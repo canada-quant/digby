@@ -1,0 +1,25 @@
+{
+  "name": "x-mcp",
+  "version": "1.0.0",
+  "description": "X (Twitter) MCP server for Digby — posts/replies/likes/retweets/follows via X API v2; reads via per-user OAuth X API v2 with Bright Data scrape + SERP/trends-mirror fallbacks",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "test": "tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "axios": "^1.20.0",
+    "express": "^4.21.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}

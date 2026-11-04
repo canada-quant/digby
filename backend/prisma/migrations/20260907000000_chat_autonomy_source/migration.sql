@@ -1,0 +1,13 @@
+-- Agent-mode auto-grant (owner 2026-09-07: "when a coding chat is set to auto
+-- these [Autonomy] flags should automatically be granted"; closes the #306 gap
+-- where Auto mode still staged confirmation cards for platform actions).
+-- chat_autonomy.source records WHO put the grant there:
+--   'manual'          — owner-curated (Autonomy dialog / set_chat_autonomy tool);
+--                       Agent-mode flips never touch it.
+--   'agent_mode_auto' — materialized by syncAutonomyWithAgentMode because the
+--                       coding chat's Agent mode is Auto; revoked automatically
+--                       when the mode leaves Auto; converted to 'manual' by any
+--                       manual save.
+-- Purely additive: every existing row backfills to 'manual' (all pre-existing
+-- grants were owner-granted), so nothing existing becomes mode-flip-revocable.
+ALTER TABLE "chat_autonomy" ADD COLUMN "source" TEXT NOT NULL DEFAULT 'manual';

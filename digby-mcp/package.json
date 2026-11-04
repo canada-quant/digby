@@ -1,0 +1,25 @@
+{
+  "name": "digby-mcp",
+  "version": "1.0.0",
+  "description": "Digby platform MCP server — exposes the Digby platform REST API (chats, folders, schedules, coding sessions) as MCP tools with per-user JWT / agent-token pass-through",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "smoke": "node scripts/smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "axios": "^1.20.0",
+    "express": "^4.21.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}

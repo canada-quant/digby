@@ -1,0 +1,75 @@
+{
+  "id": "content-filter-retry-storm",
+  "title": "A provider content-filter 400 is retried as a transient error — 5 backoffs and 2 shrinks, then a misleading failure",
+  "status": "active",
+  "incident": {
+    "date": "2026-10-08",
+    "source": "audit 2026-10-08 lanes.md F6 / plumbing.md F5 (P1-7); fix W2-4 (coding/seat-invalid-request.ts classifyContentFilter)",
+    "refs": [
+      "run 45c4f136 (failed after 87 min)",
+      "run 11cdd124 (lost 9 min)",
+      "seat cql-litellm:api-alibaba-qwen3.8-max"
+    ],
+    "summary": "Alibaba's moderation 400 ('InternalError.Algo.DataInspectionFailed: Input text data may contain inappropriate content') through the owner's LiteLLM gateway was treated as a transient 400: 5 backoffs of the IDENTICAL payload, two useless shrinks, then 'the request was too large or malformed'. HARNESS case: today's harness must fail over to the next seat on the FIRST refusal (one model-facing line) — deleting that lane re-opens the retry storm and this replay diverges."
+  },
+  "mast": [
+    "harness"
+  ],
+  "focus": "harness",
+  "role": "chat",
+  "trigger": "user_turn",
+  "seat": {
+    "model": "cql-litellm:api-alibaba-qwen3.8-max"
+  },
+  "input": {
+    "now": "2026-10-08T16:50:20Z",
+    "timezone": "America/Los_Angeles",
+    "message": "Curate the spoiler / leak trackers for the next One Piece TCG set — the sites people actually use — and say which ones are reliable."
+  },
+  "fixtures": [],
+  "harness": {
+    "maxSteps": 4
+  },
+  "graders": [
+    {
+      "id": "one-refusal-then-failover",
+      "kind": "max_model_calls",
+      "why": "A content-filter refusal is deterministic for that payload — re-sending it (5 backoffs + 2 shrinks in the incident) only burns minutes; the first refusal must move the run to the next seat.",
+      "max": 2
+    },
+    {
+      "id": "no-misleading-size-note",
+      "kind": "final_not_matches",
+      "why": "The incident ended with 'too large or malformed' — the request was neither.",
+      "pattern": "too large or malformed",
+      "flags": "i"
+    },
+    {
+      "id": "answered",
+      "kind": "final_nonempty",
+      "why": "The run delivers the work (or an honest content-filter note)."
+    }
+  ],
+  "recordings": [
+    {
+      "id": "incident",
+      "kind": "incident",
+      "expect": "pass",
+      "model": "cql-litellm:api-alibaba-qwen3.8-max",
+      "note": "the gateway's real refusal body; the fallback seat's answer. Today's harness must take exactly these two model calls.",
+      "turns": [
+        {
+          "model": "api-alibaba-qwen3.8-max",
+          "error": {
+            "status": 400,
+            "body": "{\"error\":{\"message\":\"litellm.BadRequestError: OpenAIException - InternalError.Algo.DataInspectionFailed: Input text data may contain inappropriate content.. Received Model Group=api-alibaba-qwen3.8-max\\nAvailable Model Group Fallbacks=None No fallback model group found for original model_group=api-alibaba-qwen3.8-max.\"}}"
+          }
+        },
+        {
+          "model": "glm-5.3",
+          "content": "**Spoiler / leak trackers for the next OPTCG set:** the official card list page and the Bandai Twitter account are the only authoritative sources; the community spoiler aggregators run 1–3 days ahead but mix fan translations with confirmed reveals — trust a card once it shows the official set code."
+        }
+      ]
+    }
+  ]
+}

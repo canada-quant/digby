@@ -1,0 +1,28 @@
+{
+  "name": "digby-windows-agent",
+  "version": "0.9.1",
+  "description": "Digby Windows agent — browser + computer use on the user's own PC, over the same outbound long-poll channel as the macOS agent (roadmap W0).",
+  "private": true,
+  "bin": {
+    "digby-win-agent": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js run",
+    "pair": "node dist/index.js pair",
+    "status": "node dist/index.js status",
+    "test": "npm run build && node --test test/"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "jpeg-js": "^0.4.4",
+    "playwright": "^1.51.0"
+  },
+  "devDependencies": {
+    "@types/jpeg-js": "^0.3.0",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.9.3"
+  }
+}

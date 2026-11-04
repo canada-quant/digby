@@ -1,0 +1,47 @@
+-- BROKERED REMOTE ACCESS (ticket c468f922) — the hardened "drive the OS's own
+-- remote channel" posture, per the OWNER RULING of 2026-10-29 on card
+-- oq_b5118c38: "can we do option three but a little more secure like how it's
+-- just like TeamViewer".
+--
+-- Option 3 in the ticket was "drive the OS's own remote-access channel
+-- (macOS Screen Sharing / Windows RDP) instead of the framebuffer". The weak
+-- part of plain option 3 is a permanently open inbound port on every device;
+-- TeamViewer's shape is the inverse — the device dials OUT to a broker and the
+-- operator reaches it only through that path. The paired-agent channel is
+-- ALREADY outbound-only (agent-link.ts: "the backend can therefore never open a
+-- connection TO the Mac"), so this column governs the half that did not exist:
+-- the OS channel those brokered sessions drive.
+--
+-- Agents advertise a closed token vocabulary on every poll:
+--   ?remoteaccess=on,tunnel            — enabled and provably tunnel-bound
+--   ?remoteaccess=on,exposed           — the port is reachable off-tunnel (a
+--                                        live security hole: highest priority)
+--   ?remoteaccess=on,account-password  — the channel accepts the ACCOUNT
+--                                        password instead of a dedicated one
+--   (param absent)                     — a pre-2026-10-29 agent, or not enabled
+--                                        (opt-in per device, off by default)
+--
+-- Stored shape: {"enabled":bool,"tunnelOnly":bool,"blockers":["exposed",…]}
+-- with blockers in the backend's REMOTE_BLOCKER_PRIORITY order so the deciding
+-- reason is first.
+--
+-- NULL = a legacy agent that never advertised — the fleet shows "not
+-- configured" (an honest unknown, never a false ready). Absent params never
+-- clobber the stored value, the same contract as platform/capabilities/
+-- permissions/unattended.
+--
+-- ⚠ NO SECRET EVER LANDS HERE. The dedicated channel credential lives ONLY on
+-- the device: macOS keeps the VNC password in /Library/Preferences/
+-- com.apple.VNCSettings.txt (root-readable), Windows keeps the brokered
+-- account's secret in its own SAM store. Neither is transmitted, and the token
+-- vocabulary has no field that could carry one — mirroring the guarantee the
+-- unattended migration made for /etc/kcpassword and the LSA secret.
+--
+-- ⚠ THIS IS NOT "computer_task CAN TYPE AT A LOGIN SCREEN". A hardened
+-- channel an operator (or a future brokered session) can drive is a different
+-- fact from the in-session computer agent landing input on the secure desktop.
+-- That is why prelogin_input stays 'unavailable' for computer_task input and
+-- this advert is its OWN typed fact — two questions, two answers, so no lane
+-- acts on a merged half-truth.
+
+ALTER TABLE "imessage_agents" ADD COLUMN "remoteAccess" JSONB;

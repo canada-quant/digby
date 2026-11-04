@@ -1,0 +1,23 @@
+{
+  "$comment": "Phase 3 palette guard allowlist — the ONLY places app/** may use raw violet-*/emerald-* utilities. Every entry needs a reason; new brand/success color belongs on the tokens (text-brand, bg-success-soft, …) in globals.css.",
+  "entries": [
+    {
+      "file": "app/crossmodel/components/canvas-meta.ts",
+      "reason": "TYPE_COLORS is a categorical artifact-type palette (document=blue, code=emerald, html=orange, mermaid=violet) — category color-coding, not brand/success semantics; the four hues must stay mutually distinguishable.",
+      "classes": [
+        "text-violet-600",
+        "bg-violet-50",
+        "dark:bg-violet-900/20",
+        "dark:text-violet-400",
+        "border-violet-200",
+        "dark:border-violet-800",
+        "text-emerald-600",
+        "bg-emerald-50",
+        "dark:bg-emerald-900/20",
+        "dark:text-emerald-400",
+        "border-emerald-200",
+        "dark:border-emerald-800"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+name: CI
+
+# Public test gate: backend (jest + tsc + eslint), frontend (vitest + tsc +
+# eslint + build). No deploy, no secrets, no production infrastructure.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  backend-typecheck:
+    name: backend · typecheck + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install
+        working-directory: backend
+        run: npm ci
+      - name: Prisma generate
+        working-directory: backend
+        run: npx prisma generate
+      - name: Typecheck
+        working-directory: backend
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: npx tsc --noEmit
+      - name: Lint
+        working-directory: backend
+        run: npm run lint
+
+  backend-test:
+    name: backend · jest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install
+        working-directory: backend
+        run: npm ci
+      - name: Prisma generate
+        working-directory: backend
+        run: npx prisma generate
+      - name: Test
+        working-directory: backend
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: npm test
+
+  frontend:
+    name: frontend · typecheck + lint + test + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+      - name: Test
+        working-directory: frontend
+        run: npm test
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  secret-scan:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          GITLEAKS_VERSION=8.30.1
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+      - name: Run gitleaks (full history)
+        run: |
+          # fetch-depth: 0 above is what makes this scan non-vacuous: on a
+          # shallow clone gitleaks would walk ~1 commit and still exit 0,
+          # green-but-blind. Refuse to run rather than report a false clear.
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            echo "::error::shallow clone - a history scan here would be vacuous"
+            exit 1
+          fi
+          echo "history depth: $(git rev-list --all --count) commit(s)"
+          gitleaks git --log-opts="--all" --report-format json --report-path gitleaks.json --no-banner --exit-code 1
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-report
+          path: gitleaks.json

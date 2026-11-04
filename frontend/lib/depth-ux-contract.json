@@ -1,0 +1,36 @@
+{
+  "$comment": "Depth UX seam contract (compute policy, 2026-09-26; docs/DEPTH_UX_SOTA_2026-09-26.md §4). ONE fixture BOTH sides import: frontend/lib/depth-ux-contract.test.ts proves the client reads exactly these names; Module B's jest suite (backend) must import this same file and prove the harness WRITES them (the SSE event types, the metadata keys, the request param). Drift on either side then fails CI instead of failing silently. Add a name here first, then on both sides.",
+  "version": 1,
+  "sse": {
+    "checkStateEvent": "check_state",
+    "checkStates": ["checking", "checked", "updated", "interrupted", "skipped"],
+    "checkStateFields": { "state": "state", "changed": "changed", "revisionId": "revisionId" },
+    "progressEvent": "progress",
+    "progressKeyField": "key",
+    "progressKeys": ["planning", "checking_web", "second_opinion", "double_checking_stakes", "deeper_findings_started", "deeper_findings_ready"],
+    "chipsField": "chips",
+    "chipsCarriers": ["followups", "complete"],
+    "depthField": "depth",
+    "depthCarriers": ["complete"],
+    "chipKinds": ["escalate", "signin_deeper"],
+    "escalateChipFields": { "kind": "kind", "escalationOf": "escalationOf", "nextRung": "nextRung", "etaText": "etaText", "label": "label" },
+    "nextRungs": ["verify", "research"]
+  },
+  "request": {
+    "escalationParam": "escalationOf"
+  },
+  "assistantMetadata": {
+    "check": "check",
+    "depth": "depth",
+    "chips": "chips",
+    "origin": "origin"
+  },
+  "userMetadata": {
+    "escalationOf": "escalationOf"
+  },
+  "pollWhile": {
+    "legacyFlag": "pendingCrossCheck",
+    "checkState": "checking"
+  },
+  "machineOrigins": ["schedule", "hook", "machine", "agent", "webhook"]
+}

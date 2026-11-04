@@ -1,0 +1,6 @@
+{
+  "version": "0.1.13",
+  "url": "https://digby.example.com/Digby.dmg",
+  "agentVersion": "0.9.10",
+  "notes": "Microphone permission fix (the real one): the app now ships the macOS audio-input entitlement, so pressing Ctrl+Shift+Space finally shows the actual macOS microphone permission prompt and Digby appears in Privacy & Security → Microphone. Also carries multi-display capture with owner-presence facts and the one-time Accessibility, Screen Recording and Full Disk Access permission re-grant a re-signed app needs. Bundles Mac agent 0.9.10 — the current agent release."
+}

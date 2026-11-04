@@ -1,0 +1,35 @@
+-- FO firing 33 (iter 23, 2026-09-27, Fleet-Supervisor-wake): the iter-22 2-col
+-- index (loop_metrics_sessionId_createdAt_idx, migration 20260927104600) was
+-- necessary but NOT sufficient. The supervisor-turn-noop facts read is
+--   prisma.loopMetric.findMany({ where: { sessionId, kind IN (supervisor_noop,
+--   supervisor_action, supervisor_note), createdAt >= now-7d },
+--   orderBy createdAt desc, take 400 })
+-- (supervisor-turn-noop.ts computeSupervisorTurnNoopFacts; shared by
+-- hooks.service.ts lookupWakeTargetFacts, wake_triage v3 target_facts).
+--
+-- With `kind` unindexed the (sessionId, createdAt) path needs a HEAP FETCH PER
+-- ROW, and the Fleet Supervisor's own chat is the noisiest writer in the fleet:
+-- live pg_stats 2026-09-27 — planner MCV for c0e22e36 ≈ 22.7k rows (5.9% of
+-- the table), 16.8k rows in any 7-day window. The planner correctly priced the
+-- 2-col path ABOVE the old createdAt backward scan, so on the boxes ALREADY
+-- serving 88faf443 the facts query still walked loop_metrics_createdAt_idx
+-- BACKWARD (live EXPLAIN ANALYZE, box A, 11:45Z: Execution Time 1559.515 ms,
+-- Rows Removed by Filter 60150) and every sweep/drain firing kept failing open:
+-- "supervisor-turn-noop: <chat> failed open (supervisor turn facts timed out
+-- after 1500ms)" — bbac4b42 11:35:11Z (daee2916 sweep), ecaf86cd 11:37:44Z
+-- (c0e22e36 drain), cc06330a 11:40:28Z (c0e22e36 drain), all on sha 88faf443.
+-- Quiet chats DID use the 2-col index (pg_stat_user_indexes idx_scan 77) — the
+-- shape loses exactly for the noisy supervisor chats the purpose serves.
+--
+-- The 3-column index makes BOTH equalities index conds and both selected
+-- columns (kind, createdAt) index-resident: the read becomes a ~741-entry
+-- index-only walk for the Fleet Supervisor chat. Additive only — one new
+-- index, no existing-row change; plain CREATE INDEX (no CONCURRENTLY: prisma
+-- migrate wraps each migration in a transaction and CREATE INDEX CONCURRENTLY
+-- cannot run inside one — 9df506cc F3 / iter-22 precedent); IF NOT EXISTS so a
+-- re-applied migration is idempotent. The 2-col index stays: it serves
+-- sessionId+createdAt reads without a kind filter (audit probes, wake-rider
+-- pairing) and dropping it would be a behavior change, not an additive fix.
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "loop_metrics_sessionId_kind_createdAt_idx" ON "loop_metrics"("sessionId", "kind", "createdAt");

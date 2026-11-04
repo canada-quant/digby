@@ -1,0 +1,37 @@
+{
+  "_doc": "Tool-description diet budgets (build 2026-10-08 A2-3; coding/tool-description-budget.test.ts). A top-level description may be at most maxChars, a parameter description at most maxParamChars — unless its row below allows more (the post-diet length of a tool that still needs it). The lint fails only on NEW or LONGER text; never raise a row without a one-line justification in the PR — move the why (incident, ticket, date) into a code comment instead.",
+  "maxChars": 800,
+  "maxParamChars": 400,
+  "tools": {
+    "answer_owner_question": 1100,
+    "browser_task": 1126,
+    "computer_task": 1200,
+    "delegate": 2080,
+    "file_feedback": 809,
+    "flag_owner_question": 960,
+    "get_account_overview": 1258,
+    "goal_get": 849,
+    "goal_premise_set": 1126,
+    "hook_subscribe": 893,
+    "list_owner_questions": 908,
+    "schedule_message": 879,
+    "schedule_self": 1233,
+    "set_chat_autonomy": 892,
+    "set_decision_gate_mode": 806,
+    "start_coding_session": 849,
+    "stop_run": 824,
+    "store_secret": 1059,
+    "test_model_role": 849,
+    "todo_get": 861,
+    "todo_update": 938,
+    "update_feedback": 1290
+  },
+  "params": {
+    "get_fleet_telemetry.view": 1053,
+    "goal_update.progressNote": 489,
+    "infra_action.kind": 597,
+    "schedule_message.deltaGate": 486,
+    "start_coding_session.projectId": 540,
+    "todo_update.progressNote": 527
+  }
+}

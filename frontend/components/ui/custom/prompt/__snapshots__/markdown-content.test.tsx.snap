@@ -1,0 +1,15 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MarkdownContent — degraded input tolerance > snapshot: degraded long-conversation answer renders structured 1`] = `
+"<p class="leading-7 mb-3 last:mb-0 [overflow-wrap:anywhere]">Perfect — here is the plan: ## Meal Plan (2 nights)</p>
+<ul class="my-3 pl-6 list-disc space-y-1.5 marker:text-muted-foreground">
+<li class="leading-7 pl-1 [overflow-wrap:anywhere]"><strong class="font-semibold text-foreground">Day 1 lunch:</strong> sandwiches</li>
+<li class="leading-7 pl-1 [overflow-wrap:anywhere]"><strong class="font-semibold text-foreground">Day 1 dinner:</strong> hobo packets</li>
+</ul>
+<h2 class="scroll-m-20 font-semibold tracking-tight mt-5 mb-2 first:mt-0 text-foreground [overflow-wrap:anywhere] text-xl">Grocery List</h2>
+<p class="leading-7 mb-3 last:mb-0 [overflow-wrap:anywhere]"><strong class="font-semibold text-foreground">Cooler:</strong></p>
+<ul class="my-3 pl-6 list-disc space-y-1.5 marker:text-muted-foreground">
+<li class="leading-7 pl-1 [overflow-wrap:anywhere]">1 lb ground beef</li>
+<li class="leading-7 pl-1 [overflow-wrap:anywhere]">butter</li>
+</ul>"
+`;

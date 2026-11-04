@@ -1,0 +1,40 @@
+# Digby self-host — single public entrypoint.
+#   /api/crossmodel/instances/tunnel        → relay (Digby Edge WS tunnel)
+#   /api/crossmodel/instances/*/proxy/*     → relay (per-edge HTTP/SSE proxy)
+#   /api/crossmodel/instances/*/chats/*/messages → relay (cloud→edge messaging)
+#   /api/*  → backend (Express)
+#   *       → frontend (Next.js)
+#
+# Default: plain HTTP on :8080 (LAN / localhost). COOKIE_SECURE=false in
+# .env matches this mode.
+#
+# TLS with a real domain (recommended for anything beyond LAN):
+#   1. Point DNS at this machine and open 80+443.
+#   2. Replace the ":8080" block header below with your domain, e.g.:
+#        digby.example.com {
+#      (Caddy auto-provisions Let's Encrypt certificates.)
+#   3. Publish 443 in docker-compose.selfhost.yml's caddy service:
+#        - "443:443"
+#   4. In .env: SELFHOST_PUBLIC_URL=https://digby.example.com
+#                 COOKIE_SECURE=true
+#   5. Rebuild the frontend (NEXT_PUBLIC_API_URL is baked at build time):
+#        docker compose -f docker-compose.selfhost.yml up -d --build
+
+:8080 {
+	# Digby Edge (Phase 3) relay — the relay path families MUST route before
+	# the /api/* catch-all: the edge's outbound WSS tunnel (long-lived upgrade),
+	# the cloud-side per-instance HTTP/SSE proxy, and (Phase 5) cloud→edge
+	# per-chat messaging.
+	# NOTE: Caddy path wildcards only work at the START/END of a path — a
+	# middle `*` (e.g. /instances/<id>/proxy/*) does NOT match. The two
+	# middle-wildcard families therefore use path_regexp matchers.
+	@relayTunnel path /api/crossmodel/instances/tunnel
+	@relayProxy path_regexp proxy ^/api/crossmodel/instances/[^/]+/proxy(/.*)?$
+	# Digby Edge (Phase 5): cloud→edge messaging sugar (relay convenience endpoint)
+	@relayMessages path_regexp messages ^/api/crossmodel/instances/[^/]+/chats/[^/]+/messages$
+	reverse_proxy @relayTunnel relay:4100
+	reverse_proxy @relayProxy relay:4100
+	reverse_proxy @relayMessages relay:4100
+	reverse_proxy /api/* backend:4000
+	reverse_proxy frontend:3000
+}

@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Digby – Offline</title>
+  <style>
+    /* Static page — hex values mirror the app's dark tokens (globals.css):
+       bg base-950 #09090b, text base-200 #e4e4e8, muted base-400 #9f9fa7,
+       button brand violet-600 #7f22fe / hover violet-700 #7008e7. */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #09090b;
+      color: #e4e4e8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      text-align: center;
+      padding: 2rem;
+    }
+    img {
+      width: 80px;
+      height: 80px;
+      border-radius: 16px;
+      margin-bottom: 1.5rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      margin: 0 0 0.5rem;
+    }
+    p {
+      color: #9f9fa7;
+      font-size: 0.95rem;
+      max-width: 300px;
+    }
+    button {
+      margin-top: 1.5rem;
+      background: #7f22fe;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 0.6rem 1.4rem;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #7008e7;
+    }
+  </style>
+</head>
+<body>
+  <img src="/icon-192x192.png" alt="Digby" />
+  <h1>You're offline</h1>
+  <p>Digby needs a connection to chat with AI models. Please check your network and try again.</p>
+  <button onclick="window.location.reload()">Try again</button>
+</body>
+</html>

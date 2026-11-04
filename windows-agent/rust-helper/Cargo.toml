@@ -1,0 +1,64 @@
+[package]
+name = "digby-win-helper"
+version = "0.9.1"
+edition = "2021"
+description = "Digby Windows helper — stdio JSON-RPC surface for screen capture (WGC + GDI fallback), SendInput, UI Automation, and environment safety checks (roadmap W3). Spawned and driven by the Node agent (windows-agent/src/rust-helper.ts); replaces the W1 koffi FFI layer."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "digby-win-helper"
+path = "src/main.rs"
+
+# Cross-platform (pure logic + protocol): the line-delimited JSON-RPC loop,
+# the refusal-code table, the UIA node linearization, the SendInput INPUT
+# serialization, and the DRM uniform-black heuristic all compile — and are
+# unit-tested — on the Linux CI host. The Win32 implementation lives in
+# src/win/ behind #[cfg(windows)] and a cfg(windows) dependency on the
+# `windows` crate, so `cargo test` on Linux runs the pure units and
+# `cargo check` still validates the whole protocol layer.
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+# Win32 bindings — only pulled in when building FOR Windows (the crate is
+# `#![cfg(windows)]` internally as well). On a Linux host this is never
+# fetched. windows 0.62.2 feature map verified against
+# microsoft.github.io/windows-docs-rs (2026-09-25): the WGC interop entry
+# points (IGraphicsCaptureItemInterop, CreateDirect3D11DeviceFromDXGIDevice,
+# IDirect3DDxgiInterfaceAccess) live under Win32::System::WinRT::*, NOT under
+# Graphics_Capture; the desktop APIs (OpenInputDesktop/GetThreadDesktop) live
+# under Win32::System::StationsAndDesktops.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.62"
+features = [
+    # ── Windows Graphics Capture (the W3 production capture path) ───────
+    "Graphics_Capture",                    # GraphicsCaptureItem, Direct3D11CaptureFramePool, GraphicsCaptureSession, Direct3D11CaptureFrame
+    "Graphics_DirectX",                    # DirectXPixelFormat
+    "Graphics_DirectX_Direct3D11",         # IDirect3DDevice
+    "Win32_System_WinRT",                  # RoGetActivationFactory / windows::core::factory
+    "Win32_System_WinRT_Graphics_Capture", # IGraphicsCaptureItemInterop::CreateForMonitor
+    "Win32_System_WinRT_Direct3D11",       # CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess
+    "Win32_Graphics_Direct3D11",           # D3D11CreateDevice, ID3D11Device, ID3D11Texture2D, staging copy + Map
+    "Win32_Graphics_Direct3D",             # D3D_DRIVER_TYPE (D3D11CreateDevice param)
+    "Win32_Graphics_Dxgi",                 # IDXGIDevice
+    "Win32_Graphics_Dxgi_Common",          # DXGI_FORMAT, DXGI_SAMPLE_DESC (D3D11_TEXTURE2D_DESC fields)
+    # ── GDI fallback capture (the exact W1 BitBlt path) ──────────────────
+    "Win32_Graphics_Gdi",                  # BitBlt, GetDIBits, CreateCompatibleDC/Bitmap, GetDC, MonitorFromPoint, HMONITOR
+    # ── UI Automation ───────────────────────────────────────────────────
+    "Win32_UI_Accessibility",              # CUIAutomation, IUIAutomation*, IUIAutomationTreeWalker, UIA_* pattern ids
+    "Win32_System_Com",                    # CoInitializeEx, CoCreateInstance, CLSCTX_*
+    "Win32_System_Ole",                    # SafeArrayGetElement/LBound/UBound/Destroy (runtime_id decode)
+    # ── Input injection + window/monitor/cursor geometry ────────────────
+    "Win32_UI_Input_KeyboardAndMouse",     # SendInput, INPUT/KEYBDINPUT/MOUSEINPUT, VK_*
+    "Win32_UI_WindowsAndMessaging",        # EnumDisplayMonitors, GetSystemMetrics, GetForegroundWindow, GetCursorPos, GetWindowRect, GetWindowTextW, WindowFromPoint
+    # ── Secure desktop detection ────────────────────────────────────────
+    "Win32_System_StationsAndDesktops",    # OpenInputDesktop, GetThreadDesktop (NOT WindowsAndMessaging)
+    # ── Process + token integrity (elevation detection) ─────────────────
+    "Win32_System_Threading",              # OpenProcess, GetCurrentThreadId, QueryFullProcessImageNameW
+    "Win32_Security",                      # OpenProcessToken, GetTokenInformation, TOKEN_ELEVATION
+    # ── Shell ───────────────────────────────────────────────────────────
+    "Win32_UI_Shell",                      # ShellExecuteW
+]

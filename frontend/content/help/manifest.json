@@ -1,0 +1,680 @@
+{
+  "generatedAt": "2026-10-27T19:40:38.858Z",
+  "docs": [
+    {
+      "slug": "self-host",
+      "title": "Self-hosting Digby",
+      "description": "Run the full Digby stack on your own machine or server with Docker Compose.",
+      "category": "Self-hosting & Digby Edge",
+      "source": "docs/SELF_HOST.md",
+      "filename": "self-host.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Requirements",
+          "id": "requirements"
+        },
+        {
+          "depth": 2,
+          "text": "Quick start",
+          "id": "quick-start"
+        },
+        {
+          "depth": 2,
+          "text": "What you get",
+          "id": "what-you-get"
+        },
+        {
+          "depth": 2,
+          "text": "Setup checklist (Account → Admin → Setup)",
+          "id": "setup-checklist-account--admin--setup"
+        },
+        {
+          "depth": 2,
+          "text": "LAN access (other devices on your network)",
+          "id": "lan-access-other-devices-on-your-network"
+        },
+        {
+          "depth": 2,
+          "text": "TLS with a real domain",
+          "id": "tls-with-a-real-domain"
+        },
+        {
+          "depth": 2,
+          "text": "Model providers",
+          "id": "model-providers"
+        },
+        {
+          "depth": 3,
+          "text": "Decision gate (typed judgments, optional)",
+          "id": "decision-gate-typed-judgments-optional"
+        },
+        {
+          "depth": 2,
+          "text": "Web search (optional)",
+          "id": "web-search-optional"
+        },
+        {
+          "depth": 2,
+          "text": "Integrations (Google, GitHub, X, Slack, Asana, Xero, Discord — optional)",
+          "id": "integrations-google-github-x-slack-asana-xero-discord--optional"
+        },
+        {
+          "depth": 2,
+          "text": "Updating",
+          "id": "updating"
+        },
+        {
+          "depth": 3,
+          "text": "Auto-updates (recommended for always-on servers)",
+          "id": "auto-updates-recommended-for-always-on-servers"
+        },
+        {
+          "depth": 3,
+          "text": "Self-improvement (autonomous fix loop — YOUR copy only)",
+          "id": "self-improvement-autonomous-fix-loop--your-copy-only"
+        },
+        {
+          "depth": 2,
+          "text": "Backups",
+          "id": "backups"
+        },
+        {
+          "depth": 2,
+          "text": "Troubleshooting",
+          "id": "troubleshooting"
+        },
+        {
+          "depth": 2,
+          "text": "Connecting this instance to a cloud Digby (Digby Edge, Phase 3)",
+          "id": "connecting-this-instance-to-a-cloud-digby-digby-edge-phase-3"
+        }
+      ]
+    },
+    {
+      "slug": "edge-testing",
+      "title": "Digby Edge — end-to-end testing guide (Phases 3–5)",
+      "description": "End-to-end testing guide for the cloud↔edge instance tunnel: pairing, presence, proxied browsing, and messaging.",
+      "category": "Self-hosting & Digby Edge",
+      "source": "docs/DIGBY_EDGE_TESTING.md",
+      "filename": "edge-testing.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Topology A — local server as CLOUD + Mac/dev checkout as EDGE (easiest)",
+          "id": "topology-a--local-server-as-cloud--macdev-checkout-as-edge-easiest"
+        },
+        {
+          "depth": 3,
+          "text": "1. Bring up the CLOUD (server)",
+          "id": "1-bring-up-the-cloud-server"
+        },
+        {
+          "depth": 3,
+          "text": "2. Mint a pairing code on the CLOUD",
+          "id": "2-mint-a-pairing-code-on-the-cloud"
+        },
+        {
+          "depth": 3,
+          "text": "3. Bring up the EDGE (any machine, dev checkout)",
+          "id": "3-bring-up-the-edge-any-machine-dev-checkout"
+        },
+        {
+          "depth": 3,
+          "text": "3b. ALTERNATIVE — device activation (the edge mints the code)",
+          "id": "3b-alternative--device-activation-the-edge-mints-the-code"
+        },
+        {
+          "depth": 3,
+          "text": "4. Verify presence + proxy on the CLOUD",
+          "id": "4-verify-presence--proxy-on-the-cloud"
+        },
+        {
+          "depth": 3,
+          "text": "5. UI check",
+          "id": "5-ui-check"
+        },
+        {
+          "depth": 3,
+          "text": "6. Revocation + list hygiene",
+          "id": "6-revocation--list-hygiene"
+        },
+        {
+          "depth": 2,
+          "text": "Topology B — two servers",
+          "id": "topology-b--two-servers"
+        },
+        {
+          "depth": 2,
+          "text": "Known limitations (by design, v1)",
+          "id": "known-limitations-by-design-v1"
+        },
+        {
+          "depth": 2,
+          "text": "Troubleshooting",
+          "id": "troubleshooting"
+        }
+      ]
+    },
+    {
+      "slug": "imessage-agent",
+      "title": "Digby iMessage Bridge — Architecture & Runbook",
+      "description": "Architecture and runbook for the paired-Mac iMessage bridge (read/send iMessages, browser and screen control).",
+      "category": "iMessage & macOS",
+      "source": "docs/IMESSAGE_AGENT.md",
+      "filename": "imessage-agent.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Topology — \"agent dials home\" (HTTP long-poll)",
+          "id": "topology--agent-dials-home-http-long-poll"
+        },
+        {
+          "depth": 2,
+          "text": "Components",
+          "id": "components"
+        },
+        {
+          "depth": 3,
+          "text": "Backend (backend/src/modules/crossmodel/imessage/)",
+          "id": "backend-backendsrcmodulescrossmodelimessage"
+        },
+        {
+          "depth": 3,
+          "text": "Frontend",
+          "id": "frontend"
+        },
+        {
+          "depth": 3,
+          "text": "Agent (imessage-agent/)",
+          "id": "agent-imessage-agent"
+        },
+        {
+          "depth": 2,
+          "text": "HTTP API",
+          "id": "http-api"
+        },
+        {
+          "depth": 2,
+          "text": "Activation (production) — LIVE",
+          "id": "activation-production--live"
+        },
+        {
+          "depth": 2,
+          "text": "Testing on your Mac",
+          "id": "testing-on-your-mac"
+        },
+        {
+          "depth": 3,
+          "text": "Option A — against production",
+          "id": "option-a--against-production"
+        },
+        {
+          "depth": 3,
+          "text": "Option B — fully local (no production needed)",
+          "id": "option-b--fully-local-no-production-needed"
+        },
+        {
+          "depth": 3,
+          "text": "Quick API smoke test (with a JWT)",
+          "id": "quick-api-smoke-test-with-a-jwt"
+        },
+        {
+          "depth": 2,
+          "text": "Native signed installer (.pkg) — zero-Terminal path",
+          "id": "native-signed-installer-pkg--zero-terminal-path"
+        },
+        {
+          "depth": 2,
+          "text": "Removing an old install (cleanup)",
+          "id": "removing-an-old-install-cleanup"
+        },
+        {
+          "depth": 2,
+          "text": "Security & privacy",
+          "id": "security--privacy"
+        },
+        {
+          "depth": 2,
+          "text": "Self-update (v0.8.0, ticket 4e75cdea)",
+          "id": "self-update-v080-ticket-4e75cdea"
+        },
+        {
+          "depth": 2,
+          "text": "Roadmap",
+          "id": "roadmap"
+        }
+      ]
+    },
+    {
+      "slug": "imessage-agent-install",
+      "title": "Digby iMessage Agent (macOS)",
+      "description": "Install the Digby iMessage agent on your own Mac and pair it with your account.",
+      "category": "iMessage & macOS",
+      "source": "imessage-agent/README.md",
+      "filename": "imessage-agent-install.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Which component is which (naming)",
+          "id": "which-component-is-which-naming"
+        },
+        {
+          "depth": 2,
+          "text": "Requirements",
+          "id": "requirements"
+        },
+        {
+          "depth": 2,
+          "text": "Install — the easy way (recommended)",
+          "id": "install--the-easy-way-recommended"
+        },
+        {
+          "depth": 2,
+          "text": "Install — manual (developers)",
+          "id": "install--manual-developers"
+        },
+        {
+          "depth": 2,
+          "text": "Manual / development usage",
+          "id": "manual--development-usage"
+        },
+        {
+          "depth": 2,
+          "text": "What the agent can do",
+          "id": "what-the-agent-can-do"
+        },
+        {
+          "depth": 3,
+          "text": "iMessage",
+          "id": "imessage"
+        },
+        {
+          "depth": 3,
+          "text": "Browser automation (v0.2.0+)",
+          "id": "browser-automation-v020"
+        },
+        {
+          "depth": 3,
+          "text": "Computer use (v0.3.0+)",
+          "id": "computer-use-v030"
+        },
+        {
+          "depth": 2,
+          "text": "Config & security",
+          "id": "config--security"
+        },
+        {
+          "depth": 2,
+          "text": "Notes / known limitations",
+          "id": "notes--known-limitations"
+        }
+      ]
+    },
+    {
+      "slug": "macos-app",
+      "title": "Digby — macOS desktop app",
+      "description": "The native Digby macOS desktop app — a signed WKWebView wrapper around digby.example.com.",
+      "category": "iMessage & macOS",
+      "source": "macos-app/README.md",
+      "filename": "macos-app.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Prereqs (same as the iMessage installer)",
+          "id": "prereqs-same-as-the-imessage-installer"
+        },
+        {
+          "depth": 2,
+          "text": "Build",
+          "id": "build"
+        },
+        {
+          "depth": 2,
+          "text": "Publish (serve from digby.example.com)",
+          "id": "publish-serve-from-digbyai"
+        },
+        {
+          "depth": 2,
+          "text": "Bundled iMessage helper (one download, no separate installer)",
+          "id": "bundled-imessage-helper-one-download-no-separate-installer"
+        },
+        {
+          "depth": 2,
+          "text": "Permissions & DigbyHelper",
+          "id": "permissions--digbyhelper"
+        },
+        {
+          "depth": 2,
+          "text": "Voice conversation mode (push-to-talk — v0.1.7)",
+          "id": "voice-conversation-mode-push-to-talk--v017"
+        },
+        {
+          "depth": 2,
+          "text": "What it does / limits",
+          "id": "what-it-does--limits"
+        },
+        {
+          "depth": 2,
+          "text": "Updates",
+          "id": "updates"
+        },
+        {
+          "depth": 2,
+          "text": "Customizing",
+          "id": "customizing"
+        }
+      ]
+    },
+    {
+      "slug": "digby-mcp",
+      "title": "digby-mcp — the Digby platform as MCP tools",
+      "description": "Drive the Digby platform as MCP tools from any MCP-capable client or agent.",
+      "category": "Platform & Integrations",
+      "source": "docs/DIGBY_MCP.md",
+      "filename": "digby-mcp.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Auth model: per-user pass-through — NEVER shared-key",
+          "id": "auth-model-per-user-pass-through--never-shared-key"
+        },
+        {
+          "depth": 2,
+          "text": "Tools",
+          "id": "tools"
+        },
+        {
+          "depth": 2,
+          "text": "Run it",
+          "id": "run-it"
+        },
+        {
+          "depth": 3,
+          "text": "stdio (local MCP clients — Claude Desktop-style)",
+          "id": "stdio-local-mcp-clients--claude-desktop-style"
+        },
+        {
+          "depth": 3,
+          "text": "HTTP (house pattern — how the other -mcp services run)",
+          "id": "http-house-pattern--how-the-other--mcp-services-run"
+        },
+        {
+          "depth": 3,
+          "text": "Container",
+          "id": "container"
+        },
+        {
+          "depth": 2,
+          "text": "MCP client config (example)",
+          "id": "mcp-client-config-example"
+        },
+        {
+          "depth": 2,
+          "text": "Development",
+          "id": "development"
+        },
+        {
+          "depth": 2,
+          "text": "See also",
+          "id": "see-also"
+        }
+      ]
+    },
+    {
+      "slug": "platform-api",
+      "title": "Digby Platform API",
+      "description": "External REST API and scoped agent tokens for chats, coding sessions, schedules, and fleet automation.",
+      "category": "Platform & Integrations",
+      "source": "docs/DIGBY_PLATFORM_API.md",
+      "filename": "platform-api.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Authentication",
+          "id": "authentication"
+        },
+        {
+          "depth": 3,
+          "text": "Scopes",
+          "id": "scopes"
+        },
+        {
+          "depth": 2,
+          "text": "Endpoints",
+          "id": "endpoints"
+        },
+        {
+          "depth": 3,
+          "text": "Chats",
+          "id": "chats"
+        },
+        {
+          "depth": 3,
+          "text": "Folders",
+          "id": "folders"
+        },
+        {
+          "depth": 3,
+          "text": "Schedules",
+          "id": "schedules"
+        },
+        {
+          "depth": 3,
+          "text": "Fleet supervisor",
+          "id": "fleet-supervisor"
+        },
+        {
+          "depth": 3,
+          "text": "Agent tokens (JWT only — an agent token can NEVER manage tokens)",
+          "id": "agent-tokens-jwt-only--an-agent-token-can-never-manage-tokens"
+        },
+        {
+          "depth": 2,
+          "text": "In-loop platform tools vs this REST API",
+          "id": "in-loop-platform-tools-vs-this-rest-api"
+        },
+        {
+          "depth": 2,
+          "text": "Rate limit",
+          "id": "rate-limit"
+        },
+        {
+          "depth": 2,
+          "text": "Error shapes",
+          "id": "error-shapes"
+        }
+      ]
+    },
+    {
+      "slug": "api-reference",
+      "title": "CrossModel — Backend API Reference",
+      "description": "Backend REST API reference: authentication, chats, messages, and core endpoints.",
+      "category": "Platform & Integrations",
+      "source": "docs/api-reference.md",
+      "filename": "api-reference.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Authentication",
+          "id": "authentication"
+        },
+        {
+          "depth": 3,
+          "text": "Auth Endpoints",
+          "id": "auth-endpoints"
+        },
+        {
+          "depth": 2,
+          "text": "CrossModel Chat",
+          "id": "crossmodel-chat"
+        },
+        {
+          "depth": 3,
+          "text": "Stream Endpoint (SSE)",
+          "id": "stream-endpoint-sse"
+        },
+        {
+          "depth": 3,
+          "text": "Chat CRUD",
+          "id": "chat-crud"
+        },
+        {
+          "depth": 3,
+          "text": "Projects",
+          "id": "projects"
+        },
+        {
+          "depth": 3,
+          "text": "Documents (RAG Knowledge Base)",
+          "id": "documents-rag-knowledge-base"
+        },
+        {
+          "depth": 3,
+          "text": "Canvas",
+          "id": "canvas"
+        },
+        {
+          "depth": 3,
+          "text": "Sharing",
+          "id": "sharing"
+        },
+        {
+          "depth": 3,
+          "text": "Memory & Profile",
+          "id": "memory--profile"
+        },
+        {
+          "depth": 2,
+          "text": "Admin Dashboard Endpoints",
+          "id": "admin-dashboard-endpoints"
+        },
+        {
+          "depth": 3,
+          "text": "Users (Admin only)",
+          "id": "users-admin-only"
+        },
+        {
+          "depth": 3,
+          "text": "Other Modules",
+          "id": "other-modules"
+        },
+        {
+          "depth": 2,
+          "text": "Error Responses",
+          "id": "error-responses"
+        },
+        {
+          "depth": 2,
+          "text": "Health Check",
+          "id": "health-check"
+        }
+      ]
+    },
+    {
+      "slug": "depth",
+      "title": "How deep Digby thinks — and \"Dig deeper\"",
+      "description": "How deep Digby thinks per message: the Checked / Updated pill, \"Dig deeper\", and why there is no depth setting (the old Advanced tab was removed 2026-10-27, ticket c99b404a).",
+      "category": "Using Digby",
+      "source": "docs/DEPTH_AND_DIG_DEEPER.md",
+      "filename": "depth.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "What happens when you send a message",
+          "id": "what-happens-when-you-send-a-message"
+        },
+        {
+          "depth": 2,
+          "text": "\"This one matters — double-checking\"",
+          "id": "this-one-matters--double-checking"
+        },
+        {
+          "depth": 2,
+          "text": "Dig deeper",
+          "id": "dig-deeper"
+        },
+        {
+          "depth": 2,
+          "text": "Signed-out visitors",
+          "id": "signed-out-visitors"
+        },
+        {
+          "depth": 2,
+          "text": "Depth settings",
+          "id": "depth-settings"
+        },
+        {
+          "depth": 2,
+          "text": "No spending bound per answer",
+          "id": "no-spending-bound-per-answer"
+        },
+        {
+          "depth": 2,
+          "text": "For operators",
+          "id": "for-operators"
+        }
+      ]
+    },
+    {
+      "slug": "asking-bigger",
+      "title": "Asking bigger — altitude, depth, and range",
+      "description": "Ask for the outcome, not the task: altitude, depth, and range — three ways to get more from every prompt, with a meta-prompt that upgrades any ask.",
+      "category": "Using Digby",
+      "source": "docs/ASKING_BIGGER.md",
+      "filename": "asking-bigger.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Altitude — ask for the outcome above the task",
+          "id": "altitude--ask-for-the-outcome-above-the-task"
+        },
+        {
+          "depth": 2,
+          "text": "Depth — ask for the field's instruments, not its vocabulary",
+          "id": "depth--ask-for-the-fields-instruments-not-its-vocabulary"
+        },
+        {
+          "depth": 2,
+          "text": "Range — bring in the checks another field would run",
+          "id": "range--bring-in-the-checks-another-field-would-run"
+        },
+        {
+          "depth": 2,
+          "text": "Speed needs no technique",
+          "id": "speed-needs-no-technique"
+        },
+        {
+          "depth": 2,
+          "text": "The one meta-prompt",
+          "id": "the-one-meta-prompt"
+        }
+      ]
+    },
+    {
+      "slug": "ghost-mode",
+      "title": "Ghost mode",
+      "description": "Per-conversation ghost mode: route a chat through the admin’s private endpoint and keep it out of memory and learning.",
+      "category": "Using Digby",
+      "source": "docs/GHOST_MODE.md",
+      "filename": "ghost-mode.md",
+      "headings": [
+        {
+          "depth": 2,
+          "text": "Who can use it",
+          "id": "who-can-use-it"
+        },
+        {
+          "depth": 2,
+          "text": "What the admin designates",
+          "id": "what-the-admin-designates"
+        },
+        {
+          "depth": 2,
+          "text": "What it does and does not do",
+          "id": "what-it-does-and-does-not-do"
+        }
+      ]
+    }
+  ]
+}

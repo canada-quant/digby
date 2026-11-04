@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: development
+    container_name: admin-frontend
+    ports:
+      - "8247:3000"
+    environment:
+      - NODE_ENV=development
+      - BACKEND_URL=http://backend:4000
+      - NODE_OPTIONS=--max-old-space-size=4096
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - admin-network
+    command: npm run dev
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: development
+    container_name: admin-backend
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=development
+      - PORT=4000
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/digby_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
+      - JWT_REFRESH_SECRET=your-super-secret-refresh-key-change-this-in-production
+      - JWT_EXPIRES_IN=15m
+      - JWT_REFRESH_EXPIRES_IN=7d
+      # API keys come from the root .env (see .env.example) — never commit real keys.
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - XAI_GROK_API_KEY=${XAI_GROK_API_KEY:-}
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - admin-network
+    command: npm run dev
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: admin-postgres
+    ports:
+      - "9384:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=digby_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - admin-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d digby_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: admin-redis
+    ports:
+      - "7856:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - admin-network
+    command: redis-server --appendonly yes
+
+  adminer:
+    image: adminer:latest
+    container_name: admin-adminer
+    ports:
+      - "9521:8080"
+    depends_on:
+      - postgres
+    networks:
+      - admin-network
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  admin-network:
+    driver: bridge

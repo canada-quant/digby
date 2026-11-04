@@ -1,0 +1,30 @@
+-- FO firing 32 (iter 22, 2026-09-27): supervisor_turn_noop / wake_triage v3 facts
+-- read loop_metrics by ("sessionId", "createdAt") —
+--   prisma.loopMetric.findMany({ where: { sessionId, kind IN (supervisor_noop,
+--   supervisor_action, supervisor_note), createdAt >= now-7d }, orderBy desc, take 400 })
+-- (supervisor-turn-noop.ts computeSupervisorTurnNoopFacts; shared by
+-- hooks.service.ts lookupWakeTargetFacts). LoopMetric carried only
+-- [kind, createdAt] + [createdAt], so the planner walked
+-- loop_metrics_createdAt_idx BACKWARD over the whole fleet's 7-day rows and
+-- filtered by sessionId: prod EXPLAIN ANALYZE 2026-09-27 (box A, live DB) —
+-- Execution Time 7658.216 ms, Rows Removed by Filter: 60591, buffers
+-- 40858 hit / 8891 read (174 MB table, 376,786 est rows) — against a
+-- 1500 ms facts deadline (SUPERVISOR_TURN_NOOP_FACTS_TIMEOUT_MS). Result:
+-- "supervisor-turn-noop: <chat> failed open (supervisor turn facts timed out
+-- after 1500ms)" on EVERY sweep/drain firing of the Fleet Supervisor
+-- (4/4 in the 4 h window) — the SHADOW purpose could never ask the gate, so
+-- it accumulated zero calibration rows and could never graduate to act.
+-- The same computation serves wake_triage v3's target_facts lookup.
+--
+-- One composite index closes it: sessionId first (the equality), createdAt
+-- second (the range + the ORDER BY desc … LIMIT 400). Additive only — a
+-- single new index, no existing-row change. Plain CREATE INDEX (no
+-- CONCURRENTLY dance) like the 9df506cc F3 precedent: prisma migrate wraps
+-- each migration in a transaction and CREATE INDEX CONCURRENTLY cannot run
+-- inside one; the table is 174 MB / ~377k rows so the build is seconds,
+-- and it runs in the deploy wave's `prisma migrate deploy` step
+-- (deploy-blue-green.sh: box A first, ENABLE_MIGRATIONS=false on B).
+-- Written IF NOT EXISTS so a re-applied migration is idempotent.
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "loop_metrics_sessionId_createdAt_idx" ON "loop_metrics"("sessionId", "createdAt");

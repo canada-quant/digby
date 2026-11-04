@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.digby.agent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <!-- 51d8dbe0: the Digby-named runtime copy, NOT the shared Homebrew node —
+         TCC names the executable, so Full Disk Access lists "DigbyAgent". The
+         stable path (outside the self-update swap tree) is substituted by
+         install.sh. -->
+    <string>__NODE__</string>
+    <string>__AGENT_DIR__/dist/index.js</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <!-- Relaunch on crash / token-revocation (exit!=0), but NOT after the user
+       cancels pairing (exit 0) — avoids a relaunch/dialog loop. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>StandardOutPath</key>
+  <string>__LOG_DIR__/digby-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG_DIR__/digby-agent.err.log</string>
+</dict>
+</plist>

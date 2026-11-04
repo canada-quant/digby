@@ -1,0 +1,28 @@
+-- Owner-subscribed schedule marker (ticket 4565991a, 2026-09-24): PR #1010
+-- (6ef770a1) renders schedule firings EXPANDED when the firing row's
+-- promptSetBy = 'user'. That gate misses the ONE-SHOT LADDER pattern:
+-- dormant-gated projects refuse machine-armed kind-'recurring' rows, so an
+-- owner-requested daily digest (chat dddbf9ba — the owner's ~7:30 AM PDT
+-- "AI noise on X.com" digest, armed from a real user turn, msg 90b8d65f)
+-- runs as self-re-arming one-shots whose every rung is promptSetBy 'machine'
+-- → every delivery after the original arm renders COLLAPSED as machine wake.
+-- It ALSO breaks when a machine update_schedule rewrites the prompt of a
+-- genuinely owner-armed row (promptSetBy restamps 'machine').
+--
+-- ownerSubscribed is orthogonal to promptSetBy: promptSetBy = who LAST WROTE
+-- the prompt (flips on every rewrite); ownerSubscribed = whose SUBSCRIPTION
+-- the content serves (persists through rewrites and ladder re-arms, inherited
+-- by own-chat re-arms from an owner-subscribed firing). Read at fire time to
+-- persist metadata.scheduleOwnerArmed on the wake row; the frontend
+-- (PR #1010, MachineTurnGroup) renders the turn EXPANDED with a "requested"
+-- marker.
+--
+-- ADDITIVE ONLY: single nullable Boolean, no existing-row change, no
+-- backfill (NULL = legacy/unmarked → renders collapsed exactly as today;
+-- marking flows only through the platform-tools gates — a user-anchored
+-- schedule_message arm, or inheritance from an owner-subscribed firing's
+-- own-chat re-arm/update — never inside createSchedule, so a machine arm
+-- can never launder wake noise into expanded owner-subscribed render).
+
+-- AlterTable
+ALTER TABLE "coding_schedules" ADD COLUMN IF NOT EXISTS "ownerSubscribed" BOOLEAN;

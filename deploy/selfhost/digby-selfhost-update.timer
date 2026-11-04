@@ -1,0 +1,15 @@
+# Self-host auto-update schedule. Install at
+# /etc/systemd/system/digby-selfhost-update.timer on the self-host box.
+# Runs the update check every 10 minutes; it's a no-op (one git fetch)
+# when the checkout is already at origin/main.
+[Unit]
+Description=Check for digby updates every 10 minutes
+
+[Timer]
+OnCalendar=*:0/10
+RandomizedDelaySec=120
+# If the box was off over a fire window, catch up on boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

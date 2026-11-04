@@ -1,0 +1,185 @@
+{
+  "id": "schooltime-spliced-chat-id",
+  "title": "A wake block shows a chat id suffix — the supervisor splices prefix + suffix into an id that does not exist and looks it up",
+  "status": "active",
+  "incident": {
+    "date": "2026-10-08",
+    "source": "audit 2026-10-08 supervisors.md F7 (P2); audit 2026-10-06 fleet.md F7",
+    "refs": [
+      "chat 41bd202a",
+      "lane 0037460b-d239-474e-bd32-5fe3ec52d820",
+      "13 failed lookups in 24 h (10 splices since 10-01)"
+    ],
+    "summary": "Supervisor state blocks render chat ids as SUFFIXES ('…ec52d820') while tools take prefixes; the Schooltime supervisor called get_chat_status with '0037460b-b60b-456e-977f-a3127ec52d820', '0037460b-ec52d820', '0037460b-ec52-d820' … — prefix + suffix splices of a chat that is really 0037460b-d239-474e-bd32-5fe3ec52d820. Every miss cost a round and a 'Did you mean'."
+  },
+  "mast": [
+    "FM-1.4"
+  ],
+  "role": "project_supervisor",
+  "trigger": "machine_wake",
+  "seat": {
+    "model": "cql-litellm:api-optimize-moonshot-kimi-k3"
+  },
+  "input": {
+    "now": "2026-10-08T17:20:00Z",
+    "timezone": "America/Los_Angeles",
+    "chatId": "41bd202a-7152-437e-bf4b-a097981692b1",
+    "chatTitle": "Schooltime Supervisor",
+    "projectId": "b33a1283-ac14-44ab-a0e7-9db0eb853a18",
+    "projectName": "Schooltime",
+    "context": "[SUPERVISOR STATE — notes]\nRecorder lane 0037460b is the classroom capture lane (sign-in guard, camera picker).",
+    "message": "[MACHINE-TRIGGERED RUN — a hook wake (run_completed), NOT a human-typed message. Current time: 2026-10-08T17:20:00Z — this is the ONLY trustworthy clock.]\n\nrun_completed on chat …ec52d820 \"Restore Hue clip playback for owner\" (Schooltime): sign-in detection fixed on the box and in the repo; the 10:02 AM fire captured 104.7s from Main Learning Room.\n\n[BOARD]\n- …ec52d820 \"Restore Hue clip playback…\" — idle\n- …cd3f7ec5 \"Drive safety-net watch\" — idle"
+  },
+  "fixtures": [
+    {
+      "tool": "list_chats",
+      "output": {
+        "chats": [
+          {
+            "id": "0037460b-d239-474e-bd32-5fe3ec52d820",
+            "title": "Restore Hue clip playback for owner · command run",
+            "projectId": "b33a1283-ac14-44ab-a0e7-9db0eb853a18",
+            "running": false
+          },
+          {
+            "id": "1c2b28d6-21fc-4fb4-9b3b-9f04cd3f7ec5",
+            "title": "Drive safety-net watch",
+            "projectId": "b33a1283-ac14-44ab-a0e7-9db0eb853a18",
+            "running": false
+          }
+        ]
+      }
+    },
+    {
+      "tool": "get_chat_status",
+      "args": {
+        "chatId": "0037460b-d239"
+      },
+      "output": {
+        "id": "0037460b-d239-474e-bd32-5fe3ec52d820",
+        "title": "Restore Hue clip playback for owner · command run",
+        "running": false,
+        "updatedAt": "2026-10-08T17:15:18Z"
+      }
+    },
+    {
+      "tool": "get_chat_status",
+      "args": {
+        "chatId": {
+          "re": "^0037460b$"
+        }
+      },
+      "output": {
+        "id": "0037460b-d239-474e-bd32-5fe3ec52d820",
+        "title": "Restore Hue clip playback for owner · command run",
+        "running": false,
+        "updatedAt": "2026-10-08T17:15:18Z"
+      }
+    },
+    {
+      "tool": "get_chat_status",
+      "output": {
+        "ok": false,
+        "error": "Chat not found. Did you mean 0037460b-d239-474e-bd32-5fe3ec52d820 (\"Restore Hue clip playback for owner\")?"
+      }
+    }
+  ],
+  "harness": {
+    "maxSteps": 8
+  },
+  "graders": [
+    {
+      "id": "no-spliced-ids",
+      "kind": "call_ids_grounded",
+      "why": "Every id the run passes to a tool must be one it saw (a full id, or a prefix of one) — a prefix+suffix splice is an invented id.",
+      "tools": [
+        "get_chat_status",
+        "get_chat_messages",
+        "send_chat_message",
+        "get_run_receipts"
+      ]
+    },
+    {
+      "id": "answered",
+      "kind": "final_nonempty",
+      "why": "The wake closes with a note."
+    },
+    {
+      "id": "judge-state-grounded",
+      "kind": "judge",
+      "why": "Advisory LLM check (binding once calibrated): every state claim in the note rests on what this run read.",
+      "rubric": "Is every statement the reply makes about the current state of lanes, goals, owner questions, schedules or deliveries supported by the tool results shown or the request itself, with none contradicted by them? PASS if all are supported; FAIL if any is unsupported or contradicted."
+    },
+    {
+      "id": "judge-tool-honest",
+      "kind": "judge",
+      "why": "Advisory LLM check (binding once calibrated): the note narrates only actions its calls show.",
+      "rubric": "Does the reply describe its own actions truthfully: every action, read, search or failure it says happened this turn (sent, messaged, steered, read, checked, started, searched, failed) appears in the tool calls shown with a matching result? PASS if yes; FAIL if it claims any action, read or failure the calls do not show."
+    }
+  ],
+  "recordings": [
+    {
+      "id": "incident",
+      "kind": "incident",
+      "expect": "fail",
+      "model": "cql-litellm:api-optimize-moonshot-kimi-k3",
+      "note": "two of the real spliced lookups, then a note",
+      "turns": [
+        {
+          "toolCalls": [
+            {
+              "name": "get_chat_status",
+              "args": {
+                "chatId": "0037460b-b60b-456e-977f-a3127ec52d820"
+              }
+            }
+          ]
+        },
+        {
+          "toolCalls": [
+            {
+              "name": "get_chat_status",
+              "args": {
+                "chatId": "0037460b-ec52d820"
+              }
+            }
+          ]
+        },
+        {
+          "content": "Wake 17:20Z — recorder lane reported the sign-in fix and a 104.7s Main Learning Room capture; its status lookup did not resolve this wake. No steer needed.\n\nWAKE: no-op — nothing else moved."
+        }
+      ]
+    },
+    {
+      "id": "reference",
+      "kind": "reference",
+      "expect": "pass",
+      "note": "authored: resolve the full id from list_chats, then read",
+      "turns": [
+        {
+          "toolCalls": [
+            {
+              "name": "list_chats",
+              "args": {
+                "projectId": "b33a1283-ac14-44ab-a0e7-9db0eb853a18"
+              }
+            }
+          ]
+        },
+        {
+          "toolCalls": [
+            {
+              "name": "get_chat_status",
+              "args": {
+                "chatId": "0037460b-d239-474e-bd32-5fe3ec52d820"
+              }
+            }
+          ]
+        },
+        {
+          "content": "Wake 17:20Z — the recorder lane (0037460b) fixed the sign-in check and its 10:02 AM fire captured 104.7s from Main Learning Room; the lane is idle and the timer keeps firing through 3:35 PM PDT. No steer needed.\n\nWAKE: no-op — nothing else moved."
+        }
+      ]
+    }
+  ]
+}

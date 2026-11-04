@@ -1,0 +1,6 @@
+node_modules/
+dist/
+*.log
+# The Rust helper's build artifacts (cargo) — the crate sources are tracked,
+# target/ never is (CI builds it fresh with its own toolchain + cache).
+rust-helper/target/

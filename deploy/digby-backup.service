@@ -1,0 +1,16 @@
+# Installed at /etc/systemd/system/digby-backup.service on the prod EC2.
+# Runs the nightly production data backup (see scripts/backup/digby-backup.sh).
+[Unit]
+Description=Digby nightly backup (pg_dump + optional S3 offsite)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/digby-backup.sh
+# pg_dump of a multi-GB DB can take a while on a t3.large. The dump has
+# OUTGROWN 1800: the 2026-10-23 nightly ran 08:34:49Z→09:02:27Z (~27.5 min,
+# ~2.5 min of margin) and the 2026-10-24 08:31Z run was SIGTERM'd at exactly
+# +30min ("Failed with result 'timeout'", ticket 437896fb). 7200s = 2h
+# headroom that also covers the script's 3x60s pg_dump retry envelope.
+TimeoutStartSec=7200

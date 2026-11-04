@@ -1,0 +1,83 @@
+name: Bug report
+description: Something behaves incorrectly
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not report security vulnerabilities here.** Follow
+        [SECURITY.md](https://github.com/canada-quant/digby/blob/main/SECURITY.md)
+        instead.
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: I am running the latest `main` or latest release
+          required: true
+        - label: This is not a security vulnerability
+          required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include the exact error text, not a paraphrase.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How are you running Digby?
+      options:
+        - Docker Compose (docker-compose.selfhost.yml)
+        - Local development (npm run dev)
+        - A fork or modified deployment
+        - Other (describe below)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Output of `git rev-parse --short HEAD`, or the release tag.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: >-
+        Output of `docker compose -f docker-compose.selfhost.yml logs --tail=100 backend worker`.
+        **Redact API keys, tokens, passwords and any personal data first.**
+      render: shell
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: |
+        OS / arch:
+        Docker version:
+        Browser (if UI issue):
+        Model provider in use:
+    validations:
+      required: false

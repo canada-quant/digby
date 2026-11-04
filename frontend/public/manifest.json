@@ -1,0 +1,104 @@
+{
+  "id": "/crossmodel",
+  "name": "Digby",
+  "short_name": "Digby",
+  "description": "Ask once. Get the best of every AI.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "color_scheme_dark": {
+    "background_color": "#171717",
+    "theme_color": "#171717"
+  },
+  "lang": "en",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/favicon-16x16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New chat",
+      "short_name": "New chat",
+      "description": "Start a new Digby chat",
+      "url": "/",
+      "icons": [
+        {
+          "src": "/icon-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Files",
+      "short_name": "Files",
+      "description": "Browse your project documents",
+      "url": "/files",
+      "icons": [
+        {
+          "src": "/icon-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Management",
+      "short_name": "Management",
+      "description": "Digby Code management dashboard",
+      "url": "/management",
+      "icons": [
+        {
+          "src": "/icon-192x192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/splash-1242x2688.png",
+      "sizes": "1242x2688",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Digby launch screen"
+    },
+    {
+      "src": "/splash-828x1792.png",
+      "sizes": "828x1792",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Digby launch screen"
+    }
+  ],
+  "categories": ["productivity", "utilities"]
+}

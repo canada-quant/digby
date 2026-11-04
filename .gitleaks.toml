@@ -1,0 +1,54 @@
+# gitleaks configuration for the Digby open-source repo.
+#
+# The default rule set is used unchanged. This file adds a NARROW allowlist for
+# the test fixtures and the two verified false positives that ship in this tree,
+# so the CI gate is passable while still failing on any real credential.
+#
+# Every entry below was reviewed by hand: they are placeholder strings such as
+# `sk-AAAA…`, `hunter2`, `-----BEGIN RSA PRIVATE KEY-----\nMIIFAKEFAKEFAKE`,
+# used to prove the secret-redaction code catches them. Adding a path here is a
+# security decision — do not extend this list without reading the file.
+
+title = "Digby gitleaks config"
+
+[extend]
+# Keep the upstream default rules AND the upstream default allowlist.
+useDefault = true
+
+[allowlist]
+description = "Reviewed placeholders: test fixtures proving the redaction code works."
+paths = [
+  # Backend test suites that deliberately contain fake credentials as inputs.
+  '''^backend/src/modules/crossmodel/platform/secret-scan\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/secret-handoff-tools\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/secret-vault-advisories\.[0-9a-f]+\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/owner-answer-vault\.[0-9a-f]+\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/owner-questions\.[0-9a-f]+\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/owner-question-secrets\.[0-9a-f]+\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/owner-gate-sweeper\.[0-9a-f]+\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/owner-turn-history\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/premise-register\.[0-9a-f]+\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/supervisor-state\.service\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/supervisor-wake-ledger\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/decision-gate\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/platform/platform-tools\.ops-tools\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/coding/credentials\.service\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/coding/credential-proxy\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/coding/run-receipts\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/coding/tools\.search-memory-supervisor\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/chat-agent/chat-agent\.owner-turn-context\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/fleet/framework-signal-detectors\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/image-generate\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/model-endpoints/capability-detect\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/rag\.family-[0-9a-f]+\.test\.ts$''',
+  '''^backend/src/modules/crossmodel/user-mcp/user-mcp\.service\.test\.ts$''',
+]
+
+# Two verified false positives in production source — both are code identifiers,
+# not credentials:
+#   context-gauge.ts  `t1PeakSimPromptTokens`  (read by the generic-api-key rule)
+#   plaid-mcp.ts      `getRecurringTransactions` (read by the plaid-client-id rule)
+regexes = [
+  '''this\.t1PeakSimPrompt''',
+  '''getRecurringTransactions''',
+]

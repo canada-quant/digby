@@ -1,0 +1,12 @@
+# Installed at /etc/systemd/system/digby-backup.timer on the prod EC2.
+[Unit]
+Description=Daily Digby backup at 08:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 08:30:00
+# If the box was down/stopped over the window (like 2026-07-29), run on boot.
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

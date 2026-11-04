@@ -1,0 +1,2466 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  USER
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum CRMContactStatus {
+  LEAD
+  QUALIFIED
+  PROPOSAL
+  NEGOTIATION
+  WON
+  LOST
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  password  String
+  name      String?   // Full name
+  firstName String?
+  lastName  String?
+  role      Role      @default(USER)
+  avatar    String?
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? // Soft delete timestamp
+
+  // ── Digby Kids: child sub-accounts ────────────────────────────────────────
+  // A child is a full User row (own login) flagged isChild with a parentId.
+  // It is forced onto the locked-down kid pipeline (qwen3.6-flash + web search +
+  // strict Socratic prompt) and rejected from all adult endpoints. The parent
+  // sets childAge + childGuardrails (extra parental rules layered on our base
+  // safety prompt) and a parentPinHash (gates child management + leaving kid mode).
+  isChild         Boolean @default(false)
+  childAge        Int?
+  childGuardrails String? @db.Text
+  parentPinHash   String?
+  parentId        String?
+  parent          User?   @relation("ParentChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children        User[]  @relation("ParentChildren")
+
+  // Relations
+  accounts             Account[]
+  aiChats              AIChat[]
+  crossModelChats      CrossModelChat[]
+  crossModelProjects   CrossModelProject[]
+  projectMembers       ProjectMember[]
+  projectDocuments     ProjectDocument[]
+  canvasDocuments      CanvasDocument[]
+  content              Content[]
+  kanbanBoards         KanbanBoard[]
+  crmContacts          CRMContact[]
+  activities           Activity[]
+  refreshTokens        RefreshToken[]
+  userMemory           UserMemory?
+  userPreferences      UserPreferences?
+  feedbacks            MessageFeedback[]
+  featureRequests      UserFeatureRequest[]
+  googleOAuth          GoogleOAuthToken[]
+  driveWatches         DriveWatch[]
+  githubOAuth          GitHubOAuthToken[]
+  xOAuth               XOAuthToken[]
+  xeroOAuth            XeroOAuthToken[]
+  slackOAuth           SlackOAuthToken[]
+  asanaOAuth           AsanaOAuthToken[]
+  plaidTokens          PlaidAccessToken[]
+  imessageAgents       IMessageAgent[]
+  telegramLinks        TelegramLink[]
+  codingCredentials    CodingCredential[]
+  codingSchedules      CodingSchedule[]
+  codingProjects       CodingProject[] // @deprecated (One-Digby merge) — retained for rollback; unread
+  agentTokens          AgentToken[]
+  pendingChatMessages  PendingChatMessage[]
+  chatFiles            ChatFile[]
+  // ── Fleet supervisor ──
+  chatAutonomies       ChatAutonomy[]
+  eventHooks           EventHook[]
+  projectGoals         ProjectGoal[]
+  projectTodos         ProjectTodo[]
+  projectDigests       ProjectDigest[]
+  digestItemAcks       DigestItemAck[]
+  supervisorStates     SupervisorState[]
+  generatedFiles       GeneratedFile[]
+  pushTokens           PushToken[]
+  contentReports       ContentReport[] // moderation queue entries (SetNull — trail survives account deletion)
+  modelEndpoints       ModelEndpoint[]
+  connectedInstances   ConnectedInstance[]
+  cloudLinks           CloudLink[]
+  // ── First-party visitor analytics (owner 2026-10-07) — Cascade: account deletion removes the trail ──
+  visitorLinks         VisitorLink[]
+  visitEvents          VisitEvent[]
+
+  @@index([parentId])
+  @@map("users")
+}
+
+/// Content reports (M2-prep — App Store 1.2/1.4, Play UGC policy): a
+/// moderation-queue entry keyed to the REPORTED MESSAGE. reporterId is
+/// SetNull so the moderation trail SURVIVES its reporter's account deletion
+/// (anonymized — same convention as MessageFeedback.userId); chatId cascades
+/// with the chat, messageId is a soft ref (the message may be deleted by the
+/// run lifecycle before review; the report row persists).
+model ContentReport {
+  id           String    @id @default(uuid())
+  reporterId   String?
+  chatId       String
+  messageId    String
+  reason       String // REPORT_REASONS: hate_speech | harassment | sexual_content | violence | self_harm | dangerous_acts | misinformation | illegal | spam | other
+  note         String?   @db.Text // optional free-text from the reporter (≤2000)
+  status       String    @default("open") // 'open' | 'reviewed'
+  surface      String? // 'mobile' | 'web' — where the report was filed from
+  appVersion   String? // client version for triage
+  reviewedAt   DateTime?
+  reviewAction String? // operator's resolution note (≤200)
+  createdAt    DateTime  @default(now())
+
+  reporter User?          @relation(fields: [reporterId], references: [id], onDelete: SetNull)
+  chat     CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([reporterId])
+  @@map("content_reports")
+}
+
+/// Mobile push notification tokens (M1 — roadmap §3.2 item 2). One row per
+/// (user, device token); the backend fires on run-complete so a backgrounded
+/// mobile app can surface "your run finished". Tokens are Expo Push tokens by
+/// default (Expo's service fans out to APNs/FCM); direct APNs/FCM credentials
+/// are the fallback when Expo's throughput limits matter.
+model PushToken {
+  id          String    @id @default(uuid())
+  userId      String
+  /// The provider token: an Expo Push token (ExponentPushToken[…]) or a raw
+  /// APNs/FCM device token (provider column says which).
+  token       String
+  /// 'expo' | 'apns' | 'fcm' — how the token must be addressed.
+  provider    String    @default("expo")
+  platform    String?   // 'ios' | 'android' (reported by the client)
+  deviceId    String?   // client-stable id: (userId, deviceId) dedupes re-registrations
+  appVersion  String?   // client-reported app version (ops telemetry)
+  lastSeenAt  DateTime  @default(now()) // bumped on every registration — staleness signal
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, token])
+  @@index([userId])
+  @@map("push_tokens")
+}
+
+/// Persistent cross-session memory for authenticated CrossModel users.
+/// Stores key facts extracted from conversations (name, preferences, etc.)
+model UserMemory {
+  id        String   @id @default(uuid())
+  userId    String   @unique
+  facts     Json     @default("{}") // Key-value facts extracted from conversations
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_memory")
+}
+
+model Account {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String // local, google, github
+  provider  String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("accounts")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model AIChat {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  messages  Json[] // Array of chat messages
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("ai_chats")
+}
+
+model CrossModelChat {
+  id        String   @id @default(uuid())
+  userId    String
+  projectId String?  // optional: belongs to a project
+  title     String
+  mode      String   @default("fast") // 'fast', 'thinking', or 'deep_research'
+  // ── Fleet supervisor: ONE pinned "Fleet Supervisor" chat per OWNER (userId),
+  //    auto-created lazily, full autonomy pre-granted, wildcard-hooked to every
+  //    chat the owner has. Uniqueness: partial index one_supervisor_per_owner. ──
+  isSupervisor Boolean @default(false) // the owner's fleet-supervisor chat (full autonomy pre-granted)
+  // ── Per-project supervisor (2026-09-13): ONE ordinary chat per (owner,
+  //    project) flagged here, projectId SET, created ONLY for projects whose
+  //    projectSupervisorEnabled is true. NEVER reuse isSupervisor — its
+  //    per-owner partial unique index + fleet semantics are load-bearing.
+  //    Uniqueness: partial index one_project_supervisor_per_project (DB-only). ──
+  isProjectSupervisor Boolean @default(false) // a project's dedicated supervisor chat (pause-never-delete lifecycle)
+  // ── Sub-sessions (2026-09-02, audit "promote, don't build"): lineage.
+  //    parentChatId = the chat/session whose run spawned this one via the
+  //    start_coding_session platform tool. SOFT ref by design (no FK — same
+  //    rationale as run_journal_entries.runId): a child must survive its
+  //    parent's deletion and KEEP the marker, so the idle-child reaper still
+  //    covers orphans and the sidebar just falls back to a flat render. The
+  //    implicit parent→child autonomy check re-reads this column live per call. ──
+  parentChatId String?
+  // ── Display-only sidebar nesting (2026-10-21, lanefix/nesting): the fallback
+  //    parent the SIDEBAR nests a machine-spawned lane under when it has no
+  //    in-list parentChatId — the project's Project Supervisor (a ticket lane,
+  //    a family lane, a Fleet-spawned lane in a project). Stamped once by
+  //    platform.service startCodingSession for an agent-origin spawn
+  //    (platform/display-parent.ts). SOFT ref, no FK, no index, never
+  //    re-stamped. NEVER read by hooks, hand-off, escalation, reapers, billing
+  //    or autonomy — parentChatId stays the one lineage authority (pinned by
+  //    platform/display-parent.isolation.test.ts). ──
+  displayParentChatId String?
+  systemPrompt String?  @db.Text // per-chat custom instructions — appended AFTER the project-chain prompt (highest precedence)
+  // ── Per-chat lead-seat override (WI-O #4c, 2026-09-25): a PLAIN chat's own
+  //    pick for the Digby seat — a built-in id from builtInOptionsFor
+  //    ('chat_orchestrator') or a '<label>:<modelId>' registry spec flagged
+  //    [coding]. NULL = the instance seat (model-roles). Never honoured on
+  //    supervisor chats (they resolve their own seats) or coding sessions
+  //    (set_session_model owns the satellite's model). Validated on write
+  //    (chat-lead-model.ts resolveChatLeadPick); servability checked per run. ──
+  leadModel    String?
+  // ── Ghost mode (owner 2026-10-22: "private ghost mode for a session …
+  //    changes models to a specific new endpoint we set in admin or backend
+  //    that points to ablitered self hosted models"): a PRIVATE chat posture.
+  //    true = the run path routes EVERY leg (lead, Double Checker, council)
+  //    to the ADMIN-DESIGNATED ghost endpoint (['instance','model-roles']/
+  //    'ghost-endpoint', model-endpoints/ghost-endpoint.service.ts) and the
+  //    chat stays out of memory extraction, learning and cross-chat digests.
+  //    Refused on supervisor / coding rows (crossmodel.service.updateChat).
+  //    GUESTS have no chat row — their sends carry a per-send `ghost` flag
+  //    instead (streamQuery → ChatAgentRunArgs.ghost). Kill switch:
+  //    CHAT_GHOST_MODE_DISABLED=1 (never honoured, honest notice). ──
+  ghostMode    Boolean  @default(false)
+  // ── Archive (owner 2026-09-08, "reduce clutter without permanent deletes"):
+  //    NULL = live. Archived chats leave default lists/search but still load by
+  //    direct id (archive is not tombstoning) and restore losslessly by clearing
+  //    the stamp. Partial index crossmodel_chats_archivedAt_idx (WHERE NOT NULL)
+  //    is DB-only — Prisma can't express partial indexes (same convention as
+  //    one_supervisor_per_owner). ──
+  archivedAt DateTime?
+  // ── Session titles + topology (2026-09-27, SESSION_TITLES_TOPOLOGY design):
+  //    the CHARTER a lane holds (the goal / todo its title is derived from —
+  //    bound on the first todo assignment, a goal_create from the lane, or a
+  //    spawn with goalId/todoId; never re-bound), the harness-derived STEP
+  //    half of the title ("<goal ≤6 words> · <step ≤6 words>", rendered by
+  //    platform/session-titles.ts), and the PIN a human rename sets — every
+  //    repair / renderer path returns early on titlePinned. Additive, no
+  //    backfill (scripts/framework-audit/session-topology-migrate.js binds
+  //    charters + retitles existing lanes, dry-run first). ──
+  charterGoalId String?
+  charterTodoId String?
+  titlePinned   Boolean  @default(false)
+  titleStep     String?
+  messages    Json[] // @deprecated — replaced by chatMessages relation. Kept for data backup.
+  // threadState removed — now stored in PostgresStore ([chatId, 'thread'] namespace)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project      CrossModelProject?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  shareLink    ChatShareLink?
+  webhook      ChatWebhook?
+  canvases     CanvasDocument[]
+  chatMessages CrossModelMessage[]
+  pendingMessages PendingChatMessage[] // busy-chat queue — drained automatically at run end
+  chatFiles   ChatFile[]           // persistent per-chat uploads (durable copies of consumed staged blobs)
+  codingState  ChatCodingState?    // present iff the chat is coding-capable (P5-B: the satellite, never mode, marks coding)
+  codingSchedules CodingSchedule[] // self-scheduled recurring/one-shot runs
+  runJournalEntries RunJournalEntry[] // append-only cross-run memory (what earlier runs did/decided)
+  runToolReceipts  RunToolReceipt[]  // harness-written execution receipts (anti-confabulation evidence)
+  contentReports  ContentReport[]   // moderation queue entries (M2-prep store compliance)
+  // ── Fleet supervisor ──
+  autonomy     ChatAutonomy?       // per-chat autonomous-tool allowlist (owner-granted)
+  hooksSource  EventHook[]    @relation("HookSource")
+  hooksTarget  EventHook[]    @relation("HookTarget")
+  supervisorState SupervisorState? // durable state doc — present iff this is the supervisor chat (2026-08-22 rebuild)
+
+  @@index([userId])
+  @@index([mode])
+  @@index([projectId])
+  @@index([parentChatId])
+  @@map("crossmodel_chats")
+}
+
+/// Individual chat messages — replaces the JSONB messages[] array for O(1) appends.
+/// Each row = one user or assistant message. Assistant messages carry metadata (model responses, timing).
+model CrossModelMessage {
+  id        String   @id @default(uuid())
+  chatId    String
+  role      String   // 'user' | 'assistant'
+  content   String   @db.Text
+  metadata  Json?    // Model responses, timing, etc. (assistant messages only)
+  parts     Json?    // One-Digby agent engine: ordered agent parts (CodingMessage shape); null = legacy pipeline
+  createdAt DateTime @default(now())
+  // Ticket 68916075: last-write stamp (≈ finalize time for coding-run assistant rows that are
+  // INSERTed at run start and rewritten in place). Nullable on purpose — historical rows read
+  // NULL (honest "predates this field") instead of a mass-stamped migration instant.
+  // createdAt is NEVER restamped — it is the ordering/cursor contract.
+  updatedAt DateTime? @updatedAt
+
+  chat      CrossModelChat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  feedbacks MessageFeedback[]
+
+  @@index([chatId])
+  @@index([chatId, createdAt])
+  @@map("crossmodel_messages")
+}
+
+/// Busy-chat message queue (2026-08-07): a message sent to a chat while a run
+/// is ACTIVE persists here instead of being dropped (previously the tool path
+/// 409'd and the SSE path errored — the content was lost). The finishing run's
+/// finally drains the OLDEST row as a normal detached turn
+/// (chat-agent.service drainChatQueue); one per drain, so a full queue unrolls
+/// as a FIFO chain of runs. Capped per chat (MAX_QUEUE_DEPTH in
+/// chat-agent/message-queue.service.ts) — over the cap senders get a 409.
+model PendingChatMessage {
+  id        String   @id @default(cuid())
+  chatId    String
+  userId    String
+  content   String   @db.Text
+  mode      String?  // resolved chat-agent level captured at enqueue time
+  source    String   // 'user' (SSE stream) | 'agent' (send_chat_message tool) | 'webhook' (inbound webhook fire)
+  /// Staged /crossmodel/upload ids (ticket ac65d51e) — queued messages carry
+  /// their attachments; the drain resolves them like an immediate send. Redis
+  /// TTL on each cm:upload:<id> is extended at enqueue so blobs outlive the dwell.
+  uploadIds Json?
+  createdAt DateTime @default(now())
+
+  chat      CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([chatId, createdAt])
+  @@map("pending_chat_messages")
+}
+
+/// Persistent per-chat files — durable copies of user UPLOADS (2026-08-25).
+/// A staged /crossmodel/upload blob (Redis cm:upload:<id>, 15-min TTL) is
+/// persisted here the moment it is actually CONSUMED by a send (SSE stream,
+/// busy-queue drain, fleet supervisor send, coding-surface inline) so the file
+/// outlives the staging TTL and stays downloadable/inline-previewable for
+/// anyone with read access to the chat. Idempotent per (uploadId, chatId):
+/// the unique key makes a retried/queued re-resolution a no-op. `data` holds
+/// the best available bytes — the original binary for images/PDFs (base64 in
+/// the staged blob), the extracted text (UTF-8) for documents (the staging
+/// format keeps no binary for those — mimeType is then normalized to
+/// text/plain so served bytes always match Content-Type). GC is by
+/// onDelete: Cascade from the parent chat. Generated files (agent-created
+/// documents) are a SEPARATE system — see GeneratedFile.
+model ChatFile {
+  id        String   @id @default(uuid())
+  chatId    String
+  userId    String   // the uploader
+  uploadId  String?  // Redis staging id it came from — dedupe key with chatId
+  filename  String
+  mimeType  String
+  sizeBytes Int      // byte length of `data`
+  data      Bytes    // Postgres bytea
+  createdAt DateTime @default(now())
+
+  chat CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([uploadId, chatId])
+  @@index([chatId, createdAt])
+  @@map("chat_files")
+}
+
+/// User feedback on individual AI responses — powers autopilot analysis + product improvement.
+/// Tracks thumbs down, reports, and optional free-text reasons.
+model MessageFeedback {
+  id        String   @id @default(uuid())
+  messageId String?  // CrossModelMessage.id — nullable for legacy/anonymous
+  chatId    String   // CrossModelChat.id for correlation
+  userId    String?  // null = anonymous user
+  type      String   // 'thumbs_down' | 'thumbs_up' | 'report'
+  reason    String?  // 'wrong' | 'harmful' | 'slow' | 'formatting' | 'incomplete' | 'other'
+  comment   String?  @db.Text // Free-text user comment
+  modelSet  String?  // 'frontier' | 'open_source'
+  resolved  Boolean  @default(false) // Autopilot marks true after addressing
+  createdAt DateTime @default(now())
+
+  user    User?              @relation(fields: [userId], references: [id], onDelete: SetNull)
+  message CrossModelMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([chatId])
+  @@index([userId])
+  @@index([type])
+  @@index([resolved, createdAt])
+  @@map("message_feedback")
+}
+
+/// Projects (folders) that organize chats + documents — like Claude Projects / ChatGPT Projects
+model CrossModelProject {
+  id           String   @id @default(uuid())
+  userId       String
+  name         String
+  description  String?  @db.Text
+  systemPrompt String?  @db.Text // custom instructions prepended to all chats in this project
+  emoji        String?            // e.g. "🚀" "📁" "💡"
+  color        String?            // violet, blue, green, amber, rose
+  isPublic     Boolean  @default(false)
+  supervised   Boolean  @default(true) // opt-in fleet supervision: false removes this project from AUTOMATIC supervision (wildcard hooks, hourly digests, watchdog alerts) — direct event hooks + user-action items are never filtered
+  // ── Per-project supervisor (owner directives 2026-09-13 23:15Z/23:34Z): OPT-IN.
+  //    true scaffolds ONE dedicated "Project Supervisor" chat for this project
+  //    (isProjectSupervisor on crossmodel_chats) + its project-scope event hook +
+  //    hourly sweep schedule; toggling false PAUSES them (hooks/schedules disabled,
+  //    chat/transcript/state NEVER deleted). Distinct from `supervised`, which is
+  //    the fleet-wildcard opt-out and stays untouched by this flag. ──
+  projectSupervisorEnabled Boolean @default(false)
+  // ── Auto-archive idle chats (ticket bb86cee8, owner ask 2026-09-14): OPT-IN.
+  //    NULL = feature off. An integer 1..365 = the hourly idle-chat-archiver
+  //    cron archives this folder's chats whose updatedAt is older than that
+  //    many days — through the same reversible archiveChat path the UI uses
+  //    (archivedAt stamp + coding-satellite flip + audit), never a raw update. ──
+  autoArchiveIdleDays Int?
+  isUserSpace  Boolean  @default(false) // User Space (P3): the owner's ONE hidden personal "Workspace" project chats auto-file into (partial unique index crossmodel_projects_one_userspace_per_owner is DB-only)
+  shareToken   String?  @unique   // for public project share links
+  // contextState removed — now stored in PostgresStore ([projectId, 'context'] namespace)
+  // ── Workspace (One-Digby merge, 2026-07: every project can carry a git workspace) ──
+  repoUrl       String?   // https clone URL (github/git) — null for local/blank/plain
+  repoProvider  String?   // 'github' | 'git' | 'local' | 'blank'(legacy session-chained); null = plain project
+  defaultBranch String    @default("main")
+  githubLabel   String?   // which connected GitHub account's token to use
+  workspaceAt   DateTime? // when the workspace was first provisioned on disk; null = never
+  // ── Folder tree (P0 platform unification): projects are folders; folders nest ──
+  parentId String?
+  depth    Int    @default(0)
+  path     String @default("") // materialized "/rootId/.../id" for O(1) subtree/breadcrumb queries
+  // ── Archive (owner 2026-09-08): NULL = live. Archiving a folder stamps ONLY
+  //    this row — its chats and descendant folders ride along implicitly
+  //    (default lists hide the whole subtree via the materialized path), so
+  //    restore is instant and lossless. Partial index
+  //    crossmodel_projects_archivedAt_idx (WHERE NOT NULL) is DB-only. ──
+  archivedAt DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  parent       CrossModelProject?  @relation("ProjectHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children     CrossModelProject[] @relation("ProjectHierarchy")
+  chats        CrossModelChat[]
+  documents    ProjectDocument[]
+  members      ProjectMember[]
+  codingStates ChatCodingState[]
+  goals        ProjectGoal[] // fleet-supervisor: structured goals + todos
+  digests      ProjectDigest[] // hourly per-project digest rows (null-project bucket lives on User only)
+
+  @@index([userId])
+  @@index([parentId])
+  @@index([path])
+  @@map("crossmodel_projects")
+}
+
+/// Who a project is shared with (viewer / editor / admin)
+model ProjectMember {
+  id        String   @id @default(uuid())
+  projectId String
+  userId    String
+  role      String   @default("viewer") // viewer | editor | admin
+  addedAt   DateTime @default(now())
+
+  project CrossModelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+/// Scoped API tokens a user mints for external agents/scripts (P0 platform unification).
+/// The raw token is shown once at mint; only its sha256 hash is stored.
+/// Scopes: chats:read, chats:write, folders:write, schedules:write, code:run.
+model AgentToken {
+  id          String    @id @default(uuid())
+  userId      String
+  name        String
+  tokenHash   String    @unique // sha256 hex of the presented bearer token
+  tokenPrefix String // first ~12 chars, for UI identification ("dgt_ab12cd34…")
+  scopes      String[]
+  expiresAt   DateTime?
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("agent_tokens")
+}
+
+/// Documents uploaded or URL-analyzed for a project's knowledge base
+model ProjectDocument {
+  id         String   @id @default(uuid())
+  projectId  String?  // null = ungrouped (appears in global Files folder)
+  userId     String
+  name       String   // display name
+  mimeType   String   // pdf | docx | txt | url | pasted
+  sourceUrl  String?  // populated if mimeType = url
+  source     String   @default("knowledge") // "knowledge" | "chat_upload" | "gmail_attachment" (99145890: sourceUrl then carries the gmail://<messageId>/<filename> dedup key)
+  charCount  Int      @default(0)
+  chunkCount Int      @default(0)
+  status     String   @default("processing") // processing | ready | error
+  errorMsg   String?
+  createdAt  DateTime @default(now())
+
+  project CrossModelProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chunks  ProjectChunk[]
+
+  @@index([userId])
+  @@index([projectId])
+  @@map("project_documents")
+}
+
+/// Chunked + embedded text for RAG retrieval (pgvector)
+model ProjectChunk {
+  id         String                      @id @default(uuid())
+  documentId String
+  projectId  String?
+  userId     String
+  content    String                      @db.Text // contextualized chunk (Kimi-prepended context sentence)
+  embedding  Unsupported("vector(1536)") // OpenAI text-embedding-3-small, 1536 dims
+  chunkIndex Int // position in document (0-based)
+  tokenCount Int      @default(0)
+  metadata   Json? // { page?, section?, sourceUrl?, fileName }
+
+  document ProjectDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([documentId])
+  @@map("project_chunks")
+}
+
+/// Binary files created by the agent document tools (create_document etc.).
+/// Payload stored base64; textContent keeps a plain-text rendering for
+/// read_document and previews.
+model GeneratedFile {
+  id          String   @id @default(uuid())
+  userId      String
+  chatId      String?  // bare column (NO FK) — chat the file was created in, if known
+  filename    String
+  format      String   // txt | md | csv | json | xlsx | docx | pdf
+  mimeType    String
+  size        Int      // decoded bytes
+  data        String   @db.Text // base64 payload
+  textContent String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("generated_files")
+}
+
+/// Canvas documents created by AI during chat (like Claude Artifacts / ChatGPT Canvas)
+model CanvasDocument {
+  id        String   @id @default(uuid())
+  chatId    String
+  userId    String
+  title     String
+  type      String   @default("document") // document | code | html | mermaid | table
+  language  String?  // for code type: typescript | python | javascript | sql | bash | etc.
+  content   String   @db.Text
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chat      CrossModelChat   @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shareLink CanvasShareLink?
+
+  @@index([chatId])
+  @@index([userId])
+  @@map("canvas_documents")
+}
+
+/// Public share links for individual chats (read-only, no auth required)
+/// Public share link for ONE canvas artifact (html/code/document) — the token
+/// URL serves the rendered artifact to ANYONE (no auth). Served straight from
+/// this row through the backend: one service for every chat's artifacts, no
+/// per-project containers (future-proofing decision, 2026-07-19).
+model CanvasShareLink {
+  id         String    @id @default(uuid())
+  canvasId   String    @unique
+  shareToken String    @unique
+  isActive   Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+
+  canvas CanvasDocument @relation(fields: [canvasId], references: [id], onDelete: Cascade)
+
+  @@map("canvas_share_links")
+}
+
+model ChatShareLink {
+  id         String    @id @default(uuid())
+  chatId     String    @unique
+  shareToken String    @unique
+  isActive   Boolean   @default(true)
+  expiresAt  DateTime? // null = never expires
+  createdAt  DateTime  @default(now())
+
+  chat CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("chat_share_links")
+}
+
+/// Per-chat inbound webhook (2026-08-23, feedback 111ab0e4): an external system
+/// (health monitor, CI failure, deploy hook) wakes this chat by POSTing
+/// {message} to /api/crossmodel/webhooks/:chatId/fire with
+/// Authorization: Bearer dgw_…. The run then fires exactly like a user send
+/// (platform.service sendChatMessage: idle → run starts, busy plain → queued,
+/// busy coding → steer), stamped metadata.origin 'webhook' (machine traffic).
+/// Only the SHA-256 hash of the token is stored — the plaintext is shown ONCE
+/// at creation/rotation; tokenPrefix identifies the token to the owner.
+/// One webhook per chat; rotation replaces the hash, revocation deletes the row.
+model ChatWebhook {
+  id          String    @id @default(uuid())
+  chatId      String    @unique
+  tokenHash   String    // sha256 hex of the bearer token
+  tokenPrefix String    // first 12 chars ("dgw_ab12cd34") — owner-facing identifier
+  label       String?   // optional owner note ("gateway monitor", "CI deploys")
+  isActive    Boolean   @default(true)
+  lastUsedAt  DateTime? // last successful token verification
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  chat CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@map("chat_webhooks")
+}
+
+model Content {
+  id          String        @id @default(uuid())
+  userId      String
+  title       String
+  slug        String        @unique
+  body        String        @db.Text // Rich text content
+  excerpt     String?
+  status      ContentStatus @default(DRAFT)
+  publishedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("contents")
+}
+
+model KanbanBoard {
+  id        String   @id @default(uuid())
+  userId    String
+  name      String
+  columns   Json[] // Array of columns with cards
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("kanban_boards")
+}
+
+model CRMContact {
+  id          String           @id @default(uuid())
+  userId      String
+  name        String
+  email       String?
+  phone       String?
+  company     String?
+  position    String?
+  status      CRMContactStatus @default(LEAD)
+  notes       String?          @db.Text
+  value       Decimal?         @db.Decimal(10, 2)
+  lastContact DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("crm_contacts")
+}
+
+model Activity {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String // created, updated, deleted, etc.
+  resource  String // users, content, kanban, crm, etc.
+  metadata  Json? // Additional data about the action
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("activities")
+}
+
+/// Per-user preferences — model set selection (Frontier vs Open Source), etc.
+model UserPreferences {
+  userId    String   @id
+  modelSet  String   @default("open_source") // "open_source" | "frontier" (open-source is the default; frontier is opt-in — 2026-07-21)
+  // Digby Code (agentic coding tab) — OPEN-SOURCE models only.
+  // Seats govern sessions (2026-09-28): '' = no personal pick — the admin's Workspace
+  // default seat (coding_default) governs. A stored value counts as a pick ONLY when
+  // the context-store marker ['user',<id>,'coding-prefs']/codingModelExplicit names it
+  // (coding/seat-governance.ts); the historical default "glm-5.2" never does. Default
+  // flipped "glm-5.2" → "" by migration 20260928120000 (existing rows untouched).
+  codingModel          String @default("") // "" | "glm-5.3" | "deepseek-flash" | "kimi-k3" | "<label>:<modelId>" (legacy "glm-5.2" / "kimi-k2.6" / "deepseek-v4-pro" alias forward)
+  codingPermissionMode String @default("auto")    // "auto" (bypass) | "plan" | "ask" — platform default flipped 'ask'→'auto' 2026-09-17 (owner decision oq_93a7e24c, todo 5818b20f): in ask mode an unattended run's mutating tools auto-deny on the approval timeout, silently crippling scheduled coding chats
+  // One-Digby Phase 2: chat engine opt-in — "" (resolve default) | "agent" | "legacy"
+  chatEngine String @default("")
+  // Shared tailnet dev container (Account → Coding; owner decision 2026-08-22, ticket 3ba5d35d)
+  devContainerEnabled Boolean @default(false)
+  // Per-session tailnet egress scoping (ticket 4ed6eb2e): per-USER default
+  // allowlist for the dev-container SOCKS5 shim — JSON array of rule strings
+  // (host/.suffix/CIDR[:port]); NULL = allow-all (v1 reachability), '[]' = deny-all.
+  devContainerEgressAllow String?
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DIGBY CODE — agentic coding tab (2026-07-11)
+// A separate pipeline from chat: open-source model (GLM-5.2 default) drives an
+// agentic coding loop over a git worktree, with file/command tools + subagents.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// A codebase the user has imported (from GitHub or a plain git URL).
+/// @deprecated (One-Digby merge, migration 20260714000000) — coding projects were
+/// merged INTO crossmodel_projects (same ids; repoProvider marks them). This table
+/// is retained one release as rollback insurance and is UNREAD by current code.
+/// Dropped in Phase 2.
+model CodingProject {
+  id            String   @id @default(uuid())
+  userId        String
+  name          String
+  repoUrl       String   // https clone URL
+  defaultBranch String   @default("main")
+  provider      String   @default("github") // "github" | "git"
+  githubLabel   String?  // which connected GitHub account's token to use (null = public/first)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("coding_projects")
+}
+
+/// Coding state satellite of a chat (One-Digby merge): a coding chat is a
+/// crossmodel_chats row with mode='code'; this row (SAME id — the chat id) holds
+/// the worktree/branch/run state. Same physical table as the legacy
+/// coding_sessions — zero data movement; `userId`/`title` are retained (and still
+/// written) for rollback but reads come from the chat row.
+/// NOTE (amendment A2): the id→crossmodel_chats and projectId→crossmodel_projects
+/// DB FKs are added in a FOLLOW-UP migration after the blue-green overlap drains;
+/// Prisma relations below are app-level joins until then.
+model ChatCodingState {
+  id             String   @id @default(uuid())
+  projectId      String
+  userId         String
+  title          String   @default("Untitled session")
+  // Provenance of the `title` stamp (ticket 161d39e9): NULL = default — the
+  // session was created untitled ('Untitled session' spawn default, frontend
+  // 'New chat', …) or pre-dates the column; the opening turn derives a title
+  // from the task. 'spawn-param' = an explicit start_coding_session `title`
+  // argument — the spawner NAMED the work, so the title is sticky by
+  // construction (provenance beats the substring heuristic, which misread an
+  // explicit title that echoes its own task brief as placeholder scaffolding
+  // — the 11449a0a incident). Additive, no backfill. 2026-09-27 (session
+  // titles): also 'user' (a human rename — the chat row's titlePinned is the
+  // pin), 'harness' (platform/session-titles.ts rendered it from the charter)
+  // and 'llm' (the opening-turn title chain — the title only until a charter binds).
+  titleSource    String?
+  branch         String   // the worktree branch (e.g. digby/session-<short>)
+  baseBranch     String   @default("main")
+  worktreePath   String?  // absolute path on the backend host; null until provisioned
+  permissionMode String   @default("auto") // "auto" | "plan" | "ask" (snapshot of pref at creation, editable; default flipped 2026-09-17 with the pref default, owner oq_93a7e24c)
+  model          String   @default("glm-5.2")
+  // Provenance of the `model` stamp (ticket b6acc1e3): NULL = default
+  // resolution at creation (project pick → user pref → coding_default seat) —
+  // the run-time project-codingModel override (owner 2026-09-04) applies.
+  // 'spawn-param' = an explicit start_coding_session `model` argument — the
+  // override SKIPS these sessions: a supervisor that picked the model at spawn
+  // (e.g. routing around a provider billing outage) must not be silently
+  // re-routed to the project pick on the first run. Additive, no backfill.
+  modelSource    String?
+  status         String   @default("provisioning") // provisioning | ready | running | error | archived
+  errorMessage   String?
+  // Per-session tailnet egress OVERRIDE (ticket 4ed6eb2e): JSON array of rule
+  // strings for the dev-container SOCKS5 shim; NULL = inherit the owner's
+  // user_preferences.devContainerEgressAllow (whose own NULL = allow-all).
+  // Explicit '[]' = this session may reach NOTHING over the tailnet proxy.
+  tailnetEgressAllow String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  chat     CrossModelChat    @relation(fields: [id], references: [id], onDelete: Cascade)
+  project  CrossModelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  messages CodingMessage[]
+  agentRuns AgentRun[]
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("coding_sessions")
+}
+
+/// One turn in a coding chat. `parts` holds the ordered stream of the
+/// assistant's text + tool calls/results + subagent activity for rich rendering.
+/// The `chatId` column is physically named sessionId (pre-merge) — session id ==
+/// chat id, so no data movement was needed.
+model CodingMessage {
+  id        String   @id @default(uuid())
+  chatId    String   @map("sessionId")
+  role      String   // "user" | "assistant" | "system"
+  content   String   @db.Text // final text (assistant) or the user's message
+  parts     Json?    // ordered [{type:'text'|'tool_call'|'tool_result'|'subagent', ...}]
+  /// Additive (P4 CanLaw L5): harness-side attachments — e.g. `guardOriginal`
+  /// (the pre-REPLACE final text, size-capped 20k) when the evidence guard
+  /// removed/replaced convicted lines. Mirrors into crossmodel_messages.metadata.
+  metadata  Json?
+  createdAt DateTime @default(now())
+  // Ticket 68916075: last-write stamp — coding runs INSERT the assistant row at run start
+  // (persistPartial) and rewrite it in place through finalize, so createdAt reads backdated
+  // for long runs; updatedAt ≈ finalization. Nullable on purpose (historical rows read NULL).
+  // createdAt is NEVER restamped — it is the ordering/cursor contract.
+  updatedAt DateTime? @updatedAt
+
+  state ChatCodingState @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId], map: "coding_messages_sessionId_idx")
+  @@index([chatId, createdAt], map: "coding_messages_sessionId_createdAt_idx")
+  @@map("coding_messages")
+}
+
+/// Durable record of one coding agent run (durability Phase 1: runs survive
+/// deploys/restarts). `checkpoint` is the write-ahead resume state (full provider
+/// transcript + in-flight tool state + harness counters); nulled on terminal
+/// status, retained when 'interrupted'. `heartbeatAt`/`leaseExpiresAt` are the
+/// Phase-2 worker-tier claim seam. Phase 2 adds the queue/claim fields:
+/// `input` (the queued payload {message, images, userId}), `inputConsumedAt`
+/// (set once the executor has persisted the user message — crash-safe idempotent
+/// insert), `workerId` + `attempts` (claim ownership/retry cap).
+model AgentRun {
+  id              String    @id @default(uuid())
+  sessionId       String // == chat_coding_state.id (== crossmodel_chats.id)
+  status          String    @default("queued") // queued | running | completed | failed | cancelled | interrupted
+  currentStep     Int       @default(0)
+  checkpoint      Json?
+  input           Json?
+  inputConsumedAt DateTime?
+  workerId        String?
+  attempts        Int       @default(0)
+  error           String?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  heartbeatAt     DateTime?
+  leaseExpiresAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  state  ChatCodingState @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  events AgentEvent[]
+
+  @@index([sessionId])
+  @@index([status])
+  @@index([status, leaseExpiresAt])
+  @@map("agent_runs")
+}
+
+/// Ordered durable event log for one agent run — the SSE replay source after a
+/// reconnect/deploy (Last-Event-ID / ?after_seq=). seq is monotonic per run.
+model AgentEvent {
+  id        BigInt   @id @default(autoincrement())
+  runId     String
+  seq       Int
+  type      String
+  payload   Json
+  createdAt DateTime @default(now())
+
+  run AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@unique([runId, seq])
+  @@map("agent_events")
+}
+
+/// RUN JOURNAL (cross-run memory): durable, per-chat, APPEND-ONLY log of what
+/// previous coding runs set out to do, decided, and learned. One row per
+/// TERMINAL run, distilled fire-and-forget at run finalize by the utility model
+/// (run-journal.service — never mid-run, so budget pressure can't skip it) and
+/// injected budgeted at run start ([PREVIOUS RUNS IN THIS CHAT]) into the same
+/// system-prompt assembly the orchestrator AND every delegated worker share.
+/// `runId` is a SOFT reference (no FK) — journal rows may outlive agent_runs.
+model RunJournalEntry {
+  id           String   @id @default(uuid())
+  chatId       String // == crossmodel_chats.id (a coding chat)
+  runId        String? // soft ref to agent_runs.id — rows may outlive the run row
+  triggerKind  String // 'user' | 'schedule' | 'hook' | 'machine'
+  goal         String   @db.Text // ≤ ~500 chars: what the run set out to do
+  outcome      String   @db.Text // ≤ ~1000 chars: what actually happened
+  keyDecisions String[]
+  filesTouched String[]
+  failures     String[]
+  observations String?  @db.Text // P6 (v1#36): ≤ ~400 chars of concrete metrics/state observed — captured even on no-action machine runs
+  tokensUsed   Int?
+  createdAt    DateTime @default(now())
+
+  chat CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId, createdAt])
+  @@map("run_journal_entries")
+}
+
+/// RUN TOOL RECEIPTS (anti-confabulation evidence channel): one row per
+/// CONSEQUENTIAL tool execution, written by the harness at the agent loop's
+/// tool_result seam (run-receipts.service — fire-and-forget, never fails the
+/// run). The evidence guard + action verifier resolve completion claims
+/// against THESE instead of the model's prose: `ok` is false for errored
+/// executions and staged confirmations leave NO row at all. Receipts NEVER
+/// enter a prompt. `id` is generated in-process (crypto.randomUUID) — no DB
+/// default; `runId` is a SOFT reference (no FK) shared across a run's attempts.
+model RunToolReceipt {
+  id         String   @id // generated in-process (crypto.randomUUID)
+  chatId     String // == crossmodel_chats.id
+  runId      String? // soft ref to agent_runs.id (durable coding runs); a CHAT/supervisor turn's receipts carry the turn's telemetry id (chat-<uuid>, ticket e225aad8) so get_run_receipts groups one bucket per turn; owner-card executions stay null
+  tool       String
+  ok         Boolean // actually executed (not staged, not errored)
+  ids        Json     @default("{}") // { prNumber?, sha?, branch?, chatId?, scheduleId?, ticketId?, sessionId?, passed?, failedStage? }
+  inputHash  String? // sha256 of canonical (key-sorted) JSON args
+  outputHash String? // sha256 of the raw result string
+  createdAt  DateTime @default(now())
+
+  chat CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([runId])
+  @@index([chatId, createdAt])
+  @@map("run_tool_receipts")
+}
+
+/// build 2026-10-08 D-1 (architecture.md item B — "one delegation task
+/// object"): ONE ledger of delegated work beside the 13 delegation paths, with
+/// ONE status vocabulary (A2A-shaped): submitted | working | input_required |
+/// completed | failed | canceled — terminal states are immutable. SHADOW: the
+/// harness writes it at the seams that already exist (spawn, agent sends,
+/// ticket lanes, background workers, schedule firings, turn continuations, the
+/// run start / run outcome hooks, the task card) and NOTHING reads it to
+/// decide anything; the admin view and the nightly reconcile
+/// (delegation-reconcile cron) read it. No FKs on purpose — a write must never
+/// fail on a deleted chat. platform/delegation-tasks.ts; kill switch
+/// DELEGATION_TASKS_DISABLED=1.
+model DelegationTask {
+  id             String    @id @default(uuid())
+  userId         String?
+  /// session | message_ask | ticket | background_worker | schedule_firing | continuation
+  kind           String
+  /// the seam that created it: start_coding_session | send_chat_message | dispatch_platform_task | ticket_lane | delegate_background | schedule | turn_continuation
+  source         String
+  state          String    @default("submitted")
+  parentChatId   String?
+  parentRunId    String?
+  childChatId    String?
+  /// worker handle / ticket id / schedule id / task-card id (kind-dependent)
+  childRef       String?
+  projectId      String?
+  brief          String?   @db.Text
+  /// user | machine
+  origin         String?
+  /// the tool-intent key of the call that created it (tool_intents.idemKey) — stage 3 create-idempotency
+  idempotencyKey String?
+  /// SHADOW: an earlier task carrying the same idempotencyKey (stage 3 would have returned it instead)
+  duplicateOfId  String?
+  /// refs only: [{kind:'file'|'pr'|'canvas'|'receipt'|'message', ref, name?}]
+  artifacts      Json      @default("[]")
+  /// lifecycle trail: [{at, from, to, seam, ref?}] (capped)
+  events         Json      @default("[]")
+  resultRef      String?
+  /// why a terminal state was reached when the seam knows (superseded / lost_on_resume / dispatch_exhausted …)
+  reason         String?
+  staleAfter     DateTime?
+  lastEventAt    DateTime  @default(now())
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([childChatId, state])
+  @@index([parentChatId, createdAt])
+  @@index([childRef])
+  @@index([idempotencyKey])
+  @@index([kind, createdAt])
+  @@index([createdAt])
+  @@map("delegation_tasks")
+}
+
+/// build 2026-10-08 D-2 (architecture.md item C — "pending receipts +
+/// idempotency keys"): one row per SIDE-EFFECTING tool call, written as
+/// `pending` BEFORE the tool runs and settled after (applied | failed | staged
+/// | replayed | unknown). The idempotency key is the attempt-independent
+/// identity of the call (scope = the agent_runs row, or the chat turn it
+/// answers; + tool + canonical args + slot), so a resumed / requeued attempt
+/// re-issuing an already-applied call is visible. SHADOW: the row records what
+/// a reconcile WOULD do (wouldReconcile) — nothing is skipped.
+/// coding/tool-intents.ts; kill switch TOOL_INTENT_JOURNAL_DISABLED=1.
+model ToolIntent {
+  id             String    @id @default(uuid())
+  idemKey        String
+  /// run:<agent_runs.id> | chat:<chatId>:<turn anchor> | attempt:<attemptId>
+  scope          String
+  attemptId      String
+  chatId         String
+  runId          String?
+  tool           String
+  inputHash      String
+  slot           String    @default("")
+  step           Int?
+  /// pending | applied | failed | staged | replayed | unknown
+  state          String    @default("pending")
+  /// lookup (a reconcile can read the effect back) | at_most_once (never resend)
+  reconcileClass String
+  receiptId      String?
+  priorIntentId  String?
+  /// skip_applied | reconcile_lookup | unknown_never_resend — what act mode would do
+  wouldReconcile String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  @@unique([idemKey, attemptId])
+  @@index([idemKey])
+  @@index([chatId, createdAt])
+  @@index([createdAt])
+  @@map("tool_intents")
+}
+
+/// Durable cron registry (Phase 3: the five former in-process web crons + the
+/// agent-run reaper now fire from the WORKER via Postgres claim). One row per
+/// job id; `nextRunAt` is re-anchored at FINISH time (misfire catch-up: after
+/// downtime a due job fires exactly once, never a thundering-herd replay).
+/// `leaseExpiresAt`/`workerId` are the multi-worker claim seam (guarded
+/// updateMany — blue/green overlap never double-fires).
+model CronJob {
+  id             String    @id
+  intervalSec    Int
+  nextRunAt      DateTime
+  lastFiredAt    DateTime?
+  lastStatus     String?
+  leaseExpiresAt DateTime?
+  workerId       String?
+  enabled        Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([enabled, nextRunAt])
+  @@map("cron_jobs")
+}
+
+/// User-submitted feature requests, bug reports, and general feedback — plus
+/// AGENT-filed tickets (source='agent': bugs, mishaps, enhancements, research
+/// ideas noticed by chat/coding agents and worker subagents via file_feedback).
+/// Displayed in Account > Feedback tab. Triaged by an admin or a scheduled
+/// supervisor session via list_feedback / update_feedback (the nightly
+/// autopilot was removed 2026-07-20 — this loop replaces it).
+/// userId is NULLABLE: anonymous chat-agent runs have no users row.
+model UserFeatureRequest {
+  id          String   @id @default(uuid())
+  userId      String?
+  type        String   // 'feature_request' | 'bug_report' | 'general_feedback' | 'mishap' | 'enhancement' | 'research_idea'
+  title       String
+  description String   @db.Text
+  status      String   @default("open") // 'open' | 'in_progress' | 'queued' | 'done' | 'deployed_verified' | 'reopened' — the canonical set (feedback/ticket-status.ts FEEDBACK_STATUSES); legacy 'resolved' rows read as 'done' and are folded by scripts/framework-audit/backfill-ticket-status-done.js. 'deployed_verified' (terminal, work over AND post-deploy acceptance metric re-measured passing) and 'reopened' (metric failed post-deploy, work owed) are written ONLY by the post-deploy verifier job (ticket 6665fff6); 'done' for a metric-carrying fix ticket is redirected to 'awaiting_verification' by the machine-close gate until the verifier rules.
+  priority    Int      @default(0)
+  adminNote   String?  @db.Text  // Triage response: what was done, why, or ETA
+  source      String   @default("user") // 'user' | 'agent'
+  context     Json?    // Agent-captured metadata: sessionId, surface, role, area, occurrences, lastSeen, filedAt
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status])
+  @@index([source])
+  @@map("user_feature_requests")
+}
+
+/// Per-user Google OAuth tokens — encrypted at rest with AES-256-GCM.
+/// Supports Gmail, Calendar, Drive, Docs, Sheets access via the Google MCP container.
+/// Multiple accounts per user are supported via a per-account label (Personal, Work, etc.)
+model GoogleOAuthToken {
+  id           String   @id @default(cuid())
+  userId       String
+  label        String   @default("Personal")  // "Personal", "Work", or custom
+  accessToken  String   @db.Text  // AES-256-GCM encrypted
+  refreshToken String   @db.Text  // AES-256-GCM encrypted
+  expiresAt    DateTime
+  scopes       String[]
+  email        String?            // Google account email (for display)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, label])
+  @@index([userId])
+  @@map("google_oauth_tokens")
+}
+
+/// Server-side Google Drive watch (owner-confirmed cf_822011a4): a lane registers
+/// a folder once; Google push (changes.watch) fires a webhook on edits; the
+/// platform pulls the incremental changes.list delta with NO model in the loop
+/// and wakes the target lane with the changed doc names. Same shape as event
+/// hooks, not an LLM polling loop.
+model DriveWatch {
+  id            String    @id @default(cuid())
+  userId        String
+  label         String    @default("Personal") // Google account label on the GoogleOAuthToken row
+  folderId      String    // Drive folder being watched
+  channelId     String    // changes.watch channel id (echoed back by Google's ping)
+  resourceId    String    // changes.watch resource id (verified against Google's headers)
+  token         String?   // changes.list page token (persisted between pulls)
+  expiration    DateTime? // channel expiry (Drive channels live ~1 week; renewed daily)
+  targetChatId  String    // lane woken when deduped changes are non-empty
+  promptTemplate String   @default("") // optional user template; '' = default wake prompt
+  lastFiredChanges Json?  // last fired [{fileId, modifiedTime}] — the dedupe window (capped)
+  lastFiredAt   DateTime?
+  lastSyncedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, folderId, targetChatId])
+  @@index([userId])
+  @@index([targetChatId])
+  @@index([expiration])
+  @@map("drive_watches")
+}
+
+/// Per-user GitHub OAuth tokens — encrypted at rest with AES-256-GCM.
+/// Supports multi-account via label field (Personal, Work, etc.).
+/// No refresh token or expiresAt needed — GitHub App tokens do not expire.
+model GitHubOAuthToken {
+  id          String   @id @default(cuid())
+  userId      String
+  label       String   @default("Personal")  // "Personal", "Work", or custom
+  accessToken String   @db.Text              // AES-256-GCM encrypted
+  scopes      String[]
+  username    String?                        // GitHub username (for display)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, label])
+  @@index([userId])
+  @@map("github_oauth_tokens")
+}
+
+/// Per-user macOS iMessage bridge agents. The agent is a background process the
+/// user installs on their Mac; it "dials home" via HTTP long-poll (it never
+/// accepts inbound connections). We store only a SHA-256 hash of the agent's
+/// bearer token — the plaintext is shown once at pairing and kept on the Mac,
+/// so there is nothing to decrypt server-side.
+///
+/// Multi-Mac (owner 2026-09-24): an account may pair SEVERAL Macs (a MacBook
+/// Pro + a Mac mini). Each physical Mac carries a stable agent-generated
+/// `deviceId` (uuid persisted in its local config) — pairing upserts on
+/// (userId, deviceId), so re-pairing a Mac rotates only ITS token and never
+/// touches the user's other Macs. `label` is the human-editable display name
+/// (defaults to the hostname/deviceName at pair time; unique per user is best
+/// effort, enforced at write time, not schema time — see completePairing).
+/// Exactly one row per user is the DEFAULT routing target (isDefault).
+model IMessageAgent {
+  id           String    @id @default(cuid())
+  userId       String
+  label        String    @default("Primary")
+  tokenHash    String    @unique              // sha256(agentToken) hex
+  deviceId     String?                         // stable agent-generated uuid (multi-Mac); null = legacy row (pre-multi-Mac)
+  deviceName   String?                         // e.g. "Paul's MacBook Pro" (hostname at pair time)
+  agentVersion String?
+  platform     String?                         // agent-advertised OS: 'macos' | 'windows'; null = legacy row → macos (W0 2026-09-25)
+  capabilities String[]  @default([])          // agent-advertised caps (imessage/browser/computer); EMPTY = legacy row → Mac version-gate fallback
+  permissions  Json?                           // agent-advertised macOS TCC state {ax,sr,fda,relaunch}; null = legacy agent never advertised (2f646c10)
+  unattended   Json?                           // agent-advertised "unattended / autonomous use" preset {enabled,blockers[]}; null = legacy agent OR preset off (opt-in, off by default — 2026-10-28)
+  remoteAccess Json?                           // agent-advertised BROKERED REMOTE ACCESS {enabled,tunnelOnly,blockers[]} — the OS's own channel (macOS Screen Sharing / Windows RDP) hardened tunnel-only (ticket c468f922, owner ruling 2026-10-29); null = legacy agent OR not enabled
+  preloginHelper Json?                         // agent-advertised PRE-LOGIN HELPER {installed,loaded,blockers[]} — the (d) capability of the owner's 2026-11-01 ruling (card oq_96b31bed) on ticket c468f922. CAPABILITY ONLY: the helper may post input at the login window but may NEVER hold the OS password. null = legacy agent that never advertised
+  isDefault    Boolean   @default(false)       // routing target when no explicit device is named
+  lastSeenAt   DateTime?                        // bumped on every poll — PER-DEVICE presence
+  pairedAt     DateTime  @default(now())
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@map("imessage_agents")
+}
+
+/// Per-user X (Twitter) OAuth 2.0 PKCE tokens — encrypted at rest with AES-256-GCM.
+/// X access tokens DO expire (~2h) and refresh tokens rotate on every refresh,
+/// so we always persist whatever the IdP returns. Supports multiple connected
+/// accounts per user via the `label` column (e.g. Personal, Work, Brand).
+model XOAuthToken {
+  id           String   @id @default(cuid())
+  userId       String
+  label        String   @default("Personal")  // "Personal", "Work", "Brand", or custom
+  accessToken  String   @db.Text   // AES-256-GCM encrypted
+  refreshToken String?  @db.Text   // AES-256-GCM encrypted (may be absent without offline.access)
+  expiresAt    DateTime
+  tokenType    String   @default("bearer")
+  scopes       String[]
+  screenName   String?              // X handle (for display)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, label])
+  @@index([userId])
+  @@map("x_oauth_tokens")
+}
+
+/// Per-user Xero OAuth tokens — encrypted at rest with AES-256-GCM.
+/// Supports Xero Accounting API access (contacts, invoices, accounts, etc.).
+/// Each user can connect one Xero organisation.
+model XeroOAuthToken {
+  id           String   @id @default(cuid())
+  userId       String
+  label        String   @default("Default")  // "Default" or custom org name
+  tenantId     String                        // Xero tenant (organisation) ID
+  accessToken  String   @db.Text             // AES-256-GCM encrypted
+  refreshToken String   @db.Text             // AES-256-GCM encrypted
+  expiresAt    DateTime
+  scopes       String[]
+  orgName      String?                       // Xero organisation name (for display)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, label])
+  @@index([userId])
+  @@map("xero_oauth_tokens")
+}
+
+/// Per-user Slack OAuth tokens — encrypted at rest with AES-256-GCM.
+/// Stores the Slack *user* token (xoxp) from OAuth v2 (authed_user.access_token)
+/// so Digby reads the workspace as the user. Slack user tokens do not expire
+/// (no rotation unless explicitly enabled), so no refresh logic is needed.
+/// Supports multiple workspaces per user via the `label` column.
+model SlackOAuthToken {
+  id           String   @id @default(cuid())
+  userId       String
+  label        String   @default("Workspace")  // workspace/team name or custom
+  accessToken  String   @db.Text                // AES-256-GCM encrypted (xoxp user token)
+  scopes       String[]
+  teamId       String?                          // Slack team (workspace) ID
+  teamName     String?                          // Slack workspace name (for display)
+  slackUserId  String?                          // authed_user id (for display)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, label])
+  @@index([userId])
+  @@map("slack_oauth_tokens")
+}
+
+/// Per-user Asana OAuth tokens — encrypted at rest with AES-256-GCM.
+/// Asana access tokens expire in ~1h; the refresh token is long-lived and does
+/// NOT rotate, so we persist both and refresh on demand (see asana/token-manager).
+/// Each user connects one Asana account.
+model AsanaOAuthToken {
+  id           String   @id @default(cuid())
+  userId       String
+  label        String   @default("Default")
+  accessToken  String   @db.Text         // AES-256-GCM encrypted
+  refreshToken String   @db.Text         // AES-256-GCM encrypted
+  expiresAt    DateTime
+  scopes       String[]
+  asanaUserId  String?                   // Asana user gid (for display)
+  asanaName    String?                   // Asana user name (for display)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, label])
+  @@index([userId])
+  @@map("asana_oauth_tokens")
+}
+
+/// Per-user Telegram account links (single shared "Digby" bot model).
+/// We do NOT store an OAuth token — Telegram bots use one shared bot token (env).
+/// A user links by pressing Start on the bot via a deep link carrying a one-time
+/// link token; we then map their Telegram chatId ↔ Digby userId so the bot can
+/// answer their messages and Digby can push notifications. chatId is unique so an
+/// inbound webhook update resolves to exactly one user; one Telegram link per user.
+/// Per-user CLI / API credentials injected into coding-session shells as env
+/// vars (Cloudflare, AWS, Namecheap, Brev, custom …). Values are AES-256-GCM
+/// encrypted at rest (key derived from JWT_SECRET) and never returned by the
+/// API after save — only a masked preview. Injection + transcript scrubbing
+/// happen in coding/session-credentials.ts.
+/// MULTIPLE credentials of the same provider/env-key are supported via
+/// `label`: '' is the primary (injected under the canonical envKey); a label
+/// like 'WORK' is injected as `${envKey}_WORK` so nothing is ever overwritten.
+model CodingCredential {
+  id        String   @id @default(uuid())
+  userId    String
+  provider  String   // 'cloudflare' | 'aws' | 'namecheap' | 'brev' | 'custom' | …
+  envKey    String   // e.g. CLOUDFLARE_API_TOKEN — validated, deny-listed
+  label     String   @default("") // '' = primary; 'WORK' → injected as envKey_WORK
+  valueEnc  String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, envKey, label])
+  @@index([userId])
+  @@map("coding_credentials")
+}
+
+/// Digby Edge (Phase 2) — admin-managed custom model endpoint registry.
+/// Points a Digby instance (esp. self-hosted) at any OpenAI-compatible model
+/// server (Ollama, vLLM, LM Studio, OpenRouter, llama.cpp). A coding/chat model
+/// is addressed as `<label>:<modelId>`; `apiKeyEnc` is AES-256-GCM at rest and
+/// NEVER returned by any API response. ownerUserId NULL = instance-wide (the
+/// only kind the v1 UI creates); the column + FK exist for future per-user
+/// endpoints.
+model ModelEndpoint {
+  id            String   @id @default(uuid())
+  ownerUserId   String?  // null = instance-wide
+  label         String   // unique per owner (enforced in service, not DB)
+  providerShape String   // v1: 'openai_chat' only (OpenAI-compatible /chat/completions)
+  baseUrl       String   // http(s) URL, stored WITHOUT a trailing slash
+  apiKeyEnc     String?  @db.Text // encrypted at rest; null = no auth header
+  models        Json     // [{ id, displayName?, vision?, coding?, matryoshka?, thinking?, image?, calibrated?, maxStateChars?, decision?, maxTools?, reasoningEffort?, providerClass?, kind?, contextWindow?, capabilities?, manualFlags?, unservable? }] — at least one (model-endpoints.service EndpointModelEntry)
+  settings      Json?    // 2026-09-27: endpoint-level settings { maxTools? } (model-endpoints.service EndpointSettings)
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  owner User? @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([enabled])
+  @@map("model_endpoints")
+}
+
+/// Digby Edge (Phase 3) — CLOUD side of a cloud↔edge pairing: one row per EDGE
+/// instance paired TO this instance. The edge dials OUT to this instance's
+/// relay over WSS (Authorization: Bearer dgi_…) and holds the tunnel; the cloud
+/// proxies API/SSE requests down it. The cloud stores NO edge data — only the
+/// pairing metadata below. tokenHash is the sha256 of the `dgi_` tunnel token
+/// (plaintext shown once at pair/complete); the relay re-checks `status` on
+/// every client ping so a revoke kills the live tunnel within one heartbeat.
+model ConnectedInstance {
+  id              String    @id @default(uuid())
+  ownerUserId     String                       // the ADMIN user who paired it
+  name            String
+  tokenHash       String    @unique
+  protocolVersion Int       @default(1)
+  status          String    @default("pending") // pending | online | offline | revoked
+  lastSeenAt      DateTime?
+  createdAt       DateTime  @default(now())
+  revokedAt       DateTime?
+
+  owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId])
+  @@map("connected_instances")
+}
+
+/// Digby Edge (Phase 3) — EDGE side of a cloud↔edge pairing: THIS instance's
+/// link TO a cloud. Singleton (one row max — enforced in the service, which
+/// replaces any existing row on re-pair). tokenEnc is the `dgi_` tunnel token,
+/// AES-256-GCM at rest via coding/credentials.service helpers (the edge must
+/// PRESENT the token, unlike the cloud which only verifies a hash) and is never
+/// returned by any API response. The tunnel client (cloud-link/tunnel-client.ts)
+/// holds the outbound WSS connection while state='linked'; state='error' +
+/// lastError means the cloud rejected the token and an admin must re-pair.
+model CloudLink {
+  id             String   @id @default(uuid())
+  cloudUrl       String   // e.g. https://digby.example.com (no trailing slash)
+  tokenEnc       String   @db.Text
+  instanceName   String
+  pairedByUserId String   // local ADMIN who paired
+  state          String   @default("linked") // linked | error | unlinked
+  lastError      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  pairedBy User @relation(fields: [pairedByUserId], references: [id], onDelete: Cascade)
+
+  @@map("cloud_link")
+}
+
+model CodingSchedule {
+  id          String    @id @default(uuid())
+  sessionId   String                          // == crossmodel_chats.id (a coding chat)
+  userId      String
+  prompt      String    @db.Text              // the message each firing runs as the orchestrator
+  kind        String    @default("recurring") // 'once' | 'recurring'
+  intervalSec Int?                            // set iff kind='recurring' (min enforced in service)
+  nextRunAt   DateTime                        // next due time (sweeper polls this)
+  enabled     Boolean   @default(true)
+  runsCount   Int       @default(0)
+  maxRuns     Int?                            // null = unbounded (capped by expiresAt regardless)
+  expiresAt   DateTime?                        // hard lifetime ceiling — sweeper disables past this
+  lastFiredAt DateTime?
+  lastStatus  String?                          // 'started' | 'skipped_busy' | 'error:<reason>'
+  // Who last WROTE the prompt: 'user' (real user turn / REST) | 'machine'
+  // (an autonomous run rewrote its own cadence) | 'system' (framework-created,
+  // e.g. the supervisor sweep). Drift surfacing (2026-08-30 fleet audit): a
+  // lane silently flipping its own schedule to watch-only redefined its job
+  // with no owner-visible trace — the supervisor wake block lists enabled
+  // machine-written prompts for review. NULL = predates the column.
+  promptSetBy String?
+  // Owner-SUBSCRIBED content marker (ticket 4565991a, 2026-09-24): true when
+  // the schedule's firings are content the OWNER asked to receive (armed from
+  // a real user turn, or re-armed/updated by a firing that was itself
+  // owner-subscribed — the one-shot LADDER inheritance: dormant-gated chats
+  // cannot hold machine recurring rows, so an owner-requested daily digest
+  // runs as self-re-arming one-shots whose every rung is promptSetBy
+  // 'machine'). Orthogonal to promptSetBy on purpose: promptSetBy says WHO
+  // LAST WROTE the prompt and flips on every machine rewrite (update_schedule
+  // from a firing restamps it 'machine', which used to collapse an
+  // owner-armed digest again — the 6ef770a1 latent hole), while this column
+  // says WHOSE SUBSCRIPTION the content serves and persists through rewrites
+  // and ladder re-arms. Read at fire time to persist
+  // metadata.scheduleOwnerArmed on the wake row (the frontend renders the
+  // machine turn EXPANDED with a "requested" marker — PR #1010). NULL = legacy
+  // / unmarked — renders collapsed exactly as today; set ONLY through the
+  // platform-tools gates (user turn, or own-chat inheritance), never inside
+  // createSchedule, so a machine arm can never launder wake noise into
+  // owner-subscribed expanded render.
+  ownerSubscribed Boolean?
+  // ── P3 remediation (20260909) — all nullable/default, additive ──
+  // renewOnExhaustion (v1#14): when this RECURRING schedule spends its final
+  // allowed run, the sweeper arms a same-cadence successor row instead of
+  // letting the lane go deaf. NULL = derived default: TRUE for machine/system-
+  // created recurring schedules, FALSE for user-created ones (an explicit
+  // user-set maxRuns is a deliberate stop).
+  renewOnExhaustion Boolean?
+  // Successor idempotency key (v1#14): the exhausted predecessor's id — UNIQUE,
+  // so two racing sweepers (blue/green, deploy boundary) can never double-create
+  // a successor (the second insert P2002s and is swallowed).
+  renewedFromId     String?  @unique
+  // Machine self-cancel durability (v1#13): who disabled this row ('machine' |
+  // 'owner') + when — the hourly digest backstop re-offers machine-cancelled
+  // recurring rows to the stopped-schedule decision seam even after the 12-min
+  // in-process recheck timer died with its worker.
+  cancelledBy       String?
+  disabledAt        DateTime?
+  // Consecutive busy-skips (v1#33): incremented when a firing is skipped
+  // because a run holds the lane, reset on a real start; at ≥3 an alarm-class
+  // attention_needed names the blocking run.
+  busySkips         Int      @default(0)
+  // P7 (G13 probe-shape gate): optional [{tool, argPattern?}] — receipts a
+  // MACHINE run fired by this schedule must carry at finalize. A probe-less
+  // run's journal outcome is annotated + the next firing gets a scheduler
+  // notice; 3 CONSECUTIVE probe-less firings pause the schedule + file an
+  // owner decision card. NULL/[] = no gate. Kill switch REQUIRED_PROBES_DISABLED.
+  requiredProbes    Json?
+  // Delta gate (ticket 0b1dbe75): optional {probes: [{url, headers?, jsonPath?|pattern?,
+  // marker?, checkedAt?, lastError?}], heartbeatHours?} — at each fire time of a
+  // RECURRING schedule the platform polls the probes itself and SKIPS the model
+  // run (lastStatus 'skipped:delta_unchanged', no run/maxRuns/daily-cap budget)
+  // when every observed value equals its stored marker. marker/checkedAt/
+  // lastError are platform-maintained (stripped from caller writes). Refused on
+  // kind 'once'. Fail-open on any evaluation error. Kill switch DELTA_GATE_DISABLED.
+  deltaGate         Json?
+  // Near-cap pre-emptive alert (ticket b4d1096c): stamped ONCE when the sweeper
+  // emits the schedule_near_cap hook event (a recurring row at ≥90% of maxRuns
+  // or inside the last 10% of its lifetime window). The atomic guarded write
+  // (WHERE nearCapAlertedAt IS NULL) is the dedupe — one alert per schedule row
+  // ever, across repeat processings, busy re-arms and racing blue/green
+  // sweepers. renewOnExhaustion successor rows start NULL. NULL = never alerted.
+  nearCapAlertedAt DateTime?
+  // One-shot CHAIN link (finding B1, 2026-09-27): the id of the schedule whose
+  // FIRING armed this `once` row on its own chat (a machine schedule_self /
+  // own-chat schedule_message from a run fired by that schedule). A chain of
+  // ≥3 links inside a rolling 24h window is governed as a RECURRING cadence
+  // (schedule-once-chain.ts): fire-time dormancy park, cap-cadence math on the
+  // observed cadence, busy re-arm + busySkips instead of queue-behind-busy.
+  // NULL = not a chain link (user/REST arms, hook-wake arms, legacy rows).
+  // Kill switch SCHEDULE_ONCE_CHAIN_GUARD_DISABLED (telemetry stays).
+  chainedFromScheduleId String?
+  createdAt   DateTime  @default(now())
+
+  chat CrossModelChat @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  promptHistory SchedulePromptHistory[]
+
+  @@index([userId])
+  @@index([sessionId])
+  @@index([enabled, nextRunAt])
+  @@map("coding_schedules")
+}
+
+/// P6 (N4 — the 128-rewrites lane): append-only ledger of a schedule's prompt
+/// REWRITES. Each row preserves the OUTGOING prompt (written BEFORE the
+/// overwrite lands) with the rewriter's authorship ('user' | 'machine' |
+/// 'system'). Powers: (a) the fire-time "[SCHEDULE STATE: prompt changed since
+/// last firing (vN)]" wake notice, (b) the 5/day machine-rewrite cap
+/// (counted per schedule over author='machine' rows; kill switch
+/// PROMPT_REWRITE_CAP_DISABLED). No diff rendering — history + count + notice.
+model SchedulePromptHistory {
+  id         String   @id @default(uuid())
+  scheduleId String
+  prompt     String   @db.Text // the prompt being REPLACED (pre-rewrite text)
+  author     String?           // who performed the rewrite ('user' | 'machine' | 'system')
+  runId      String?           // soft ref to agent_runs.id when the rewrite came from a run (optional)
+  createdAt  DateTime @default(now())
+
+  schedule CodingSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, createdAt])
+  @@map("schedule_prompt_history")
+}
+
+// ── Fleet supervisor (docs/FLEET_SUPERVISOR_DESIGN.md) ────────────────────────
+
+/// Per-chat autonomy allowlist: which CONSEQUENTIAL platform tools this chat may
+/// execute during MACHINE-TRIGGERED runs (schedule firings, hook wakes). Granted
+/// only from a real user turn via the set_chat_autonomy consequential tool;
+/// revocation is immediate (per-call PK lookup in the gate).
+model ChatAutonomy {
+  chatId       String   @id // == crossmodel_chats.id
+  userId       String
+  allowedTools String[] // ⊆ send_chat_message | start_coding_session | schedule_message | cancel_schedule
+  scheduleCap  Int      @default(48) // max scheduled firings/day for this chat (clamped 1..1440 in the service — MAX_SCHEDULE_CAP)
+  // Who put the grant here (owner 2026-09-07 auto-grant): 'manual' = owner-curated
+  // (Autonomy dialog / set_chat_autonomy — NEVER touched by Agent-mode flips) |
+  // 'agent_mode_auto' = materialized because the coding chat's Agent mode is Auto
+  // (revoked automatically when the mode leaves Auto; any manual save converts it
+  // to 'manual') | 'machine_delegated' = a supervisor-class lane granted a
+  // supervised same-owner lane card-free (ticket eb4337fe, ruling oq_2674964f —
+  // scoped delegation via delegateChatAutonomy; treated like a curated row by
+  // mode flips). See platform/autonomy.service.ts syncAutonomyWithAgentMode +
+  // supervisorDelegationVerdict.
+  source       String   @default("manual")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  chat CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("chat_autonomy")
+}
+
+/// Staged consequential-tool confirmation (the platform-tools gate). DB-persisted
+/// so a staged action survives deploys/restarts and can be confirmed HOURS later —
+/// from the UI card (POST /confirmations/:id/confirm, which executes the stored
+/// args server-side) or by the model re-calling the tool with confirmationId from
+/// a NEW user turn (the user-turn anchor semantics are unchanged). No relations:
+/// rows self-clean by expiry; orphans after a chat/user delete are inert, and the
+/// two biggest models stay free of another back-relation.
+model PendingConfirmation {
+  id         String    @id // cf_<uuid>
+  chatId     String // the staging run's sessionId (== crossmodel_chats.id)
+  userId     String // owner the action executes as; REST confirm/cancel scope to this
+  tool       String
+  args       Json // STAGED registration-time args — a successful confirm executes THESE (WYSIWYG confirm; never re-call- or client-supplied args)
+  summary    String // one-line human description for the UI card
+  origin     String? // 'user' (a real user turn staged it) | 'machine' (schedule / hook / agent wake) | NULL legacy — cohesive chat, 2026-09-28
+  status     String    @default("pending") // pending | consumed | cancelled | expired | failed
+  result     Json? // execution outcome (REST confirm path) or the failure message
+  createdAt  DateTime  @default(now())
+  expiresAt  DateTime
+  resolvedAt DateTime?
+
+  @@index([userId, status])
+  @@index([chatId, status])
+  @@index([expiresAt])
+  @@map("pending_confirmations")
+}
+
+/// "Needs owner" persistent inbox row (ticket 7705fec2): a question/decision an
+/// agent run flagged for the owner via the flag_owner_question platform tool.
+/// Unlike a staged confirmation it NEVER expires — it persists in the
+/// Management → Inbox surface until the owner answers or dismisses it (both
+/// REST endpoints), and the resolution is posted back into the originating
+/// chat's transcript so the agent sees it on its next turn/wake. No relations:
+/// same orphan-tolerance argument as PendingConfirmation above.
+model OwnerQuestion {
+  id         String    @id // oq_<uuid>
+  chatId     String // the flagging run's sessionId (== crossmodel_chats.id)
+  userId     String // owner; REST answer/dismiss scope to this
+  question   String    @db.Text
+  context    String?   @db.Text
+  status     String    @default("open") // open | answered | dismissed
+  answer     String?   @db.Text
+  // Typed decision options (remediation P2 N3, 2026-09-09): OPTIONAL array of
+  // {id, label, consequence?} the flagging run supplied. When present, the
+  // Inbox card and the Telegram DM render them numbered; the answer path
+  // matches an option id / label / 1-based number and stamps chosenOption.
+  options      Json?
+  chosenOption String?
+  // Expected answer TYPE (todo 77c88942 item 2, 2026-10-16): the flagger
+  // declares what a RESOLVING answer looks like — 'free' (default/legacy:
+  // any non-empty text resolves), 'choice' (one of the typed options),
+  // 'yes_no', or 'credential:<ENVKEY>' (the answer is a credential for env
+  // var ENVKEY — the gate resolves ONLY on a store_secret RunToolReceipt for
+  // that envKey, NEVER on answer text: specimen oq_211513ed/oq_483730f8,
+  // both answered "yes public" 3 s apart on 2026-10-16, opened the
+  // credential-gated Schooltime todo because any text resolved the gate).
+  expectedAnswerType String?
+  // Ticket 90a5b127 (2026-10-19): the flagger's own typed declaration that
+  // the ask is OPTIONAL. TRUE completes the options axis of the owner-card
+  // payload-gap admission (detectOwnerCardPayloadGaps) by declaration;
+  // FALSE suppresses the prose-optionality fallback (the wording-chased cue
+  // list); NULL = not declared (prose fallback applies). The structural
+  // signal that ends the incomplete-card FP family's wording chase (four
+  // tickets: 84b11946 → 65cfec1b → cea10fa4 → 90a5b127, all FPs, zero true
+  // positives in the wild): the flagger knows the ask is optional — the
+  // detector no longer has to guess it from prose.
+  optionalAsk    Boolean?
+  // (deduped against chatId), and the goal/todo the question gates.
+  forChatId String?
+  goalId    String?
+  todoId    String?
+  // Cost-of-delay + conservative default answers (remediation P7 S2b):
+  //   idleUsdPerDay    — the flagger's estimate of what waiting costs per day
+  //                      (rendered on the Telegram DM + Inbox card)
+  //   defaultAfterDays — after this many OPEN days the escalation sweep
+  //                      auto-answers the question…
+  //   defaultOption    — …with this option id/label. BOTH fields must be set
+  //                      by the flagger for the auto-answer to arm (double guard).
+  //   answeredBy       — 'owner' (REST answer) | 'default' (auto-answered);
+  //                      NULL = predates the column (or dismissed).
+  idleUsdPerDay    Float?
+  defaultAfterDays Int?
+  defaultOption    String?
+  answeredBy       String?
+  // Review 2026-09-13 issue 11: supervisor-first triage. A machine lane's
+  // approval-type question is routed to the Fleet Supervisor FIRST:
+  //   triage      — 'supervisor' while the supervisor is first responder (the
+  //                 row is hidden from the owner's rail + Telegram); 'surfaced'
+  //                 once the SLA elapsed unanswered and the owner was notified;
+  //                 NULL = never triaged (owner-only class, supervisor-filed,
+  //                 user-present, or pre-column rows).
+  //   triageUntil — the SLA deadline (createdAt + OWNER_QUESTION_TRIAGE_SLA_MIN).
+  //   answeredBy  additionally takes 'supervisor' (answer_owner_question tool).
+  triage      String?
+  triageUntil DateTime?
+  // Ticket 1b1c41bc (owner ask 2026-10-16, 3× in one day: "better
+  // instructions always"): a card that asks the owner to act in an EXTERNAL
+  // console. The structured spec {consoleName, consoleUrl, whatAndWhySafe,
+  // payload?, payloadLanguage?, steps[]} — the service composes the
+  // four-element card body (paste-ready payload + click-by-click steps +
+  // what/why-safe + typed saved/error/defer options) into `question`, and the
+  // pending surface stamps consoleAction:true so the UI can render the kind.
+  consoleAction Json?
+  // Todo fea78360 (monitor lesson 6, 2026-10-16): replacement-card linkage —
+  // one decision, one live card. supersedesId on the REPLACEMENT names the
+  // card it replaces (owner-scoped, resolved at flag time, fail-closed);
+  // supersededBy on the OLD card points forward. The service links both rows
+  // and auto-dismisses an OPEN predecessor at filing time (the 4-card ACL
+  // chain is the specimen: oq_d5948325/oq_ea52c6ae/oq_9396afac/oq_19ab7b6b —
+  // four cards for ONE 2-minute console save, none naming the one it
+  // replaced, the owner answering the STALE card while the live one sat
+  // under it).
+  supersedesId String?
+  supersededBy String?
+  // Ticket abca56ce (2026-10-18): WHO dismissed a dismissed row — 'owner'
+  // (the owner's own inbox/REST click), 'supervisor' (answer_owner_question
+  // sibling dismiss_owner_question under standing directives), 'agent' (the
+  // filing chat withdrawing its own card), 'system' (a replacement card
+  // superseded it — no one's ruling). NULL = pre-column rows. Every dismissal
+  // narration (inbox note, wake, list_owner_questions, notify_user refusal)
+  // attributes from THIS stamp — never a hardcoded "the owner".
+  dismissedBy  String?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
+
+  @@index([userId, status])
+  @@index([chatId, status])
+  @@map("owner_questions")
+}
+
+/// Ticket 26786762 (2026-10-17): a credential a lane DELIVERS to the owner
+/// through a flag_owner_question card. The write-time inbound scan used to
+/// destroy the value in the card text ("[REDACTED: looked like a credential]")
+/// — the exact opposite of what a credential-delivery card exists to do.
+/// Now the would-be-destroyed span (or an explicit deliverSecrets entry) is
+/// stored here, ENCRYPTED (AES-256-GCM via credentials.service encryptValue,
+/// key derived from JWT_SECRET), and the card text carries a numbered reveal
+/// handle ([SECRET 1]). Reveal is owner-scoped REST only
+/// (POST /owner-questions/:id/secrets/:ordinal/reveal); no agent surface ever
+/// reads a value back.
+model OwnerQuestionSecret {
+  id          String    @id // oqs_<uuid>
+  questionId  String // the OwnerQuestion this secret belongs to
+  userId      String // owner; reveal/list scoped to this
+  ordinal     Int // 1-based handle number — matches the [SECRET n] in the card text
+  label       String // display label (explicit entries) / pattern name (implicit)
+  valueEnc    String    @db.Text // encrypted value — never returned by list paths
+  spanName    String // scanner pattern that rescued the span, or 'explicit'
+  revealedAt  DateTime?
+  revealCount Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  @@unique([questionId, ordinal])
+  @@index([userId])
+  @@map("owner_question_secrets")
+}
+
+/// Event hook subscription: when sourceChatId emits one of eventTypes, wake
+/// targetChatId with the rendered promptTemplate. Delivery is durable via the
+/// HookEvent outbox (emission never blocks the emitting run).
+model EventHook {
+  id             String    @id @default(uuid())
+  userId         String
+  sourceChatId   String? // NULL = WILDCARD: every chat owned by `userId` emits to targetChatId (the Fleet Supervisor's hook)
+  targetChatId   String
+  // ── Project-scope wildcard lane (per-project supervisors, 2026-09-13):
+  //    sourceChatId NULL + projectId SET = only chats IN this project (owned by
+  //    userId) emit to targetChatId. NULL projectId = the owner-scope wildcard.
+  //    SOFT ref by design (NO relation — same rationale as
+  //    crossmodel_chats.parentChatId): a FK onDelete:SetNull would silently
+  //    mutate the hook into an OWNER-scope wildcard on project deletion, and
+  //    Cascade would hard-delete wiring the pause-never-delete doctrine keeps.
+  //    A dangling projectId matches nothing (chats detach via SetNull), so the
+  //    row is inert until the supervisor heal/GC disables it. ──
+  projectId      String?
+  eventTypes     String[]  // ⊆ run_completed | run_failed | attention_needed | goal_blocked | todo_done | schedule_cap_skipped
+  promptTemplate String    @default("") @db.Text // placeholders {{eventType}} {{sourceChatTitle}} {{summary}}; empty = default
+  enabled        Boolean   @default(true)
+  debounceSec    Int       @default(60)
+  lastFiredAt    DateTime?
+  // ── Creator provenance (ticket dd3a19fa, 2026-09-20): WHO armed this hook.
+  //    NULL on rows predating the columns. createdVia values:
+  //    'tool:hook_subscribe' (an agent/user tool call — createdByChatId/RunId
+  //    name the lane + agent run), 'system:child-result-hook',
+  //    'system:direct-wake', 'system:fleet-supervisor'. Written ONCE at create;
+  //    a re-subscribe rewire keeps the original creator (rewrites are audited
+  //    via hook.subscribe/hook.update Activity rows).
+  createdVia     String?
+  createdByChatId String?
+  createdByRunId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user   User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  source CrossModelChat? @relation("HookSource", fields: [sourceChatId], references: [id], onDelete: Cascade)
+  target CrossModelChat @relation("HookTarget", fields: [targetChatId], references: [id], onDelete: Cascade)
+  events HookEvent[]
+
+  @@index([sourceChatId, enabled])
+  @@index([userId])
+  @@index([targetChatId, projectId]) // project-supervisor lane find-or-create (targetChatId+projectId)
+  // ONE hook per (source, target) pair (ticket c65de47c): subscribeHook dedups
+  // pre-create (update-in-place + deduped:true) and converges on P2002, so the
+  // public hook_subscribe path can never double-wire a pair (which used to wake
+  // the target TWICE per event). Postgres treats NULLs as DISTINCT, so WILDCARD
+  // rows (sourceChatId NULL) are NOT constrained by this index — they remain
+  // covered by the partial unique indexes event_hooks_one_wildcard_per_target
+  // (owner-scope) and event_hooks_one_project_hook_per_target (project-scope).
+  @@unique([sourceChatId, targetChatId], map: "event_hooks_one_hook_per_pair")
+  @@map("event_hooks")
+}
+
+/// Hook-event outbox row: one per (hook, emission). Claimed by the sweeper
+/// (pending → delivering → delivered|failed); depth in payload bounds loops.
+model HookEvent {
+  id        String   @id @default(uuid())
+  hookId    String
+  userId    String
+  eventType String
+  payload   Json     // {sourceChatId, sourceChatTitle, summary, depth, runId?}
+  status    String   @default("pending") // pending | delivering | delivered | failed | failed:horizon | failed:source_gone | failed:target_gone | skipped:hook_disabled | skipped:target_retired
+  attempts  Int      @default(0)
+  // TTL-park (v1#1): a busy-target row parks with retryAt = now + backoff
+  // instead of burning delivery attempts; the sweep skips rows whose retryAt
+  // is still in the future. NULL = immediately sweepable (legacy rows).
+  retryAt   DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  hook EventHook @relation(fields: [hookId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@map("hook_events")
+}
+
+/// Fleet-event KPI rollup (feedback 4e36ee4a): the DURABLE aggregate ledger of
+/// fleet-event emissions — one row per (UTC day, eventType) with counters,
+/// upsert-incremented at emission time, INDEPENDENT of subscriber count (a
+/// zero-subscriber emission persists no HookEvent row but still lands here)
+/// and of outbox GC (HookEvent terminal rows are deleted after 30 days in
+/// coding/run-reaper.ts and loop_metrics rows after 30 days in loop-metrics
+/// .service.ts — this table has NO GC by design, so fleet KPIs stay
+/// measurable indefinitely). Rows are tiny and cardinality-bounded
+/// (day × eventType). Writers: platform/fleet-event-rollup.service.ts
+/// (fire-and-forget, wired at both emission sites in hooks.service.ts);
+/// reader: fleetEventKpis() there, served as get_fleet_telemetry view
+/// 'fleetEvents'.
+model FleetEventRollup {
+  id        String   @id @default(uuid())
+  day       DateTime @db.Date // UTC calendar day (midnight) the emission belongs to
+  eventType String // HookEventType | 'todo_wake' — open string: new event types need no migration
+  emitted   Int      @default(0) // emissions admitted past the depth ladder (incl. zero-subscriber)
+  delivered Int      @default(0) // HookEvent outbox rows actually written (the fan-out count)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([day, eventType])
+  @@map("fleet_event_rollups")
+}
+
+/// Fleet Supervisor durable state doc (2026-08-22 rebuild — the 2026-08-21
+/// amnesia incident): the supervisor is a plain chat whose machine wakes
+/// reconstruct state from a 12-pair transcript, so everything older is lost.
+/// This row is its durable memory: injected into every machine wake by
+/// chat-agent.service (startDetachedChatRun), merged by the supervisor itself
+/// via the update_supervisor_state platform tool, and appended-to whenever the
+/// OWNER types in the supervisor chat (a directive). See
+/// platform/supervisor-state.service.ts for the doc shape + merge rules.
+model SupervisorState {
+  id        String   @id @default(uuid())
+  chatId    String   @unique
+  userId    String
+  state     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  chat CrossModelChat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("supervisor_states")
+}
+
+/// A structured goal inside a project (supervisor-tracked). Goals may depend on
+/// goals in OTHER projects of the same owner (GoalDependency, cycle-checked).
+model ProjectGoal {
+  id              String   @id @default(uuid())
+  userId          String
+  projectId       String
+  title           String
+  description     String   @default("") @db.Text
+  status          String   @default("active") // active | blocked | done | archived
+  blockedReason   String?
+  // Remediation P2 S2a (2026-09-09): WHY it is blocked ('deps' | 'owner' |
+  // 'agent' | 'external'), and the open owner_questions row gating it (the
+  // digest's 24h/72h owner-wait escalation keys on these).
+  blockKind      String?
+  gateQuestionId String?
+  // When the CURRENT block began (review fix 2026-09-27 on the digest's
+  // stale-deps gate): stamped on the transition INTO 'blocked' (updateGoal, the
+  // auto_block recompute, create-with-open-deps), cleared on the way out;
+  // reason / kind / gate / note rewrites never touch it — updatedAt bumps on
+  // every one of those, so it could not stand in for a block start. Backfilled
+  // for rows blocked at migration time from the Activity audit trail.
+  blockedAt      DateTime?
+  // Progress-aware pulse (remediation P7 v1#20): the newest short free-text
+  // progress note ("3/5 shards trained, loss 2.1") — cheap, ≤200 chars.
+  progressNote   String?  @db.Text
+  // Premise register (owner 2026-09-16, framework item 2): the quantitative
+  // premises the goal rests on — [{key, value, unit?, note?, source?, jsonPath?
+  // | pattern?, tolerance?, setByChatId, setAt, checkedAt?, observed?, drift?:
+  // 'ok'|'drift'|'error', driftNote?}]. Written by goal_premise_set
+  // (goals.service setGoalPremises), re-checked hourly against `source` by
+  // platform/premise-register.ts, rendered in the [BOARD] block and goal views.
+  premises       Json     @default("[]")
+  // GOAL-PRIORITY-SPEND (supervisor SOTA round 3, 2026-10-20; owner decision
+  // Paul 2026-10-20): 1 (P1, highest) .. 4 (P4, lowest); null = unset = P2
+  // (applied in code, platform/goal-priority.ts). prioritySource 'owner' |
+  // 'member' | 'machine' = who last set the ranking fields (priority / dueAt)
+  // — an OWNER-set (project owner) ranking is never overwritten by anyone
+  // else; 'member' (another human with write access) is not a lock; a
+  // supervisor may set it only on a goal whose source is not 'owner'. dueAt optional.
+  // Additive + nullable (migration 20261020200000), no data rewrite.
+  priority       Int?
+  prioritySource String?
+  dueAt          DateTime?
+  createdByChatId String?
+  // Gate-write authorship (ticket c286ba91): WHO last wrote this row — the
+  // acting chat + agent run, stamped by updateGoal on EVERY row write; null =
+  // a user/REST/framework writer (no machine actor). Mirrors ProjectTodo's
+  // doneRunId idiom. Born of the 2026-09-19 incident: an "unattributed"
+  // gateQuestionId flip burned three tickets identifying the writer.
+  updatedByChatId String?
+  updatedByRunId  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project  CrossModelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user     User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  todos    ProjectTodo[]
+  depsThis GoalDependency[]  @relation("GoalDepsThis")
+  depsOn   GoalDependency[]  @relation("GoalDepsOn")
+
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_goals")
+}
+
+/// A todo under a goal. projectId is denormalized from the goal for fleet-wide
+/// todo queries. Todos may depend on todos in other projects (TodoDependency).
+model ProjectTodo {
+  id             String   @id @default(uuid())
+  userId         String
+  goalId         String
+  projectId      String // denormalized from the goal
+  title          String
+  status         String   @default("pending") // pending | in_progress | blocked | done | dropped (P7 N5 — terminal, owner-superseded)
+  blockedReason  String?
+  // Remediation P2 S2a (2026-09-09): see ProjectGoal.blockKind/gateQuestionId.
+  blockKind      String?
+  gateQuestionId String?
+  // When the CURRENT block began (review fix 2026-09-27): see
+  // ProjectGoal.blockedAt — the digest's 72 h stale-deps gate ages on this,
+  // not on updatedAt (which every blockedReason refresh restarted).
+  blockedAt      DateTime?
+  // Progress-aware pulse (remediation P7 v1#20): newest short progress note
+  // (≤200 chars, via todo_update), and when work actually STARTED — stamped
+  // once, on the first transition into in_progress.
+  progressNote   String?  @db.Text
+  startedAt      DateTime?
+  assigneeChatId String?
+  /// Evidence carried by the update that marked this todo done (P4 v1#10):
+  /// REQUIRED for machine-triggered closes (tool-result artifact citation);
+  /// optional for user-present closes. Cleared on reopen.
+  evidence       String?  @db.Text
+  /// The agent_runs row whose update closed this todo (machine closes only).
+  doneRunId      String?
+  // Gate-write authorship (ticket c286ba91): WHO last wrote this row — the
+  // acting chat + agent run, stamped by updateTodo on EVERY row write; null =
+  // a user/REST/framework writer. See ProjectGoal.updatedByChatId.
+  updatedByChatId String?
+  updatedByRunId  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  goal     ProjectGoal      @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  depsThis TodoDependency[] @relation("TodoDepsThis")
+  depsOn   TodoDependency[] @relation("TodoDepsOn")
+
+  @@index([goalId])
+  @@index([projectId])
+  // Retired-target hook hygiene (ticket 57154856) runs a per-delivery COUNT on
+  // assigneeChatId — indexed so the check stays cheap on large boards (ticket
+  // 9df506cc F3).
+  @@index([assigneeChatId])
+  @@map("project_todos")
+}
+
+/// Goal depends-on goal (cross-project allowed; same-owner enforced in the service).
+model GoalDependency {
+  goalId          String
+  dependsOnGoalId String
+
+  goal      ProjectGoal @relation("GoalDepsThis", fields: [goalId], references: [id], onDelete: Cascade)
+  dependsOn ProjectGoal @relation("GoalDepsOn", fields: [dependsOnGoalId], references: [id], onDelete: Cascade)
+
+  @@id([goalId, dependsOnGoalId])
+  @@map("goal_dependencies")
+}
+
+/// Todo depends-on todo (cross-project allowed; same-owner enforced in the service).
+model TodoDependency {
+  todoId          String
+  dependsOnTodoId String
+
+  todo      ProjectTodo @relation("TodoDepsThis", fields: [todoId], references: [id], onDelete: Cascade)
+  dependsOn ProjectTodo @relation("TodoDepsOn", fields: [dependsOnTodoId], references: [id], onDelete: Cascade)
+
+  @@id([todoId, dependsOnTodoId])
+  @@map("todo_dependencies")
+}
+
+/// Hourly per-project digest (fleet/project-digest.service.ts): ONE row per
+/// (userId, projectId) bucket — projectId NULL is the UNGROUPED bucket (chats
+/// with no project). Regenerated by the worker's hourly `project-digest` cron;
+/// the API (GET /fleet/digests) is a READ-ONLY projection of these rows.
+/// `signature` is a sha1 of the digest inputs — an unchanged signature skips
+/// regeneration (no LLM spend on a quiet bucket).
+/// NOTE: Postgres treats NULLs as distinct, so @@unique([userId, projectId])
+/// does NOT dedupe the ungrouped bucket — a hand-written partial unique index
+/// in the migration does:
+///   "project_digests_userId_ungrouped_key" ON ("userId") WHERE "projectId" IS NULL
+model ProjectDigest {
+  id             String   @id @default(uuid())
+  userId         String
+  projectId      String?  // null = the UNGROUPED bucket
+  status         String   @default("idle") // blocked | needs_attention | on_track | idle
+  summary        String   @default("") @db.Text
+  attentionItems Json     @default("[]")
+  stats          Json     @default("{}")
+  /// Project Pulse (owner 2026-09-04): per-goal deterministic progress facts —
+  /// DigestGoalProgress[] (title, todosDone/Total, blockedCount, trailing
+  /// 24h/7d completions, honest computed ETA). [] = no active/blocked goals.
+  goalProgress   Json     @default("[]")
+  /// Project-level ETA rollup (DigestEtaSummary) — null when no goals tracked.
+  etaSummary     Json?
+  /// Program-truth reader (remediation P7 G16): the project's
+  /// .digby/rules/00-current-state.md read from the bare MIRROR's default
+  /// branch at digest build (bounded 4k, cached 30 min, fail-open null).
+  programState   String?  @db.Text
+  signature      String?
+  windowStart    DateTime
+  windowEnd      DateTime
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user    User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project CrossModelProject? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, projectId])
+  @@index([userId, updatedAt])
+  @@map("project_digests")
+}
+
+/// P7 (S1b): a long-lived EXTERNAL resource a lane is responsible for watching
+/// (GPU reservation, training box, paid sandbox…). The lane observes it via the
+/// observe_resource platform tool (stamps lastObservedAt from a run receipt);
+/// the attention-watchdog sweep alarms the owner (Telegram + supervisor note,
+/// deduped 6h) when lastObservedAt ages past maxUnobservedMinutes or the
+/// reservation ends within 24h. SOFT refs only (the PendingConfirmation
+/// orphan-tolerance argument): the money-clock must keep ticking visibly even
+/// after its project/chat is deleted.
+model WatchedResource {
+  id                   String    @id @default(uuid())
+  userId               String
+  projectId            String?
+  label                String
+  usdPerHour           Float?
+  reservationEndsAt    DateTime?
+  maxUnobservedMinutes Int
+  lastObservedAt       DateTime?
+  notes                String?   @db.Text
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([projectId])
+  @@map("watched_resources")
+}
+
+/// P7 (S1b): durable training artifacts (checkpoint | dataset | eval | model |
+/// other) with a verify_durable stamp — the coding doctrine refuses
+/// release/teardown of a watched resource until the artifacts it produced
+/// verify durable. Soft refs, same orphan-tolerance as WatchedResource.
+model TrainingArtifact {
+  id                String    @id @default(uuid())
+  userId            String
+  projectId         String?
+  kind              String // 'checkpoint' | 'dataset' | 'eval' | 'model' | 'other'
+  label             String
+  uri               String
+  sha               String?
+  bytes             Float? // exact for any real file size (< 2^53)
+  durableVerifiedAt DateTime?
+  runId             String? // soft ref — the registering agent_runs row
+  createdAt         DateTime  @default(now())
+
+  @@index([userId])
+  @@index([projectId])
+  @@map("training_artifacts")
+}
+
+/// Alertmanager-style silence for ONE digest attention item (fleet.service
+/// digestAttentionItemKey): `itemKey` = "{kind}:{first ref id | title}" — stable
+/// across hourly digest regenerations while the underlying condition persists.
+/// snoozeUntil NULL = acknowledged indefinitely; a future timestamp = snoozed
+/// (the item resurfaces once it lapses). The hourly project-digest sweep prunes
+/// rows older than 30 days.
+model DigestItemAck {
+  id          String    @id @default(cuid())
+  userId      String
+  itemKey     String
+  snoozeUntil DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemKey])
+  @@map("digest_item_acks")
+}
+
+model TelegramLink {
+  id             String   @id @default(cuid())
+  userId         String   @unique
+  chatId         String   @unique          // Telegram chat id (== user id for private chats)
+  telegramUserId String?                    // Telegram user id (from update.message.from.id)
+  username       String?                    // @handle (for display)
+  firstName      String?                    // first name (for display)
+  linkedAt       DateTime @default(now())
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("telegram_links")
+}
+
+/// Per-user Plaid access tokens — encrypted at rest with AES-256-GCM.
+/// Supports Plaid financial data access (accounts, balances, transactions).
+/// Each user can connect multiple bank institutions via Plaid Link.
+model PlaidAccessToken {
+  id              String   @id @default(cuid())
+  userId          String
+  label           String   @default("Default")  // Institution name or custom label
+  accessToken     String   @db.Text             // AES-256-GCM encrypted
+  itemId          String                        // Plaid item ID
+  institutionId   String?                       // Plaid institution ID
+  institutionName String?                       // Bank name (for display)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemId])
+  @@index([userId])
+  @@map("plaid_access_tokens")
+}
+
+/// Admin-configurable key-value settings (e.g. rate limits, feature flags).
+/// Seeded with sensible defaults; editable via the admin panel.
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+
+  @@map("system_settings")
+}
+
+/// Instance-wide web-search provider configuration (ticket 6f4d42f2): the
+/// admin-settable Bright Data credentials that let a self-hosted / Digby Edge
+/// instance run web search WITHOUT env vars — the admin enters the API key in
+/// Admin → Settings → Web search and it is used by the search backend
+/// (search_engine / web_pipe / scrape tools) with env vars still taking
+/// precedence when present. apiKeyEnc is AES-256-GCM at rest via the
+/// coding/credentials.service helpers (key derived from JWT_SECRET) and is
+/// NEVER returned by any API response — reads carry a masked preview only.
+/// provider is a slug ('brightdata' v1) so a second search provider can be
+/// added later without a migration; zone is the Bright Data zone NAME (not a
+/// secret — it is config, like BRIGHTDATA_WEB_UNLOCKER_ZONE in env).
+model SearchProviderConfig {
+  id        String   @id @default(uuid())
+  provider  String   @unique // 'brightdata' (v1) — slug for future providers
+  apiKeyEnc String   @db.Text // encrypted at rest; never returned by any API
+  zone      String?  // Bright Data zone name (default web_unlocker1 at resolve time)
+  enabled   Boolean  @default(true)
+  updatedBy String?  // admin email/id who last saved
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("search_provider_configs")
+}
+
+/// Platform-level integration read-path health (ticket fa956f09, 2026-09-24).
+///
+/// The 2026-09-22 X outage: x_search / x_get_trends served EMPTY results for a
+/// full day while Account → Integrations kept showing X "connected" —
+/// "connected" only checks the per-user OAuth row, and the platform-side read
+/// path (x-mcp → Bright Data gateway / X API) had failed with no state
+/// recorded anywhere. One row per provider holds the read path's LAST outcome
+/// so agents (chat context + tool errors) and the integrations UI can see a
+/// degraded integration instead of silently-empty results.
+///
+/// NOT per-user and NOT on the OAuth token models: X reads are app-level
+/// (shared Bright Data/API credentials), so a user's token row cannot
+/// represent a platform-side outage. Postgres (not a process-local latch)
+/// because reads execute in the WORKER process while /x/status is served by
+/// WEB — the row is the shared state both see.
+model IntegrationHealth {
+  id           String    @id @default(cuid())
+  provider     String    @unique // "x" | future: "slack", "asana", ...
+  status       String // "ok" | "fail" — the read path's LAST recorded outcome
+  lastError    String?   @db.Text // short reason, e.g. "x-mcp error -32601: gateway timeout"
+  lastErrorAt  DateTime?
+  lastSuccessAt DateTime?
+  failureCount Int       @default(0) // consecutive failures; resets on the next success
+  updatedAt    DateTime  @updatedAt
+
+  @@map("integration_health")
+}
+
+/// Persistent application error/warning log.
+/// Written by a custom Winston transport so errors survive container restarts.
+/// Queryable via GET /api/crossmodel/admin/error-logs (admin only).
+model AppErrorLog {
+  id        String   @id @default(uuid())
+  level     String   // "error" | "warn"
+  message   String   @db.Text
+  stack     String?  @db.Text
+  context   Json?    // { url, method, userId, statusCode, ... }
+  source    String?  // e.g. "error-handler", "uncaughtException", module name
+  createdAt DateTime @default(now())
+
+  @@index([level, createdAt])
+  @@index([createdAt])
+  @@map("app_error_logs")
+}
+
+/// Unified loop telemetry (audit roadmap #12): one row per counter/measurement
+/// event emitted by the agentic loop — guard strikes/misses, wake scheduling
+/// outcomes, per-run token/dollar spend, UX beacons, verify-queue waits.
+/// Written ONLY via recordLoopMetric() (platform/loop-metrics.service.ts —
+/// fire-and-forget, batched, never throws); sessionId/runId are SOFT refs by
+/// design (telemetry must survive its subject being GC'd — receipts pattern).
+/// Read via GET /api/crossmodel/admin/loop-metrics; 30d retention
+/// (sweepLoopMetrics).
+model LoopMetric {
+  id        String   @id @default(uuid())
+  kind      String // LOOP_METRIC_KINDS: guard_strike | guard_miss | wake_* | run_spend | run_tokens_* | ux_beacon | verify_queue_wait
+  sessionId String? // soft ref — chat/coding session id
+  runId     String? // soft ref — agent_runs.id / usage runId
+  value     Float? // the measurement (tokens, usd, ms, count-weight); null = pure counter
+  unit      String? // 'tokens' | 'usd' | 'ms' | ... (kind-dependent)
+  meta      Json? // { model?, reason?, ... } — small, kind-dependent
+  createdAt DateTime @default(now())
+
+  @@index([kind, createdAt])
+  @@index([createdAt])
+  // FO firing 32 (iter 22, 2026-09-27): supervisor-turn-noop / wake-triage v3
+  // facts read loop_metrics by sessionId+createdAt — unindexed it was a 7.6 s
+  // cold backward scan (prod EXPLAIN 2026-09-27: Rows Removed by Filter 60591,
+  // 174 MB table) against a 1500 ms facts deadline, so the purpose timed out
+  // on EVERY firing (4/4) and was inert in shadow. Additive only.
+  @@index([sessionId, createdAt])
+  // FO firing 33 (iter 23, 2026-09-27, Fleet-Supervisor-wake): the 2-col index
+  // above was necessary but NOT sufficient — the facts query also filters
+  // kind IN (supervisor_noop, supervisor_action, supervisor_note), and with
+  // kind unindexed the composite path needs a heap fetch per row. The Fleet
+  // Supervisor's own chat is the noisiest writer in the fleet (planner MCV:
+  // ~22.7k rows = 5.9% of the table; 16.8k rows in any 7-day window), so the
+  // planner correctly priced the 2-col path ABOVE the 1.5 s createdAt backward
+  // scan (live EXPLAIN 2026-09-27 post-88faf443: still createdAt_idx BACKWARD,
+  // 1559 ms actual, Rows Removed by Filter 60150 — every strike class remained)
+  // while quiet chats DID use the index (idx_scan 77). The 3-col index makes
+  // both equalities index conds and both selected columns (kind, createdAt)
+  // index-resident: the read becomes a ~741-entry index-only walk. Additive.
+  @@index([sessionId, kind, createdAt])
+  @@map("loop_metrics")
+}
+
+// Analytics data can be tracked through Activity model or separately
+model AnalyticsEvent {
+  id         String   @id @default(uuid())
+  eventType  String
+  eventData  Json
+  userId     String?
+  sessionId  String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([eventType, createdAt])
+  @@index([userId])
+  @@map("analytics_events")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FIRST-PARTY VISITOR ANALYTICS (owner 2026-10-07: "activity on users / api
+// cost / ip addressed or unique hash … from what traffic source ie google ads
+// facebook and the user flow"). Accessed ONLY through
+// backend/src/modules/crossmodel/visitors/. NEVER a raw IP (an HMAC hash),
+// never a Digby Kids session. Kill switch VISITOR_ANALYTICS_DISABLED=1.
+// The legacy analytics_events table (raw ipAddress) is NOT reused.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// One row per browser — the random first-party visitor id (`dg_vid`, 13 months).
+model Visitor {
+  id          String   @id // the client-minted uuid
+  ipHash      String? // HMAC-SHA256(client ip, VISITOR_HASH_SECRET) — 32 hex; never the raw ip
+  firstTouch  Json? // first landing's attribution — set once, NEVER overwritten
+  lastTouch   Json? // most recent landing that carried a source (utm / click id / external referrer)
+  channel     String? // first-touch channel (visitors/attribution.ts classifyChannel)
+  campaign    String? // first-touch utm_campaign
+  lastChannel String? // last-touch channel
+  firstSeen   DateTime @default(now())
+  lastSeen    DateTime @default(now())
+  uaFamily    String? // coarse "browser/os/device" (e.g. "chrome/macos/desktop") — never the raw user agent
+  isBot       Boolean  @default(false) // suspected automation (navigator.webdriver) — kept, excluded from stats
+
+  links  VisitorLink[]
+  events VisitEvent[]
+
+  @@index([firstSeen])
+  @@index([lastSeen])
+  @@index([channel, firstSeen])
+  @@map("visitors")
+}
+
+/// visitor → user stitching (one user may have several browsers; one browser may see several accounts).
+model VisitorLink {
+  visitorId String
+  userId    String
+  linkedAt  DateTime @default(now())
+
+  visitor Visitor @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([visitorId, userId])
+  @@index([userId, linkedAt])
+  @@map("visitor_links")
+}
+
+/// One funnel / navigation event. `source` 'client' (the web capture) | 'server' (authoritative backend hooks).
+model VisitEvent {
+  id             String   @id @default(uuid())
+  visitorId      String?
+  userId         String?
+  type           String // page_view | signup_view | login_view | signup_cta | signup_complete | login | first_chat | chat_sent | dig_deeper | coding_session_started
+  path           String? // normalized (no query string; ids → :id)
+  props          Json?
+  source         String   @default("client")
+  dedupeKey      String?  @unique // once-per-subject types (signup_complete, first_chat): "<type>:u:<userId>" | "<type>:v:<visitorId>"
+  spendSessionId String? // the run_spend sessionId this turn bills to (a guest's "anon-<session>") — guest cost → visitor
+  createdAt      DateTime @default(now())
+
+  visitor Visitor? @relation(fields: [visitorId], references: [id], onDelete: Cascade)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([visitorId, createdAt])
+  @@index([userId, createdAt])
+  @@index([type, createdAt])
+  @@index([spendSessionId])
+  @@index([createdAt])
+  @@map("visit_events")
+}
+
+/// Daily per-subject API spend, rolled up from loop_metrics run_spend (which keeps only 30 days) so the
+/// per-user "all time" cost survives the loop_metrics sweep. subjectKind: user | visitor | guest | chatless |
+/// decision_gate | other; subjectId '' for the buckets. Rebuilt per day by the visitor-analytics cron.
+model SpendDailyRollup {
+  day         DateTime @db.Date
+  subjectKind String
+  subjectId   String   @default("")
+  usd         Float    @default(0)
+  runs        Int      @default(0)
+  updatedAt   DateTime @default(now())
+
+  @@id([day, subjectKind, subjectId])
+  @@index([subjectKind, subjectId])
+  @@map("spend_daily_rollups")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MEMORY DOMAIN — split-ready module boundary (2026-07-10)
+// These tables are accessed ONLY through backend/src/modules/crossmodel/memory/
+// and never joined against app-core tables in hot paths, so the whole domain
+// can later move to a dedicated Postgres with a connection-string change.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Namespaced JSONB key-value store for memory/context state (user profile state,
+/// project context/settings, chat thread state, feed state).
+/// Replaces the LangGraph PostgresStore — SAME physical table ("store"), same
+/// ":"-joined namespace encoding, so all pre-existing production rows are
+/// read/written unchanged. Runs on the shared Prisma pool (the old store kept
+/// its own separate pg pool).
+model ContextStoreEntry {
+  namespacePath String    @map("namespace_path")
+  key           String
+  value         Json
+  createdAt     DateTime? @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime? @default(now()) @map("updated_at") @db.Timestamptz(6)
+  expiresAt     DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  @@id([namespacePath, key])
+  @@map("store")
+}
+
+/// One row per stored user-memory fact, embedded for semantic retrieval.
+/// The user_memory.facts JSON blob remains the CANONICAL store (all guardrails —
+/// rejections, name rules, dream consolidation — operate on it); these rows are a
+/// derived retrieval index, reconciled fire-and-forget after every blob write and
+/// lazily backfilled on first retrieval. Retrieval = top-K cosine (HNSW) + recency,
+/// replacing pure keyword-overlap gating. `embedding` is vector(1536)
+/// (DashScope text-embedding-v4) — written via raw SQL (Prisma can't bind pgvector).
+model UserMemoryFact {
+  id         String   @id @default(uuid())
+  userId     String
+  key        String
+  content    String   @db.Text // "key: value" text that gets embedded
+  embedding  Unsupported("vector(1536)")?
+  lastSeenAt DateTime @default(now()) @db.Timestamptz(6) // bumped only when the fact is added or its value changes
+  createdAt  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@unique([userId, key])
+  @@index([userId])
+  @@map("user_memory_facts")
+}
+
+/// Value history of user-memory facts (2026-10-20). The user_memory.facts blob stays
+/// CANONICAL; every blob writer appends here after its write (memory/fact-versions.ts):
+/// one row per value a key has held — validTo NULL = the current value. A changed value
+/// closes the open row (endedReason 'replaced', replacedBy = the new value) instead of
+/// overwriting it; a dream merge closes it as 'consolidated' with replacedBy `key:<into>`.
+/// A user-intent forget (forget_fact, the Memory tab delete, the extractor's grounded
+/// remove/reject, clear memory) DELETES the key's rows — forgotten means gone.
+/// FK-less like user_memory_facts (account deletion cleans it up manually).
+model UserMemoryFactVersion {
+  id           String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId       String
+  key          String
+  value        String
+  source       String // turn | rebuild | dream | api | tool | profile | backfill | …
+  sourceChatId String?
+  validFrom    DateTime  @default(now()) @db.Timestamptz(6)
+  validTo      DateTime? @db.Timestamptz(6) // NULL = the current value
+  endedReason  String? // 'replaced' | 'consolidated'
+  replacedBy   String? // the new value, or `key:<newKey>` when merged into another key
+  createdAt    DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([userId, key, validTo])
+  @@index([userId, validFrom])
+  @@map("user_memory_fact_versions")
+}

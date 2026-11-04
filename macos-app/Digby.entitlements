@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Ticket 61823826: the missing half of the mic permission fix (8b13ec2b
+       made the request FIRE; the hardened runtime was silently denying it).
+       Notarization requires signing with the runtime option (hardened
+       runtime), and under the hardened runtime microphone capture
+       additionally requires this entitlement: without it
+       AVAudioApplication.requestRecordPermission (macOS 14+) and
+       AVCaptureDevice.requestAccess(for: .audio) return granted=false
+       IMMEDIATELY, with no TCC consent dialog, no entry under System
+       Settings, Privacy and Security, Microphone, and tccutil reset is a
+       no-op because no TCC record ever exists. That is exactly the AUTO_DENY
+       the owner reproduced on both Macs (the in-app Microphone Needed alert
+       fires, proof the request ran, while the TCC prompt never appears).
+       Differential: Accessibility, Screen Recording and Full Disk Access are
+       pure-TCC permissions and their prompts DID appear; microphone is the
+       only one of the set that is also entitlement-gated, and the only one
+       that never prompts. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+</dict>
+</plist>

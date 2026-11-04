@@ -1,0 +1,21 @@
+# Self-host auto-update for the digby stack. Install at
+# /etc/systemd/system/digby-selfhost-update.service on the self-host box.
+# Pairs with digby-selfhost-update.timer.
+[Unit]
+Description=Digby self-host auto-update (git pull + compose rebuild)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Path to the digby/crossmodel repo checkout on THIS host.
+Environment=DIGBY_REPO_DIR=/opt/digby
+Environment=DIGBY_BRANCH=main
+# Uncomment if you run optional compose profiles (e.g. MCP servers):
+#Environment=DIGBY_COMPOSE_PROFILES=mcp
+# Uncomment to hard-reset a dirty checkout instead of bailing:
+#Environment=DIGBY_UPDATE_FORCE=1
+ExecStart=/opt/digby/scripts/selfhost/auto-update.sh
+# Frontend Next.js builds can take a while on small boxes.
+TimeoutStartSec=3600

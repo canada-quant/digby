@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key>
+  <string>Digby</string>
+  <key>CFBundleDisplayName</key>
+  <string>Digby</string>
+  <key>CFBundleIdentifier</key>
+  <string>__BUNDLE_ID__</string>
+  <key>CFBundleExecutable</key>
+  <string>Digby</string>
+  <key>CFBundleIconFile</key>
+  <string>Digby</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>__VERSION__</string>
+  <key>CFBundleVersion</key>
+  <string>__VERSION__</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.productivity</string>
+  <key>NSHumanReadableCopyright</key>
+  <string>© Digby</string>
+  <!-- Voice conversation mode (push-to-talk): native SFSpeechRecognizer STT —
+       the WKWebView getUserMedia path is why web voice input stays disabled
+       in this shell (ticket 00504a77); TTS rides the web app's Read-aloud. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Digby uses the microphone for push-to-talk voice messages.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Digby uses speech recognition to turn your push-to-talk voice messages into text.</string>
+</dict>
+</plist>

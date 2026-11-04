@@ -1,0 +1,24 @@
+{
+  "name": "github-mcp",
+  "version": "1.0.0",
+  "description": "GitHub MCP server for Digby — exposes repos, issues, PRs, code search, file operations",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@octokit/rest": "^21.0.0",
+    "express": "^4.21.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,6 @@
+# Keep the docker build context lean: nothing here is COPYied into the image
+# (the Dockerfile copies package*.json, tsconfig.json and src/ only), and a
+# worktree/checkout-local node_modules or dist would bloat every context
+# upload on CI and the deploy boxes.
+node_modules
+dist

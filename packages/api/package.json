@@ -1,0 +1,15 @@
+{
+  "name": "@digby/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Typed Digby API client (pure TypeScript, injectable fetch) shared by the web client and mobile apps.",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  }
+}

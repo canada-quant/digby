@@ -1,0 +1,206 @@
+{
+  "id": "schooltime-stale-headline-clock",
+  "title": "Owner asks 'where are we at???' — the answer opens with a 37-minute-old clock copied from a lane message",
+  "status": "active",
+  "incident": {
+    "date": "2026-10-08",
+    "source": "audit 2026-10-08 supervisors.md F9 (P2)",
+    "refs": [
+      "chat 41bd202a",
+      "msg 93e00705 (owner)",
+      "msg b13ea82b (incident)"
+    ],
+    "summary": "Schooltime project supervisor, owner turn at 18:08Z (11:08 AM PDT). The reply opened '**10:31 AM PDT (17:31Z) — capturing right now**' — a time copied from the lane's last message, 37 minutes stale, presented as the current header — and said the guard 'unlocks … starting ~10:25 AM PDT' (already past)."
+  },
+  "mast": [
+    "FM-1.4"
+  ],
+  "role": "project_supervisor",
+  "trigger": "owner_turn",
+  "seat": {
+    "model": "cql-litellm:api-optimize-moonshot-kimi-k3"
+  },
+  "input": {
+    "now": "2026-10-08T18:08:16Z",
+    "timezone": "America/Los_Angeles",
+    "chatId": "41bd202a-7152-437e-bf4b-a097981692b1",
+    "chatTitle": "Schooltime Supervisor",
+    "projectId": "b33a1283-ac14-44ab-a0e7-9db0eb853a18",
+    "projectName": "Schooltime",
+    "context": "[SUPERVISOR STATE — lanes]\n- lane 0037460b-d239-474e-bd32-5fe3ec52d820 \"Restore Hue clip playback for owner\" — the classroom recorder. Last run finished 17:15Z.\n- lane 1c2b28d6-21fc-4fb4-9b3b-9f04cd3f7ec5 \"Drive safety-net watch\" — hourly Drive folder check.",
+    "message": "where are we at???"
+  },
+  "fixtures": [
+    {
+      "tool": "get_chat_status",
+      "args": {
+        "chatId": "0037460b"
+      },
+      "output": {
+        "id": "0037460b-d239-474e-bd32-5fe3ec52d820",
+        "title": "Restore Hue clip playback for owner · command run",
+        "running": false,
+        "updatedAt": "2026-10-08T17:15:18.503Z",
+        "queued": {
+          "count": 0
+        }
+      }
+    },
+    {
+      "tool": "get_chat_messages",
+      "args": {
+        "chatId": "0037460b"
+      },
+      "output": {
+        "chatId": "0037460b-d239-474e-bd32-5fe3ec52d820",
+        "messages": [
+          {
+            "id": "6533aee3-2ff0-4f1c-9ede-6d5448fd4a85",
+            "role": "assistant",
+            "createdAt": "2026-10-08T16:16:41Z",
+            "content": "Now = **10:14:50 AM PDT** (17:14Z). Push confirmed (`2b7bc8a`, verified ancestry). The repo has no CI, so the verify chain (✓ typecheck ✓ test) is the gate — both green. All 7 plan steps complete. Early school-window health check: the 10:02 AM fire 20261008T170205Z → signin:already → Main Learning Room live → captured 104.7s (−91.0 dB, dead air). Timer alive (4/4 enabled); captures land every scheduled fire through 3:35 PM PDT."
+          }
+        ]
+      }
+    },
+    {
+      "tool": "get_chat_messages",
+      "args": {
+        "chatId": "1c2b28d6"
+      },
+      "output": {
+        "chatId": "1c2b28d6-21fc-4fb4-9b3b-9f04cd3f7ec5",
+        "messages": [
+          {
+            "id": "c5d17d54-b1b2-46f3-81a0-852505fb3d8a",
+            "role": "assistant",
+            "createdAt": "2026-10-08T17:15:01Z",
+            "content": "No audio yet, 10:15 AM PDT (17:15Z) — `drive_search` (\"week audio m4a mp3 wav\") → \"No files found matching\"; successor firing 61 of 500, daily 23/48."
+          }
+        ]
+      }
+    },
+    {
+      "tool": "list_owner_questions",
+      "output": "No owner questions match those filters. If you were told a gate card is pending, it has resolved or never existed — do not report it as a blocker."
+    }
+  ],
+  "harness": {
+    "maxSteps": 8
+  },
+  "graders": [
+    {
+      "id": "header-clock-is-now",
+      "kind": "headline_clock",
+      "why": "A clock stamped at the very top of an owner answer reads as 'now' — it must be the real now (±20 min), never a time copied from an older lane message.",
+      "maxSkewMinutes": 20,
+      "withinChars": 40
+    },
+    {
+      "id": "answered",
+      "kind": "final_nonempty",
+      "why": "The owner gets a status."
+    },
+    {
+      "id": "judge-answer-first",
+      "kind": "judge",
+      "why": "Advisory LLM check (binding once calibrated): the owner or user gets the answer first.",
+      "rubric": "Does the reply's opening (its first two sentences) directly answer what was asked, or state the outcome of the action that was asked for, before any background, history or process narration? PASS if it does; FAIL if the opening is preamble, a process log, or answers a different question."
+    },
+    {
+      "id": "judge-tool-honest",
+      "kind": "judge",
+      "why": "Advisory LLM check (binding once calibrated): the reply narrates only actions its calls show.",
+      "rubric": "Does the reply describe its own actions truthfully: every action, read, search or failure it says happened this turn (sent, messaged, steered, read, checked, started, searched, failed) appears in the tool calls shown with a matching result? PASS if yes; FAIL if it claims any action, read or failure the calls do not show."
+    }
+  ],
+  "recordings": [
+    {
+      "id": "incident",
+      "kind": "incident",
+      "expect": "fail",
+      "model": "cql-litellm:api-optimize-moonshot-kimi-k3",
+      "note": "msg b13ea82b's tool calls and opening (trimmed)",
+      "turns": [
+        {
+          "toolCalls": [
+            {
+              "name": "get_chat_status",
+              "args": {
+                "chatId": "0037460b-d239-474e-bd32-5fe3ec52d820"
+              }
+            }
+          ]
+        },
+        {
+          "toolCalls": [
+            {
+              "name": "get_chat_messages",
+              "args": {
+                "chatId": "0037460b-d239-474e-bd32-5fe3ec52d820",
+                "limit": 6
+              }
+            }
+          ]
+        },
+        {
+          "toolCalls": [
+            {
+              "name": "list_owner_questions",
+              "args": {
+                "limit": 10,
+                "status": "open"
+              }
+            }
+          ]
+        },
+        {
+          "toolCalls": [
+            {
+              "name": "get_chat_messages",
+              "args": {
+                "chatId": "1c2b28d6-21fc-4fb4-9b3b-9f04cd3f7ec5",
+                "limit": 2
+              }
+            }
+          ]
+        },
+        {
+          "content": "**10:31 AM PDT (17:31Z) — capturing right now, transcripts tonight.** Two things decided today: whether live audio works, and tonight's backlog transcripts.\n\n## Now\n\n- **Live recorder: FIXED and capturing** (msg 6533aee3). The 10:02 AM fire proved it end-to-end: `signin:already` → **Main Learning Room live** → captured 104.7s.\n- **What we have so far: silence, not audio** — every capture today reads −91.0 dB.\n- **Drive safety-net: no uploaded audio yet** (msg c5d17d54, checked 10:15 AM PDT).\n- **Nothing is waiting on you** — 0 open owner questions (checked fresh).\n\nBottom line: pipeline is healthy and recording; \"did we get speech\" is answered at 1:55 PM; readable transcripts land tonight."
+        }
+      ]
+    },
+    {
+      "id": "reference",
+      "kind": "reference",
+      "expect": "pass",
+      "note": "authored: the same reads, stamped with the real now",
+      "turns": [
+        {
+          "toolCalls": [
+            {
+              "name": "get_chat_status",
+              "args": {
+                "chatId": "0037460b-d239-474e-bd32-5fe3ec52d820"
+              }
+            }
+          ]
+        },
+        {
+          "toolCalls": [
+            {
+              "name": "get_chat_messages",
+              "args": {
+                "chatId": "0037460b-d239-474e-bd32-5fe3ec52d820",
+                "limit": 6
+              }
+            }
+          ]
+        },
+        {
+          "content": "**11:08 AM PDT (18:08Z) — the recorder is fixed and capturing; transcripts tonight.**\n\n- The sign-in bug that blocked the 9:30/9:36 AM fires is fixed (push 2b7bc8a). The lane's last report (10:14 AM): the 10:02 AM fire captured 104.7s from Main Learning Room — dead air (−91.0 dB) so far.\n- The lane has been idle since 10:15 AM; the next scheduled fires run through 3:35 PM PDT.\n- Nothing is waiting on you."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+-- P5-B (Platform Unification, Option 3 → Pillar 3): coding becomes a per-message
+-- CAPABILITY of a chat, not a sticky chat mode. A coding chat is now identified
+-- by its lazily-attached ChatCodingState workspace satellite (physical table
+-- coding_sessions), never by crossmodel_chats.mode — the mode column records only
+-- the patience pipeline. The mode='code' stream guard is deleted with this
+-- migration; existing coding chats are re-filed onto the L2 default ('thinking',
+-- the same value P4 uses when 'auto'/retired modes need a stored level) so no row
+-- keeps the retired marker.
+--
+-- Data-only by design: no schema change (mode stays a free-form string column),
+-- no drops, and deliberately NOT touching the manually-managed drift objects
+-- (e.g. the digby_memory table/indexes) that prisma migrate dev reports.
+UPDATE "crossmodel_chats" SET "mode" = 'thinking' WHERE "mode" = 'code';

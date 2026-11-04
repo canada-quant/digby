@@ -1,0 +1,34 @@
+-- PRE-LOGIN HELPER (ticket c468f922) — the (d) capability of the owner's
+-- 2026-11-01 ruling on card oq_96b31bed: "(d) + (b) together — recommended".
+--
+-- WHAT THIS COLUMN ANSWERS. Option (d) is a privileged helper that buys the
+-- ABILITY to render and post input at the macOS login window — capability
+-- only. Option (b) keeps the "Unattended / Autonomous use" preset as the
+-- default posture so a device does not idle to a lock screen at all. Option
+-- (a) — a helper that also holds the login password in the root Keychain —
+-- was explicitly REJECTED.
+--
+-- WHY A COLUMN AND NOT A BOOLEAN. A lane deciding whether it can dispatch to a
+-- locked device needs three distinct facts, and collapsing them is the bug
+-- class this ticket exists to end: (1) is the helper INSTALLED, (2) is it
+-- actually LOADED in the system launchd domain (a plist on disk that launchd
+-- never bootstrapped is inert), and (3) did the agent's live probe find a
+-- reason it cannot work — an unsigned binary, a missing program, or a helper
+-- that claims custody of an OS credential (an owner-ruling breach that must
+-- read as blocked, never ready). So this stores
+-- {installed, loaded, blockers[]} — matching the shape of `unattended` and
+-- `remote_access` above, and normalized by prelogin-helper.ts with a CLOSED
+-- blocker vocabulary so an agent can never inject arbitrary tokens.
+--
+-- ABSENT-NEVER-CLOBBERS. null means "a legacy agent never advertised this",
+-- which the verdict renders as `unavailable` — unknown is never ready. A poll
+-- that omits the param leaves the stored row untouched.
+--
+-- NO CREDENTIAL COLUMN, EVER. There is deliberately no field here for a
+-- password, a Keychain item, a token or a hint: option (d) never creates one,
+-- so the revoke path has nothing to shred. Adding such a column would reverse
+-- the owner's ruling; prelogin-credential-model.c468f922.test.ts and the
+-- credential-custody blocker exist to fail that change instead of shipping it.
+
+-- AlterTable
+ALTER TABLE "imessage_agents" ADD COLUMN "prelogin_helper" JSONB;

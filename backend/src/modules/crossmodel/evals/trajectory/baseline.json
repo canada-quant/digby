@@ -1,0 +1,21 @@
+{
+  "passing": [
+    "checker-contradicts-unread-evidence",
+    "fleet-autonomy-audit-misreads",
+    "fleet-wake-phantom-dispatch",
+    "guest-phantom-search-failure",
+    "schooltime-spliced-chat-id",
+    "schooltime-stale-headline-clock",
+    "schooltime-steering-now-no-send",
+    "stanne-fleet-label-from-memory",
+    "stanne-switch-model-unsourced",
+    "supervisor-cross-project-directive",
+    "supervisor-owner-wait-inside-grant",
+    "supervisor-repairs-parked-wake",
+    "supervisor-stale-relay-open-question",
+    "supervisor-steers-busy-lane-as-stuck"
+  ],
+  "noiseCases": 1,
+  "measuredAt": "2026-10-09",
+  "note": "Measured 2026-10-08/09 on the prod seats (glm-5.3 / kimi-k3 / glm-5.3-flash, effort high): three k=3 live runs 37860938118 / 37864168984 / 37868336394 scored pass^3 17 / 20 / 20 of 22 ($34 total). These 14 cases passed pass^3 in ALL three runs; the nightly run fails when more than noiseCases of them lose pass^3. FLAKY on today's seats (failed pass^3 in at least one run \u2014 real behaviour gaps, tracked but not gating): canlaw-readback-without-reads, cloudflare-credential-denied, fleet-board-status-from-memory, fleet-relays-false-unpushed-note, fleet-renotifies-dismissed-question, stanne-phantom-message-tt-rd, supervisor-lane-halt-as-owner-decision, ttrd-archived-search-overclaim. Re-measure (3 runs) after a seat change, and move a flaky case here once a fix makes it pass pass^3 three runs in a row."
+}

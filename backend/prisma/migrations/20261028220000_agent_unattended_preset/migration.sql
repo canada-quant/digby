@@ -1,0 +1,34 @@
+-- "Unattended / Autonomous use" device preset — the fleet-side verdict row
+-- (2026-10-28, owner request on card oq_f7955582: "how can you fix this for all
+-- mac and windows clients to give full remote login permissions etc as this
+-- will be a requirement for most users to use their remote devices
+-- autonomously").
+--
+-- THE PROBLEM: macOS (and Windows) put the login / lock screen BELOW every
+-- permission the agent holds, so a device that reboots or locks strands the
+-- fleet behind a screen only a human finger can clear. Three owner cards in one
+-- day asked for that same physical act. A lane had no way to see, from the
+-- device list, whether the machine it wanted could ever have been configured to
+-- stay signed in — so it filed "please unlock <device>" against devices that
+-- were fixable in one setting.
+--
+-- The agents now detect the facts on the box (fdesetup / defaults / pmset on
+-- macOS; BitLocker / Credential Guard / Hello policy / Winlogon + the LSA
+-- secret on Windows) and advertise a closed token vocabulary on every poll:
+--   ?unattended=on,ok            — the preset is on and everything holds
+--   ?unattended=on,filevault     — on, but FileVault makes auto-login impossible
+--   (param absent)               — a pre-2026-10-28 agent, or the preset is off
+--                                 (it is opt-in per device, off by default)
+--
+-- Stored shape: {"enabled":bool,"blockers":["filevault",…]} with blockers in the
+-- backend's BLOCKER_PRIORITY order so the deciding reason is first.
+--
+-- NULL = a legacy agent that never advertised — the fleet shows "not
+-- configured" (an honest unknown, never a false ready). Absent params never
+-- clobber the stored value (the same contract as platform/capabilities/
+-- permissions). NO SECRET EVER LANDS HERE: the account password the macOS
+-- preset needs lives only in /etc/kcpassword on the device (root-only), and the
+-- Windows one in the LSA secret store — neither is transmitted, and the token
+-- vocabulary has no field that could carry one.
+
+ALTER TABLE "imessage_agents" ADD COLUMN "unattended" JSONB;

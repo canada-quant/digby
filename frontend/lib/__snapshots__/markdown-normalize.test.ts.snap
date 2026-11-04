@@ -1,0 +1,17 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`normalizeMarkdownForRender > snapshot: degraded long-conversation answer 1`] = `
+"Perfect — here it is:
+
+## Meal Plan (2 nights)
+
+## Grocery List
+**Cooler:**
+
+- 1 lb ground beef
+- butter
+**Dry bin:**
+
+- foil
+- bread"
+`;

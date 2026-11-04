@@ -1,0 +1,9 @@
+# Dependencies (workspace hoists to the root, but keep per-package ignores so
+# a copied-out package never commits its own tree)
+node_modules/
+
+# TypeScript
+*.tsbuildinfo
+
+# Build output
+dist/

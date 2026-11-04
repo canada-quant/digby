@@ -1,0 +1,11 @@
+-- Opt-in fleet supervision (ticket c992d730): the owner CHOOSES which projects
+-- sit under fleet-supervisor/management supervision instead of everything
+-- automatically (alerts about retired projects were the trigger).
+--   crossmodel_projects.supervised — true (default) = supervised; false =
+--     excluded from the AUTOMATIC supervision surfaces (wildcard hook fan-out,
+--     hourly project digests, attention-watchdog alerts). Explicitly-wired
+--     DIRECT event hooks and user-action items (ask_user, staged confirmations)
+--     are never filtered by this flag.
+-- NOT NULL DEFAULT true backfills every existing project as supervised →
+-- zero behavior change until a project is explicitly toggled off.
+ALTER TABLE "crossmodel_projects" ADD COLUMN "supervised" BOOLEAN NOT NULL DEFAULT true;

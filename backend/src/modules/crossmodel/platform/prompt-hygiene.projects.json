@@ -1,0 +1,17 @@
+{
+  "_doc": "Live project names captured for the prompt-hygiene lint (platform/prompt-hygiene.test.ts) — any of these inside a GENERIC prompt block fails CI. Refresh from prod (read-only): scripts/framework-audit/prodq.sh with `SELECT DISTINCT name FROM crossmodel_projects WHERE \"archivedAt\" IS NULL AND \"isUserSpace\" = false` — keep names ≥ 3 chars, never add a generic English word (a name like 'inference' would convict the word). The static incident list lives in prompt-hygiene.ts STATIC_PROJECT_DENYLIST.",
+  "capturedAt": "2026-09-27",
+  "captureNote": "seeded from the 2026-09-27 inventory (design PROMPT_ARCHITECTURE_2026-09-27.md §4) — this session had no prod read; the next framework-audit pass refreshes it",
+  "names": [
+    "CanLaw",
+    "canlegal-bench",
+    "canlegal-benchmark",
+    "spark-cluster",
+    "dflash2",
+    "One Piece TCG",
+    "Teranet",
+    "Mayfair",
+    "tt-rd",
+    "IDEaS"
+  ]
+}

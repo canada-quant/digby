@@ -1,0 +1,29 @@
+{
+  "_doc": "Prompt-hygiene allowlist (platform/prompt-hygiene.ts). Each row allows ONE token in generic prompt text, with a reason and an EXPIRY the lint enforces (an expired row fails CI). The allowlist may never name a project. Mirror every row with a `// hygiene-allow:` comment at the source line.",
+  "entries": [
+    {
+      "token": "05:07Z",
+      "reason": "machine-wake preamble rule 8: taught future-clock LABEL vocabulary ('next fire 05:07Z') — a format example the action-verifier drift guards run through the detectors (platform/action-verifier.test.ts pins the exact vocabulary); not an incident date",
+      "expires": "2027-03-31",
+      "sources": ["machine-wake preamble"]
+    },
+    {
+      "token": "05:30Z",
+      "reason": "machine-wake preamble rule 8: taught label 'ETA ~05:30Z' — format example, see 05:07Z",
+      "expires": "2027-03-31",
+      "sources": ["machine-wake preamble"]
+    },
+    {
+      "token": "17:29Z",
+      "reason": "machine-wake preamble rule 8: taught labels 'hourly tick 17:29Z' / '17:29Z future' — format example, see 05:07Z",
+      "expires": "2027-03-31",
+      "sources": ["machine-wake preamble"]
+    },
+    {
+      "token": "18:00Z",
+      "reason": "machine-wake preamble rule 8: taught label '18:00Z checkpoint' — format example, see 05:07Z",
+      "expires": "2027-03-31",
+      "sources": ["machine-wake preamble"]
+    }
+  ]
+}

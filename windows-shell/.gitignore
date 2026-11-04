@@ -1,0 +1,14 @@
+# Build outputs — the shell is built by CI (windows-latest) and locally via
+# installer/build-installer.sh; nothing compiled belongs in git.
+bin/
+obj/
+publish/
+dist/
+
+# Rider / VS
+.idea/
+.vs/
+*.user
+
+# The .NET SDK installed ad-hoc for a local cross-build (never commit binaries)
+.dotnet/

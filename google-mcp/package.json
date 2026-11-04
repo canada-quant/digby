@@ -1,0 +1,27 @@
+{
+  "name": "google-mcp",
+  "version": "1.0.0",
+  "description": "Google Workspace MCP server for Digby — exposes Gmail, Calendar, Drive, Docs, Sheets tools",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "express": "^4.21.2",
+    "googleapis": "^146.0.0",
+    "marked": "^14.1.4",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.2",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}

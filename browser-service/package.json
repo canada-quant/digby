@@ -1,0 +1,19 @@
+{
+  "name": "digby-browser-service",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hosted hardened browser service (ticket ea3ad8a8): one pinned Chromium, per-session Playwright contexts with persisted cookies/localStorage, loopback/network-internal HTTP API with per-session HMAC tokens.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/server.js",
+    "test": "node --test dist/core.test.js"
+  },
+  "dependencies": {
+    "playwright": "1.55.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  }
+}

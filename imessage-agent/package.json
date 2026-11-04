@@ -1,0 +1,31 @@
+{
+  "name": "digby-imessage-agent",
+  "version": "0.9.19",
+  "description": "Digby macOS iMessage bridge agent — reads & sends iMessages locally and relays to Digby over an outbound long-poll link.",
+  "private": true,
+  "bin": {
+    "digby-agent": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js run",
+    "pair": "node dist/index.js pair",
+    "status": "node dist/index.js status",
+    "test": "npm run build && node --test test/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "allowScripts": {
+    "better-sqlite3": true
+  },
+  "dependencies": {
+    "better-sqlite3": "12.11.1",
+    "playwright": "^1.51.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.10.5",
+    "typescript": "^5.9.3"
+  }
+}

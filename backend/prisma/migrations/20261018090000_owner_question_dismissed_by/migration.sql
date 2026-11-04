@@ -1,0 +1,11 @@
+-- Ticket abca56ce (2026-10-18): KPI re-announcements + dismissal attribution.
+-- This half: WHO dismissed a dismissed owner-question row. Every dismissal
+-- narration (the inbox note, the wake, list_owner_questions, the notify_user
+-- dismissed-refusal) attributed dismissals to "the OWNER" regardless of the
+-- actual caller — the 2026-10-16 specimen: a 15:27Z owner-inbox dismissal was
+-- narrated at 15:28Z as "dismissed as our bug" with no actor, and lanes read
+-- system/supervisor dismissals as the owner's "stop raising it" ruling.
+-- Additive only: one nullable column, no constraint, no backfill (NULL =
+-- pre-column rows; the renderers treat NULL as 'owner' for legacy rows,
+-- preserving every existing sentence).
+ALTER TABLE "owner_questions" ADD COLUMN "dismissedBy" TEXT;

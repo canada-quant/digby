@@ -1,0 +1,653 @@
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+/* 2026-07-13: typography plugin was in package.json but never loaded, so every
+   `prose` class in the app (terms, privacy, profile bios) was silently inert. */
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --base-50: oklch(0.985 0.0013 286.84);
+  --base-100: oklch(0.967 0.0027 286.38);
+  --base-200: oklch(0.92 0.0053 286.32);
+  --base-300: oklch(0.871 0.008 286.29);
+  --base-400: oklch(0.705 0.012 286.07);
+  --base-500: oklch(0.552 0.016 285.94);
+  --base-600: oklch(0.442 0.0147 285.79);
+  --base-700: oklch(0.37 0.012 285.81);
+  --base-800: oklch(0.274 0.008 286.03);
+  --base-900: oklch(0.21 0.0053 285.89);
+  --base-950: oklch(0.141 0.004 285.83);
+  --base-1000: oklch(0.096 0.0027 285.79);
+
+  /* ═══ DIGBY FRONTIER (2026-10-06 redesign) — raw design tokens.
+     Neutral is the default palette; `data-palette="cool"` on <html> opts
+     into the cool set below. The shadcn tokens are REMAPPED onto these (block
+     after `.dark`), so bg-background / text-muted-foreground / border-border
+     follow automatically. Utilities: text-ink / text-ink-2 / text-ink-3,
+     bg-hover / bg-active / bg-bubble / bg-raised / bg-surface / bg-bg-2,
+     border-line / border-line-2, text-ok / bg-warn, bg-send / text-send-ink. */
+  --bg: oklch(1 0 0);
+  --bg-2: oklch(0.985 0 0);
+  --surface: oklch(0.975 0 0);
+  --raised: oklch(1 0 0);
+  --ink: oklch(0.24 0 0);
+  --ink-2: oklch(0.42 0 0);
+  --ink-3: oklch(0.54 0 0);
+  --line: oklch(0.905 0 0);
+  --line-2: oklch(0.83 0 0);
+  --hover: oklch(0.938 0 0);
+  --active: oklch(0.915 0 0);
+  --bubble: oklch(0.94 0 0);
+  --ok: oklch(0.5 0.12 152);
+  --warn: oklch(0.7 0.15 65);
+  --warn-ink: oklch(0.52 0.13 60);   /* readable amber TEXT on light surfaces */
+  --send: oklch(0.24 0 0);
+  --send-ink: oklch(0.99 0 0);
+  --shadow: 0 1px 2px oklch(0.2 0 0 / 0.04), 0 8px 28px -12px oklch(0.2 0 0 / 0.16);
+  --shadow-f: 0 1px 2px oklch(0.2 0 0 / 0.05), 0 14px 40px -14px oklch(0.2 0 0 / 0.26);
+  --pop: 0 12px 40px -8px oklch(0.2 0 0 / 0.22), 0 0 0 1px oklch(0.905 0 0);
+  --rail-shadow: 3px 0 10px -7px oklch(0 0 0 / 0.22);   /* left sidebar, points right */
+  --panel-shadow: -3px 0 10px -7px oklch(0 0 0 / 0.22); /* canvas panel, points left */
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+
+  --destructive: oklch(0.577 0.245 27.325);
+  --chart-1: var(--base-950);
+  --chart-2: var(--base-600);
+  --chart-3: var(--base-800);
+  --chart-4: var(--base-400);
+  --chart-5: var(--base-300);
+  --sidebar-primary: var(--base-950);
+  --sidebar-primary-foreground: var(--color-white);
+  --sidebar-ring: var(--base-800);
+
+  --display-weight: 700;
+
+  /* ═══ BRAND + STATUS TOKENS (UI overhaul Phase 3) ═══
+     Values are copied verbatim from the Tailwind v4 palette shades the app
+     actually used (raw utilities were codemodded 1:1 — see
+     scripts/codemods/palette-tokens.mjs), so every converted site renders
+     byte-identically in both themes. Constant tokens (same value in dark)
+     are defined once here; adaptive tokens are re-declared in `.dark`.
+
+       brand          violet-600 → violet-400   adaptive brand text/links/icons
+       brand (bg)     use bg-brand (violet-600 const) for solid fills
+       brand-hover    violet-700 const           hover/active solid fills
+       brand-accent   violet-500 const           icons, dots, accents, borders
+       brand-ring     violet-400 const           focus rings + focus borders
+       success        green-600 → green-400      adaptive success text
+       success-accent green-500 const            status dots/icons
+       warning        amber-600 → amber-400      (reserved — amber codemod is a later phase)
+       info           blue-600  → blue-400       (reserved — blue codemod is a later phase)
+       destructive    already exists above (shadcn) */
+  /* Digby Frontier (2026-10-06, sweep): the legacy brand-* (violet) and
+     success-* (green) families are RE-POINTED at the neutral Frontier tokens so
+     every component still using them adopts the new palette — brand = the ink
+     primary, success = the calm --ok, warning = --warn-ink, info = ink-2. They
+     follow light/dark through the raw tokens; no .dark overrides needed. */
+  --brand: var(--send);
+  --brand-hover: color-mix(in oklch, var(--send) 86%, var(--ink-3));
+  --brand-accent: var(--ink-2);
+  --brand-ring: var(--line-2);
+  --brand-pale: var(--line-2);
+  --brand-dim: var(--ink-3);
+  --brand-deep: var(--ink-2);
+  --brand-foreground: var(--send-ink);
+  --brand-text: var(--ink);
+  --brand-soft: var(--hover);
+  --brand-muted: var(--active);
+  --brand-faint: var(--bg-2);
+  --brand-border: var(--line);
+
+  --success: var(--ok);
+  --success-strong: var(--ok);
+  --success-accent: var(--ok);
+  --success-ring: color-mix(in oklch, var(--ok) 45%, transparent);
+  --success-soft: color-mix(in oklch, var(--ok) 8%, transparent);
+  --success-muted: color-mix(in oklch, var(--ok) 12%, transparent);
+  --success-faint: color-mix(in oklch, var(--ok) 5%, transparent);
+  --success-border: color-mix(in oklch, var(--ok) 28%, var(--line));
+
+  --warning: var(--warn-ink);
+  --info: var(--ink-2);
+
+  --fc-button-bg-color: var(--primary);
+  --fc-button-hover-bg-color: var(--primary);
+  --fc-button-active-bg-color: var(--primary);
+  --fc-button-hover-border-color: transparent;
+  --fc-button-active-border-color: transparent;
+  --fc-button-border-color: transparent;
+  --fc-event-border-color: transparent;
+  --fc-event-text-color: oklch(1 0 0);
+  --fc-border-color: var(--border);
+  --fc-page-bg-color: var(--muted);
+  --fc-today-bg-color: var(--muted);
+}
+
+.dark {
+  --bg: oklch(0.205 0 0);
+  --bg-2: oklch(0.222 0 0);
+  --surface: oklch(0.178 0 0);
+  --raised: oklch(0.252 0 0);
+  --ink: oklch(0.94 0 0);
+  --ink-2: oklch(0.79 0 0);
+  --ink-3: oklch(0.64 0 0);
+  --line: oklch(0.305 0 0);
+  --line-2: oklch(0.4 0 0);
+  --hover: oklch(0.265 0 0);
+  --active: oklch(0.295 0 0);
+  --bubble: oklch(0.285 0 0);
+  --ok: oklch(0.77 0.13 152);
+  --warn: oklch(0.8 0.14 75);
+  --warn-ink: oklch(0.82 0.13 75);
+  --send: oklch(0.94 0 0);
+  --send-ink: oklch(0.2 0 0);
+  --shadow: 0 1px 2px oklch(0 0 0 / 0.2), 0 10px 30px -12px oklch(0 0 0 / 0.5);
+  --shadow-f: 0 1px 2px oklch(0 0 0 / 0.25), 0 16px 44px -14px oklch(0 0 0 / 0.65);
+  --pop: 0 14px 44px -8px oklch(0 0 0 / 0.6), 0 0 0 1px oklch(0.305 0 0);
+
+  --destructive: oklch(0.704 0.191 22.216);
+  --chart-1: var(--base-50);
+  --chart-2: var(--base-400);
+  --chart-3: var(--base-200);
+  --chart-4: var(--base-600);
+  --chart-5: var(--base-700);
+  --sidebar-primary: var(--base-50);
+  --sidebar-primary-foreground: var(--base-900);
+  --sidebar-ring: var(--base-200);
+
+}
+
+/* Optional palette (not default): `data-palette="cool"` on <html>. Warm from
+   the design prototype is intentionally not shipped. */
+[data-palette="cool"] {
+  --bg: oklch(0.986 0.005 255); --bg-2: oklch(0.978 0.006 255); --surface: oklch(0.964 0.007 255); --raised: oklch(0.997 0.003 255);
+  --ink: oklch(0.24 0.015 255); --ink-2: oklch(0.42 0.015 255); --ink-3: oklch(0.54 0.013 255);
+  --line: oklch(0.905 0.01 255); --line-2: oklch(0.83 0.013 255); --hover: oklch(0.938 0.01 255); --active: oklch(0.915 0.013 255); --bubble: oklch(0.94 0.011 255);
+  --send: oklch(0.24 0.015 255); --send-ink: oklch(0.99 0.004 255);
+}
+.dark[data-palette="cool"], .dark [data-palette="cool"] {
+  --bg: oklch(0.205 0.007 255); --bg-2: oklch(0.222 0.007 255); --surface: oklch(0.178 0.006 255); --raised: oklch(0.252 0.009 255);
+  --ink: oklch(0.94 0.007 255); --ink-2: oklch(0.79 0.01 255); --ink-3: oklch(0.64 0.01 255);
+  --line: oklch(0.305 0.009 255); --line-2: oklch(0.4 0.01 255); --hover: oklch(0.265 0.009 255); --active: oklch(0.295 0.01 255); --bubble: oklch(0.285 0.01 255);
+  --send: oklch(0.94 0.007 255); --send-ink: oklch(0.2 0.007 255);
+}
+
+/* shadcn tokens → the Frontier system (replaces the old zinc --base-* values) */
+:root, .dark {
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--raised);
+  --card-foreground: var(--ink);
+  --popover: var(--raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--send);
+  --primary-foreground: var(--send-ink);
+  --secondary: var(--hover);
+  --secondary-foreground: var(--ink);
+  --muted: var(--hover);
+  --muted-foreground: var(--ink-3);
+  --accent: var(--active);
+  --accent-foreground: var(--ink);
+  --border: var(--line);
+  --input: var(--line-2);
+  --ring: var(--line-2);
+  --sidebar: var(--raised);
+  --sidebar-foreground: var(--ink-2);
+  --sidebar-accent: var(--active);
+  --sidebar-accent-foreground: var(--ink);
+  --sidebar-border: transparent;
+  --radius: 0.625rem;
+}
+
+/* ═══ Z-INDEX SCALE (UI overhaul Phase 1) — the app's ONE layering order.
+   Use via arbitrary-value utilities: z-(--z-rail), z-(--z-overlay), …
+   Values leave headroom between steps for one-off in-surface layers.
+
+     raised (10)            in-surface floating bits: FloatingChrome pills,
+                            resize handles, hover stamps
+     rail (20)              static rails / sticky in-page headers
+     overlay-backdrop (30)  the dimming scrim behind any drawer
+     overlay (40)           slide-over drawers (sidebar, workspace panel)
+     modal (50)             true dialogs/lightboxes (matches the existing
+                            z-50 modals — do NOT renumber those)
+     toast (100)            notifications above everything */
+@theme {
+  --z-raised: 10;
+  --z-rail: 20;
+  --z-overlay-backdrop: 30;
+  --z-overlay: 40;
+  --z-modal: 50;
+  --z-toast: 100;
+}
+
+/* ═══ READING MEASURE (UI overhaul Phase 2) — the app's ONE centered text
+   measure for conversation surfaces. Use via `max-w-(--measure-chat)` +
+   `mx-auto w-full`. A transcript and its composer MUST share this token so
+   they align; do not reintroduce per-surface max-w-3xl/4xl/6xl measures. */
+@theme {
+  --measure-chat: 46rem;
+}
+
+/* ═══ ICON SCALE (UI overhaul Phase 3) — ONE sizing convention for icons:
+   size-4 (16px) default · size-3.5 (14px) compact · size-3 (12px) micro.
+   size-* is core Tailwind (h+w in one utility) — prefer it over h-N w-N
+   pairs in app code (scripts/codemods/icon-size.mjs did the conversion). */
+
+@theme inline {
+  --animate-scroll: scroll var(--animation-duration, 40s) var(--animation-direction, forwards) linear infinite;
+
+  @keyframes scroll {
+    to {
+      transform: translate(calc(-50% - 0.5rem));
+    }
+  }
+
+  @keyframes pulse-dot {
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 0.8;
+    }
+    50% {
+      transform: scale(1.5);
+      opacity: 1;
+    }
+  }
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* Phase 3 brand + status utilities (text-brand, bg-success-soft, …) */
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-accent: var(--brand-accent);
+  --color-brand-ring: var(--brand-ring);
+  --color-brand-pale: var(--brand-pale);
+  --color-brand-dim: var(--brand-dim);
+  --color-brand-deep: var(--brand-deep);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-text: var(--brand-text);
+  --color-brand-soft: var(--brand-soft);
+  --color-brand-muted: var(--brand-muted);
+  --color-brand-faint: var(--brand-faint);
+  --color-brand-border: var(--brand-border);
+  --color-success: var(--success);
+  --color-success-strong: var(--success-strong);
+  --color-success-accent: var(--success-accent);
+  --color-success-ring: var(--success-ring);
+  --color-success-soft: var(--success-soft);
+  --color-success-muted: var(--success-muted);
+  --color-success-faint: var(--success-faint);
+  --color-success-border: var(--success-border);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+
+  /* Digby brand-mark stop colors (the 4-hex gradient, individually addressable:
+     bg-brand-blue, text-brand-yellow, from-brand-red/10, …) */
+  --color-brand-red: #E52128;
+  --color-brand-yellow: #F9D015;
+  --color-brand-green: #00A550;
+  --color-brand-blue: #0093D7;
+  --color-brand-blue-hover: #007AB5;
+
+  /* Digby Frontier utilities (text-ink-3, bg-hover, border-line, …) */
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-line-2: var(--line-2);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-bubble: var(--bubble);
+  --color-raised: var(--raised);
+  --color-surface: var(--surface);
+  --color-bg-2: var(--bg-2);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-warn-ink: var(--warn-ink);
+  --color-send: var(--send);
+  --color-send-ink: var(--send-ink);
+  --shadow-soft: var(--shadow);
+  --shadow-focus: var(--shadow-f);
+  --shadow-pop: var(--pop);
+  --shadow-rail: var(--rail-shadow);
+  --shadow-panel: var(--panel-shadow);
+
+  --font-display: var(--display-family);
+  --display-weight: var(--display-weight);
+  --font-sans: var(--text-family, ui-sans-serif, system-ui, sans-serif);
+  --font-serif: var(--serif-family, ui-serif, Georgia, serif);
+  --font-mono: var(--mono-family, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+/* Scrollbars — thin pills in both themes (Digby Frontier). */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--ink) 18%, transparent) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: color-mix(in oklch, var(--ink) 16%, transparent);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background-color: color-mix(in oklch, var(--ink) 30%, transparent); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* Fix Radix ScrollArea inner wrapper (display:table + minWidth:100%) causing
+   horizontal overflow on mobile — table layout expands to the intrinsic width
+   of widest child (code blocks, tables, long URLs). Block layout respects the
+   viewport constraint while still sizing to children vertically. */
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+}
+
+/* Push Sonner toast notifications below the Dynamic Island / notch on newer iPhones.
+   Sonner uses --mobile-offset-top on viewports ≤600px and --offset-top on desktop.
+   Override both so toasts don't render behind the notch regardless of viewport.
+   env(safe-area-inset-top) returns 0px on normal devices and ~59px on Dynamic Island. */
+[data-sonner-toaster][data-y-position="top"] {
+  --mobile-offset-top: calc(env(safe-area-inset-top, 0px) + 16px) !important;
+  --offset-top: calc(env(safe-area-inset-top, 0px) + 16px) !important;
+}
+
+/* True visible viewport height, pinned from JS (window.visualViewport) by the
+   /crossmodel shell. A `fixed inset-0` root can still compute short on iOS —
+   standalone PWA (white band under the app), keyboard retract, URL-bar
+   collapse — because the ICB/layout viewport lags the visual one. The shell's
+   root sets height: var(--app-height, 100dvh); JS keeps this exact. The 100dvh
+   default covers modern browsers pre-hydration / no-JS. */
+:root {
+  --app-height: 100dvh;
+}
+
+/* iOS 26 installed-PWA viewport quirk (ticket 45cb5171): in standalone mode
+   viewport units exclude env(safe-area-inset-bottom), so an h-dvh root renders
+   ~34px short and leaves a band under the app. For SCROLL surfaces (login) it
+   is safe to overshoot by the inset — unaffected iOS just gains scroll room
+   under already-padded content, and env() is 0 off iOS, so this is a no-op
+   everywhere else. The FIXED chat shell must NOT use this (overshoot would cut
+   the composer) — it compensates by measurement in useAppViewportVars. */
+@media (display-mode: standalone) {
+  .pwa-viewport-fill {
+    height: calc(100dvh + env(safe-area-inset-bottom, 0px)) !important;
+  }
+  /* Installed app only (ticket 013746f4 "you can still zoom on pwa"): the
+     fixed chat shell must not pinch- or double-tap-zoom — a zoomed viewport
+     strands the composer off-screen. `pan-x pan-y` allows every scroll/pan
+     and forbids the zoom gestures; the primary lever is the runtime viewport
+     lock in lib/use-pwa-zoom-lock.ts (maximum-scale=1, user-scalable=no —
+     honoured by iOS ONLY in standalone). Browser tabs keep the base-layer
+     `touch-action: manipulation` below (pinch-zoom stays, WCAG 1.4.4). */
+  :root,
+  body {
+    touch-action: pan-x pan-y;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground overflow-hidden;
+    height: 100%;
+    /* Old iOS Safari: 100% can compute short (white band under the app shell).
+       -webkit-fill-available pins to the real available height there; browsers
+       that don't know it keep the 100% above. The /crossmodel app shell itself
+       is `fixed inset-0` (ICB-pinned) for the same reason. */
+    height: -webkit-fill-available;
+    overscroll-behavior: none;
+    /* Prevent iOS Safari rubber-band overscroll that reveals a white gap
+       at the top/bottom of the viewport on mobile until you start scrolling.
+       The app uses h-dvh + overflow-hidden on the root container and
+       Radix ScrollArea for inner scrolling — html/body must not scroll. */
+    touch-action: manipulation;
+    /* Double-tap zoom DISABLED app-wide, pinch-zoom still allowed
+       (manipulation = pan + pinch-zoom; WCAG 1.4.4-safe). Feedback ticket
+       d0624b13 ("you shouldn't be able to zoom on the app at all pwa") —
+       supervisor-approved middle ground via owner question oq_48632205
+       (2026-09-15): kill the accidental double-tap zoom, do NOT cap the
+       viewport scale (P1.8 pin keeps pinch-zoom). Ancestor-intersection
+       semantics clamp every descendant; elements needing stricter control
+       (e.g. vaul drawer's touch-action:none) still win. */
+  }
+
+  .font-display {
+    font-weight: var(--display-weight);
+  }
+
+  [data-slot="button"],
+  [data-slot="dialog-trigger"],
+  [data-slot="dropdown-menu-item"],
+  [data-slot="command-item"],
+  [data-slot="toggle-group-item"],
+  [data-slot="dropdown-menu-trigger"],
+  [data-slot="popover-trigger"],
+  [data-slot="tooltip-trigger"],
+  [data-slot="sheet-trigger"],
+  [data-slot="collapsible-trigger"]{
+    @apply cursor-pointer!
+  }
+
+  [data-slot="dialog-overlay"], [data-slot="sheet-overlay"], [data-slot="drawer-overlay"] {
+    @apply bg-black/20! backdrop-blur-sm;
+  }
+}
+
+/* ═══ Autofill detection — syncs browser autofill with React state ═══
+   iOS Safari + Chrome Password Autofill set input.value directly without
+   dispatching 'input'/'change' events, so React state stays empty and the
+   submit button remains disabled even though the user sees filled fields. */
+@keyframes onAutoFillStart { from { opacity: 0.99; } to { opacity: 1; } }
+input:-webkit-autofill { animation: onAutoFillStart 0.001s; }
+
+/* ═══ Shiki dual-theme code highlighting (MarkdownCodeBlock) ═══
+   Rendered with defaultColor:false so each token carries both --shiki-light
+   and --shiki-dark. Light is the default; the .dark ancestor swaps to dark.
+   Body background comes from the block frame, so we ignore the theme bg. */
+.shiki-body .shiki,
+.shiki-body .shiki span {
+  color: var(--shiki-light);
+  background-color: transparent;
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight);
+  text-decoration: var(--shiki-light-text-decoration);
+}
+.dark .shiki-body .shiki,
+.dark .shiki-body .shiki span {
+  color: var(--shiki-dark);
+  background-color: transparent;
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight);
+  text-decoration: var(--shiki-dark-text-decoration);
+}
+
+/* ═══ Digby brand gradient — single source of truth for the 4-hex gradient.
+   The stop list lives in one variable; both directional utilities share it.
+   Stops are the @theme brand-mark tokens (--color-brand-red/-yellow/-green/-blue)
+   so individual sites and the gradient can never drift apart. ═══ */
+:root {
+  --brand-gradient-stops: var(--color-brand-red), var(--color-brand-yellow),
+    var(--color-brand-green), var(--color-brand-blue);
+}
+.bg-brand-gradient {
+  background-image: linear-gradient(to right, var(--brand-gradient-stops));
+}
+.bg-brand-gradient-br {
+  background-image: linear-gradient(to bottom right, var(--brand-gradient-stops));
+}
+
+/* ═══ DigbyLoader float (P4) — moved from a per-instance <style> tag in
+   components/ui/custom/DigbyLoader.tsx so N loaders no longer inject N
+   duplicate style tags. Rendering is identical: tiny slow vertical float,
+   disabled under prefers-reduced-motion (the gif's own propeller remains). ═══ */
+.digby-loader {
+  animation: digby-loader-float 3s ease-in-out infinite;
+}
+@keyframes digby-loader-float {
+  0%, 100% { transform: translateY(6%); }
+  50% { transform: translateY(-6%); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .digby-loader { animation: none; }
+}
+
+/* ═══ Global polish / hardening (2026-09-14) ═══
+   Skip-link, reduced-motion (except autofill detection), tap highlight,
+   selection, and the tab-strip scrollbar hide. Tokens stay the source of
+   truth — these are the last-mile browser/OS seams. */
+
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+::selection {
+  background: color-mix(in oklch, var(--ink) 18%, transparent);
+  color: inherit;
+}
+
+/* Keyboard-first skip link — visually hidden until focused.
+   Hidden with the clip-path/1px pattern, NOT a translateY off the top: the
+   installed PWA runs edge-to-edge (viewport-fit=cover, black-translucent
+   status bar), so a transform measured from a safe-area-relative `top` left
+   20–36px of the pill permanently visible under the notch (review 2026-09-14). */
+.skip-link {
+  position: absolute;
+  left: 0.75rem;
+  top: max(0.75rem, env(safe-area-inset-top, 0.75rem));
+  z-index: 200;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  width: auto;
+  height: auto;
+  overflow: visible;
+  clip-path: none;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.25);
+  outline: 2px solid var(--brand-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Autofill detection (above) keys off a 0.001s animation — keep it. */
+  input:-webkit-autofill {
+    animation-duration: 0.001s !important;
+  }
+  .skip-link {
+    transition: none;
+  }
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+/* ═══ Digby Frontier motion (2026-10-06 redesign) ═══
+   Durations/easing are the design's final values (see the redesign handoff):
+   rise 420ms (message entrance), word 420ms (streamed fade + blur clear),
+   pop 200–260ms (popovers / disclosures), shimmer 1.8s (thinking label).
+   The prefers-reduced-motion block above already neutralizes all of them. */
+@keyframes dg-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes dg-fade { from { opacity: 0; filter: blur(3px); } to { opacity: 1; filter: none; } }
+@keyframes dg-pop { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes dg-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@keyframes dg-pulse { 0%, 100% { opacity: .35; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+@keyframes dg-float { 0%, 100% { transform: translateY(1.5px) rotate(-3deg); } 50% { transform: translateY(-1.5px) rotate(3deg); } }
+.dg-rise { animation: dg-rise 420ms var(--ease-out) both; }
+.dg-rise-fast { animation: dg-rise 260ms var(--ease-out) both; }
+.dg-rise-step { animation: dg-rise 320ms var(--ease-out) both; }
+.dg-rise-hero { animation: dg-rise 520ms var(--ease-out) both; }
+.dg-rise-late { animation: dg-rise 620ms var(--ease-out) 80ms both; }
+.dg-fade { animation: dg-fade 260ms ease-out both; }
+.dg-word { animation: dg-fade 420ms ease-out both; }
+.dg-pop { animation: dg-pop 260ms var(--ease-out) both; }
+.dg-pop-fast { animation: dg-pop 200ms var(--ease-out) both; }
+.dg-float { animation: dg-float 5s ease-in-out infinite; }
+.dg-float-fast { animation: dg-float 1.6s ease-in-out infinite; }
+.dg-pulse { animation: dg-pulse 1s ease-in-out infinite; }
+.dg-shimmer {
+  background: linear-gradient(90deg, var(--ink-3) 30%, var(--ink) 50%, var(--ink-3) 70%);
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: dg-shimmer 1.8s linear infinite;
+}
+
+/* Sidebar skin — the right-rounded raised column with its rail shadow. */
+.dg-rail-skin {
+  background: linear-gradient(180deg, var(--raised), color-mix(in oklch, var(--raised), var(--surface) 70%));
+}
+
+/* Assistant answer wrapper (Digby Frontier). The serif prose itself rides
+   the plain-chat text-size classes (lib/preferences TEXT_SIZE_MAP — p/li are
+   `font-serif`, medium = 17.5/1.68; headings Geist 15/600), so cards, tool
+   rows, code and tables inside an answer keep their own sans styling. */
+.dg-answer { color: var(--ink); }

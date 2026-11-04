@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment / secrets — NEVER commit
+.env
+.env.*
+!.env.example
+!.env.template
+*.pem
+*.key
+*.p12
+*.pfx
+cert.pem
+
+# Logs
+*.log
+npm-debug.log*
+yarn-error.log*
+
+# Runtime / local state
+*.pid
+*.pid.lock
+.pid-loop.json.lock
+tmp-*.json
+tmp-*.js
+.digby/
+.digby-scratch/
+
+# Test / coverage
+coverage/
+.nyc_output/
+backend/.jest-tmp/
+test-results/
+playwright-report/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+*.swo
+.vscode/*
+!.vscode/extensions.json
+
+# Databases
+*.sqlite
+*.sqlite3

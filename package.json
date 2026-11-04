@@ -1,0 +1,12 @@
+{
+  "name": "crossmodel",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "overrides": {
+    "react": "19.2.3",
+    "react-native": "0.86.3"
+  }
+}
