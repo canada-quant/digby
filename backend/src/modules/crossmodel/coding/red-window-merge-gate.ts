@@ -17,8 +17,14 @@
  * This leaf classifies main's window state from a LIVE Actions snapshot at
  * MERGE time — the same single-source rule the script's jq implements:
  *   - ANY deploy.yml run on the target branch still ACTIVE (queued /
- *     in_progress / pending-hole) → UNPROVEN → fail-open (blocking an
- *     in-flight deploy would deadlock the queue behind every ~30-min wave);
+ *     in_progress / pending-hole) → UNPROVEN. The verdict still CARRIES the
+ *     newest CONCLUDED run it shadows (ticket 5e3453bb): only a completed run
+ *     can CLEAR a window, so an active run may not launder a red one.
+ *     `self-merge.service.ts` G2.5 refuses when the shadow is RED (as a TIMING
+ *     class, so the merge intent holds and lands the merge once the wave
+ *     concludes CLEAN) and admits a CLEAN shadow — holding every coalescing
+ *     wave would stall the fleet behind the serialized ~40-min deploy queue
+ *     (measured 86.4 % occupancy, 2026-11-02T22:56Z..2026-11-04T04:39Z).
  *   - else the NEWEST COMPLETED run by CONCLUSION time (updated_at — a
  *     long-running older run can conclude after a newer one); conclusion
  *     'failure' → RED (the window); anything else (success / cancelled —
@@ -32,6 +38,15 @@
  * (red-window-merge-gate.2bccefe0.test.ts) reads the SHIPPED script and
  * fails when its jq decision arms change, so this mirror cannot drift
  * silently — edit the script and this leaf together.
+ *
+ * DELIBERATE ASYMMETRY (ticket 5e3453bb): the script's jq still answers a bare
+ * "unproven none none none none" for an active run, because at PUSH time it can
+ * afford to be lenient — the check re-runs on every push and the deploy queue is
+ * busy most of the day. This leaf carries the shadowed verdict because it feeds
+ * the MERGE-time gate, which is the last word before a merge lands: it may be
+ * STRICTER than the check (it is, above) and must never be laxer. Both surfaces
+ * still agree on 'red' and 'clean'; only the unproven detail differs, and the
+ * leaf only ever ADDS a refusal there.
  *
  * The gate itself (I/O, labels, base-branch scope, refusal shape) lives in
  * self-merge.service.ts G2.5 — this file is pure helpers only, same shape
@@ -70,6 +85,11 @@ export interface RedWindowVerdict {
   runSha?: string;
   conclusion?: string;
   concludedAt?: string;
+  /**
+   * UNPROVEN only: how many deploy runs on the branch are still ACTIVE (the
+   * reason the window cannot be read). Ticket 5e3453bb.
+   */
+  activeRuns?: number;
 }
 
 /**
@@ -87,26 +107,35 @@ export function classifyRedWindow(runs: RedWindowRun[], branchRef: string): RedW
   const onBranch: RedWindowRun[] = (Array.isArray(runs) ? runs : []).filter(
     (r) => String(r?.path ?? '') === DEPLOY_WORKFLOW_PATH && String(r?.head_branch ?? '') === String(branchRef ?? ''),
   );
-  // ANY active run shadows everything older — the window is UNPROVEN, not
-  // red (and blocking an in-flight deploy would deadlock the queue).
-  if (onBranch.some((r) => String(r?.status ?? '') !== 'completed')) {
-    return { state: 'unproven' };
-  }
-  // Newest COMPLETED by CONCLUSION time (updated_at): a long-running older
-  // run can conclude after a newer one, and the jq's sort_by is the same
+  // The newest COMPLETED run by CONCLUSION time (updated_at): a long-running
+  // older run can conclude after a newer one, and the jq's sort_by is the same
   // lexicographic ISO-8601 Z-suffix sort reproduced here.
   const completed = onBranch
     .filter((r) => String(r?.status ?? '') === 'completed')
     .sort((a, b) => String(b?.updated_at ?? '').localeCompare(String(a?.updated_at ?? '')));
   const newest = completed[0];
+  const base: RedWindowVerdict = newest
+    ? {
+      state: 'clean',
+      runId: newest.id != null ? String(newest.id) : undefined,
+      runSha: newest.head_sha ? String(newest.head_sha).slice(0, 8) : undefined,
+      conclusion: newest.conclusion ? String(newest.conclusion) : undefined,
+      concludedAt: newest.updated_at ? String(newest.updated_at) : undefined,
+    }
+    : { state: 'clean' };
+
+  // ANY active run shadows everything older going FORWARD — the jq's rule, kept
+  // for parity with red-window-guard.sh. But an active run does NOT erase the
+  // newest CONCLUDED verdict: only a completed run can clear a red window
+  // (ticket 5e3453bb). The verdict therefore CARRIES that shadow (runId /
+  // conclusion / concludedAt) so the merge-time gate can tell a benign
+  // coalescing wave (clean shadow) from an in-flight run LAUNDERING a red
+  // window — the fail-open this leaf used to hand back as a bare 'unproven'.
+  const active = onBranch.filter((r) => String(r?.status ?? '') !== 'completed');
+  if (active.length) {
+    return { ...base, state: 'unproven', activeRuns: active.length };
+  }
   if (!newest) return { state: 'clean' };
-  const base: RedWindowVerdict = {
-    state: 'clean',
-    runId: newest.id != null ? String(newest.id) : undefined,
-    runSha: newest.head_sha ? String(newest.head_sha).slice(0, 8) : undefined,
-    conclusion: newest.conclusion ? String(newest.conclusion) : undefined,
-    concludedAt: newest.updated_at ? String(newest.updated_at) : undefined,
-  };
   if (String(newest.conclusion ?? '') === 'failure') return { ...base, state: 'red' };
   return base;
 }

@@ -39,7 +39,7 @@ const mockPost = (axios as any).post as jest.Mock;
 
 /** The strict backend: vLLM on the Quietbox, fronted by LiteLLM. */
 const TT_SEAT: ProviderConfig = {
-  url: 'https://llm.example.com/v1/chat/completions',
+  url: 'https://llm.cql.ca/v1/chat/completions',
   apiKey: 'sk-test',
   model: 'tt-qwen3.8-flash-next',
   spec: 'cql-litellm:tt-qwen3.8-flash-next',

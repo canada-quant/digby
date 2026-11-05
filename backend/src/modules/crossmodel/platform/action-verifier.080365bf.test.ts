@@ -78,7 +78,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) }, // coding_sessions (ticket f1cb73ff lane)
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) }, // the ticket lane's existence + near-miss probes (b216475a)
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -211,8 +211,8 @@ beforeEach(() => {
   mockPrisma.chatCodingState.findFirst.mockResolvedValue(null);
   // The cited schedules b0456337 / 8082b51f / 92c59ba2 / 2d67240e / 8871d918
   // are REAL rows (8871d918: 312 firings) — exonerated live on existence.
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: `${REAL_SCHED_2}-0000-4000-8000-000000000000` });
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: `${REAL_SCHED_2}-0000-4000-8000-000000000000` });
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null);
   mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
 });

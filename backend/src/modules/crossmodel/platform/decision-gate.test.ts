@@ -1568,10 +1568,10 @@ describe('plan C — challengers: parallel, grace-bounded, never answer, own row
 });
 
 // ── Laya follow-up (2026-09-26): systemone_chat transport, confidence normalisation, sampled state, detached challengers ──
-// Scope: scratchpad/laya/followup-scope.md — the wire dialect below is the one probed live on llm.example.com `agx-laya`.
+// Scope: scratchpad/laya/followup-scope.md — the wire dialect below is the one probed live on llm.cql.ca `agx-laya`.
 
 const LAYA_REG = {
-  url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', model: 'agx-laya', label: 'cql-litellm',
+  url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', model: 'agx-laya', label: 'cql-litellm',
   supportsVision: false, coding: false, matryoshka: false, thinkingOff: false, providerShape: 'openai_chat', decision: 'systemone_chat' as const, maxStateChars: 3800,
 };
 /** The live envelope: an OpenAI chat completion whose message content is the JSON string { model, state_kind, result: { model, answers, usage } }. */
@@ -1611,7 +1611,7 @@ describe('Laya follow-up — systemone_chat transport (parse + decide)', () => {
     expect(r).toMatchObject({ backend: 'cql-litellm (typed decisions via chat completions)', backendSpec: 'cql-litellm:agx-laya', modelId: 'laya-rl-agent', stateTruncated: true, calibrated: false });
     expect(post).toHaveBeenCalledTimes(1);
     const [url, body, cfg] = post.mock.calls[0];
-    expect(url).toBe('https://llm.example.com/v1/chat/completions');
+    expect(url).toBe('https://llm.cql.ca/v1/chat/completions');
     expect(body.model).toBe('agx-laya');
     expect(body.messages).toEqual([{ role: 'user', content: expect.stringContaining('…[state truncated at 3800 chars]') }]);
     expect(body.messages[0].content.length).toBeLessThan(3900);
@@ -2543,10 +2543,23 @@ describe('task_kind — the act-band threshold is the classifier bar; a stored /
 // visibility for that silent backend swap; a TIMEOUT is deliberately NOT
 // latched (DECISION_AUTH_LATCH_STATUSES covers 401/403 only — a transient
 // provider must keep being probed), and warnFallThroughThrottled bounds the
-// rows to ONE per 5 min per process. The recurrence is owner-side endpoint
-// config; the emit site stays untagged — a real fall-through must stay
-// sweep-visible. This block pins that contract so a future pass cannot
-// "fix" the warn into silence or latch timeouts into a dead chain.
+// rows to ONE per 5 min per process. This block pins that contract so a
+// future pass cannot "fix" the warn into silence or latch timeouts into a
+// dead chain.
+//
+// UPDATED by family lane 3556c8a4 (ticket d883ae45, 2026-11-03): the emit site
+// is now TAGGED logClass:'external'. The original d37054e9 note said it "stays
+// untagged — a real fall-through must stay sweep-visible". Keeping it visible
+// was right; leaving it UNTAGGED never achieved that, it achieved the opposite
+// of what was wanted — after three separate lanes adjudicated this same class
+// a designed non-defect (f68b611e here, 0c86f97f task_kind, 22afdd2d
+// turn_plan), the hourly sweep was still fingerprinting it as a framework fault
+// and re-filing it weekly (29 rows / 12 distinct hours on d883ae45 alone), i.e.
+// the untagged warn produced tickets, not visibility. Visibility is preserved
+// where it can actually be read: every instance stays on loop_metrics
+// decision_gate meta.legErrors — the very row this message points at — so a
+// real degradation is still measurable and alertable. What the tag removes is
+// only the sweep's misreading of a DESIGNED backend swap as an internal fault.
 describe('compute_policy fall-through — log-signal f68b611e (designed WI-H visibility, 5-min throttle, no timeout latch)', () => {
   beforeEach(() => {
     process.env.DECISION_GATE_DEFAULT_MODE = 'shadow';
@@ -2593,10 +2606,13 @@ describe('compute_policy fall-through — log-signal f68b611e (designed WI-H vis
     } finally {
       nowSpy.mockRestore();
     }
-    const fallWarns = loggerMock.warn.mock.calls.filter((c: any[]) => String(c[0] ?? '').includes('decision-gate[compute_policy]: earlier leg(s) failed'));
+    const fallWarns = loggerMock.warn.mock.calls.filter((c: any[]) => String(c[0]?.message ?? '').includes('decision-gate[compute_policy]: earlier leg(s) failed'));
     expect(fallWarns).toHaveLength(1);
-    expect(String(fallWarns[0][0])).toContain('TypeSafe Jev answered');
-    expect(String(fallWarns[0][0])).toContain('(further fall-throughs in loop_metrics decision_gate meta.legErrors)');
+    expect(String(fallWarns[0][0]?.message)).toContain('TypeSafe Jev answered');
+    expect(String(fallWarns[0][0]?.message)).toContain('(further fall-throughs in loop_metrics decision_gate meta.legErrors)');
+    // d883ae45: the row is TAGGED external so the sweep stops filing a
+    // designed backend swap as a framework fault (isNonFaultLogRow).
+    expect(fallWarns[0][0]?.logClass).toBe('external');
   });
 
   it('a timing-out first leg is retried on EVERY ask (deliberately unlatched — timeouts are not in DECISION_AUTH_LATCH_STATUSES) while the chain still answers', async () => {
@@ -2605,7 +2621,7 @@ describe('compute_policy fall-through — log-signal f68b611e (designed WI-H vis
     await primeBackends({ purposes: { compute_policy: { primary: 'llm-cql:agx-laya' } } });
     mockResolveRegistryModel.mockImplementation(async (spec: string) => (spec === 'llm-cql:agx-laya' ? LAYA_REG : null));
     post.mockImplementation(async (url: string) => {
-      if (String(url).includes('llm.example.com')) {
+      if (String(url).includes('llm.cql.ca')) {
         const err: any = new Error('timeout of 599ms exceeded');
         err.code = 'ECONNABORTED';
         throw err;
@@ -2618,7 +2634,7 @@ describe('compute_policy fall-through — log-signal f68b611e (designed WI-H vis
     expect(r1!.backend).toBe('TypeSafe Jev');
     expect(r2!.backend).toBe('TypeSafe Jev');
     // The dead leg was attempted on BOTH asks — no cross-ask timeout latch exists (by design).
-    const layaCalls = post.mock.calls.filter((c: any[]) => String(c[0]).includes('llm.example.com')).length;
+    const layaCalls = post.mock.calls.filter((c: any[]) => String(c[0]).includes('llm.cql.ca')).length;
     expect(layaCalls).toBe(2);
   });
 
@@ -2680,7 +2696,7 @@ describe('task_kind fall-through — log-signal 0c86f97f (designed WI-H visibili
     await primeBackends({ purposes: { task_kind: { primary: 'llm-cql:agx-laya' } } });
     mockResolveRegistryModel.mockImplementation(async (spec: string) => (spec === 'llm-cql:agx-laya' ? LAYA_REG_PROD : null));
     post.mockImplementation(async (url: string) => {
-      if (String(url).includes('llm.example.com')) {
+      if (String(url).includes('llm.cql.ca')) {
         // The prod shape: axios ECONNABORTED with the leg-share timeout in
         // the message — the "timeout timeout of 567ms exceeded" fingerprint.
         const err: any = new Error('timeout of 567ms exceeded');
@@ -2705,13 +2721,15 @@ describe('task_kind fall-through — log-signal 0c86f97f (designed WI-H visibili
     } finally {
       nowSpy.mockRestore();
     }
-    const fallWarns = loggerMock.warn.mock.calls.filter((c: any[]) => String(c[0] ?? '').includes('decision-gate[task_kind]: earlier leg(s) failed'));
+    const fallWarns = loggerMock.warn.mock.calls.filter((c: any[]) => String(c[0]?.message ?? '').includes('decision-gate[task_kind]: earlier leg(s) failed'));
     expect(fallWarns).toHaveLength(1);
     // The exact prod label: systemOneBackendLabel's chat-transport form.
-    expect(String(fallWarns[0][0])).toContain('TypeSafe Jev answered — llm-cql (typed decisions via chat completions)');
+    expect(String(fallWarns[0][0]?.message)).toContain('TypeSafe Jev answered — llm-cql (typed decisions via chat completions)');
     // The exact prod leg-error form: "timeout" (the ECONNABORTED prefix) then
     // the axios message, scrubbed to the row cap.
-    expect(String(fallWarns[0][0])).toMatch(/: timeout timeout of 56[0-9]ms exceeded \(further fall-throughs in loop_metrics decision_gate meta\.legErrors\)/);
+    expect(String(fallWarns[0][0]?.message)).toMatch(/: timeout timeout of 56[0-9]ms exceeded \(further fall-throughs in loop_metrics decision_gate meta\.legErrors\)/);
+    // d883ae45: TAGGED external — the sweep stops filing the designed swap.
+    expect(fallWarns[0][0]?.logClass).toBe('external');
   });
 
   it("the leg-share budget produces the fingerprint numbers: the dead leg's timeout < the ask's total budget, so the Jev fallback stays reachable", () => {
@@ -2753,7 +2771,7 @@ describe('task_kind fall-through — log-signal 0c86f97f (designed WI-H visibili
 //   llm-cql (typed decisions via chat completions): timeout timeout of
 //   598ms exceeded (further fall-throughs in loop_metrics decision_gate meta.legErrors)
 // Adjudication (lane 92dc54d6, 2026-10-27): NOT a framework defect — the SAME
-// owner-side root cause as f68b611e (the llm.example.com gateway leg on the
+// owner-side root cause as f68b611e (the llm.cql.ca gateway leg on the
 // decision seat's per-purpose chain times out inside its legShareCap share
 // ~598 ms, the built-in TypeSafe Jev answers, and the ask is ANSWERED). What
 // makes this member its own pin: turn_plan is THE live act purpose (the only
@@ -2789,7 +2807,7 @@ describe('turn_plan fall-through — log-signal 22afdd2d (designed WI-H visibili
     await primeBackends({ purposes: { turn_plan: { primary: 'llm-cql:agx-laya' } } });
     mockResolveRegistryModel.mockImplementation(async (spec: string) => (spec === 'llm-cql:agx-laya' ? LAYA_REG_PROD : null));
     post.mockImplementation(async (url: string) => {
-      if (String(url).includes('llm.example.com')) {
+      if (String(url).includes('llm.cql.ca')) {
         const err: any = new Error('timeout of 598ms exceeded');
         err.code = 'ECONNABORTED';
         throw err;
@@ -2809,10 +2827,12 @@ describe('turn_plan fall-through — log-signal 22afdd2d (designed WI-H visibili
     } finally {
       nowSpy.mockRestore();
     }
-    const fallWarns = loggerMock.warn.mock.calls.filter((c: any[]) => String(c[0] ?? '').includes('decision-gate[turn_plan]: earlier leg(s) failed'));
+    const fallWarns = loggerMock.warn.mock.calls.filter((c: any[]) => String(c[0]?.message ?? '').includes('decision-gate[turn_plan]: earlier leg(s) failed'));
     expect(fallWarns).toHaveLength(1);
-    expect(String(fallWarns[0][0])).toContain('TypeSafe Jev answered — llm-cql (typed decisions via chat completions)');
-    expect(String(fallWarns[0][0])).toMatch(/: timeout timeout of 59[0-9]ms exceeded \(further fall-throughs in loop_metrics decision_gate meta\.legErrors\)/);
+    expect(String(fallWarns[0][0]?.message)).toContain('TypeSafe Jev answered — llm-cql (typed decisions via chat completions)');
+    expect(String(fallWarns[0][0]?.message)).toMatch(/: timeout timeout of 59[0-9]ms exceeded \(further fall-throughs in loop_metrics decision_gate meta\.legErrors\)/);
+    // d883ae45: TAGGED external — the sweep stops filing the designed swap.
+    expect(fallWarns[0][0]?.logClass).toBe('external');
   });
 
   it('the leg budget math reproduces the fingerprint numbers: legShareCap(2000, ~1196) = 598 — the half-share of a ~1196ms turn_plan ask', () => {
@@ -2838,7 +2858,7 @@ describe('turn_plan fall-through — log-signal 22afdd2d (designed WI-H visibili
     await primeBackends({ purposes: { turn_plan: { primary: 'llm-cql:agx-laya' } } });
     mockResolveRegistryModel.mockImplementation(async (spec: string) => (spec === 'llm-cql:agx-laya' ? LAYA_REG_PROD : null));
     post.mockImplementation(async (url: string) => {
-      if (String(url).includes('llm.example.com')) {
+      if (String(url).includes('llm.cql.ca')) {
         const err: any = new Error('timeout of 598ms exceeded');
         err.code = 'ECONNABORTED';
         throw err;

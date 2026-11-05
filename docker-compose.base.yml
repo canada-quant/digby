@@ -8,8 +8,8 @@ services:
       - "9384:5432"
     environment:
       - POSTGRES_USER=admin
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-SecureP@ssw0rd2026!}
-      - POSTGRES_DB=digby_db
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change-me-local-dev}
+      - POSTGRES_DB=admin_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -17,7 +17,7 @@ services:
         aliases:
           - postgres
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d digby_db"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d admin_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -200,7 +200,7 @@ services:
     environment:
       - X_MCP_API_KEY=${X_MCP_API_KEY:-}
       - MCP_DIGBY_TOKEN=${MCP_DIGBY_TOKEN:-}
-      - BRIGHTDATA_MCP_URL=${BRIGHTDATA_MCP_URL:-https://mcp.digby.example.com/mcp}
+      - BRIGHTDATA_MCP_URL=${BRIGHTDATA_MCP_URL:-https://mcp.digby.ai/mcp}
       - NODE_OPTIONS=--max-old-space-size=512
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8000/health"]
@@ -314,7 +314,7 @@ services:
       # are stopped/removed after each flip). Hairpin latency is negligible;
       # when the ALB path is down the platform API is down for everyone anyway.
       # Override with DIGBY_API_URL if ever needed.
-      - DIGBY_API_URL=${DIGBY_API_URL:-https://digby.example.com}
+      - DIGBY_API_URL=${DIGBY_API_URL:-https://digby.ai}
       - NODE_OPTIONS=--max-old-space-size=512
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8000/health"]

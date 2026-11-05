@@ -252,7 +252,7 @@ describe('CodeSessionView — pill + chip → escalationOf send', () => {
   });
 
   it('send() forwards escalationOf to buildPlainStreamUrl with the fixed label as the message; guests / chatless / streaming never escalate', () => {
-    const fn = region(VIEW, 'const send = async (overrideMessage?: string, overrideImages?: ChatImage[], opts?: { bypassRunningGuard?: boolean; displayContent?: string; escalationOf?: string; overrideUploads?: AttachmentInfo[] })', 'const sendRoute = routeSend({');
+    const fn = region(VIEW, 'const send = async (overrideMessage?: string, overrideImages?: ChatImage[], opts?: { bypassRunningGuard?: boolean; displayContent?: string; escalationOf?: string; overrideUploads?: AttachmentInfo[]; interrupt?: boolean })', 'const sendRoute = routeSend({');
     expect(fn).toContain('const escalationOf = opts?.escalationOf && chatId && !plainCfg.guest ? opts.escalationOf : undefined;');
     expect(fn).toContain('if (opts?.escalationOf && !escalationOf) return;');
     expect(fn).toContain('if (escalationOf && live.running) {');
@@ -262,7 +262,7 @@ describe('CodeSessionView — pill + chip → escalationOf send', () => {
   });
 
   it('a Dig-deeper tap never clears the composer draft or discards a voice recording (review MEDIUM #2)', () => {
-    const fn = region(VIEW, 'const send = async (overrideMessage?: string, overrideImages?: ChatImage[], opts?: { bypassRunningGuard?: boolean; displayContent?: string; escalationOf?: string; overrideUploads?: AttachmentInfo[] })', 'const sendRoute = routeSend({');
+    const fn = region(VIEW, 'const send = async (overrideMessage?: string, overrideImages?: ChatImage[], opts?: { bypassRunningGuard?: boolean; displayContent?: string; escalationOf?: string; overrideUploads?: AttachmentInfo[]; interrupt?: boolean })', 'const sendRoute = routeSend({');
     expect(fn).toContain('if (!overrideMessage && !escalationOf) { composerRef.current?.clear(); voice.discardRecording(); }');
     expect(fn).not.toContain('if (!overrideMessage) { composerRef.current?.clear();');
   });

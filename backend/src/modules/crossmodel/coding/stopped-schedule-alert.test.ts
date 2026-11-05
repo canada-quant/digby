@@ -29,7 +29,7 @@ const mockTicketFindMany = jest.fn();
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       findUnique: (...a: any[]) => mockScheduleFindUnique(...a),
       count: (...a: any[]) => mockScheduleCount(...a),
     },

@@ -1,0 +1,84 @@
+# Nightly live query suite (2026-10-04) — the SYNTHETIC leg of the nightly hardening loop.
+#
+# The REAL-chat leg is the worker cron `live-chat-audit` (backend platform/live-chat-audit.ts): signals + a
+# decision replay over the last 24 h of human turns, one deduped framework ticket per regression. This
+# workflow covers what real users did not touch that day: a seeded random sample of the query suite
+# (scripts/e2e/query-suite.py, runbook docs/E2E_QUERY_SUITE.md) on the canonical TEST account — routing, the
+# Quick lane, Dig deeper, every safe chat tool family, Files artifacts, platform actions. Research cases are
+# left out (long councils); the owner profile (read-only integrations on the owner's account) is never run
+# here — it needs the owner's credentials and stays a manual run.
+#
+# COSTS REAL MONEY (≈ 10 model runs a night). On any FAIL the suite files a "[nightly query suite] failing
+# cases" bug as the test account — deduped on the failure SET (it files unless an open nightly ticket already
+# reports every failing case id; a NEW failing id always files, 44f0cafc), the job goes red, and the markdown
+# report is on the run summary + an artifact. Turn it off by disabling this workflow (gh workflow disable nightly-query-suite.yml)
+# or with the repository variable NIGHTLY_QUERY_SUITE_DISABLED=1.
+#
+# Secrets: DIGBY_E2E_EMAIL / DIGBY_E2E_PASSWORD — the canonical prod test account (AGENTS.md).
+name: Nightly query suite
+
+on:
+  schedule:
+    - cron: '17 10 * * *'   # 10:17 UTC — 03:17 Pacific, after the overnight lanes settle
+  workflow_dispatch:
+    inputs:
+      n:
+        description: 'cases'
+        default: '14'
+      seed:
+        description: 'seed (blank = the date)'
+        default: ''
+      categories:
+        description: 'categories (test profile)'
+        default: 'quick,standard,checked,tools,memory,multi,dig,files,platform,human,human_thread'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-query-suite
+  cancel-in-progress: false
+
+jobs:
+  suite:
+    if: ${{ vars.NIGHTLY_QUERY_SUITE_DISABLED != '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Offline self-test
+        run: bash scripts/e2e/query-suite.test.sh
+      - name: Live suite (prod, test account)
+        env:
+          DIGBY_E2E_EMAIL: ${{ secrets.DIGBY_E2E_EMAIL }}
+          DIGBY_E2E_PASSWORD: ${{ secrets.DIGBY_E2E_PASSWORD }}
+          GITHUB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          N: ${{ github.event.inputs.n || '14' }}
+          SEED_IN: ${{ github.event.inputs.seed || '' }}
+          CATEGORIES: ${{ github.event.inputs.categories || 'quick,standard,checked,tools,memory,multi,dig,files,platform,human,human_thread' }}
+        run: |
+          set -o pipefail
+          if [ -z "$DIGBY_E2E_EMAIL" ] || [ -z "$DIGBY_E2E_PASSWORD" ]; then
+            echo "::warning::DIGBY_E2E_EMAIL / DIGBY_E2E_PASSWORD secrets are not set — nightly suite skipped"
+            exit 0
+          fi
+          SEED="${SEED_IN:-$(date -u +%Y%m%d)}"
+          python3 -u scripts/e2e/query-suite.py --profile test --n "$N" --seed "$SEED" --categories "$CATEGORIES" \
+            --max-research 0 --concurrency 2 --case-timeout 900 \
+            --out run.jsonl --report report.md --cleanup --file-ticket-on-fail --run-url "$GITHUB_RUN_URL" | tee suite.log
+      - name: Report to the run summary
+        if: always()
+        run: |
+          if [ -f report.md ]; then cat report.md >> "$GITHUB_STEP_SUMMARY"; else echo "no report (suite skipped or crashed — see the log)" >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-query-suite-${{ github.run_id }}
+          path: |
+            report.md
+            run.jsonl
+            suite.log
+          if-no-files-found: ignore
+          retention-days: 30

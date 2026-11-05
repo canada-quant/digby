@@ -20,10 +20,10 @@ jest.mock('../platform/loop-metrics.service', () => ({
 const mockQuery: jest.Mock = jest.fn();
 const mockExecute: jest.Mock = jest.fn();
 jest.mock('../../../config/database', () => ({ __esModule: true, default: { $queryRawUnsafe: (...a: any[]) => mockQuery(...a), $executeRawUnsafe: (...a: any[]) => mockExecute(...a) } }));
-// MERGE-1 slice 1: the service now imports the read-switch from coding-data.service,
-// which reaches middleware/error-handler -> config/env, which calls process.exit(1)
-// without env vars and kills the whole jest worker at import time. Mock AppError (same
-// shape) exactly as coding-data.service.test.ts does.
+// MERGE-1 complete (2026-11-04): the service no longer imports the read-switch or
+// coding-data.service, but AppError is mocked here anyway so the suite keeps its shape
+// if that edge ever comes back (coding-data.service reaches middleware/error-handler ->
+// config/env, which calls process.exit(1) without env vars and kills the jest worker).
 jest.mock('../../../middleware/error-handler', () => ({
   __esModule: true,
   AppError: class AppError extends Error {
@@ -54,11 +54,10 @@ interface Row { id: number; runId: string; seq: number; type: string; payload: a
 interface Run { status: string; finishedAt: Date | null; finalMessageId?: string }
 
 /**
- * MERGE-1 slice 1: which runs' final assistant transcript row lives in WHICH table.
- * The complete tier's `FINAL_MESSAGE_LATERAL` is resolved by the read-switch, so a
- * fixture that supplies this models the real distinction (a mirror-only chat) instead
- * of pretending every run has its row everywhere. Omitted ⇒ the legacy assumption
- * (the row exists in both tables) so the pre-existing fixtures keep their meaning.
+ * Which runs' final assistant transcript row lives in WHICH table. The complete tier's
+ * `FINAL_MESSAGE_LATERAL` now hard-codes `crossmodel_messages` (the only transcript table
+ * after MERGE-1 completed), so the `legacy` half of this fixture models a row that is no
+ * longer reachable at all. Omitted ⇒ the row exists (keeps the pre-existing fixtures).
  */
 interface TranscriptHoldings { legacy?: string[]; merged?: string[] }
 
@@ -347,31 +346,28 @@ describe('compaction statements + defaults', () => {
 });
 
 /**
- * MERGE-1 slice 1 — THE PINNING TEST for the one failure that is silent.
+ * MERGE-1 COMPLETE — THE PINNING TEST for the one failure that is silent.
  *
- * The complete tier's `FINAL_MESSAGE_LATERAL` hard-coded `coding_messages`. After the
- * drop that statement raises 42P01 on every range, compactRange throws, the caller
+ * The complete tier's `FINAL_MESSAGE_LATERAL` once hard-coded `coding_messages`. After
+ * the drop that statement raises 42P01 on every range, compactRange throws, the caller
  * catches at :398, retries, then SKIPS the range with only a logger.warn (:403) and
  * advances the cursor — so `agent_events.payload.parts` is never stripped again and the
  * largest table grows unbounded, reporting `rows = 0` the whole time (the same value it
  * legitimately reports on a quiet fleet). No red test, no error, disk fills weeks later.
  *
- * The lateral is now resolved by the read-switch (`transcriptReadMode()`), so these
- * assertions fail on the pre-slice-1 tree: a MIRROR-ONLY fixture must report COUNT(*) > 0
- * under the default (merged) read switch.
+ * The lateral is now hard-coded to `crossmodel_messages` — the only transcript table
+ * after MERGE-1 completed (2026-11-04) — so these assertions pin the single remaining
+ * source: a MIRROR-ONLY fixture must report COUNT(*) > 0, and a legacy-only fixture 0.
  */
-describe('MERGE-1 slice 1 — the complete tier resolves the transcript through the read-switch', () => {
-  /** The run's final assistant row exists ONLY in crossmodel_messages (a fully-migrated chat). */
+describe('MERGE-1 complete — the complete tier reads crossmodel_messages only', () => {
+  /** The run's final assistant row exists ONLY in crossmodel_messages (the only table left). */
   const MIRROR_ONLY: TranscriptHoldings = { legacy: [], merged: ['A'] };
-  /** The same row exists ONLY in coding_messages (a not-yet-backfilled chat). */
+  /** A row that exists ONLY in coding_messages can no longer be found at all. */
   const LEGACY_ONLY: TranscriptHoldings = { legacy: ['A'], merged: [] };
   const runA = () => [...runRows('A', 1, 10), fresh(1000)];
   const runsA = { A: { status: 'completed', finishedAt: at(9) }, live: { status: 'running', finishedAt: null } };
 
-  afterEach(() => { delete process.env.TRANSCRIPT_READ; });
-
-  it('MIRROR-ONLY fixture reports COUNT(*) > 0 under the default (merged) read switch — the drop-safety proof', async () => {
-    delete process.env.TRANSCRIPT_READ; // the production default
+  it('MIRROR-ONLY fixture reports COUNT(*) > 0 — the drop-safety proof', async () => {
     db(runA(), runsA, MIRROR_ONLY);
     const r = await runAgentEventsCompactionOnce(NOW);
     expect(r.mode).toBe('apply');
@@ -379,34 +375,16 @@ describe('MERGE-1 slice 1 — the complete tier resolves the transcript through 
     expect(r.tiers.complete.rows).toBe(1);
   });
 
-  it('the SAME mirror-only fixture reports 0 pinned to legacy — the SWITCH decides, not the fixture', async () => {
-    process.env.TRANSCRIPT_READ = 'legacy';
-    db(runA(), runsA, MIRROR_ONLY);
-    const r = await runAgentEventsCompactionOnce(NOW);
-    expect(r.tiers.complete.rows).toBe(0);
-  });
-
-  it('legacy-only fixture is the mirror image: 0 under merged, 1 pinned to legacy', async () => {
-    delete process.env.TRANSCRIPT_READ;
+  it('a legacy-only row is no longer visible to the lateral (that table is gone)', async () => {
     db(runA(), runsA, LEGACY_ONLY);
     expect((await runAgentEventsCompactionOnce(NOW)).tiers.complete.rows).toBe(0);
-
-    store.clear(); // the dry-run/apply cursor is per-tick work; start the legacy walk fresh
-    jest.clearAllMocks();
-    process.env.TRANSCRIPT_READ = 'legacy';
-    db(runA(), runsA, LEGACY_ONLY);
-    expect((await runAgentEventsCompactionOnce(NOW)).tiers.complete.rows).toBe(1);
   });
 
-  it('the merged lateral names crossmodel_messages."chatId" and never the doomed table', () => {
-    const merged = compactionSql('merged');
+  it('the lateral names crossmodel_messages."chatId" and never the doomed table', () => {
+    const merged = compactionSql();
     expect(merged.complete.apply).toContain('crossmodel_messages cm');
     expect(merged.complete.apply).toContain('cm."chatId" = r."sessionId"');
     expect(merged.complete.apply).not.toContain('coding_messages');
     expect(merged.complete.dry).not.toContain('coding_messages');
-
-    const legacy = compactionSql('legacy');
-    expect(legacy.complete.apply).toContain('coding_messages cm');
-    expect(legacy.complete.apply).toContain('cm."sessionId" = r."sessionId"');
   });
 });

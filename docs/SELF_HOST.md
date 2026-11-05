@@ -2,9 +2,9 @@
 
 Run the entire Digby stack on your own machine or server — your own database,
 UI, coding worker, STT, MCP integrations, and model providers. Nothing talks to
-digby.example.com unless you configure it to.
+digby.ai unless you configure it to.
 
-> **🔒 Isolation boundary (owner standing requirement, ticket c75b5f34): your self-hosted Digby self-improves on ITS OWN copy only.** `docker-compose.selfhost.yml` sets `DIGBY_INSTANCE=selfhost`: the instance's autonomous loop (merge → deploy → verify → auto-fix) resolves its repo/DB/deploy targets from YOUR environment — never production Digby's repo (`the production Digby repository`), DB, or infrastructure. Any attempt to resolve a production target from this instance hard-fails with an `ISOLATION BOUNDARY` error by design; to let it improve itself, point it at YOUR fork (see *Updating* / the `GITHUB_REPO_SLUG` notes in `selfhost.env.example`). This instance shares no secrets, database, or deploy path with digby.example.com.
+> **🔒 Isolation boundary (owner standing requirement, ticket c75b5f34): your self-hosted Digby self-improves on ITS OWN copy only.** `docker-compose.selfhost.yml` sets `DIGBY_INSTANCE=selfhost`: the instance's autonomous loop (merge → deploy → verify → auto-fix) resolves its repo/DB/deploy targets from YOUR environment — never production Digby's repo (`example-org/crossmodel`), DB, or infrastructure. Any attempt to resolve a production target from this instance hard-fails with an `ISOLATION BOUNDARY` error by design; to let it improve itself, point it at YOUR fork (see *Updating* / the `GITHUB_REPO_SLUG` notes in `selfhost.env.example`). This instance shares no secrets, database, or deploy path with digby.ai.
 
 > **Distribution note:** today this builds images from the source tree. The
 > planned distribution is pre-built images + this compose file, so self-hosters
@@ -34,7 +34,7 @@ surfaces, cloud-link pairing and the setup checklist need it. Without the
 variable, promote by hand:
 
 ```bash
-docker exec digby-postgres psql -U admin -d digby_db \
+docker exec digby-postgres psql -U admin -d admin_db \
   -c "UPDATE users SET role='ADMIN' WHERE email='you@example.com';"
 ```
 
@@ -76,6 +76,127 @@ docker compose -f docker-compose.selfhost.yml --profile tools up -d
 docker compose -f docker-compose.selfhost.yml --profile browser up -d --build
 ```
 
+## Branding (rebrand this instance — no source edits)
+
+A self-hosted instance can carry its own product name, logos, spinner, icons
+and colours. Everything comes from **two places only**: `DIGBY_BRAND_*`
+environment variables, and a **`branding/` asset directory** mounted next to
+`docker-compose.selfhost.yml`. Nothing in the source is edited, and with
+nothing set the instance renders the shipped Digby identity exactly.
+
+**What needs a rebuild.** The `DIGBY_BRAND_*` *values* are baked at build time
+(they feed page metadata, the PWA manifest, social cards and the public site),
+so changing one is:
+
+```bash
+docker compose -f docker-compose.selfhost.yml up -d --build frontend
+```
+
+The **files** in the asset directory are served live at `/branding/asset/*`,
+so you can swap a logo, spinner or icon with **no rebuild** (just hard-reload
+the page; the route sends `Cache-Control: max-age=60`).
+
+### The asset directory
+
+Create `branding/` next to `docker-compose.selfhost.yml` (the compose file
+mounts it read-only at `/branding`), drop files in, and point the
+`DIGBY_BRAND_*` path knobs at `/branding/asset/<file>`:
+
+```
+branding/
+  logo.png              # full mark — login panel, error page, share headers, site chrome
+  mark.png              # compact mark — sidebar brand row, install prompt, small chrome
+  logo-light.png        # optional: the variant used in light mode
+  logo-dark.png         # optional: the variant used in dark mode
+  spinner.gif           # the animated loader (GIF / APNG / animated SVG)
+  spinner-static.png    # the reduced-motion twin (a still image)
+  favicon-16.png
+  favicon-32.png
+  icon-192.png
+  icon-512.png
+  apple-touch-icon.png  # 180×180
+```
+
+Rules the server enforces (a violation falls back to Digby's asset — it never
+breaks a page):
+
+- paths must be **same-origin absolute** (`/branding/asset/logo.png`); a
+  scheme, a protocol-relative `//`, or a `..` segment is refused;
+- the asset route serves **images only** (png / jpg / webp / gif / svg / avif /
+  ico / apng), refuses dotfiles, and cannot read outside `/branding`;
+- text values are trimmed, stripped of control characters and angle brackets,
+  and length-capped (a 200-character product name is refused, not rendered);
+- colours must be hex (`#0b7285`); anything else keeps the shipped colour.
+
+### Every knob
+
+Set these in `.env` (see `selfhost.env.example` § Branding). Leave all of them
+empty for the stock Digby identity.
+
+| Variable | Surface it drives | Default |
+|---|---|---|
+| `DIGBY_BRAND_NAME` | every visible product name: headers, sidebar, `<title>`, page metadata, JSON-LD, error/login/share copy, help + site page titles — max 40 chars | `Digby` |
+| `DIGBY_BRAND_NAME_SHORT` | home-screen name, `apple-mobile-web-app-title` — max 16 chars | `DIGBY_BRAND_NAME` |
+| `DIGBY_BRAND_TAGLINE` | the login panel's one-liner and social-card alt text — max 140 chars | `Ask once. Get the best of every AI.` |
+| `DIGBY_BRAND_DESCRIPTION` | meta description + PWA manifest description — max 400 chars | Digby's shipped description |
+| `DIGBY_BRAND_TITLE` | the full `<title>` default (overrides the composed `NAME — SUFFIX`) | `NAME — Private, Canadian AI Assistant` |
+| `DIGBY_BRAND_TITLE_SUFFIX` | the half after the em dash in the composed title | `Private, Canadian AI Assistant` |
+| `DIGBY_BRAND_LOGO_ALT` | accessible text for logo imagery | `DIGBY_BRAND_NAME` |
+| `DIGBY_BRAND_LOGO` | full logo | `/digbyhat.png` |
+| `DIGBY_BRAND_LOGO_COMPACT` | compact mark | `DIGBY_BRAND_LOGO` |
+| `DIGBY_BRAND_LOGO_LIGHT` / `DIGBY_BRAND_LOGO_DARK` | per-scheme variants (unset ⇒ `DIGBY_BRAND_LOGO`) | — |
+| `DIGBY_BRAND_SPINNER` | the animated loading mark (hero, thinking block, streaming dot, queue rows) | `/digbyspin.gif` |
+| `DIGBY_BRAND_SPINNER_STATIC` | the still twin shown under `prefers-reduced-motion: reduce` | `DIGBY_BRAND_LOGO` |
+| `DIGBY_BRAND_FAVICON_16` / `_FAVICON_32` | browser tab icons | Digby's |
+| `DIGBY_BRAND_ICON_192` / `_ICON_512` | PWA / home-screen / install-prompt icons | Digby's |
+| `DIGBY_BRAND_APPLE_TOUCH_ICON` | iOS home-screen icon + startup image | Digby's |
+| `DIGBY_BRAND_THEME_COLOR` / `_DARK` | browser-chrome + PWA theme colour per scheme | `#ffffff` / `#171717` |
+| `DIGBY_BRAND_BACKGROUND_COLOR` / `_DARK` | PWA splash background per scheme | `#ffffff` / `#171717` |
+| `DIGBY_BRANDING_DIR` | where the asset route reads from (already set to `/branding` by the compose file) | unset (route 404s) |
+
+### Reduced motion, and what happens when a file is missing
+
+- The **spinner swaps to `DIGBY_BRAND_SPINNER_STATIC`** when the visitor's OS
+  asks for reduced motion. This matters because CSS `prefers-reduced-motion`
+  rules cannot stop an animated GIF's own frames — only an asset swap can. The
+  CSS float is disabled too (globals.css).
+- A **missing or 404 asset** falls back to the static twin, then to the shipped
+  Digby mark — never a broken-image box.
+- A **component rendered outside the branding provider** (an error boundary
+  above the layout, a unit test) renders the shipped Digby identity, never an
+  empty string.
+- **SVG logos work**, but render through a plain `<img>` rather than Next's
+  image optimizer (`next.config.ts` does not set `dangerouslyAllowSVG`, so the
+  optimizer answers 400 for an SVG). Prefer PNG/WebP if you want the
+  optimizer's resizing; both are served by the asset route.
+
+### What the name rewrites, and what it does not
+
+`DIGBY_BRAND_NAME` reaches every **product-chrome** surface and every
+**metadata title** (including the help-doc and marketing page titles, which are
+data in `content.ts`). It does **not** rewrite long-form editorial body copy —
+the marketing site's prose, guide articles and FAQs keep their authored wording.
+If you need that copy changed, it is content, not configuration.
+
+### Surfaces that carry the branding
+
+Page metadata and viewport colours; the PWA manifest (a rebranded instance
+links `/branding/manifest`, which keeps the installed-app `id` — changing it
+would orphan every existing home-screen install); the browser tab title; login
+and signup; the app-root error page; the loading spinner everywhere it appears;
+the sidebar brand row; the empty-chat hero; public share links for chats and
+folders (including their "Open …" buttons); the in-app browser's back button;
+the install prompt; the public marketing site's header/footer/breadcrumbs; and
+social cards.
+
+Social cards (Open Graph / Twitter) inline the mark from disk, so they only
+follow a `DIGBY_BRAND_LOGO` that lives under `frontend/public/`. A logo served
+from the operator directory renders the card with Digby's mark instead — the
+card never fetches a URL at render time.
+
+The static `public/manifest.json` is deliberately left untouched: it is the
+installed-app identity (`id: "/crossmodel"`) for the shipped build.
+
 ## Setup checklist (Account → Admin → Setup)
 
 The checklist is the one place that says what **this** instance can and cannot
@@ -96,7 +217,7 @@ Each row carries the exact env names to set, a one-line how-to, the callback
 URL to register at the provider and a link to the section of this guide. The
 same endpoint (`GET /api/crossmodel/instance/setup`) feeds the Integrations tab,
 the home headlines card and the "How Digby answered" pill, so a
-missing key reads the same everywhere. Production digby.example.com has every key set
+missing key reads the same everywhere. Production digby.ai has every key set
 and shows no such notices.
 
 ## LAN access (other devices on your network)
@@ -122,9 +243,9 @@ Caddy can terminate TLS automatically (Let's Encrypt):
 
 1. Point DNS at the machine, open ports 80+443.
 2. Edit `deploy/selfhost/Caddyfile`: replace the `:8080` block header with your
-   domain (`digby.example.net {`).
+   domain (`digby.example.com {`).
 3. Publish 443 on the caddy service in `docker-compose.selfhost.yml`.
-4. `.env`: `SELFHOST_PUBLIC_URL=https://digby.example.net`, `COOKIE_SECURE=true`.
+4. `.env`: `SELFHOST_PUBLIC_URL=https://digby.example.com`, `COOKIE_SECURE=true`.
 5. `docker compose -f docker-compose.selfhost.yml up -d --build`.
 
 ## Model providers
@@ -415,12 +536,56 @@ on, in resolution order:
   `BRIGHTDATA_API_TOKEN` from `.env` — it is a front for the same account, so
   it needs the env key (a store-only instance searches through the direct API
   instead). A self-hosted instance never falls back to Digby's production
-  `mcp.digby.example.com` gateway: a token without `MCP_DIGBY_URL` is reported as a
+  `mcp.digby.ai` gateway: a token without `MCP_DIGBY_URL` is reported as a
   misconfiguration on the checklist and ignored.
 
 With none of these configured, the web-search tools answer "web search is not
 configured — set a Bright Data key in Admin → Settings → Web search" instead of
 a generic outage error, so the operator knows exactly what to do.
+
+### How search, reading, RAG, embeddings and reranking fit together
+
+These are **five separate stages**, and an operator debugging "search is broken"
+needs to know which one failed — they fail independently and look similar from
+the outside (owner report 2026-11-05: a saved key does not prove any of them work).
+
+| Stage | What it does | Where | Fails as |
+|---|---|---|---|
+| **1. Search discovery** | asks the SERP backend for result URLs + snippets | `search_engine`; `web_pipe({query})` | "web search is not configured", a provider/auth error, or zero results |
+| **2. Page reading** | fetches one URL and extracts readable text | `scrape_as_markdown`; each parallel leg of `web_pipe({urls})` | `unreadable — …` per source |
+| **3. Store (chunk → embed)** | chunks the text and writes vectors | `web_pipe` → `storeFindings` → session RAG | digest delivered but "NOTE: session-memory store failed" (or no "N chunks embedded" line) |
+| **4. Retrieval** | semantic (pgvector) + keyword (tsvector) → RRF merge | `search_memory` | empty results over material that was stored |
+| **5. Reranking** | cross-encoder reorders the merged candidates | DashScope `qwen3-rerank`, or your Rerank seat | degrades to RRF order, silently |
+
+Two rules that explain most "search doesn't work" reports:
+
+- **`web_pipe` is not a search engine.** It is the parallel reader and ingestion
+  layer (stage 2→3). With `urls` it never searches at all; with `query` it asks
+  stage 1 for links first. A broken search backend therefore does not make
+  `web_pipe({urls})` fail — and a page it cannot extract is a *reading* failure,
+  not a *search* failure.
+- **A short page reads as "unreadable", which is not the same as the site being
+  down.** A page whose usable text is under `MIN_GOOD_CHARS` (200 characters,
+  `coding/web-pipe.ts`) is classified `unreadable — scrape returned no usable
+  content` even when the fetch succeeded. Thin landing pages, JS shells and
+  placeholder domains hit this every time. Compare with `scrape_as_markdown` on
+  the same URL before concluding the provider is at fault.
+
+**A failure early starves everything later.** Stages 4 and 5 only ever see what
+stage 3 stored: if search or reading yields nothing, embeddings have nothing to
+embed and the reranker has nothing to order — so a search outage presents as
+"RAG returns nothing", not as a RAG bug. Diagnose in order (1 → 5) and stop at
+the first failing stage.
+
+**Embeddings fail closed; reranking fails open** (`rag.service.ts`). If a
+configured Embeddings seat stops resolving, the embed call **errors** rather than
+quietly substituting another model — two models producing 1536-dim vectors would
+mix vector spaces and corrupt retrieval permanently. A configured Rerank seat
+that stops resolving only changes ordering, so it degrades to RRF order instead.
+
+Like search, these stages are optional and each names itself when missing:
+uploads report "no embeddings backend configured" and memory rows stay
+keyword-only until the Embeddings seat is assigned (see *Troubleshooting*).
 
 ## Integrations (Google, GitHub, X, Slack, Asana, Xero, Discord — optional)
 
@@ -486,15 +651,15 @@ installer script and the agent from your own server and passes your `/api` as
 the pairing URL —
 `curl -fsSL <SELFHOST_PUBLIC_URL>/install-digby-agent.sh | DIGBY_INSTALL_HOST=<SELFHOST_PUBLIC_URL> bash -s -- <code> <SELFHOST_PUBLIC_URL>/api`.
 A hand-typed install must pass the same second argument, or the agent pairs
-with digby.example.com. Agent self-updates come from your server too — when
+with digby.ai. Agent self-updates come from your server too — when
 `SELFHOST_PUBLIC_URL` is https; on a plain-http instance the agent ignores
 update adverts, so re-run the update one-liner from the Your Mac card.
 
 **The desktop app** (`Digby.dmg` / `Digby-Setup.exe`) is a different matter:
 the installers this instance serves are the production builds and sign into
-digby.example.com, not here — the Integrations tab and the public site hide the download
+digby.ai, not here — the Integrations tab and the public site hide the download
 links on a self-host. Use the browser (Add to Home Screen on phones) or rebuild
-the app with your own home / update URLs (see `imessage-agent/README.md` for the device-bridge reference).
+the app with your own home / update URLs (`macos-app/README.md`).
 
 **GitHub without an OAuth app:** you can skip creating the OAuth app entirely
 and paste a personal access token in the UI (Account → Integrations → GitHub).
@@ -568,7 +733,7 @@ design (ticket c75b5f34):
 
    With them unset, the fleet pulse / deploy telemetry / self-merge simply
    report nothing about any repo; setting any of them to the PRODUCTION repo
-   (`the production Digby repository`) **hard-fails** with an `ISOLATION BOUNDARY`
+   (`example-org/crossmodel`) **hard-fails** with an `ISOLATION BOUNDARY`
    error — that is the boundary working, not a bug.
 2. **Your own stack**: your postgres (the `digby_postgres_data` volume),
    your redis, your deploy = the `git pull` + rebuild above. The production
@@ -583,13 +748,13 @@ fork, and the loop runs end-to-end on your copy.
 Everything that matters lives in the `digby_postgres_data` volume:
 
 ```bash
-docker exec digby-postgres pg_dump -U admin -d digby_db | gzip > digby-backup-$(date +%F).sql.gz
+docker exec digby-postgres pg_dump -U admin -d admin_db | gzip > digby-backup-$(date +%F).sql.gz
 ```
 
 The coding-workspaces volume (`digby_coding_workspaces`) holds session
 worktrees — back it up too if you have uncommitted session work that matters.
 
-> **The server-side backup/digest tooling referenced in earlier internal docs is a
+> **The server-side `scripts/backup/digby-backup.sh` digest script is a
 > PRODUCTION tool** (S3 offsite copy, prod container names). On a self-hosted
 > box its non-prod dump leg reads this instance's own `digby-postgres`
 > container, but the one-liner above is the documented self-host backup —
@@ -604,7 +769,7 @@ worktrees — back it up too if you have uncommitted session work that matters.
   is baked into the frontend bundle; rebuild with `--build`.
 - **Check logs**: `docker logs digby-backend`, `docker logs digby-worker`,
   `docker compose -f docker-compose.selfhost.yml ps` for health states.
-- **DB access**: `docker exec -it digby-postgres psql -U admin -d digby_db`.
+- **DB access**: `docker exec -it digby-postgres psql -U admin -d admin_db`.
 - **"Web search is NOT configured on this Digby instance"** in answers, no
   headlines, "New feed" disabled — no search provider: see *Web search* above
   and the checklist row.
@@ -628,7 +793,7 @@ worktrees — back it up too if you have uncommitted session work that matters.
 - **Telegram bot never answers** — the webhook was never registered or points
   elsewhere: Account → Admin → Setup → Telegram shows the registered URL and
   the `setWebhook` command.
-- **The Mac agent pairs with digby.example.com instead of this instance** — the install
+- **The Mac agent pairs with digby.ai instead of this instance** — the install
   command was typed without the API URL argument; copy it from the Your Mac
   card (it carries `DIGBY_INSTALL_HOST` and your `/api`).
 - **Not an admin on your own instance** — set `SELFHOST_ADMIN_EMAIL` in `.env`

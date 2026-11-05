@@ -101,9 +101,9 @@ async function withManifest(patch: Partial<typeof AGENT_RELEASE>, fn: () => void
 
 describe('advertisedAgentUrl — a self-host serves its own tarball (2026-10-20)', () => {
   it('derives the tarball from the instance public URL off production, and keeps the release URL on prod / without one', () => {
-    expect(advertisedAgentUrl({ DIGBY_INSTANCE: 'selfhost', SELFHOST_PUBLIC_URL: 'https://digby.example.com/' } as NodeJS.ProcessEnv)).toBe('https://digby.example.com/digby-imessage-agent.tar.gz');
+    expect(advertisedAgentUrl({ DIGBY_INSTANCE: 'selfhost', SELFHOST_PUBLIC_URL: 'https://digby.cql.ca/' } as NodeJS.ProcessEnv)).toBe('https://digby.cql.ca/digby-imessage-agent.tar.gz');
     expect(advertisedAgentUrl({ DIGBY_INSTANCE: 'selfhost' } as NodeJS.ProcessEnv)).toBe(AGENT_RELEASE.url);
-    expect(advertisedAgentUrl({ FRONTEND_URL: 'https://digby.example.com,http://localhost:8247' } as NodeJS.ProcessEnv)).toBe(AGENT_RELEASE.url);
+    expect(advertisedAgentUrl({ FRONTEND_URL: 'https://digby.ai,http://localhost:8247' } as NodeJS.ProcessEnv)).toBe(AGENT_RELEASE.url);
   });
 });
 
@@ -194,7 +194,7 @@ function fakeRes(): any {
 const AGENT_ROW = {
   id: 'agent-1',
   userId: 'user-1',
-  deviceName: 'Pauls-Mac-mini.local',
+  deviceName: 'example-tailnet-peer.local',
   agentVersion: '0.6.3',
   platform: null,
   lastSeenAt: new Date(),

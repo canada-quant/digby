@@ -93,7 +93,7 @@ const dbMock = {
   pendingConfirmation: mockConfirmations.api,
   crossModelChat: { findUnique: jest.fn(async ({ where }: any) => chats[where.id] ?? null) },
   crossModelMessage: { create: jest.fn(async () => ({})) },
-  codingSchedule: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'sch-1' ? { id: 'sch-1', sessionId: 'c-own', userId: 'u1' } : null)) },
+  chatSchedule: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'sch-1' ? { id: 'sch-1', sessionId: 'c-own', userId: 'u1' } : null)) },
   agentRun: {
     findUnique: jest.fn(async ({ where }: any) => (where.id === 'run-1' ? { id: 'run-1', sessionId: 'c-own' } : null)),
     // Honors where.id when present (ticket 568d3652 replay): a runId-narrowed

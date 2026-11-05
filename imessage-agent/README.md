@@ -24,10 +24,10 @@ name the **binary**, so this is the map from component → binary → pane entry
 
 | Component | What it is | Binary macOS asks about | Updates via |
 | --- | --- | --- | --- |
-| **Digby desktop app** | The window you chat in (`Digby.app`, v0.1.x) | `Digby` (its own app sandbox — not in the FDA/Screen Recording lists for the agent) | The app's own updater (`digby.example.com/desktop-latest.json`) |
+| **Digby desktop app** | The window you chat in (`Digby.app`, v0.1.x) | `Digby` (its own app sandbox — not in the FDA/Screen Recording lists for the agent) | The app's own updater (`digby.ai/desktop-latest.json`) |
 | **Bundled helper** (`DigbyHelper`) | The agent copy inside `Digby.app/Contents/Resources` — installed by the app's one-click "Set up iMessage on this Mac" (which now refuses when a self-managed agent exists, ticket 405927c9) | `DigbyHelper` | Nothing (frozen at the app's build) — retired automatically by agent ≥ 0.9.1 |
 | **`.pkg` install** (`DigbyAgent`) | The signed installer's copy at `/Library/Digby/imessage-agent` | `DigbyAgent` (a second, separate TCC entry from the self-managed one) | Nothing (root-owned, no bundled npm) — retired automatically by agent ≥ 0.9.2; the fresh .pkg also yields to a self-managed install |
-| **Digby agent** (`DigbyAgent`) | The self-managed background agent this repo builds (label `com.digby.agent`) | `DigbyAgent` | Itself (self-update, `digby.example.com/digby-imessage-agent.tar.gz`) |
+| **Digby agent** (`DigbyAgent`) | The self-managed background agent this repo builds (label `com.digby.agent`) | `DigbyAgent` | Itself (self-update, `digby.ai/digby-imessage-agent.tar.gz`) |
 
 The one-line installer updates **only the Digby agent** — never the desktop app
 and never the bundled helper. Installing it retires a bundled helper **and any
@@ -150,12 +150,12 @@ In Digby go to **Account → Integrations → iMessage → Connect your Mac**. I
 Mac (⌘-Space → "Terminal") and paste it:
 
 ```bash
-curl -fsSL https://digby.example.com/install-digby-agent.sh | bash -s -- YOUR-CODE
+curl -fsSL https://digby.ai/install-digby-agent.sh | bash -s -- YOUR-CODE
 ```
 
 On a **self-hosted Digby** the card builds the command from that instance's own
 address — the script and the agent tarball come from your server and the pairing
-API is your `/api`, never digby.example.com:
+API is your `/api`, never digby.ai:
 
 ```bash
 curl -fsSL https://digby.example.com/install-digby-agent.sh | DIGBY_INSTALL_HOST=https://digby.example.com bash -s -- YOUR-CODE https://digby.example.com/api

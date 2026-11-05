@@ -367,7 +367,7 @@ export async function buildLaneIndex(projectId: string, userId: string, opts: { 
     withDeadline(prisma.projectTodo.findMany({ where: { projectId, assigneeChatId: { in: ids }, status: { in: OPEN_TODO } }, select: { id: true, goalId: true, assigneeChatId: true } }), timeoutMs, null),
     withDeadline(prisma.agentRun.groupBy({ by: ['sessionId'], where: { sessionId: { in: ids }, createdAt: { gte: d14 } }, _count: { _all: true } } as any), timeoutMs, null),
     withDeadline(prisma.agentRun.findMany({ where: { sessionId: { in: ids }, status: { in: ['running', 'queued'] } }, select: { sessionId: true }, take: 500 }), timeoutMs, null),
-    withDeadline((prisma as any).codingSchedule.groupBy({ by: ['sessionId'], where: { sessionId: { in: ids }, enabled: true }, _count: { _all: true } }), timeoutMs, null),
+    withDeadline((prisma as any).chatSchedule.groupBy({ by: ['sessionId'], where: { sessionId: { in: ids }, enabled: true }, _count: { _all: true } }), timeoutMs, null),
     withDeadline(prisma.loopMetric.groupBy({ by: ['sessionId'], where: { kind: LOOP_METRIC_KINDS.SCHEDULE_BUSY_SKIP, sessionId: { in: ids }, createdAt: { gte: d1 } }, _count: { _all: true } } as any), timeoutMs, null),
     withDeadline(prisma.loopMetric.groupBy({ by: ['sessionId'], where: { kind: LOOP_METRIC_KINDS.CONTEXT_COMPACTION, sessionId: { in: ids }, createdAt: { gte: d14 } }, _count: { _all: true } } as any), timeoutMs, null),
     // The newest mutating receipt per lane. Lane lifecycle second review fixer

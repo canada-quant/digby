@@ -432,7 +432,7 @@ describe('supervisor OWNER turn — origin-chosen history, [OWNER THREAD], [SINC
       upsert: jest.fn(async () => ({})),
     };
     mockPrisma.projectTodo = { findMany: jest.fn(async () => []) };
-    mockPrisma.codingSchedule = { findMany: jest.fn(async () => []) };
+    mockPrisma.chatSchedule = { findMany: jest.fn(async () => []) };
     mockPrisma.ownerQuestion = { findMany: jest.fn(async () => []) };
   });
   afterEach(() => {
@@ -441,7 +441,7 @@ describe('supervisor OWNER turn — origin-chosen history, [OWNER THREAD], [SINC
     (buildChatQueryContext as jest.Mock).mockResolvedValue({ queryMessage: 'the question', systemContext: '', conversationHistory: [{ role: 'user', content: 'earlier' }], projectId: null });
     delete mockPrisma.supervisorState;
     delete mockPrisma.projectTodo;
-    delete mockPrisma.codingSchedule;
+    delete mockPrisma.chatSchedule;
     delete mockPrisma.ownerQuestion;
   });
 

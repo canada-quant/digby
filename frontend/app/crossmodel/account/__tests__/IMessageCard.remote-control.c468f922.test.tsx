@@ -145,7 +145,15 @@ describe('RemoteControlSection — honest action surface (no unusable path)', ()
       remoteAccess: { state: 'off', enabled: false, tunnelOnly: false, ready: false, reason: 'off — the default' },
     });
     expect(html).toContain('data-testid="remote-control-enable-cmd"');
-    expect(html).toContain('sudo digby-agent remote-access enable');
+    // TICKET 36d1c99f: this used to pin the BARE `sudo digby-agent …` — i.e. it
+    // froze the very `command not found` defect the ticket exists to fix. The
+    // bare name is not on `PATH` on a stock install, and `sudo` resets `PATH`
+    // anyway, so that form failed even for an owner who had added the directory
+    // themselves (docs/UNATTENDED_DEVICES.md §10.4.1). The card now prints the
+    // absolute, quoted path — `$HOME` expands in the owner's own shell BEFORE
+    // `sudo` runs, which is what makes it the sudo-safe form too.
+    expect(html).toContain('/Library/Application Support/Digby/bin/digby-agent');
+    expect(html).not.toMatch(/sudo digby-agent remote-access/);
   });
 
   it('offers the Windows variant on a PC', () => {

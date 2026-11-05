@@ -30,7 +30,7 @@ const mockPrisma: any = {
   projectMember: { findUnique: jest.fn(), findMany: jest.fn() },
   userPreferences: { findUnique: jest.fn() },
   user: { findUnique: jest.fn() },
-  codingSchedule: { count: jest.fn(), create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn(), groupBy: jest.fn() },
+  chatSchedule: { count: jest.fn(), create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn(), groupBy: jest.fn() },
   activity: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null) },
   $transaction: jest.fn(async (arg: any) => (typeof arg === 'function' ? arg(mockPrisma) : Promise.all(arg))),
 };

@@ -33,7 +33,7 @@ const mockAgentRunCreate = jest.fn(async (..._a: any[]): Promise<any> => ({ id: 
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       update: jest.fn(async () => ({})),
       findUnique: jest.fn(async () => ({
         enabled: true, kind: 'recurring', runsCount: 0, maxRuns: null, expiresAt: null, lastFiredAt: null,
@@ -192,7 +192,7 @@ describe('infra-blockers leaf — deploy-runbook gate', () => {
 
   it('ignores non-deploy firings (digests, probes, reports)', () => {
     expect(isDeployRunbookPrompt('Nightly supervisor loop: review fleet state and report.')).toBe(false);
-    expect(isDeployRunbookPrompt('probe the gate: nc -z -w 5 100.99.3.52 22 — quote the NC_EXIT line')).toBe(false);
+    expect(isDeployRunbookPrompt('probe the gate: nc -z -w 5 100.64.0.1 22 — quote the NC_EXIT line')).toBe(false);
     expect(isDeployRunbookPrompt('Summarize the overnight learnings and post a digest.')).toBe(false);
     expect(isDeployRunbookPrompt('')).toBe(false);
   });

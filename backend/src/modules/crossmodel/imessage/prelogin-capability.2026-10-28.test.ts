@@ -23,7 +23,7 @@
  *      driver selection, the tool-result header) actually read this module.
  */
 
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 import {
   PRELOGIN_INPUT,
@@ -34,6 +34,7 @@ import {
   preloginInputMarker,
 } from './prelogin-capability';
 import { BLOCKER_PRIORITY, normalizeUnattended } from './unattended-verdict';
+import { HELPER_UNKNOWN_REASON, preloginHelperVerdict } from './prelogin-helper';
 
 // backend/src/modules/crossmodel/imessage → the repo root is five levels up.
 const REPO = join(__dirname, '..', '..', '..', '..', '..');
@@ -105,6 +106,95 @@ describe('preloginInputFor — the typed capability', () => {
     const marker = preloginInputMarker(preloginInputFor({ unattended: 'on,locked' }));
     expect(marker.startsWith('prelogin_input: unavailable (')).toBe(true);
     expect(marker).toContain(PRELOGIN_LOCKED_REASON);
+  });
+});
+
+describe('ticket e530220e — the copy may only claim "no release reports this" while that is TRUE', () => {
+  // THE DEFECT THIS PINS. Both standing reasons used to say a pre-login helper
+  // is not installed, and `HELPER_UNKNOWN_REASON` said the agent was "older than
+  // the release that introduced it" — i.e. update the agent and the row moves.
+  // Neither was a fact the fleet had measured: NOTHING on the device side emits
+  // the `preloginhelper` advert, so every device reads `unavailable` and no
+  // release ever introduced the report. The owner updated to 0.9.23 and the row
+  // did not move, because updating could never have moved it.
+  //
+  // The copy now says the gap is FLEET-side. That is true only while no agent
+  // emits the advert, so the claim is pinned to the code: if a release starts
+  // reporting it, this suite goes RED and the copy must be rewritten to match.
+  const AGENT_TREES = ['imessage-agent/src', 'windows-agent/src', 'macos-app'];
+
+  /** Does any shipped agent tree contain a producer of the advert? We look for
+   *  the wire param and the advert builder by name; the backend's own parser is
+   *  excluded by construction because these are AGENT trees. */
+  const agentEmitters = (): string[] => {
+    const hits: string[] = [];
+    const walk = (rel: string) => {
+      let entries: string[] = [];
+      try { entries = readdirSync(join(REPO, rel)); } catch { return; }
+      for (const e of entries) {
+        if (e === 'node_modules' || e === 'dist' || e === '.git') continue;
+        const childRel = join(rel, e);
+        let st: ReturnType<typeof statSync>;
+        try { st = statSync(join(REPO, childRel)); } catch { continue; }
+        if (st.isDirectory()) { walk(childRel); continue; }
+        if (!/\.(ts|mjs|js|swift)$/.test(e)) continue;
+        let body = '';
+        try { body = SRC(childRel); } catch { continue; }
+        // A COMMENT mentioning the param is not a producer — the agent trees
+        // carry explanatory prose about the fleet fact. Only a quoted param
+        // literal or an advert-builder CALL counts as emitting it.
+        if (/'preloginhelper'|"preloginhelper"|preloginHelperAdvertValue\s*\(/.test(body)) {
+          hits.push(childRel);
+        }
+      }
+    };
+    for (const t of AGENT_TREES) walk(t);
+    return hits;
+  };
+
+  it('NO shipped agent emits the pre-login advert — the premise of the copy', () => {
+    // If this fails, a release DOES report it: update PRELOGIN_STANDING_REASON,
+    // PRELOGIN_OPTED_IN_REASON and HELPER_UNKNOWN_REASON (they say no release
+    // does) and this assertion — in the SAME commit.
+    expect(agentEmitters()).toEqual([]);
+  });
+
+  it('neither standing reason claims a device-side cause for an unmeasured row', () => {
+    // The two sentences the owner's card actually renders. Their Macs report
+    // `unattended.enabled: true`, so PRELOGIN_OPTED_IN_REASON is the live one.
+    for (const reason of [PRELOGIN_STANDING_REASON, PRELOGIN_OPTED_IN_REASON]) {
+      expect(reason).not.toMatch(/helper (is )?(not )?installed/i);
+      expect(reason).not.toMatch(/update the agent/i);
+      expect(reason).toMatch(/no agent release reports/i);
+      expect(reason).toMatch(/fleet-side gap|cannot change/i);
+    }
+  });
+
+  it('the locked reason states only the MEASURED half (the lock), not an install state', () => {
+    // This branch is only reachable from a positive `locked` token, which IS
+    // measured — so its copy may say the device is locked, and must not go on
+    // to assert whether a helper is installed (unmeasured on every device).
+    expect(PRELOGIN_LOCKED_REASON).not.toMatch(/helper (is )?(not )?installed/i);
+    expect(PRELOGIN_LOCKED_REASON).toMatch(/lock \/ login screen/);
+    expect(PRELOGIN_LOCKED_REASON).toMatch(/unlock the device once/);
+  });
+
+  it('the helper verdict reason points at the fleet, never at updating the device', () => {
+    const v = preloginHelperVerdict(undefined);
+    expect(v.state).toBe('unavailable');
+    // The old string told the owner their agent was "older than the release that
+    // introduced it" — an update that could not change the row.
+    expect(HELPER_UNKNOWN_REASON).not.toMatch(/older than the release/i);
+    expect(HELPER_UNKNOWN_REASON).not.toMatch(/until the agent is updated/i);
+    expect(HELPER_UNKNOWN_REASON).toMatch(/no agent release reports/i);
+    expect(HELPER_UNKNOWN_REASON).toMatch(/cannot change this row/i);
+  });
+
+  it('the opted-in device is still told the preset is doing its job', () => {
+    // The honest rewrite must not lose the true half: on an opted-in device the
+    // preset is what stops the console reaching a lock screen at all.
+    expect(PRELOGIN_OPTED_IN_REASON).toMatch(/preset is enabled here/i);
+    expect(PRELOGIN_OPTED_IN_REASON).toMatch(/keeps the session alive/i);
   });
 });
 

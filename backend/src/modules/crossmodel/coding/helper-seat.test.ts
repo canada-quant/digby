@@ -24,7 +24,7 @@ jest.mock('../model-endpoints/model-roles.service', () => ({
 }));
 
 const REG = {
-  url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql',
+  url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql',
   model: 'qwen3-4b', label: 'cql', supportsVision: false, coding: true, thinkingOff: false,
 };
 const mockResolveRegistryModel = jest.fn(async (spec: string) => (spec === 'cql:qwen3-4b' ? REG : null));
@@ -258,7 +258,7 @@ describe('workerSeatFailureReason — the streaming worker path decision', () =>
   });
   it('a connection-level failure (server not there) → the code', () => {
     expect(workerSeatFailureReason(CUSTOM, { errorMessage: 'connect ECONNREFUSED 10.0.0.5:8000' })).toBe('ECONNREFUSED');
-    expect(workerSeatFailureReason(CUSTOM, { errorMessage: 'getaddrinfo ENOTFOUND llm.example.com' })).toBe('ENOTFOUND');
+    expect(workerSeatFailureReason(CUSTOM, { errorMessage: 'getaddrinfo ENOTFOUND llm.cql.ca' })).toBe('ENOTFOUND');
     // ECONNRESET / socket hang up are transient-lane material for a streaming turn.
     expect(workerSeatFailureReason(CUSTOM, { errorMessage: 'read ECONNRESET' })).toBeNull();
   });
@@ -271,7 +271,7 @@ describe('workerSeatFailureReason — the streaming worker path decision', () =>
 describe('leadSeatConnectionFailure (lead seat on an unreachable custom endpoint)', () => {
   it('hard codes fall back at once; timeouts/resets only after one prior backoff; HTTP rejections and built-in seats never', () => {
     expect(leadSeatConnectionFailure('cql:qwen3-4b', { errorMessage: 'connect ECONNREFUSED 10.0.0.5:8000' }, 0)).toBe('ECONNREFUSED');
-    expect(leadSeatConnectionFailure('cql:qwen3-4b', { errorMessage: 'getaddrinfo ENOTFOUND llm.example.com' }, 0)).toBe('ENOTFOUND');
+    expect(leadSeatConnectionFailure('cql:qwen3-4b', { errorMessage: 'getaddrinfo ENOTFOUND llm.cql.ca' }, 0)).toBe('ENOTFOUND');
     expect(leadSeatConnectionFailure('cql:qwen3-4b', { errorMessage: 'connect ETIMEDOUT 89.124.37.178:4000' }, 0)).toBeNull();
     expect(leadSeatConnectionFailure('cql:qwen3-4b', { errorMessage: 'connect ETIMEDOUT 89.124.37.178:4000' }, 1)).toBe('ETIMEDOUT');
     expect(leadSeatConnectionFailure('cql:qwen3-4b', { errorMessage: 'socket hang up' }, 1)).toBe('socket hang up');
@@ -333,7 +333,7 @@ describe('2026-09-29 — a provider quota 403 fails the lead seat over like a 42
 describe('log-signal 84dbf9c0 + 2eb4e244 — the llm-cql utility-seat fallback warn is designed per-attempt observability (prod spec replay)', () => {
   const PROD_SPEC = 'llm-cql:stanne-qwen3-8b-utility';
   const PROD_REG = {
-    url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql',
+    url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql',
     model: 'stanne-qwen3-8b-utility', label: 'llm-cql', supportsVision: false, coding: true, thinkingOff: false,
   };
   const seatWarns = () => mockWarn.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith('helper-seat'));

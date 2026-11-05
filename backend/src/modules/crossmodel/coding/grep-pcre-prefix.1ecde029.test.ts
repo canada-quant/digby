@@ -473,7 +473,10 @@ describe('ticket 1ecde029 — grep (?i) PCRE-prefix replay (pre-flight ERE trans
   it('b6d50f4a contract intact: an infra-killed search still fails honestly (no regression of the false-zero fix)', async () => {
     const deadExec = async () => ({ stdout: '', stderr: '[exit: 124 — timed out]' });
     const out = await executeCodingTool(mkCtx(deadExec as typeof realExec), 'grep', { pattern: '(?i)qwen' });
-    expect(out).toMatch(/^Tool grep failed: the search did not complete/);
+    // tool-failure-streak family (2026-11-03): a timeout is a TRANSPORT death —
+    // now anchored `[INFRA]` (and exempt from the derail breaker). This case's
+    // claim is unchanged: an honest failure, never a false "(no matches)".
+    expect(out).toMatch(/^(?:\[INFRA\] )?Tool grep failed: the search did not complete/);
     expect(out).toContain('NOT a "no matches" verdict');
   });
 

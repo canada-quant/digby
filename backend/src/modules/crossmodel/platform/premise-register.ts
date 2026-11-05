@@ -911,7 +911,7 @@ export async function fetchPremiseSource(source: string, fetchImpl: typeof fetch
         redirect: 'manual',
         signal: ctl.signal,
         headers: {
-          'user-agent': 'digby-premise-check/1 (+https://digby.example.com)',
+          'user-agent': 'digby-premise-check/1 (+https://digby.ai)',
           accept: 'application/json, text/plain, text/*;q=0.8, */*;q=0.5',
           ...(extraHeaders ?? {}),
         },

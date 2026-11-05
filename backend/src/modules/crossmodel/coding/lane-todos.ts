@@ -248,7 +248,7 @@ export async function maybeStartNextLaneTodo(o: { chatId: string; userId: string
     // (30 min) means "the lane is scheduled" — a check armed for tomorrow left the next todo idle all day.
     // LANE_IDLE_WAKE_DISABLED=1 restores "any enabled schedule".
     const dueSoon = laneIdleWakeDisabled() ? {} : { nextRunAt: { lte: new Date((o.now ?? new Date()).getTime() + LANE_TODO_SCHEDULED_HORIZON_MS) } };
-    const scheduled = await prisma.codingSchedule.count({ where: { sessionId: o.chatId, enabled: true, ...dueSoon } }).catch(() => 1);
+    const scheduled = await prisma.chatSchedule.count({ where: { sessionId: o.chatId, enabled: true, ...dueSoon } }).catch(() => 1);
     if (scheduled > 0) return record('scheduled', { todoId: next.id });
     const queued = await prisma.agentRun.count({ where: { sessionId: o.chatId, status: { in: ['queued', 'running'] }, NOT: { id: o.runId } } }).catch(() => 1);
     if (queued > 0) return record('queued', { todoId: next.id });

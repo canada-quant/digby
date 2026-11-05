@@ -20,7 +20,7 @@ import type { ProviderConfig } from './coding-model';
 const mockPost = (axios as any).post as jest.Mock;
 
 const CUSTOM: ProviderConfig = {
-  url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk-x', model: 'qwen3-4b',
+  url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk-x', model: 'qwen3-4b',
   label: 'cql-litellm (custom endpoint)', extra: {},
 };
 const BUILT_IN: ProviderConfig = {

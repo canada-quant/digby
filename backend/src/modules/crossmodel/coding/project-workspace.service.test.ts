@@ -9,7 +9,7 @@ jest.mock('../../../utils/logger', () => ({
 }));
 jest.mock('../../../config/database', () => ({ __esModule: true, default: {
   chatCodingState: { findMany: jest.fn(async () => []), update: jest.fn(async () => ({})) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   agentRun: { findMany: jest.fn(async () => []) },
   crossModelProject: { findFirst: jest.fn(async () => null), findUnique: jest.fn(async () => null), update: jest.fn(async () => ({})) },
 } }));
@@ -272,18 +272,18 @@ describe('reapIdleWorktrees scheduled-lane exemption (P6 — B24)', () => {
     const prismaMock = jest.requireMock('../../../config/database').default;
     prismaMock.chatCodingState.findMany.mockReset();
     prismaMock.chatCodingState.update.mockReset().mockResolvedValue({});
-    prismaMock.codingSchedule.findMany.mockReset().mockResolvedValue([]);
+    prismaMock.chatSchedule.findMany.mockReset().mockResolvedValue([]);
   });
 
   it('exemptScheduled: sessions with an ENABLED schedule are filtered out of the pressure batch', async () => {
     const prismaMock = jest.requireMock('../../../config/database').default;
     prismaMock.chatCodingState.findMany.mockResolvedValueOnce([candidate('s-sched'), candidate('s-idle')]);
-    prismaMock.codingSchedule.findMany.mockResolvedValueOnce([{ sessionId: 's-sched' }]);
+    prismaMock.chatSchedule.findMany.mockResolvedValueOnce([{ sessionId: 's-sched' }]);
     const reaped = await reapIdleWorktrees({ idleMs: 48 * 3600 * 1000, take: 100, exemptScheduled: true });
     expect(reaped).toBe(1);
     const updatedIds = prismaMock.chatCodingState.update.mock.calls.map((c: any[]) => c[0].where.id);
     expect(updatedIds).toEqual(['s-idle']); // the scheduled lane survives
-    expect(prismaMock.codingSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+    expect(prismaMock.chatSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ enabled: true, sessionId: { in: ['s-sched', 's-idle'] } }),
     }));
   });
@@ -291,7 +291,7 @@ describe('reapIdleWorktrees scheduled-lane exemption (P6 — B24)', () => {
   it('exemptScheduled fail-safe: a schedule-lookup error skips the whole pressure batch (never reaps on uncertainty)', async () => {
     const prismaMock = jest.requireMock('../../../config/database').default;
     prismaMock.chatCodingState.findMany.mockResolvedValueOnce([candidate('s-a')]);
-    prismaMock.codingSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
+    prismaMock.chatSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
     await expect(reapIdleWorktrees({ idleMs: 48 * 3600 * 1000, exemptScheduled: true })).resolves.toBe(0);
     expect(prismaMock.chatCodingState.update).not.toHaveBeenCalled();
   });
@@ -301,7 +301,7 @@ describe('reapIdleWorktrees scheduled-lane exemption (P6 — B24)', () => {
     prismaMock.chatCodingState.findMany.mockResolvedValueOnce([candidate('s-sched')]);
     const reaped = await reapIdleWorktrees();
     expect(reaped).toBe(1);
-    expect(prismaMock.codingSchedule.findMany).not.toHaveBeenCalled();
+    expect(prismaMock.chatSchedule.findMany).not.toHaveBeenCalled();
   });
 });
 
@@ -328,7 +328,7 @@ describe('reapIdleWorktrees on-disk census + ownership (review 2026-09-13 issue 
     mockFsAccess.mockReset().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     prismaMock().chatCodingState.findMany.mockReset().mockResolvedValue([]);
     prismaMock().chatCodingState.update.mockReset().mockResolvedValue({});
-    prismaMock().codingSchedule.findMany.mockReset().mockResolvedValue([]);
+    prismaMock().chatSchedule.findMany.mockReset().mockResolvedValue([]);
     wsMock().listWorktreeDirsOnDisk.mockReset().mockResolvedValue([]);
     wsMock().isWorkspaceVolumeOwner.mockReset().mockReturnValue(true);
     wsMock().removeWorktree.mockClear();
@@ -512,7 +512,7 @@ describe('pruneReinstallableArtifacts dir-mtime co-signal (ticket 09d84d7d)', ()
     mockFsAccess.mockReset().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     mockFsReaddir.mockReset().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     prismaMock2().chatCodingState.findMany.mockReset().mockResolvedValue([]);
-    prismaMock2().codingSchedule.findMany.mockReset().mockResolvedValue([]);
+    prismaMock2().chatSchedule.findMany.mockReset().mockResolvedValue([]);
     prismaMock2().agentRun.findMany.mockReset().mockResolvedValue([]);
     wsMock2().listWorktreeDirsOnDisk.mockReset().mockResolvedValue([]);
   });
@@ -579,7 +579,7 @@ describe('pruneReinstallableArtifacts dir-mtime co-signal (ticket 09d84d7d)', ()
       { sessionId: 's-idle', mtimeMs: Date.now() - 30 * DAY },
     ]);
     prismaMock2().chatCodingState.findMany.mockResolvedValueOnce([rowAt('s-sched', 12 * HOUR), rowAt('s-idle', 12 * HOUR)]);
-    prismaMock2().codingSchedule.findMany.mockResolvedValueOnce([{ sessionId: 's-sched' }]);
+    prismaMock2().chatSchedule.findMany.mockResolvedValueOnce([{ sessionId: 's-sched' }]);
     mockFsAccess.mockResolvedValue(undefined);
     mockFsReaddir.mockResolvedValue([dirent('node_modules')] as any);
     const n = await pruneReinstallableArtifacts({ idleMs: DAY, exemptScheduled: true });
@@ -591,7 +591,7 @@ describe('pruneReinstallableArtifacts dir-mtime co-signal (ticket 09d84d7d)', ()
     mockFsRm.mockClear();
     wsMock2().listWorktreeDirsOnDisk.mockResolvedValue([{ sessionId: 's-x', mtimeMs: Date.now() - 30 * DAY }]);
     prismaMock2().chatCodingState.findMany.mockResolvedValueOnce([rowAt('s-x', 12 * HOUR)]);
-    prismaMock2().codingSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
+    prismaMock2().chatSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
     await expect(pruneReinstallableArtifacts({ idleMs: DAY, exemptScheduled: true })).resolves.toBe(0);
     expect(mockFsRm).not.toHaveBeenCalled();
   });
@@ -808,7 +808,7 @@ describe('reaper per-session live re-check + kept-dir counts (2026-10-20)', () =
     mockFsReaddir.mockReset().mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
     prismaMock().chatCodingState.findMany.mockReset().mockResolvedValue([]);
     prismaMock().chatCodingState.update.mockReset().mockResolvedValue({});
-    prismaMock().codingSchedule.findMany.mockReset().mockResolvedValue([]);
+    prismaMock().chatSchedule.findMany.mockReset().mockResolvedValue([]);
     prismaMock().agentRun.findMany.mockReset().mockResolvedValue([]);
     wsMock().listWorktreeDirsOnDisk.mockReset().mockResolvedValue([]);
     wsMock().isWorkspaceVolumeOwner.mockReset().mockReturnValue(true);

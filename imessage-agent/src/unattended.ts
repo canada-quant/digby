@@ -41,7 +41,7 @@
  * by imessage-agent/test/unattended.<ticket>.test.mjs.
  */
 
-import { execFile } from 'child_process';
+import { execFile, spawnSync } from 'child_process';
 
 // ── The wire vocabulary (MUST match the backend's BLOCKER_PRIORITY tokens) ────
 export type UnattendedBlocker =
@@ -221,6 +221,36 @@ export function parsePasswordExpiry(output: string): boolean | null {
   return null;
 }
 
+/** `id -Gn <user>` → is this account an ADMINISTRATOR on this Mac?
+ *
+ *  TICKET e530220e. This replaced a `sudo -n true` probe, and the difference is
+ *  the whole bug the owner reported ("Unattended use · blocked — the agent lacks
+ *  the administrator rights the preset needs"). `sudo -n` means NEVER PROMPT, so
+ *  on a perfectly healthy admin Mac that simply had not run `sudo` in that
+ *  terminal recently it exits 1 — and the old code read that as `canAdmin:false`
+ *  and advertised `no-admin` on EVERY poll. The owner had granted everything,
+ *  enabled the preset, and was still told they lacked administrator rights,
+ *  forever, because "sudo is not primed right now" is not "this account cannot
+ *  administer".
+ *
+ *  The question the blocker actually means is the one in the verdict's own
+ *  words — "the preset can never be applied" — and since agent 0.9.21 the enable
+ *  ASKS for the rights itself (`ensureAdminRights` → `sudo -v` in the user's
+ *  terminal, ticket bcdf5d2f). So the account only has to BE an administrator,
+ *  not to arrive with sudo already primed. Group membership answers that without
+ *  any privilege at all, which also means this probe can never hang waiting for
+ *  a password prompt inside a launchd job.
+ *
+ *  An unreadable output is UNKNOWN (null), never a fabricated false: a
+ *  localization or a missing `id` must not accuse the device.
+ */
+export function parseIsAdmin(groupsOutput: string): boolean | null {
+  const tokens = String(groupsOutput ?? '').trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return null;
+  // macOS's administrator group is literally named `admin` (gid 80).
+  return tokens.includes('admin');
+}
+
 /** `defaults read com.apple.loginwindow ShowUserList` /
  *  `defaults read /Library/Preferences/com.apple.loginwindow FUS...` →
  *  fast user switching enabled. Explicit keys win; an absent key is macOS's
@@ -333,6 +363,21 @@ export interface MacRunResult { stdout: string; code: number }
 export interface MacIo {
   /** Run a command; never throws — a failure is `{stdout:'', code≠0}`. */
   run(cmd: string, args: string[], opts?: { stdin?: string }): Promise<MacRunResult>;
+  /** Run a command ATTACHED to the user's own terminal, so the command can
+   *  prompt them directly (`sudo -v` and its "Password:" line). Omitted by the
+   *  test runners and by any run with no controlling terminal — callers must
+   *  treat its ABSENCE as "cannot ask", never as "already authorised".
+   *
+   *  WHY THIS EXISTS (ticket bcdf5d2f). `applyMacPreset` used to gate on
+   *  `sudo -n true`, and `-n` means NEVER PROMPT. So a stock Mac always failed
+   *  that check and the owner was told "run it in a terminal where sudo is
+   *  already authorised" — i.e. they had to know to run `sudo -v` in that same
+   *  window FIRST, while the docs simultaneously said NOT to prefix the command
+   *  itself with `sudo` (under sudo `$USER` is root, so the preset configures
+   *  auto-login for root and strands the machine). Two opposite hidden
+   *  prerequisites, neither discoverable from the card: that is the "very messy
+   *  setup flow… normal users wouldn't know to run sudo" the owner reported. */
+  runInteractive?(cmd: string, args: string[]): Promise<{ code: number }>;
 }
 
 /** The real runner (execFile — no shell, so no quoting surprises). */
@@ -344,6 +389,26 @@ export const realMacIo: MacIo = {
       });
       if (opts?.stdin) {
         try { child.stdin?.end(opts.stdin); } catch { /* the command may not read stdin */ }
+      }
+    });
+  },
+  runInteractive(cmd, args) {
+    return new Promise((resolve) => {
+      try {
+        // No controlling terminal (a script, a launchd job, a piped run): sudo
+        // would either hang forever or fail opaquely, so report "could not ask"
+        // instead. Callers treat a non-zero code as a refusal, never a grant.
+        if (!process.stdin.isTTY) {
+          resolve({ code: 1 });
+          return;
+        }
+        // `stdio: 'inherit'` is the whole point: sudo's own "Password:" prompt
+        // goes to the user's terminal and the password never passes through
+        // this process, an argv, an env var or a pipe.
+        const child = spawnSync(cmd, args, { stdio: 'inherit', timeout: 120000 });
+        resolve({ code: typeof child.status === 'number' ? child.status : 1 });
+      } catch {
+        resolve({ code: 1 });
       }
     });
   },
@@ -360,7 +425,7 @@ export async function probeMacUnattended(
   opts: { user: string; enabled: boolean },
 ): Promise<MacUnattendedSnapshot> {
   const user = opts.user;
-  const [fv, autoLogin, kc, ask, delay, idle, pmset, pwpolicy, fus, consoleUser, sudoProbe] = await Promise.all([
+  const [fv, autoLogin, kc, ask, delay, idle, pmset, pwpolicy, fus, consoleUser, adminGroups] = await Promise.all([
     io.run('fdesetup', ['status']),
     io.run('defaults', ['read', LOGINWINDOW_PLIST, 'autoLoginUser']),
     io.run('test', ['-f', '/etc/kcpassword']),
@@ -371,7 +436,16 @@ export async function probeMacUnattended(
     io.run('pwpolicy', ['-u', user, '-getaccountpolicies']),
     io.run('defaults', ['read', 'com.apple.loginwindow', 'ShowUserList']),
     io.run('stat', ['-f', '%Su', '/dev/console']),
-    io.run('sudo', ['-n', 'true']),
+    // TICKET e530220e: group membership, NOT `sudo -n true`. `-n` never
+    // prompts, so an ordinary admin Mac that had not primed sudo read as
+    // `canAdmin:false` and the card announced "the agent lacks the
+    // administrator rights the preset needs" forever. The blocker means "this
+    // account can never be an administrator", which is a membership fact and
+    // needs no privilege to read. Since 0.9.21 the enable asks for the rights
+    // itself (ensureAdminRights), so arriving un-primed is not a blocker.
+    // No user name (a row that never captured one) → ask about THIS process's
+    // user, which is the account the agent runs as either way.
+    io.run('id', user ? ['-Gn', user] : ['-Gn']),
   ]);
   const pm = parsePmsetCustom(pmset.stdout);
   return {
@@ -388,7 +462,10 @@ export async function probeMacUnattended(
     passwordExpires: parsePasswordExpiry(pwpolicy.stdout),
     atLoginScreen: consoleIsAtLoginWindow(consoleUser.stdout),
     enabled: opts.enabled,
-    canAdmin: sudoProbe.code === 0 ? true : sudoProbe.code === 1 ? false : null,
+    // Only a SUCCESSFUL groups read counts. A failed `id` (unknown user, a
+    // localized error) is UNKNOWN, never a fabricated `no-admin` — the same
+    // absent-never-accuses rule the rest of this snapshot follows.
+    canAdmin: adminGroups.code === 0 ? parseIsAdmin(adminGroups.stdout) : null,
   };
 }
 
@@ -473,6 +550,74 @@ export interface MacApplyResult {
   backup: MacUnattendedBackup;
 }
 
+/** Ask the OS for the administrator rights the preset needs — once, through
+ *  sudo's OWN password prompt, in the terminal the user is already sitting in.
+ *
+ *  TICKET bcdf5d2f. The owner's report: "still very messy setup flow.. normal
+ *  users wouldnt know to run sudo prefix to command". The previous shape was a
+ *  `sudo -n true` gate — `-n` means NEVER PROMPT — so the enable could only
+ *  ever succeed if the user had ALREADY run `sudo -v` in that same terminal,
+ *  and the failure message asked them to do exactly that in words they had to
+ *  decode ("a terminal where sudo is already authorised"). Worse, the docs
+ *  simultaneously forbade the obvious workaround: prefixing the command with
+ *  `sudo` makes `$USER` root, and the preset then configures auto-login for
+ *  root — which looks applied and strands the machine at the login window.
+ *  So the two instructions contradicted each other and neither was discoverable.
+ *
+ *  WHAT THIS DOES INSTEAD. If sudo is already authorised (`sudo -n` succeeds)
+ *  nothing changes and no prompt appears. Otherwise the agent runs `sudo -v`
+ *  ATTACHED to the terminal, so the user sees the familiar macOS "Password:"
+ *  line and types their own password — the standard, expected escalation of any
+ *  installer. The password goes to sudo, never through this process, never into
+ *  an argv, env var, log or the pairing config.
+ *
+ *  FAILS CLOSED with an ACTIONABLE sentence when there is no terminal to ask
+ *  in (a non-interactive shell): that is the one case where a human really must
+ *  act, and it says so plainly instead of implying a hidden ritual.
+ */
+export async function ensureAdminRights(io: MacIo): Promise<{ ok: boolean; message: string }> {
+  // Already authorised (a recent sudo in this terminal, or a managed Mac whose
+  // policy grants it): nothing to ask, nothing to change.
+  const probe = await io.run('sudo', ['-n', 'true']);
+  if (probe.code === 0) return { ok: true, message: '' };
+
+  // No terminal to prompt in (or a runner that cannot attach one): refuse
+  // honestly. Never fall through — the writes below would fail one by one.
+  if (!io.runInteractive) {
+    return {
+      ok: false,
+      message:
+        'administrator rights are required to enable this (the preset writes a root-owned ' +
+        'login-window preference and /etc/kcpassword). Run this command in Terminal.app so it ' +
+        'can ask for your Mac password. Nothing was changed.',
+    };
+  }
+
+  // The normal path: let sudo ask, in the user's own terminal.
+  const ask = await io.runInteractive('sudo', ['-v']);
+  if (ask.code !== 0) {
+    return {
+      ok: false,
+      message:
+        'administrator rights are required to enable this, and the password prompt was ' +
+        'cancelled or refused. Run this command again in Terminal.app and enter your Mac ' +
+        'password when macOS asks. Nothing was changed.',
+    };
+  }
+  // Re-probe: a `sudo -v` that "succeeded" against a policy that grants nothing
+  // must not be read as authorisation for the writes that follow.
+  const confirm = await io.run('sudo', ['-n', 'true']);
+  if (confirm.code !== 0) {
+    return {
+      ok: false,
+      message:
+        'administrator rights could not be confirmed after the password prompt — this ' +
+        'account is probably not an administrator on this Mac. Nothing was changed.',
+    };
+  }
+  return { ok: true, message: '' };
+}
+
 /**
  * Apply the preset. ORDER MATTERS: probe first, refuse on a hard blocker, and
  * only then touch anything — a refusal leaves the machine exactly as it was.
@@ -492,12 +637,18 @@ export async function applyMacPreset(io: MacIo, opts: MacApplyOptions): Promise<
       'filevault',
     );
   }
-  const sudo = await io.run('sudo', ['-n', 'true']);
-  if (sudo.code !== 0) {
-    throw new UnattendedRefusal(
-      'administrator rights are required (the preset writes a root-owned login-window preference and /etc/kcpassword). Run it in a terminal where sudo is already authorised. Nothing was changed.',
-      'no-admin',
-    );
+  // TICKET bcdf5d2f — the owner's "very messy setup flow, normal users
+  // wouldn't know to run sudo". This used to be a bare `sudo -n true` gate: `-n`
+  // NEVER PROMPTS, so on a stock Mac it always failed and the owner was told to
+  // "run it in a terminal where sudo is already authorised" — a hidden
+  // prerequisite (`sudo -v` first, same window) that was ALSO contradicted by
+  // the docs' "do NOT prefix the command with sudo" rule. Two opposite
+  // instructions, neither on the card. The agent now asks for the password
+  // ITSELF, once, through sudo's own prompt, which is the whole point of running
+  // the command in the user's terminal.
+  const admin = await ensureAdminRights(io);
+  if (!admin.ok) {
+    throw new UnattendedRefusal(admin.message, 'no-admin');
   }
 
   const backup = await captureMacBackup(io, user);

@@ -27,6 +27,19 @@ jest.mock('axios', () => {
     if (process.env.__BSVC_DOWN === '1') {
       return Promise.reject(new Error('connect ECONNREFUSED 127.0.0.1:3100'));
     }
+    // Ticket 169d5080: the service now answers a NON-2xx status for a failed
+    // action, and axios throws on those. Simulate that exact shape — the class
+    // and any partial content live ONLY in the thrown response body.
+    if (process.env.__BSVC_FAIL_STATUS) {
+      return Promise.reject(
+        Object.assign(new Error(`Request failed with status code ${process.env.__BSVC_FAIL_STATUS}`), {
+          response: {
+            status: Number(process.env.__BSVC_FAIL_STATUS),
+            data: JSON.parse(process.env.__BSVC_FAIL_BODY || '{}'),
+          },
+        }),
+      );
+    }
     const url: string = cfg.url || cfg.baseURL || '';
     if (url.includes('/health')) {
       return Promise.resolve({ status: 200, data: { ok: true, service: 'digby-browser-service', contexts: 0 } });
@@ -169,6 +182,60 @@ describe('session-browser-client (ticket ea3ad8a8)', () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/hosted browser service error/);
     delete process.env.__BSVC_DOWN;
+  });
+
+  // Ticket 169d5080: the service answers a NON-2xx status for a REAL failure
+  // (invalid/incomplete URL, missing selector, render incomplete, screenshot too
+  // large, at capacity). axios throws on those, so the body is the only place
+  // the machine-readable class and any partial content live. The client must
+  // forward them instead of flattening everything into a bare string — the
+  // pre-fix dead ternary made every one of these look like a healthy 200.
+  test('169d5080: a non-2xx action response keeps its errorCode, status and partial content', async () => {
+    process.env.__BSVC_FAIL_STATUS = '502';
+    process.env.__BSVC_FAIL_BODY = JSON.stringify({
+      ok: false,
+      action: 'get_content',
+      url: 'https://www.facebook.com/ads/library/',
+      errorCode: 'render_incomplete',
+      error: 'render incomplete: still an empty HTML shell after 1200ms of re-polling',
+      content: '<html><body><div id="root"></div></body></html>',
+    });
+    try {
+      const res = await sessionBrowserAction('chat:abc', { name: 'get_content' });
+      expect(res.ok).toBe(false);
+      expect(res.errorCode).toBe('render_incomplete');
+      expect(res.status).toBe(502);
+      // The partial content survives so the caller can show what WAS read.
+      expect(res.content).toContain('root');
+      expect(res.url).toBe('https://www.facebook.com/ads/library/');
+      expect(res.error).toMatch(/render incomplete/);
+    } finally {
+      delete process.env.__BSVC_FAIL_STATUS;
+      delete process.env.__BSVC_FAIL_BODY;
+    }
+  });
+
+  test('169d5080: a 400 incomplete_url from the service reaches the caller as that class', async () => {
+    process.env.__BSVC_FAIL_STATUS = '400';
+    process.env.__BSVC_FAIL_BODY = JSON.stringify({
+      ok: false,
+      action: 'navigate',
+      errorCode: 'incomplete_url',
+      error: 'incomplete URL: "https://www.facebook.com/ads/library/?acti" breaks off mid-path',
+    });
+    try {
+      const res = await sessionBrowserAction('chat:abc', {
+        name: 'navigate',
+        url: 'https://www.facebook.com/ads/library/?acti',
+      });
+      expect(res.ok).toBe(false);
+      expect(res.status).toBe(400);
+      expect(res.errorCode).toBe('incomplete_url');
+      expect(res.error).toMatch(/incomplete URL/);
+    } finally {
+      delete process.env.__BSVC_FAIL_STATUS;
+      delete process.env.__BSVC_FAIL_BODY;
+    }
   });
 });
 

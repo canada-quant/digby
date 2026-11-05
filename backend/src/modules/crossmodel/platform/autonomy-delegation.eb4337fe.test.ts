@@ -236,6 +236,10 @@ function makeCtx(overrides: Partial<ToolContext> = {}) {
   const ctx = {
     worktree: '/wt', sessionId: FLEET, userId: U, permissionMode: 'auto',
     emit: () => {}, alwaysAllow: new Set<string>(),
+    // Stage legs model a Dig-deeper rung (a human turn that re-runs an EARLIER
+    // ask and therefore cards) — the same gate WORK_TOOLS_NO_CARD_DISABLED held
+    // open until RSW-1 retired it.
+    escalation: true,
     requestApproval: async () => 'allow' as const,
     execShell: async () => ({ stdout: '', stderr: '' }),
     ...overrides,
@@ -291,10 +295,11 @@ beforeEach(() => {
 // requested-work tools (start_coding_session, create_feed, own-chat schedule
 // tools, …) now execute WITHOUT a card. This suite pins the STAGING contract
 // itself (staging-time validation, WYSIWYG confirm, the card envelope), which
-// still governs machine turns and the kill switch — so it runs with the switch
-// set; the direct path is pinned by work-tools.test.ts.
-beforeAll(() => { process.env.WORK_TOOLS_NO_CARD_DISABLED = '1'; });
-afterAll(() => { delete process.env.WORK_TOOLS_NO_CARD_DISABLED; });
+// still governs machine turns and a Dig-deeper rung (ctx.escalation re-runs an
+// EARLIER ask, so it cards rather than re-running the work) — so its stage legs
+// pass escalation; the direct path is pinned by work-tools.test.ts.
+// (Until RSW-1 this suite reached the card by setting WORK_TOOLS_NO_CARD_DISABLED;
+// that kill switch is gone and escalation is the behaviour that actually stays.)
 
 describe('supervisorDelegationVerdict (eb4337fe limb A)', () => {
   it('a PROJECT supervisor delegating a held tool to a same-project lane → delegate', async () => {

@@ -259,9 +259,9 @@ describe('misfiled-spawns-4 — ungrouped (fleet) caller: observe-only framework
 
   it('the prompt regex names the framework repo and the backend tree; the repo regex matches the crossmodel repoUrl', () => {
     expect(FRAMEWORK_WORK_PROMPT_RE.test('Fix backend/src/modules/crossmodel/platform/platform-tools.ts')).toBe(true);
-    expect(FRAMEWORK_WORK_PROMPT_RE.test('Review PR #838 on canada-quant/digby')).toBe(true);
+    expect(FRAMEWORK_WORK_PROMPT_RE.test('Review PR #838 on example-org/crossmodel')).toBe(true);
     expect(FRAMEWORK_WORK_PROMPT_RE.test('Rebase onto tt-metal v0.78 and re-measure tok/s')).toBe(false);
-    expect(CROSSMODEL_REPO_RE.test('https://github.com/canada-quant/digby')).toBe(true);
+    expect(CROSSMODEL_REPO_RE.test('https://github.com/example-org/crossmodel')).toBe(true);
     expect(CROSSMODEL_REPO_RE.test('https://github.com/canada-quant/tt-rd')).toBe(false);
   });
 
@@ -287,7 +287,7 @@ describe('misfiled-spawns-4 — ungrouped (fleet) caller: observe-only framework
   });
 
   it('(5b) a crossmodel-repo target records nothing; a non-framework prompt records nothing', async () => {
-    mockDb.crossModelProject.findUnique.mockResolvedValue({ id: HOME, name: 'crossmodel', repoUrl: 'https://github.com/canada-quant/digby' });
+    mockDb.crossModelProject.findUnique.mockResolvedValue({ id: HOME, name: 'crossmodel', repoUrl: 'https://github.com/example-org/crossmodel' });
     let out = await executePlatformTool(ungrouped(), 'start_coding_session', { projectId: HOME, title: 'ok', prompt: 'Fix backend/src/x.ts' });
     expect(String(out)).not.toContain('NOTE (observe-only)');
 
@@ -328,7 +328,7 @@ describe('misfiled-spawns-5 — ungrouped caller that OMITS projectId (review of
   });
 
   it('(7d) an ungrouped caller that NAMES a project is untouched by the refusal (spawns where it says)', async () => {
-    mockDb.crossModelProject.findUnique.mockResolvedValue({ id: HOME, name: 'crossmodel', repoUrl: 'https://github.com/canada-quant/digby' });
+    mockDb.crossModelProject.findUnique.mockResolvedValue({ id: HOME, name: 'crossmodel', repoUrl: 'https://github.com/example-org/crossmodel' });
     const out = await executePlatformTool(ungrouped(), 'start_coding_session', { projectId: HOME, title: 'Framework fix', prompt: 'Fix backend/src/x.ts' });
     expect(mockStartCodingSession.mock.calls[0][0].projectId).toBe(HOME);
     expect(String(out)).not.toContain('REFUSED');

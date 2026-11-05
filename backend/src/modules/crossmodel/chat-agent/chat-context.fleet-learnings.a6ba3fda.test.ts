@@ -108,7 +108,7 @@ const hit = (over: Partial<MemBlendedHit> = {}): MemBlendedHit => ({
 
 const sessionHit = (over: Partial<MemBlendedHit> = {}): MemBlendedHit => ({
   ...hit({ scopeType: 'session', scopeId: 'chat-supervisor', projectId: '', projectName: null, crossProject: false, source: 'compaction' as any }),
-  content: 'Prior wake: QB2 lane parked awaiting reviewer verdict.',
+  content: 'Prior wake: node-a lane parked awaiting reviewer verdict.',
   ...over,
 });
 
@@ -170,14 +170,14 @@ describe('buildFleetLearningsBlock', () => {
     expect(block).toContain('[FLEET LEARNINGS & DECISIONS — 2 durable notes from your projects\' coding memory]');
     expect(block).toContain('- (learning · learnings.md · from project "crossmodel") Never force-push main');
     // The supervisor chat's OWN session-scope hit: no from-project marker, its own ref.
-    expect(block).toContain('- (compaction · abc123hash) Prior wake: QB2 lane parked awaiting reviewer verdict.');
+    expect(block).toContain('- (compaction · abc123hash) Prior wake: node-a lane parked awaiting reviewer verdict.');
   });
 
   it('a chat/session-scope hit is NEVER labelled "another project" (its scopeId is a chat id, not a project id)', () => {
     const block = buildFleetLearningsBlock([sessionHit({ projectName: null })]);
     // The HIT line (last line) carries no provenance marker — only project hits do.
     const hitLine = block.trim().split('\n').pop()!;
-    expect(hitLine).toBe('- (compaction · abc123hash) Prior wake: QB2 lane parked awaiting reviewer verdict.');
+    expect(hitLine).toBe('- (compaction · abc123hash) Prior wake: node-a lane parked awaiting reviewer verdict.');
     expect(hitLine).not.toContain('another project');
     expect(hitLine).not.toContain('from project');
   });

@@ -746,13 +746,13 @@ describe('supervisor OFF switch × owner briefing line', () => {
   it('fleet OFF: the posted briefing opens with "Fleet supervisor: OFF since … by … — wakes skipped: N"', async () => {
     mockPrisma.systemSetting.findUnique.mockImplementation(async ({ where }: any) =>
       where?.key === 'fleet_supervisor_enabled' ? { key: where.key, value: '0', updatedAt: new Date('2026-09-26T17:30:00Z') }
-        : where?.key === 'fleet_supervisor_enabled_by' ? { key: where.key, value: 'paul@sunday.market', updatedAt: new Date() }
+        : where?.key === 'fleet_supervisor_enabled_by' ? { key: where.key, value: 'example-user@example.com', updatedAt: new Date() }
           : null);
     redisStore.set('supervisor_switch:skipped:fleet', '9');
     invalidateSupervisorSwitchCache();
     expect(await generateOwnerBriefing(ARGS)).toBe(true);
     const content = postedContent();
-    expect(content.startsWith('Fleet supervisor: OFF since 2026-09-26 17:30Z by paul@sunday.market — wakes skipped: 9\n\n')).toBe(true);
+    expect(content.startsWith('Fleet supervisor: OFF since 2026-09-26 17:30Z by example-user@example.com — wakes skipped: 9\n\n')).toBe(true);
     expect(content).toContain('CanLaw:');
   });
 });

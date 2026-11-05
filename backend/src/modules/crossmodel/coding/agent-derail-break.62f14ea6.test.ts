@@ -1,7 +1,7 @@
 /**
  * REPLAY PIN — ticket 62f14ea6 (general_feedback sighting, 2026-10-15) on the
  * auto-filed mishap 596718e7: "3× tool-failure streak: todo_update on
- * 'DNS cutover llm.example.com → · Phase 3 remai' — framework or model?"
+ * 'DNS cutover llm.cql.ca → · Phase 3 remai' — framework or model?"
  * Auto-filed at breaker trip (owner doctrine 2026-09-10: self-heal +
  * attribute, never just escalate).
  *
@@ -16,7 +16,7 @@
  *      todo(s) not done: "Verify cutover: …" (blocked). Pass force: true to
  *      override.`
  * with the paired args `{"blockedReason":"Client list is owner/fleet-side…` and
- * `{"evidence":"Fresh-host verification this run (SSH deploy@203.0.113.10)…`.
+ * `{"evidence":"Fresh-host verification this run (SSH deploy@69.19.140.37)…`.
  *
  * ADJUDICATION (against primary sources, 2026-10-16, ticket lane 62f14ea6):
  * MODEL BEHAVIOR — no deterministic framework defect. Every leg verified:
@@ -203,9 +203,9 @@ const CODING_TEST_PROFILE: AgentProfile = {
 const SWEEP_TODO = '06c26d0f-a77f-41dc-adcb-c3268309a2db';   // dependsOn 10023020 (blocked at 21:51Z)
 const DNS_TODO = 'fe467ced-572a-49db-aff8-02dac35030c6';     // the in_progress row (startedAt 21:51:20.594Z)
 const VERIFY_TITLE =
-  'Verify cutover: /v1/models roster vs 50, census script, StAnne legs (mbp-2 utility 100.64.0.11:8095, asr, ' +
-  'edge image 100.64.0.12), self-hosted tailnet legs (box-a 100.64.0.13:8091, box-b 100.64.0.14:8000, ' +
-  'GLM nodes), E2E completion through https://llm.example.com';
+  'Verify cutover: /v1/models roster vs 50, census script, StAnne legs (mbp-2 utility 100.64.0.1:8095, asr, ' +
+  'accelerator image 100.64.0.1), self-hosted tailnet legs (node-a 100.64.0.1:8091, node-b 100.64.0.1:8000, GLM ' +
+  'heads), E2E completion through https://llm.cql.ca';
 
 // ── The incident's verbatim failure texts (mishap 596718e7 body, newest
 //    first) — the executeCodingTool catch-all envelopes the lane actually saw.
@@ -226,7 +226,7 @@ const BLOCKED_REASON_ARGS = JSON.stringify({
 });
 const DONE_EVIDENCE_ARGS = JSON.stringify({
   evidence:
-    'Fresh-host verification this run (SSH deploy@203.0.113.10): /etc/gateway-health-monitor.env does not exist; ' +
+    'Fresh-host verification this run (SSH deploy@69.19.140.37): /etc/gateway-health-monitor.env does not exist; ' +
     'no KNOWN_DOWN overrides in any systemd drop-in (grep across /etc/systemd/system…',
   status: 'done',
   todoId: SWEEP_TODO,
@@ -245,7 +245,7 @@ const makeInput = (): AgentRunInput => ({
   doctrineOverride: 'You are a test agent.',
   history: [],
   userMessage: [
-    'RUNBOOK PHASE 3 — the deploy row is done on rutherford-2 (203.0.113.10).',
+    'RUNBOOK PHASE 3 — the deploy row is done on rutherford-2 (69.19.140.37).',
     `Close out the remaining rows for the fleet: the drop-in sweep ${SWEEP_TODO} and the DNS cutover ${DNS_TODO}.`,
     'Record why anything that cannot close yet is held, then wrap the wake.',
   ].join('\n'),

@@ -69,7 +69,7 @@
  *     and OPENED PR #1384 (merged squash cb5da77337fc — GitHub mergedAt
  *     21:37:07Z, the merge receipt 9c372e78 landed 21:37:09Z; deploy run
  *     37996093973 success; the Windows installer 1.0.1 shipped, served from
- *     digby.example.com). The work the streak interrupted landed in full.
+ *     digby.ai). The work the streak interrupted landed in full.
  * NO platform code change (per the 6a950136 doctrine: never exempt the verify
  * envelope — a lane that truly cannot get its chain green must stay visible).
  *
@@ -249,7 +249,7 @@ const PR_GATE_REFUSAL =
 // ${created.url}` plus the [PR DIFF] tail in pr-diff-shape.ts's format with
 // the receipt's real numbers (14 file(s), +792/−36, hash d51a6549f99a3ad5).
 const GATE_GREEN =
-  'Opened PR #1384: https://github.com/canada-quant/digby/pull/1384\n'
+  'Opened PR #1384: https://github.com/example-org/crossmodel/pull/1384\n'
   + '[PR DIFF] 14 file(s) · +792/−36 · code · hash d51a6549f99a3ad5';
 
 /** The verify double: a per-run extra tool whose execute replays the abort bytes at the counting seam. */
@@ -353,15 +353,15 @@ describe('replay 0022cb16 — three bare verify 900s-aborts + five streak-neutra
     // The frozen incident shape: tools.ts:2844 `Opened PR #${number}: ${url}`
     // + the pr-diff-shape.ts [PR DIFF] tail, with the receipt's real numbers.
     expect(looksLikeToolFailure(GATE_GREEN)).toBe(false);
-    expect(GATE_GREEN).toContain('Opened PR #1384: https://github.com/canada-quant/digby/pull/1384');
+    expect(GATE_GREEN).toContain('Opened PR #1384: https://github.com/example-org/crossmodel/pull/1384');
     // Generalization — the contract must hold on shapes the incident did NOT
     // produce (other PR numbers, larger/smaller diffs, docs-only waves): a
     // success render is never failure-shaped regardless of its numbers.
     for (const s of [
-      'Opened PR #629: https://github.com/canada-quant/digby/pull/629',
-      'Opened PR #1410: https://github.com/canada-quant/digby/pull/1410\n[PR DIFF] 3 file(s) · +120/−4 · docs-only, unverified · README.md',
-      'Opened PR #2: https://github.com/canada-quant/digby/pull/2\n[PR DIFF] 1 file(s) · +1/−1 · code · hash abcdef0123456789 · a.ts',
-      'Opened PR #1384: https://github.com/canada-quant/digby/pull/1384\n[PR DIFF] 14 file(s) · +810/−36 · code',
+      'Opened PR #629: https://github.com/example-org/crossmodel/pull/629',
+      'Opened PR #1410: https://github.com/example-org/crossmodel/pull/1410\n[PR DIFF] 3 file(s) · +120/−4 · docs-only, unverified · README.md',
+      'Opened PR #2: https://github.com/example-org/crossmodel/pull/2\n[PR DIFF] 1 file(s) · +1/−1 · code · hash abcdef0123456789 · a.ts',
+      'Opened PR #1384: https://github.com/example-org/crossmodel/pull/1384\n[PR DIFF] 14 file(s) · +810/−36 · code',
     ]) {
       expect(looksLikeToolFailure(s)).toBe(false);
     }
@@ -388,7 +388,7 @@ describe('replay 0022cb16 — three bare verify 900s-aborts + five streak-neutra
       .mockResolvedValueOnce('feed probe: windows-latest.json 1.0.1\n[exit: 0]')
       .mockResolvedValueOnce('byte probe: cmp differs, expected pre-deploy\n[exit: 1]')       // red — exempt
       .mockResolvedValueOnce('log probe: boot milestones present\n[exit: 0]')
-      .mockResolvedValue('post-trip probe: digby.example.com/Digby-Setup.exe 74,850,282 B\n[exit: 1]'); // receipt 1a0d5205 20:56:52Z (ok:false)
+      .mockResolvedValue('post-trip probe: digby.ai/Digby-Setup.exe 74,850,282 B\n[exit: 1]'); // receipt 1a0d5205 20:56:52Z (ok:false)
     mockRunModelTurn
       .mockResolvedValueOnce(verifyTurn(1))  // ABORT → streak (verify, 1)
       .mockResolvedValueOnce(shTurn(2))      // green probe — exempt (the 19:11–19:24 real work)

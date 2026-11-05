@@ -17,7 +17,7 @@ jest.mock('../../../config/database', () => ({
     activity: { create: jest.fn(async () => ({})) },
     supervisorState: { findMany: (...a: any[]) => mockSupFindMany(...a) },
     crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
-    codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+    chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
     projectGoal: { findMany: jest.fn(async () => []) },
     projectTodo: { findMany: jest.fn(async () => []) },
     eventHook: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
@@ -54,7 +54,7 @@ beforeEach(() => {
       directives: [{ id: 'aaaa1111-0000-4000-8000-000000000001', text: 'Keep the bench running', status: 'open', at: '2026-10-05T00:00:00Z' }],
       archived: [{ id: DIR, text: 'AGX reflash HOLD until the AGX lane verify chain is green', status: 'done', at: '2026-10-05T00:00:00Z', archivedAt: '2026-10-06T00:00:00Z' }],
       dispatches: [{ at: '2026-10-05T12:00:00Z', kind: 'start_coding_session', id: 'c90fed41-2222-4333-8444-555566667777', note: 'watchdog lane' }],
-      notes: 'MiMo slow-restore todo e83d5e45 open per my notes; hold 2602af09.',
+      notes: 'node-b slow-restore todo e83d5e45 open per my notes; hold 2602af09.',
     },
   });
 });

@@ -305,7 +305,7 @@ const recoveryGrepTurn = {
   toolCalls: [
     { id: 'tg1', name: 'grep', arguments: JSON.stringify({ pattern: 'aws', path: 'systemd' }) },
     { id: 'tg2', name: 'grep', arguments: JSON.stringify({ pattern: 'amazonaws', path: 'docker-compose.yml' }) },
-    { id: 'tg3', name: 'grep', arguments: JSON.stringify({ pattern: 'i-020850b4474761289', path: '.' }) },
+    { id: 'tg3', name: 'grep', arguments: JSON.stringify({ pattern: 'i-0123456789abcdef0', path: '.' }) },
   ],
   finishReason: 'tool_calls' as const,
 };

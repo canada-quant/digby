@@ -161,7 +161,7 @@ describe('embedTexts — embeddings role override (Digby Edge)', () => {
 
   it('an UNFLAGGED model returning 4096 dims still fails closed, and the error says whether `dimensions` was REJECTED or ignored', async () => {
     mockGetModelRoleOverrides.mockResolvedValue({ embeddings: 'cql:Qwen3-Embedding-8B' });
-    mockResolveRegistryModel.mockResolvedValue({ baseUrl: 'https://llm.example.com/v1', model: 'Qwen3-Embedding-8B', apiKey: 'k' });
+    mockResolveRegistryModel.mockResolvedValue({ baseUrl: 'https://llm.cql.ca/v1', model: 'Qwen3-Embedding-8B', apiKey: 'k' });
     // Server IGNORES the param (200 with the native size).
     mockedAxios.post.mockResolvedValueOnce({ data: { data: [{ index: 0, embedding: new Array(4096).fill(0.2) }] } });
     await expect(embedTexts(['hello'])).rejects.toThrow(/4096 dimensions \(the server ignored the dimensions=1536 request\)[\s\S]*flag it "MRL"/);
@@ -175,7 +175,7 @@ describe('embedTexts — embeddings role override (Digby Edge)', () => {
 
   it('a model FLAGGED matryoshka is truncated to the leading 1536 dims and L2-normalized (the `dimensions` operation, client-side)', async () => {
     mockGetModelRoleOverrides.mockResolvedValue({ embeddings: 'cql:Qwen3-Embedding-8B' });
-    mockResolveRegistryModel.mockResolvedValue({ baseUrl: 'https://llm.example.com/v1', model: 'Qwen3-Embedding-8B', apiKey: 'k', matryoshka: true });
+    mockResolveRegistryModel.mockResolvedValue({ baseUrl: 'https://llm.cql.ca/v1', model: 'Qwen3-Embedding-8B', apiKey: 'k', matryoshka: true });
     // Distinct head vs tail so truncation (not resampling) is provable.
     const native = [...new Array(1536).fill(3), ...new Array(4096 - 1536).fill(99)];
     mockedAxios.post.mockResolvedValueOnce({ data: { data: [{ index: 0, embedding: native }] } });
@@ -193,7 +193,7 @@ describe('embedTexts — embeddings role override (Digby Edge)', () => {
 
   it('a flagged model returning FEWER than 1536 dims cannot be padded — still a hard error', async () => {
     mockGetModelRoleOverrides.mockResolvedValue({ embeddings: 'cql:small-embed' });
-    mockResolveRegistryModel.mockResolvedValue({ baseUrl: 'https://llm.example.com/v1', model: 'small-embed', apiKey: 'k', matryoshka: true });
+    mockResolveRegistryModel.mockResolvedValue({ baseUrl: 'https://llm.cql.ca/v1', model: 'small-embed', apiKey: 'k', matryoshka: true });
     mockedAxios.post.mockResolvedValueOnce({ data: { data: [{ index: 0, embedding: new Array(768).fill(0.2) }] } });
     await expect(embedTexts(['hello'])).rejects.toThrow(/768[\s\S]*1536/);
   });

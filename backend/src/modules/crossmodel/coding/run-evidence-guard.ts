@@ -30,7 +30,7 @@
  *      demand an external-action tool call (run_command, git_*,
  *      open_pull_request, merge_pull_request, github_*); deploy claims take
  *      that same action class, and — for the pure OBSERVATION shape only
- *      ("health check 200", "prod green", "digby.example.com healthy", no deploy verb;
+ *      ("health check 200", "prod green", "digby.ai healthy", no deploy verb;
  *      F32 2026-10-22, EVIDENCE_GUARD_DEPLOY_OBSERVATION_DISABLED=1 to
  *      restore) — the deploy-health observation reads (get_fleet_telemetry,
  *      scrape_as_markdown, scrape_batch, browser_task); probe/benchmark
@@ -70,7 +70,7 @@ import {
 // Re-export for the supervisor chat seam (chat-agent.service.ts imports both
 // from here — the guard is the module's public surface).
 export { parseClaimsBlock };
-import { receiptMatchesClaim, commitLocalClaimGuardDisabled, isLocalReceiptTool, type ToolReceipt } from './run-receipts';
+import { receiptMatchesClaim, isLocalReceiptTool, type ToolReceipt } from './run-receipts';
 import { NON_EVIDENCE_TOOLS, PLATFORM_OBSERVE_TOOLS, INFRA_PROBE_SUBJECT_RE, isEvidenceToolName, isDeployObservationClaimText, DEPLOY_HEALTH_OBSERVATION_TOOLS, DEPLOY_HEALTH_SURFACE_RE, deployObservationTierDisabled } from './evidence-tools';
 
 // ── Layer 1: claim extraction ───────────────────────────────────────────────
@@ -261,7 +261,7 @@ function pairMatch(line: string, a: RegExp, b: RegExp): boolean {
 // Deploy: the verb + a success adjective on the same line…
 const DEPLOY_RE = /\bdeploy(?:ed|ment|s)?\b/i;
 const DEPLOY_OK_RE = /\b(?:green|healthy|live|succeeded|passed|flipped)\b/i;
-// …or a health surface + an OK signal ("health check 200", "prod green", "digby.example.com healthy").
+// …or a health surface + an OK signal ("health check 200", "prod green", "digby.ai healthy").
 // F32: the regex lives in evidence-tools.ts (DEPLOY_HEALTH_SURFACE_RE — the single shared
 // home; the boundary predicate isDeployObservationClaimText and this extraction must see
 // the SAME surface) — this alias is import-order sugar.
@@ -291,8 +291,8 @@ const COMMIT_PUSH_VERB_RE = /\b(?:pushed|force-pushed|landed|live on origin)\b/i
 // on origin — local only, not pushed" strike (verdict.localOnlyShas), never a
 // fabrication conviction (the commit may well exist locally). A clause that
 // ALSO carries a push verb is a commit_pushed claim for that sha, not a
-// commit_local one. Kill switch COMMIT_LOCAL_CLAIM_GUARD_DISABLED=1 (no
-// extraction, no receipt split).
+// commit_local one. Unconditional since RSW-1 2026-11-03 (the kill switch
+// that could disable the extraction and the receipt split is gone).
 // Review fix (same day): "saved" / "checkpointed" are NOT git verbs — on an
 // ML lane ("Saved checkpoint ckpt-1a2b3c4d", "Checkpointed step 2f4e6a8c")
 // they mined training artefacts as commit shas, cost a commits-API call each
@@ -575,9 +575,9 @@ function commitShasInClause(clause: string): string[] {
     if (m.index !== undefined && RECEIPT_LABEL_BEFORE_RE.test(clause.slice(Math.max(0, m.index - 20), m.index))) continue;
     if (m.index !== undefined && negatedBefore(clause, m.index)) continue;
     if (m.index !== undefined && HASH_LABEL_BEFORE_RE.test(clause.slice(Math.max(0, m.index - 24), m.index))) continue;
-    if (m.index !== undefined && !commitLocalClaimGuardDisabled() && RELAY_LABEL_BEFORE_RE.test(clause.slice(Math.max(0, m.index - 16), m.index))) continue;
-    if (m.index !== undefined && !commitLocalClaimGuardDisabled() && ARTIFACT_LABEL_BEFORE_RE.test(clause.slice(Math.max(0, m.index - 16), m.index))) continue;
-    if (m.index !== undefined && !commitLocalClaimGuardDisabled() && BOARD_LABEL_BEFORE_RE.test(clause.slice(Math.max(0, m.index - 24), m.index))) continue;
+    if (m.index !== undefined && RELAY_LABEL_BEFORE_RE.test(clause.slice(Math.max(0, m.index - 16), m.index))) continue;
+    if (m.index !== undefined && ARTIFACT_LABEL_BEFORE_RE.test(clause.slice(Math.max(0, m.index - 16), m.index))) continue;
+    if (m.index !== undefined && BOARD_LABEL_BEFORE_RE.test(clause.slice(Math.max(0, m.index - 24), m.index))) continue;
     out.push(tok);
   }
   return out;
@@ -619,7 +619,7 @@ export function extractCompletionClaims(text: string): CompletionClaim[] {
           shasClaimed.add(sha);
           claims.push({ kind: 'commit_pushed', sha, text: line });
         }
-      } else if (!commitLocalClaimGuardDisabled() && anyMatch(clause, COMMIT_LOCAL_VERB_RE) && !LOCAL_HONEST_RE.test(line) && !PUSH_REFUSED_RE.test(line)) {
+      } else if (anyMatch(clause, COMMIT_LOCAL_VERB_RE) && !LOCAL_HONEST_RE.test(line) && !PUSH_REFUSED_RE.test(line)) {
         // commit_local (finding A1): "fully banked a65e79f4", "committed
         // 3f2a1b9c" — a sha whose only completion verb is commit-shaped. The
         // push-verb branch above wins for a clause carrying both ("committed
@@ -755,7 +755,7 @@ export function claimHasEvidence(claim: CompletionClaim, parts: MessagePart[]): 
       return names.some((n) => EXTERNAL_ACTION_TOOL_RE.test(n));
     case 'deploy':
       // F32 (2026-10-22): the DEPLOY_ALT observation shape ("health check
-      // 200", "prod green", "digby.example.com healthy" — no deploy verb) is ALSO
+      // 200", "prod green", "digby.ai healthy" — no deploy verb) is ALSO
       // evidenced by the deploy-health observation tools: get_fleet_telemetry
       // (deploy/health view — the deploy doctrine's own mandated verification
       // read, platform-tools.ts:6559) and the web health reads. DEPLOY-ONLY
@@ -770,7 +770,7 @@ export function claimHasEvidence(claim: CompletionClaim, parts: MessagePart[]): 
     case 'commit_local':
       // Finding A1: a git_commit call is LOCAL — it never evidences that a
       // sha reached origin (git_push / run_command / github_* still do).
-      return names.some((n) => EXTERNAL_ACTION_TOOL_RE.test(n) && !(!commitLocalClaimGuardDisabled() && isLocalReceiptTool(n)));
+      return names.some((n) => EXTERNAL_ACTION_TOOL_RE.test(n) && !isLocalReceiptTool(n));
     case 'probe':
     case 'benchmark':
       // Ticket 212b3aa0: ∪ the read-only platform observation tools — a
@@ -2129,7 +2129,7 @@ export function carriedReceiptFor(c: CompletionClaim, carriedReceipts: ToolRecei
       // Finding A1 ∘ carried tier: a LOCAL receipt (git_commit) proves the
       // worktree has the sha, never that origin does — it cannot carry a
       // pushed claim from an earlier run either.
-      if (!commitLocalClaimGuardDisabled() && isLocalReceiptTool(r.tool)) continue;
+      if (isLocalReceiptTool(r.tool)) continue;
       if (r.ids?.sha !== undefined && r.ids?.sha !== null && idMatch(String(c.sha).toLowerCase(), String(r.ids.sha).toLowerCase())) return r;
     }
   }
@@ -4022,7 +4022,7 @@ export function renderGuardRejectBackNotice(v: GuardVerdict): string {
     // WHICH tool class satisfies it (the 212b3aa0 repeat-strike fix, applied
     // to the deploy kind).
     if (v.unprovenKinds.some((k) => k === 'deploy')) {
-      lines.push('  deploy evidence = an ok receipt from run_command/git_*/github_* (or merge_pull_request). If the claim is the pure OBSERVATION shape ("health check 200", "prod green", "digby.example.com healthy" — no deploy verb), a get_fleet_telemetry deploy/health read or a web health read (scrape_as_markdown/browser_task) executed THIS run also evidences it; a line saying the deploy itself ran (deploy verb) always needs the action class. Re-observe and cite the fresh output, or remove the claim.');
+      lines.push('  deploy evidence = an ok receipt from run_command/git_*/github_* (or merge_pull_request). If the claim is the pure OBSERVATION shape ("health check 200", "prod green", "digby.ai healthy" — no deploy verb), a get_fleet_telemetry deploy/health read or a web health read (scrape_as_markdown/browser_task) executed THIS run also evidences it; a line saying the deploy itself ran (deploy verb) always needs the action class. Re-observe and cite the fresh output, or remove the claim.');
     }
     for (const c of cap5(v.unprovenClaims ?? [])) lines.push(`  - "${clip(c.text)}"`);
   }
@@ -4443,7 +4443,7 @@ export function renderLineLevelRemovedFinal(opts: {
     for (const claim of extractCompletionClaims(line)) {
       if (claim.prNumber !== undefined && okReceipts.some((r) => r.ids?.prNumber !== undefined && r.ids?.prNumber !== null && String(r.ids.prNumber) === String(claim.prNumber))) return true;
       // Finding A1: a git_commit receipt never makes a push/banked line "receipted".
-      if (isOriginShaKind(claim.kind) && claim.sha && okReceipts.some((r) => typeof r.ids?.sha === 'string' && !(!commitLocalClaimGuardDisabled() && isLocalReceiptTool(r.tool)) && exonShaMatches(claim.sha!, r.ids.sha))) return true;
+      if (isOriginShaKind(claim.kind) && claim.sha && okReceipts.some((r) => typeof r.ids?.sha === 'string' && !isLocalReceiptTool(r.tool) && exonShaMatches(claim.sha!, r.ids.sha))) return true;
     }
     return false;
   };
@@ -4614,7 +4614,7 @@ function citedToolEvidencesKind(kind: ClaimKind, tool: string, claimText?: strin
     case 'commit_pushed':
     case 'commit_local':
       // Finding A1: the local class (git_commit) is not origin evidence.
-      return EXTERNAL_ACTION_TOOL_RE.test(tool) && !(!commitLocalClaimGuardDisabled() && isLocalReceiptTool(tool));
+      return EXTERNAL_ACTION_TOOL_RE.test(tool) && !isLocalReceiptTool(tool);
     case 'probe':
     case 'benchmark':
       // Ticket 212b3aa0: the read-only platform observation tools are the
@@ -4649,7 +4649,7 @@ export function citedReceiptProvesClaim(claim: CompletionClaim, citedOk: ToolRec
   }
   if (isOriginShaKind(claim.kind) && claim.sha) {
     // Finding A1: a cited git_commit receipt's sha is LOCAL — it cannot prove a push/banked line.
-    if (citedOk.some((r) => typeof r.ids?.sha === 'string' && !(!commitLocalClaimGuardDisabled() && isLocalReceiptTool(r.tool)) && exonShaMatches(claim.sha!, r.ids.sha))) return true;
+    if (citedOk.some((r) => typeof r.ids?.sha === 'string' && !isLocalReceiptTool(r.tool) && exonShaMatches(claim.sha!, r.ids.sha))) return true;
     const sha = claim.sha.toLowerCase();
     return classCited && haystacksLower.some((h) => h.includes(sha));
   }
@@ -4791,7 +4791,7 @@ export async function applyCompletionClaimGuard(opts: {
     // Cross-chat receipt evidence (finding A1 review fix): the git_push shas
     // and receipt uuids this run READ via get_run_receipts (a lane's harness
     // record). Empty under the A1 kill switch — pre-split, no such lane.
-    const observedReceipts = commitLocalClaimGuardDisabled() ? { pushShas: [] as string[], receiptIds: [] as string[] } : observedRunReceiptEvidence(opts.parts);
+    const observedReceipts = observedRunReceiptEvidence(opts.parts);
     const observedPushShaProves = (c: CompletionClaim): boolean =>
       isOriginShaKind(c.kind) && !!c.sha && observedReceipts.pushShas.some((s) => exonShaMatches(c.sha!, s));
 
@@ -5280,7 +5280,7 @@ export async function applyCompletionClaimGuard(opts: {
       // the lane (get_run_receipts) is receipt-proven — the doctrine's "cite a
       // git_push receipt" is satisfiable cross-chat.
       const unprovenRelayed = unprovenRaw.filter((c) => !observedPushShaProves(c)).filter((c) => !(
-        !(c.kind === 'commit_local' && !commitLocalClaimGuardDisabled())
+        c.kind !== 'commit_local'
         && observedRelayIds.some((id) => c.text.toLowerCase().includes(id))
         && relayBindsClaimContent(c, lowerFdHaystacks)
       ));
@@ -5310,7 +5310,7 @@ export async function applyCompletionClaimGuard(opts: {
       // and the same final then carried both "✅ EXISTS on origin" and "treat
       // it as LOCAL ONLY"). The other kinds render here exactly as before.
       for (const c of unproven) {
-        if (c.kind === 'commit_local' && !commitLocalClaimGuardDisabled()) deferredLocalClaims.push(c);
+        if (c.kind === 'commit_local') deferredLocalClaims.push(c);
         else if (deferExternal && isDeferredPrClaimKind(c.kind) && typeof c.prNumber === 'number') deferredExternalClaims.push(c);
         else unprovenNow.push(c);
       }
@@ -5424,10 +5424,9 @@ export async function applyCompletionClaimGuard(opts: {
       // Receipt-sourced shas: git_push only (finding A1) — a git_commit
       // receipt is LOCAL and the harness never "confirms it on origin"; under
       // the kill switch git_commit shas ride as 'receipt' exactly as before.
-      const localSplitOn = !commitLocalClaimGuardDisabled();
       for (const r of opts.receipts ?? []) {
         const sha = typeof r.ids?.sha === 'string' ? r.ids.sha : null;
-        if (sha && (r.tool === 'git_push' || (!localSplitOn && r.tool === 'git_commit')) && !bySha.has(sha)) bySha.set(sha, 'receipt');
+        if (sha && r.tool === 'git_push' && !bySha.has(sha)) bySha.set(sha, 'receipt');
       }
       // Present-on-origin shas the deferred commit_local claims reconcile
       // against (empty when the lane was silent / unavailable).
@@ -5579,6 +5578,14 @@ const BLOCK_TYPE_COVERED_KINDS: Record<ClaimsBlockType, readonly ClaimKind[]> = 
   // LOCAL commit (finding A1's receipt split), so a "pushed <sha>" prose
   // line is never downgraded by a commit entry.
   commit: ['commit_local'],
+  // CT-5 (todo 76fd0cce): a VERIFIED probe/benchmark entry — vouched by the
+  // run_command receipt that produced it — covers its OWN prose class. This is
+  // the downgrade CT-5 existed to enable: before it, a lane's honest "probe says
+  // the box is on sha 7d38730f" had no typed record to back it and stayed in the
+  // tier-2 advisory lane. Id-narrowing rides the shared helper below (a verified
+  // probe of sha A never launders a fabricated prose probe of sha B).
+  probe: ['probe'],
+  benchmark: ['benchmark'],
   schedule_armed: [],
   email_sent: [],
   state_update: [],
@@ -5675,7 +5682,7 @@ function renderClaimsBlockMalformedNote(reason: string): string {
   return [
     '[HARNESS EVIDENCE GUARD — CLAIMS BLOCK MALFORMED]',
     `The final answer ends with a typed claims block that could not be parsed (${reason}) — it was IGNORED and prose evidence mining applied unchanged.`,
-    'Next time emit a JSON array of {"type","ref"} entries inside the claims fence (types: push, pr, merge, deploy, commit, ticket_update, message_sent, dispatch, file_change, verify, schedule_armed, email_sent, state_update). Entries may add an optional "scope":"session" (work an earlier run of this chat did) or "scope":"relayed" (a receipt read with get_run_receipts this run) — scoped entries are re-checked against the chat\u2019s receipt history before a miss is struck.',
+    'Next time emit a JSON array of {"type","ref"} entries inside the claims fence (types: push, pr, merge, deploy, commit, ticket_update, message_sent, dispatch, file_change, verify, schedule_armed, email_sent, state_update, probe, benchmark). Entries may add an optional "scope":"session" (work an earlier run of this chat did) or "scope":"relayed" (a receipt read with get_run_receipts this run) — scoped entries are re-checked against the chat\u2019s receipt history before a miss is struck.',
   ].join('\n');
 }
 

@@ -7,7 +7,7 @@
  * bg1-378g; verified first-hand on origin/main 6f1da1ee):
  *   - DEPLOY_ALT_RE (run-evidence-guard.ts) extracts a `deploy` claim from
  *     pure OBSERVATION lines — "health check 200", "prod green",
- *     "digby.example.com healthy" — lines that assert NOTHING about the run having
+ *     "digby.ai healthy" — lines that assert NOTHING about the run having
  *     performed a deploy.
  *   - Every deploy evidence tier bound ONLY to the external-action class:
  *     claimHasEvidence's parts tier, citedToolEvidencesKind's citation tier,
@@ -82,7 +82,7 @@ const part = (name: string): any => ({ type: 'tool_call', name, args: {} });
 
 describe('F32 deploy-observation boundary predicate (evidence-tools.ts)', () => {
   it('the OBSERVATION shape: health surface + OK signal, no deploy verb', () => {
-    expect(isDeployObservationClaimText('health check 200, digby.example.com healthy')).toBe(true);
+    expect(isDeployObservationClaimText('health check 200, digby.ai healthy')).toBe(true);
     expect(isDeployObservationClaimText('prod green')).toBe(true);
     expect(isDeployObservationClaimText('Deploy verified: health check 200')).toBe(false);
     expect(isDeployObservationClaimText('the deploy flipped green')).toBe(false);
@@ -94,7 +94,7 @@ describe('F32 deploy-observation boundary predicate (evidence-tools.ts)', () => 
   it('the shared regexes mirror the guard\'s extraction vocabulary', () => {
     // DEPLOY_ALT_RE's exact surface, verbatim.
     expect(DEPLOY_HEALTH_SURFACE_RE.test('health check 200')).toBe(true);
-    expect(DEPLOY_HEALTH_SURFACE_RE.test('digby.example.com healthy')).toBe(true);
+    expect(DEPLOY_HEALTH_SURFACE_RE.test('digby.ai healthy')).toBe(true);
     expect(DEPLOY_HEALTH_SURFACE_RE.test('prod green')).toBe(true);
     expect(DEPLOY_HEALTH_SURFACE_RE.test('boxes report the new main head')).toBe(false);
     // The verb guard: extraction fires on DEPLOY_ALT even when a verb is
@@ -114,22 +114,22 @@ describe('F32 parts tier: deploy observation vs deploy verb (claimHasEvidence)',
     return claims.find((c) => c.kind === 'deploy')!;
   };
 
-  it('CLEAN (the fix): "health check 200, digby.example.com healthy" evidenced by a this-run get_fleet_telemetry read', () => {
-    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [part('get_fleet_telemetry')])).toBe(true);
+  it('CLEAN (the fix): "health check 200, digby.ai healthy" evidenced by a this-run get_fleet_telemetry read', () => {
+    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [part('get_fleet_telemetry')])).toBe(true);
   });
 
   it('CLEAN (the fix): the same observation evidenced by a web health read (scrape_as_markdown)', () => {
-    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [part('scrape_as_markdown')])).toBe(true);
-    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [part('browser_task')])).toBe(true);
+    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [part('scrape_as_markdown')])).toBe(true);
+    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [part('browser_task')])).toBe(true);
   });
 
   it('STILL CONVICTS: the same observation line with a ZERO journal (honest lane must have run the read)', () => {
-    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [])).toBe(false);
+    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [])).toBe(false);
   });
 
   it('STILL CONVICTS (anti-laundering): a GENERIC fleet read (get_chat_status) never vouches a deploy observation', () => {
-    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [part('get_chat_status')])).toBe(false);
-    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [part('todo_get')])).toBe(false);
+    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [part('get_chat_status')])).toBe(false);
+    expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [part('todo_get')])).toBe(false);
   });
 
   it('STILL CONVICTS (the verb boundary): a deploy-verb line is action-only even with the observation tools in the journal', () => {
@@ -142,10 +142,10 @@ describe('F32 parts tier: deploy observation vs deploy verb (claimHasEvidence)',
   it('KILL SWITCH: EVIDENCE_GUARD_DEPLOY_OBSERVATION_DISABLED=1 restores the action-only tier', () => {
     process.env[DEPLOY_OBSERVATION_TIER_DISABLED_ENV] = '1';
     try {
-      expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [part('get_fleet_telemetry')])).toBe(false);
-      expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [part('scrape_as_markdown')])).toBe(false);
+      expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [part('get_fleet_telemetry')])).toBe(false);
+      expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [part('scrape_as_markdown')])).toBe(false);
       // The action class is untouched.
-      expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.example.com healthy'), [part('run_command')])).toBe(true);
+      expect(claimHasEvidence(obsClaim('Verified: health check 200, digby.ai healthy'), [part('run_command')])).toBe(true);
     } finally {
       delete process.env[DEPLOY_OBSERVATION_TIER_DISABLED_ENV];
     }
@@ -156,14 +156,14 @@ describe('F32 parts tier: deploy observation vs deploy verb (claimHasEvidence)',
 
 describe('F32 receipts lane: deploy observation vs deploy verb (receiptMatchesClaim)', () => {
   it('CLEAN (the fix): the observation claim is proven by a web health-read receipt', () => {
-    const claims = extractCompletionClaims('Verified: health check 200, digby.example.com healthy');
+    const claims = extractCompletionClaims('Verified: health check 200, digby.ai healthy');
     const c = claims.find((x) => x.kind === 'deploy')!;
     expect(receiptMatchesClaim(c, [receipt('scrape_as_markdown', true)])).toBe(true);
     expect(receiptMatchesClaim(c, [receipt('browser_task', true)])).toBe(true);
   });
 
   it('STILL CONVICTS: the observation claim against receipts that prove nothing (a generic platform read)', () => {
-    const claims = extractCompletionClaims('Verified: health check 200, digby.example.com healthy');
+    const claims = extractCompletionClaims('Verified: health check 200, digby.ai healthy');
     const c = claims.find((x) => x.kind === 'deploy')!;
     expect(receiptMatchesClaim(c, [receipt('get_chat_status', true)])).toBe(false);
     expect(receiptMatchesClaim(c, [receipt('todo_get', true)])).toBe(false);
@@ -171,7 +171,7 @@ describe('F32 receipts lane: deploy observation vs deploy verb (receiptMatchesCl
   });
 
   it('CLEAN: a get_fleet_telemetry receipt proves the observation claim (deploy-health observation class)', () => {
-    const claims = extractCompletionClaims('Verified: health check 200, digby.example.com healthy');
+    const claims = extractCompletionClaims('Verified: health check 200, digby.ai healthy');
     const c = claims.find((x) => x.kind === 'deploy')!;
     expect(receiptMatchesClaim(c, [receipt('get_fleet_telemetry', true)])).toBe(true);
   });
@@ -186,7 +186,7 @@ describe('F32 receipts lane: deploy observation vs deploy verb (receiptMatchesCl
   it('KILL SWITCH: =1 restores the action-only receipts lane for the observation shape', () => {
     process.env[DEPLOY_OBSERVATION_TIER_DISABLED_ENV] = '1';
     try {
-      const claims = extractCompletionClaims('Verified: health check 200, digby.example.com healthy');
+      const claims = extractCompletionClaims('Verified: health check 200, digby.ai healthy');
       const c = claims.find((x) => x.kind === 'deploy')!;
       expect(receiptMatchesClaim(c, [receipt('scrape_as_markdown', true)])).toBe(false);
       expect(receiptMatchesClaim(c, [receipt('run_command', true)])).toBe(true);
@@ -201,7 +201,7 @@ describe('F32 receipts lane: deploy observation vs deploy verb (receiptMatchesCl
 describe('F32 live path: applyCompletionClaimGuard with a get_fleet_telemetry-only journal', () => {
   const OBS_FINAL = [
     'Verified this cycle:',
-    'health check 200, digby.example.com healthy',
+    'health check 200, digby.ai healthy',
   ].join('\n');
 
   it('CLEAN (the fix): the honest telemetry-verified health line passes with zero deploy findings', async () => {
@@ -342,7 +342,7 @@ describe('F32 review fixes: verb vocabulary (F2) and pr_* isolation (F1) at the 
       'Deploying now; prod green',
       'deployments healthy, prod green',
       'Shipped to prod; health check 200',
-      'Rolled out to prod — digby.example.com healthy',
+      'Rolled out to prod — digby.ai healthy',
       'pushed to prod, health check 200',
     ]) {
       const c = deployClaim(line);
@@ -370,7 +370,7 @@ describe('F32 parts fallback positive: the deploy observation survives a receipt
     // delete the parts fallback and the receipts-lane branch, and this still
     // passes ONLY through claimHasEvidence (findUnprovenClaims path).
     const out = await applyCompletionClaimGuard({
-      finalText: 'Verified: health check 200, digby.example.com healthy',
+      finalText: 'Verified: health check 200, digby.ai healthy',
       parts: [part('get_fleet_telemetry')],
       triggerKind: 'schedule', resumed: false,
       now: new Date('2026-10-22T16:00:00.000Z'), ...OPTS,
@@ -382,7 +382,7 @@ describe('F32 parts fallback positive: the deploy observation survives a receipt
     process.env[DEPLOY_OBSERVATION_TIER_DISABLED_ENV] = '1';
     try {
       const out = await applyCompletionClaimGuard({
-        finalText: 'Verified: health check 200, digby.example.com healthy',
+        finalText: 'Verified: health check 200, digby.ai healthy',
         parts: [part('get_fleet_telemetry')],
         triggerKind: 'schedule', resumed: false,
         now: new Date('2026-10-22T16:00:00.000Z'), ...OPTS,

@@ -24,7 +24,7 @@ jest.mock('../../../config/database', () => ({
     projectTodo: { count: jest.fn(async () => 0) },
     agentRun: { count: jest.fn(async () => 0) },
     watchedResource: { count: jest.fn(async () => 0) },
-    codingSchedule: { count: jest.fn(async () => 0) },
+    chatSchedule: { count: jest.fn(async () => 0) },
   },
 }));
 const store = new Map<string, any>();

@@ -5,14 +5,14 @@
  *
  * THE INCIDENT: the 68a1c868 fix (PR #1943, squash 4b655f10) made the negation
  * windows' GAP WORDS compositional (dot-free head + ".lower-or-digit"
- * identifier tails) so "Nothing in ctrl.example.com is waiting on the owner."
+ * identifier tails) so "Nothing in ctrl.cql.ca is waiting on the owner."
  * suppresses. But PARENTHETICAL_FRAME_RE's ASIDE BODY was still the raw
  * dot-EXCLUDING class [^.;:,\n]{1,60}? — an aside CARRYING a dotted
- * identifier ("per ctrl.example.com status") could not be consumed, the
+ * identifier ("per ctrl.cql.ca status") could not be consumed, the
  * parenthetical guard died, and the comma-parenthetical negative status
- * report "Nothing, per ctrl.example.com status, waits on the owner." MINED as an
+ * report "Nothing, per ctrl.cql.ca status, waits on the owner." MINED as an
  * affirmative owner-wait claim (scratch probe at tip 11311aff4 on 2026-10-24:
- * PARENTHETICAL_MINES=["Nothing, per ctrl.example.com status, waits on the
+ * PARENTHETICAL_MINES=["Nothing, per ctrl.cql.ca status, waits on the
  * owner."]). The adversarial reviewer's 34-shape parent/tip differential
  * proved parent-parity at 6defebc9a — a PRE-EXISTING hole, not a 68a1c868
  * regression — flagged as the follow-up that became this ticket.
@@ -25,7 +25,7 @@
  * the other two windows use (NEG_GAP_WORD_RE_SOURCE), comma-joined, with the
  * ≤60-char cap kept as a comma-within-60-chars lookahead (the aside body
  * holds no commas, so the comma the lookahead finds IS the closing one). So
- * "Nothing, per ctrl.example.com status, waits on the owner." suppresses like its
+ * "Nothing, per ctrl.cql.ca status, waits on the owner." suppresses like its
  * undotted sibling "Nothing, per the current status, waits on the owner.",
  * while every pinned contrast keeps mining.
  *
@@ -58,10 +58,10 @@ jest.mock('../platform/loop-metrics.service', () => ({ __esModule: true, recordL
 import { mineUnfiledDecisionClaims } from './follow-through.service';
 
 /** The exact sentence the ticket's scratch probe demonstrated mining at tip. */
-const INCIDENT = 'Nothing, per ctrl.example.com status, waits on the owner.';
+const INCIDENT = 'Nothing, per ctrl.cql.ca status, waits on the owner.';
 /** The 68a1c868 incident sentence (dotted identifier in the GAP WORDS, no
  *  parenthetical) — re-pinned here so the two doors stay fixed together. */
-const DOOR_68A1C868 = 'Nothing in ctrl.example.com is waiting on the owner.';
+const DOOR_68A1C868 = 'Nothing in ctrl.cql.ca is waiting on the owner.';
 
 describe('replay 11354cbe — comma-parenthetical door (miner level)', () => {
   it('the incident sentence (dotted identifier in the ASIDE) mines NO claim anymore', () => {
@@ -71,9 +71,9 @@ describe('replay 11354cbe — comma-parenthetical door (miner level)', () => {
 
   it('dotted-identifier asides suppress (the 11354cbe class)', () => {
     expect(mineUnfiledDecisionClaims('Nothing, per i-020850b4.prod.aws status, waits on the owner.')).toEqual([]);
-    expect(mineUnfiledDecisionClaims('Nothing, per digby.example.com v0.8.2 status, waits on the owner.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('Nothing, per digby.ai v0.8.2 status, waits on the owner.')).toEqual([]);
     expect(mineUnfiledDecisionClaims('Nothing, per project.paul-2.config.json, waits on the owner.')).toEqual([]);
-    expect(mineUnfiledDecisionClaims('No-one, per ctrl.example.com status, waits on the owner.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('No-one, per ctrl.cql.ca status, waits on the owner.')).toEqual([]);
     // dot-free asides keep their 68a1c868-era suppression (the preserved win)
     expect(mineUnfiledDecisionClaims('Nothing, as of this sweep, waits on the owner.')).toEqual([]);
     expect(mineUnfiledDecisionClaims('Nothing, per the current status, waits on the owner.')).toEqual([]);
@@ -86,8 +86,8 @@ describe('replay 11354cbe — comma-parenthetical door (miner level)', () => {
     expect(mineUnfiledDecisionClaims('The seat swap remains blocked on the owner.')).toEqual([
       'The seat swap remains blocked on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('The deploy of digby.example.com waits on the owner.')).toEqual([
-      'The deploy of digby.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('The deploy of digby.ai waits on the owner.')).toEqual([
+      'The deploy of digby.ai waits on the owner.',
     ]);
   });
 
@@ -117,24 +117,24 @@ describe('replay 11354cbe — comma-parenthetical door (miner level)', () => {
     // MID-ASIDE exception prepositions (review of this fix, finding F1): the
     // aside guard must vet EVERY gap word, not only the opening one — the
     // exception names the thing that DOES wait, an affirmative claim
-    expect(mineUnfiledDecisionClaims('Nothing, per ctrl.example.com except the publish gate, waits on the owner.')).toEqual([
-      'Nothing, per ctrl.example.com except the publish gate, waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing, per ctrl.cql.ca except the publish gate, waits on the owner.')).toEqual([
+      'Nothing, per ctrl.cql.ca except the publish gate, waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing, per digby.example.com other than the publish gate, waits on the owner.')).toEqual([
-      'Nothing, per digby.example.com other than the publish gate, waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing, per digby.ai other than the publish gate, waits on the owner.')).toEqual([
+      'Nothing, per digby.ai other than the publish gate, waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing, per ctrl.example.com status except the DMG build ask, waits on the owner.')).toEqual([
-      'Nothing, per ctrl.example.com status except the DMG build ask, waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing, per ctrl.cql.ca status except the DMG build ask, waits on the owner.')).toEqual([
+      'Nothing, per ctrl.cql.ca status except the DMG build ask, waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing, in the ctrl.example.com run apart from the publish gate, waits on the owner.')).toEqual([
-      'Nothing, in the ctrl.example.com run apart from the publish gate, waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing, in the ctrl.cql.ca run apart from the publish gate, waits on the owner.')).toEqual([
+      'Nothing, in the ctrl.cql.ca run apart from the publish gate, waits on the owner.',
     ]);
     expect(mineUnfiledDecisionClaims('Nothing, per the sweep except the publish gate, waits on the owner.')).toEqual([
       'Nothing, per the sweep except the publish gate, waits on the owner.',
     ]);
     // mid-aside trailing connective: the claim after it is live
-    expect(mineUnfiledDecisionClaims('Nothing, per ctrl.example.com however, waits on the owner.')).toEqual([
-      'Nothing, per ctrl.example.com however, waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing, per ctrl.cql.ca however, waits on the owner.')).toEqual([
+      'Nothing, per ctrl.cql.ca however, waits on the owner.',
     ]);
     // post-verb exception re-arm over a parenthetical-negated frame
     expect(mineUnfiledDecisionClaims('Nothing, as of this sweep, waits on the owner but the publish gate.')).toEqual([
@@ -190,7 +190,7 @@ describe('replay 11354cbe — comma-parenthetical door (miner level)', () => {
 
   it('mixed note: a dotted-aside no-op status line next to an affirmative claim still auto-files only the claim', () => {
     const claims = mineUnfiledDecisionClaims(
-      'Nothing, per ctrl.example.com status, waits on the owner. Publishing v0.8.2 is owner-gated on Gates 1–3.',
+      'Nothing, per ctrl.cql.ca status, waits on the owner. Publishing v0.8.2 is owner-gated on Gates 1–3.',
     );
     expect(claims).toEqual(['Publishing v0.8.2 is owner-gated on Gates 1–3.']);
   });

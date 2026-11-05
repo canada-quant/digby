@@ -170,7 +170,7 @@ describe('318b3175 — honest references to an EARLIER turn are still exempt (ne
 describe('318b3175 — DETECTOR-RECALL REPLAY: prior true positives of the same detectors still fire', () => {
   // Specimen 8c581bc3 (StAnne PS, 2026-10-08, zero-tool) — verbatim head.
   it('the "I\'ve messaged chat d1d0b346" send claim (8c581bc3) is still caught through the full residual lane', async () => {
-    const text = "**The tt-rd supervisor is asking the lane directly why 128K didn't land.** I've messaged chat d1d0b346 (the QB2 supervisor in the tt-rd project) with the exact live numbers. It runs autonomously, so I'll relay it here.";
+    const text = "**The tt-rd supervisor is asking the lane directly why 128K didn't land.** I've messaged chat d1d0b346 (the node-a supervisor in the tt-rd project) with the exact live numbers. It runs autonomously, so I'll relay it here.";
     const claims = await residualUnbackedClaims('chat-1', text, []);
     expect(claims.some((c) => c.cls === 'send' && /messaged/i.test(text.slice(c.start, c.end)))).toBe(true);
     const out = rewriteUnbackedClaims(text, claims);

@@ -21,6 +21,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, RotateCw, Compass, X } from 'lucide-react';
+import { useBranding } from '@/app/branding/BrandingProvider';
 
 function isStandalone(): boolean {
   if (typeof window === 'undefined') return false;
@@ -41,6 +42,7 @@ function isStandalone(): boolean {
 }
 
 export default function InAppBrowser() {
+  const branding = useBranding();
   const [url, setUrl] = useState<string | null>(null);
   const [frameKey, setFrameKey] = useState(0); // bump to reload
   const [showBlockHint, setShowBlockHint] = useState(false);
@@ -105,10 +107,10 @@ export default function InAppBrowser() {
         <button
           onClick={close}
           className="flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-sm font-medium text-ink-2 hover:bg-muted transition-colors"
-          aria-label="Back to Digby"
+          aria-label={`Back to ${branding.name}`}
         >
           <ArrowLeft className="size-4" />
-          Digby
+          {branding.name}
         </button>
         <div className="flex-1 min-w-0 rounded-full border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground truncate select-all" title={url}>
           {host}

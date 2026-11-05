@@ -1,0 +1,100 @@
+name: Windows W4 live-desktop
+
+# Roadmap §2.10 W4 — live-desktop validation of the Rust helper (W3's
+# WGC/SendInput/UIA paths) against a REAL interactive Windows session.
+#
+# This is deliberately a SEPARATE job from the `build` job: the build job
+# packs an installer; this one drives the live OS surface. It runs on
+# windows-latest where job steps execute in the runner's interactive console
+# session (session 1, runneradmin) — the harness records the session-model
+# evidence itself (query session + environment_check) before asserting.
+# If GitHub ever changes that model, C2 fails loudly; do NOT weaken C2 to
+# make CI green — update docs/WINDOWS_W4_LIVE_DESKTOP_VALIDATION.md instead.
+#
+# Runs only when the harness exists on the ref (resolve step), so refs that
+# predate W4 stay green — same pattern as the build job's resolve gate.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'windows-agent/rust-helper/**'
+      - 'windows-agent/scripts/w4-live-desktop.mjs'
+      - '.github/workflows/windows-w4-live.yml'
+  pull_request:
+    paths:
+      - 'windows-agent/rust-helper/**'
+      - 'windows-agent/scripts/w4-live-desktop.mjs'
+      - '.github/workflows/windows-w4-live.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-w4-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  w4-live-desktop:
+    name: W4 live-desktop validation (WGC + UIA + SendInput)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Resolve harness
+        id: resolve
+        shell: pwsh
+        run: |
+          $harness = Test-Path "windows-agent/scripts/w4-live-desktop.mjs"
+          "harness=$(if ($harness) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+          if (-not $harness) { Write-Host "::notice::w4-live-desktop.mjs not on this ref — validation skipped" }
+
+      # The helper is built here rather than reused from the build job so
+      # this job is self-contained (it also runs on workflow_dispatch /
+      # helper-only changes where the installer build is irrelevant).
+      - name: Setup Rust toolchain
+        if: steps.resolve.outputs.harness == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        if: steps.resolve.outputs.harness == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows-agent/rust-helper
+
+      - name: Build the Rust helper
+        if: steps.resolve.outputs.harness == 'true'
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path windows-agent/rust-helper/Cargo.toml
+          $exe = "windows-agent/rust-helper/target/release/digby-win-helper.exe"
+          if (-not (Test-Path $exe)) { throw "cargo build produced no $exe" }
+
+      # Node 20 ships on the runner image; assert it rather than assume.
+      - name: Node available
+        if: steps.resolve.outputs.harness == 'true'
+        shell: pwsh
+        run: |
+          $v = node --version
+          if (-not ($v -match 'v(\d+)') -or [int]$Matches[1] -lt 18) { throw "node too old: $v" }
+          Write-Host "node $v"
+
+      - name: Run the W4 live-desktop harness
+        if: steps.resolve.outputs.harness == 'true'
+        shell: pwsh
+        run: node windows-agent/scripts/w4-live-desktop.mjs
+
+      # The captured frame is the evidence artifact — upload on success AND
+      # failure (if: always()) so a red run still shows what the desktop
+      # looked like when the harness ran.
+      - name: Upload capture artifact
+        if: always() && steps.resolve.outputs.harness == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: w4-live-desktop-${{ github.sha }}
+          path: windows-agent/scripts/w4-desktop.png
+          if-no-files-found: warn
+          retention-days: 30

@@ -32,7 +32,7 @@ jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
     crossModelChat: { findMany: (...a: any[]) => mockChatFindMany(...a) },
-    codingSchedule: {
+    chatSchedule: {
       findMany: (...a: any[]) => mockSchedFindMany(...a),
       groupBy: (...a: any[]) => mockSchedGroupBy(...a),
     },

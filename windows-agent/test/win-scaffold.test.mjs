@@ -298,7 +298,7 @@ test('dispatch: the null seam refuses computer_* with a clear error (never a cra
   const { NullWin32Surface, NullWin32Input } = await import(join(pkgRoot, 'dist', 'win-platform.js'));
   const deps = { surface: new NullWin32Surface(), input: new NullWin32Input() };
   for (const method of ['computer_screenshot', 'computer_click', 'computer_type', 'computer_key', 'computer_scroll', 'computer_open']) {
-    const params = method === 'computer_type' ? { text: 'x' } : method === 'computer_key' ? { key: 'return' } : method === 'computer_open' ? { target: 'https://digby.example.com' } : { x: 10, y: 10 };
+    const params = method === 'computer_type' ? { text: 'x' } : method === 'computer_key' ? { key: 'return' } : method === 'computer_open' ? { target: 'https://digby.ai' } : { x: 10, y: 10 };
     const out = await executeCommand(method, params, deps, { ...GEO });
     assert.equal(out.ok, false, `${method} must refuse on the null seam`);
     assert.match(out.error, /Rust helper layer is not loaded/, `${method} error must name the cause: ${out.error}`);
@@ -309,7 +309,7 @@ test('dispatch: browser_* routes to handlers when present; unknown methods refus
   const { NullWin32Surface, NullWin32Input } = await import(join(pkgRoot, 'dist', 'win-platform.js'));
   // No browser handlers wired (the null-seam agent) → browser_* refuses cleanly.
   const deps = { surface: new NullWin32Surface(), input: new NullWin32Input() };
-  const b = await executeCommand('browser_navigate', { url: 'https://digby.example.com' }, deps, { ...GEO });
+  const b = await executeCommand('browser_navigate', { url: 'https://digby.ai' }, deps, { ...GEO });
   assert.equal(b.ok, false);
   assert.match(b.error, /browser command not yet available/);
   // iMessage methods are the macOS agent's surface — never ours.

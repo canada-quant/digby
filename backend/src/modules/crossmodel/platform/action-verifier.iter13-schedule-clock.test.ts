@@ -13,7 +13,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -53,7 +53,7 @@ const guard = (extra: Record<string, unknown> = {}) =>
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
 });
 
 describe('schedule-clock haystack (operator iteration 13)', () => {
@@ -69,11 +69,11 @@ describe('schedule-clock haystack (operator iteration 13)', () => {
   });
 
   it('REPLAY: the enabled morning-nudge schedule (nextRunAt 14:31Z) exonerates "7:31 AM PDT" — note delivered unmodified', async () => {
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([NUDGE]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([NUDGE]);
     const res = await guard();
     expect(res.struck).toBe(false);
     expect(res.finalText).toBe(NOTE);
-    const where = mockPrisma.codingSchedule.findMany.mock.calls[0][0].where;
+    const where = mockPrisma.chatSchedule.findMany.mock.calls[0][0].where;
     expect(where.userId).toBe(OWNER);
     expect(where.enabled).toBe(true);
   });
@@ -81,22 +81,22 @@ describe('schedule-clock haystack (operator iteration 13)', () => {
   it('per-STAMP: a schedule at another time exonerates nothing, and a co-line invented clock still convicts next to a real fire time', async () => {
     // (a recurring schedule's lastFiredAt shares its fire time-of-day, so the
     // other-time row moves BOTH stamps — the clock-only stamp asserts no day)
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ ...NUDGE, nextRunAt: new Date('2026-09-25T16:00:00.000Z'), lastFiredAt: new Date('2026-09-24T16:00:03.000Z') }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ ...NUDGE, nextRunAt: new Date('2026-09-25T16:00:00.000Z'), lastFiredAt: new Date('2026-09-24T16:00:03.000Z') }]);
     expect((await guard()).struck).toBe(true);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([NUDGE]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([NUDGE]);
     const res = await guard({ finalText: NOTE + '\n- box probe read clean 5:15 AM PDT' });
     expect(res.struck).toBe(true);
     expect(res.futureClocks?.map((h) => h.token)).toEqual(['5:15 AM PDT']);
   });
 
   it('a DB error fails open to [] (the haystack is armed)', async () => {
-    mockPrisma.codingSchedule.findMany.mockRejectedValue(new Error('db down'));
+    mockPrisma.chatSchedule.findMany.mockRejectedValue(new Error('db down'));
     expect(await scheduleClockHaystack(OWNER)).toEqual([]);
     expect((await guard()).struck).toBe(true);
   });
 
   it('haystack shape carries the instants the cross-format leg reads', async () => {
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([NUDGE]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([NUDGE]);
     const hs = await scheduleClockHaystack(OWNER);
     expect(hs).toEqual(['[harness schedule 3f9a2c11] nextRunAt 2026-09-25T14:31:12.000Z lastFiredAt 2026-09-24T14:31:15.000Z']);
   });

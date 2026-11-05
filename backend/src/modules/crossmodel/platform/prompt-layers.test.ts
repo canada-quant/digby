@@ -33,7 +33,7 @@ const mockPrisma: any = {
   ownerQuestion: { findMany: jest.fn(async () => []) },
   store: { findUnique: jest.fn(async () => null), upsert: jest.fn(async () => ({})) },
   chatAutonomy: { findUnique: jest.fn(async () => null), upsert: jest.fn(async () => ({})), update: jest.fn(async () => ({})) },
-  codingSchedule: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null), create: jest.fn(async () => ({})), update: jest.fn(async () => ({})), updateMany: jest.fn(async () => ({ count: 0 })), deleteMany: jest.fn(async () => ({ count: 0 })) },
+  chatSchedule: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null), create: jest.fn(async () => ({})), update: jest.fn(async () => ({})), updateMany: jest.fn(async () => ({ count: 0 })), deleteMany: jest.fn(async () => ({ count: 0 })) },
   eventHook: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), create: jest.fn(async () => ({})), update: jest.fn(async () => ({})), updateMany: jest.fn(async () => ({ count: 0 })) },
   activity: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null) },
   chatCodingState: { findUnique: jest.fn(async () => null) },
@@ -469,7 +469,12 @@ describe('budgets + facts', () => {
     // the zero-gap drain — a shipped fix read as ABSENT four times). Compressed to 193
     // chars so the floor HOLDS: measured worst case 17,461 < 17,287 is false, so the
     // floor moves by exactly the 194 chars the rule adds (17,267 + 194 = 17,461).
-    expect(coreMeasured).toBeLessThan(17_461 + 20);
+    // 2026-11-02 (ticket f94e91eb): rule relay.truncated-answer joined the evidence
+    // section (a supervisor read a silently clipped owner answer as real absence and a
+    // duplicate owner card asked for values already supplied). Compressed once before
+    // pinning (364 → 310 chars, at its semantic floor); measured worst case 17,772
+    // (core budget 17,958 unchanged — it already holds; the floor moves to 17,792).
+    expect(coreMeasured).toBeLessThan(17_772 + 20);
 
     expect(roleMeasured).toBeLessThan(28_000);
   });

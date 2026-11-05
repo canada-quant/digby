@@ -37,7 +37,7 @@
 import prisma from '../../../config/database';
 import logger from '../../../utils/logger';
 import { plain, plural, renderSection, hashStatusObject, clipText } from '../fleet/project-status.service';
-import { appendCodingMessage, pickTranscriptSource } from './coding-data.service';
+import { appendCodingMessage } from './coding-data.service';
 import { getPlan } from './plan.service';
 import { getRecentChatReceipts } from './run-receipts.service';
 import { loadSessionUsage } from './usage-store';
@@ -377,22 +377,17 @@ export async function renderSessionStatus(input: {
 
 /**
  * Newest session-status row in a session chat (the 60-min gate + hash source).
- * Read through the READ-SWITCH (MERGE-1 slice 1) — the same seam every other transcript
- * read uses. Previously this keyed on `transcriptDualWriteEnabled()`, a flag mismatch:
- * dual-write governs WRITES, the read switch governs READS, so under TRANSCRIPT_READ=legacy
- * this card came from the mirror while every other transcript read came from
- * coding_messages. `pickTranscriptSource` also preserves the 2026-09-15 fix (a
- * mirror-only read under TRANSCRIPT_DUAL_WRITE=off would never see a previous card and
- * emit one per cron tick): with dual-write off the mirror is empty, so it falls through to
- * the legacy rows the writes are actually landing on.
+ *
+ * MERGE-1 is complete (2026-11-04): `crossmodel_messages` is the ONLY transcript
+ * table, read unconditionally. The former read-switch (and the flag mismatch it
+ * fixed — dual-write governed WRITES while the read switch governed READS, so
+ * under TRANSCRIPT_READ=legacy this card came from the mirror while every other
+ * read came from the legacy table) has no lever left to express.
  */
 async function latestSessionStatusRow(chatId: string): Promise<{ createdAt: Date; metadata: any } | null> {
   const where = { chatId, role: 'assistant', metadata: { path: ['origin'], equals: SESSION_STATUS_ORIGIN } } as const;
   const args = { where, orderBy: { createdAt: 'desc' as const }, select: { createdAt: true, metadata: true } };
-  const source = await pickTranscriptSource(chatId);
-  const row = source === 'legacy'
-    ? await prisma.codingMessage.findFirst(args as any)
-    : await prisma.crossModelMessage.findFirst(args as any);
+  const row = await prisma.crossModelMessage.findFirst(args as any);
   return (row as any) ?? null;
 }
 
@@ -441,7 +436,7 @@ export async function emitSessionStatusUpdates(opts?: { now?: Date }): Promise<S
         },
         select: { sessionId: true, status: true, error: true, startedAt: true, finishedAt: true },
       }) as Promise<RunRow[]>,
-      prisma.codingSchedule.findMany({
+      prisma.chatSchedule.findMany({
         where: { sessionId: { in: ids }, enabled: true },
         select: { sessionId: true, nextRunAt: true },
       }) as Promise<ScheduleRow[]>,

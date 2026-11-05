@@ -1,6 +1,7 @@
 import apiClient from '../api-client';
 import type { CodingSession } from './coding';
 import type { SupervisorSwitchState, SupervisorSwitchTargetState } from './fleet';
+import type { QueuedItem } from '../queue-controls';
 
 export type ModelKey = 'openai' | 'grok' | 'gemini' | 'glm' | 'kimi' | 'deepseek';
 
@@ -356,6 +357,35 @@ export const crossModelApi = {
   stopAgentRun: async (chatId: string): Promise<{ stopping: boolean }> => {
     const response = await apiClient.post('/crossmodel/agent/stop', { chatId });
     return response.data.data;
+  },
+
+  /** The chat's USER messages waiting behind a live run, in DRAIN order
+   *  (ticket ea04454c) — position, content, attachment count. Machine relay
+   *  rows and other people's rows are never returned. */
+  listChatQueue: async (chatId: string): Promise<QueuedItem[]> => {
+    const response = await apiClient.get(`/crossmodel/chats/${chatId}/queue`);
+    return response.data.data?.queue || [];
+  },
+
+  /** Drop one of MY queued messages before it fires (ea04454c). Returns the
+   *  fresh queue so the panel re-renders from server truth. */
+  cancelChatQueueItem: async (chatId: string, pendingId: string): Promise<QueuedItem[]> => {
+    const response = await apiClient.post(`/crossmodel/chats/${chatId}/queue/${pendingId}/cancel`);
+    return response.data.data?.queue || [];
+  },
+
+  /** Make it the NEXT turn when the live run finishes. Deliberately does not
+   *  stop the run — the caller pairs it with a Stop when the person chose
+   *  "run now" (interrupt). */
+  promoteChatQueueItem: async (chatId: string, pendingId: string): Promise<QueuedItem[]> => {
+    const response = await apiClient.post(`/crossmodel/chats/${chatId}/queue/${pendingId}/promote`);
+    return response.data.data?.queue || [];
+  },
+
+  /** Reorder one of MY queued messages by one slot (ea04454c). */
+  moveChatQueueItem: async (chatId: string, pendingId: string, direction: 'up' | 'down'): Promise<QueuedItem[]> => {
+    const response = await apiClient.post(`/crossmodel/chats/${chatId}/queue/${pendingId}/move`, { direction });
+    return response.data.data?.queue || [];
   },
 
   /** The chat's schedule rows (enabled + terminal) — the workspace panel's
@@ -1863,6 +1893,12 @@ export interface IMessageAgentInfo {
     enabled: boolean;
     ready: boolean;
     reason: string;
+    /** TICKET 36d1c99f: the RAW blocker tokens in priority order ([] when
+        ready/off/unavailable). The guided enable flow branches on
+        `blockers.includes('filevault')` — auto-login cannot coexist with
+        FileVault, so the tradeoff must be named BEFORE any privileged step.
+        Absent on an older backend → treat as unknown, never as "no FileVault". */
+    blockers?: string[];
   };
   /** PRE-LOGIN INPUT (ticket c468f922): can input be delivered while no user
       session exists (`status` — 'unavailable' in this build, no privileged

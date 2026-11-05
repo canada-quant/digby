@@ -22,7 +22,7 @@ import prisma from '../../config/database';
 
 /** The public share page URL for a token — the same host rule the controller always used. */
 export function shareUrlForToken(shareToken: string): string {
-  const host = process.env.FRONTEND_URL?.split(',')[0] ?? 'http://crossmodel.cozz';
+  const host = process.env.FRONTEND_URL?.split(',')[0] ?? 'http://example-local.test';
   return `${host}/shared/chat/${shareToken}`;
 }
 

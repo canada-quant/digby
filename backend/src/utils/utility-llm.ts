@@ -993,7 +993,7 @@ export function isUtilityLLMAvailable(): boolean {
 }
 
 /**
- * STRUCTURALLY unconfigured utility chain (2026-10-26, the digby.example.com Edge
+ * STRUCTURALLY unconfigured utility chain (2026-10-26, the digby.cql.ca Edge
  * outage): no built-in key (DEEPSEEK_API_KEY / DASHSCOPE_API_KEY) AND no
  * 'utility' seat override or custom fallback. Callers use this to give a
  * TERMINAL "not configured" answer instead of a degrade-forever loop —

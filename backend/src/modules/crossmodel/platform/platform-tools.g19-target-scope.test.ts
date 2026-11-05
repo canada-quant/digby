@@ -134,7 +134,7 @@ jest.mock('../../../config/database', () => ({
       update: jest.fn(async () => ({})),
       count: jest.fn(async () => 0),
     },
-    codingSchedule: {
+    chatSchedule: {
       findFirst: (...a: any[]) => mockScheduleFindFirst(...a),
       findMany: (...a: any[]) => mockScheduleFindMany(...a),
     },

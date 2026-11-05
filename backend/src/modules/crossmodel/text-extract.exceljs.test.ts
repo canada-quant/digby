@@ -41,7 +41,7 @@ async function buildRichFixture(): Promise<Buffer> {
   ws.getCell('A2').value = 'Sum';
   ws.getCell('B2').value = { formula: 'B4+B4', result: 2700 };
   // Hyperlink cell (row 3): renders the label, not the URL, not [object Object].
-  ws.getCell('A3').value = { text: 'click here', hyperlink: 'https://digby.example.com' };
+  ws.getCell('A3').value = { text: 'click here', hyperlink: 'https://digby.ai' };
   // Rich-text cell (row 4): concatenated runs.
   ws.getCell('A4').value = { richText: [{ text: 'bo' }, { text: 'ld' }] };
   // Date cell (row 5): short ISO date, not the Date.toString() dump.

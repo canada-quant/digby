@@ -14,7 +14,7 @@ describe('loadModelEvidence', () => {
     const s = await loadModelEvidence();
     // audit 2026-10-08 W4-1b: the lane-merged variant by default (one percentile per (model, lane)).
     expect(mockQuery.mock.calls[0][0]).toBe(PROD_EVIDENCE_SQL_V2_LANES);
-    expect(mockQuery.mock.calls[0].slice(1)).toEqual(['14', 'claudebot@digby.example.com']);
+    expect(mockQuery.mock.calls[0].slice(1)).toEqual(['14', 'claudebot@digby.ai']);
     expect(s.v2).toBe(true);
     expect(s.prod?.['glm-5.3']?.checked).toMatchObject({ n: 19, toolN: 19, toolMean: 1.1 });
     expect(s.laneToolRates?.checked.measured).toBe(false); // 19 < 20

@@ -370,10 +370,10 @@ describe('verifyEndpointModel — decision models (Laya follow-up, 2026-09-26)',
   beforeEach(() => { mockProbeSystemOne.mockResolvedValue({ ok: true, target: 't', latencyMs: 4, detail: 'typed decision OK' }); });
 
   it('a model flagged decision:"systemone_chat" on an openai_chat endpoint (cql-litellm:agx-laya) gets ONE typed-decision probe over the chat transport — the four-shape battery (which the proxy 400s) never runs', async () => {
-    mockResolveRegistryModel.mockResolvedValue({ ...REG, label: 'cql-litellm', model: 'agx-laya', coding: false, baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', providerShape: 'openai_chat', decision: 'systemone_chat', maxStateChars: 3800 });
+    mockResolveRegistryModel.mockResolvedValue({ ...REG, label: 'cql-litellm', model: 'agx-laya', coding: false, baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', providerShape: 'openai_chat', decision: 'systemone_chat', maxStateChars: 3800 });
     const result = await verifyEndpointModel('cql-litellm:agx-laya');
     expect(result).toEqual({ model: 'cql-litellm:agx-laya', results: [{ shape: 'decision', ok: true, latencyMs: 4, detail: 'typed decision OK' }] });
-    expect(mockProbeSystemOne).toHaveBeenCalledWith({ baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', model: 'agx-laya', transport: 'chat' });
+    expect(mockProbeSystemOne).toHaveBeenCalledWith({ baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', model: 'agx-laya', transport: 'chat' });
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });
 
@@ -407,12 +407,12 @@ describe('verifyEndpointModel — decision models (Laya follow-up, 2026-09-26)',
   // "verified broken while healthy".
   it('an UNFLAGGED model whose spec the runtime LATCHED as typed-decision (ticket 3c18284e: guard 400 observed on its logit leg) verifies over the chat transport — the four-shape battery never runs; unlatched, the same spec runs the battery', async () => {
     mockLatchedTypedDecisionSpecs.clear();
-    mockResolveRegistryModel.mockResolvedValue({ ...REG, label: 'cql-llm', model: 'agx-laya', coding: false, baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', providerShape: 'openai_chat' });
+    mockResolveRegistryModel.mockResolvedValue({ ...REG, label: 'cql-llm', model: 'agx-laya', coding: false, baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', providerShape: 'openai_chat' });
     mockProbeSystemOne.mockClear();
     mockLatchedTypedDecisionSpecs.add('cql-llm:agx-laya');
     const result = await verifyEndpointModel('cql-llm:agx-laya');
     expect(result).toEqual({ model: 'cql-llm:agx-laya', results: [{ shape: 'decision', ok: true, latencyMs: 4, detail: 'typed decision OK' }] });
-    expect(mockProbeSystemOne).toHaveBeenCalledWith({ baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', model: 'agx-laya', transport: 'chat' });
+    expect(mockProbeSystemOne).toHaveBeenCalledWith({ baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', model: 'agx-laya', transport: 'chat' });
     expect(mockedAxios.post).not.toHaveBeenCalled();
     // Unlatched (the admin reset): the same unflagged spec is the plain chat battery again.
     mockLatchedTypedDecisionSpecs.clear();
@@ -425,10 +425,10 @@ describe('verifyEndpointModel — decision models (Laya follow-up, 2026-09-26)',
 
   it('ticket 2df5ed65 — a DECISION-KIND model (unflagged, kind "decision" or a decision id like agx-laya) gets the ONE typed-decision probe too, never the four-shape chat battery: the battery\'s plain call draws its usage-guide 400 and a healthy model verified "broken"', async () => {
     // kind:'decision' from modelKindOf (explicit kind or the id heuristic) — no decision flag, no dedicated shape.
-    mockResolveRegistryModel.mockResolvedValue({ ...REG, label: 'cql-litellm', model: 'agx-laya', coding: false, baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', providerShape: 'openai_chat', kind: 'decision' });
+    mockResolveRegistryModel.mockResolvedValue({ ...REG, label: 'cql-litellm', model: 'agx-laya', coding: false, baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', providerShape: 'openai_chat', kind: 'decision' });
     const result = await verifyEndpointModel('cql-litellm:agx-laya');
     expect(result).toEqual({ model: 'cql-litellm:agx-laya', results: [{ shape: 'decision', ok: true, latencyMs: 4, detail: 'typed decision OK' }] });
-    expect(mockProbeSystemOne).toHaveBeenCalledWith({ baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', model: 'agx-laya', transport: 'chat' });
+    expect(mockProbeSystemOne).toHaveBeenCalledWith({ baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', model: 'agx-laya', transport: 'chat' });
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });
 });

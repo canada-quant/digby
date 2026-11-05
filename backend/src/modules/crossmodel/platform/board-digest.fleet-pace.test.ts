@@ -13,7 +13,7 @@ const mockPrisma: any = {
   projectTodo: { findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []) },
   agentRun: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   crossModelMessage: { findFirst: jest.fn(async () => null) },
   systemSetting: { findUnique: jest.fn(async () => null) },
 };

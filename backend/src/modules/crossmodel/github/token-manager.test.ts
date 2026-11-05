@@ -60,8 +60,8 @@ import { getValidToken, __resetGithubLabelFallbackLatchForTests } from './token-
 const flushMicrotasks = () => new Promise<void>((r) => setImmediate(r));
 
 const UID = 'user-1';
-const ROW_OLD = { label: 'pastapaul_canadaquant', username: 'canada-quant', accessToken: 'enc_old' };
-const ROW_NEW = { label: 'Pastapaul', username: 'canada-quant', accessToken: 'enc_new' };
+const ROW_OLD = { label: 'pastapaul_canadaquant', username: 'example-org', accessToken: 'enc_old' };
+const ROW_NEW = { label: 'Pastapaul', username: 'example-org', accessToken: 'enc_new' };
 
 describe('getValidToken', () => {
   const prevFlag = process.env.GITHUB_LABEL_FALLBACK_DISABLED;
@@ -144,7 +144,7 @@ describe('getValidToken', () => {
   });
 
   // ── e1cca01d label-miss warn latch (f156 shape, fleet-wide Redis NX) ──
-  // The 2026-10-18 prod burst: 6 projects pinned the dead "pasta_paul" label
+  // The 2026-10-18 prod burst: 6 projects pinned the dead "example-org" label
   // and a busy lane hot-looped 73 byte-identical warn rows across 6 hours —
   // one standing degraded state, one message, no new information per row.
   // The FALLBACK must keep happening every call; only the logging is latched.

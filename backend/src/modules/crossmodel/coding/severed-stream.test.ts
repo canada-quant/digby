@@ -61,7 +61,7 @@ describe('efdb3d31 — a KNOWN-severed stream is re-emitted instead of dispatche
 describe('efdb3d31 — the gate is NARROW by construction (the C-2 protection)', () => {
   it('does NOT fire when the stream is severed but the payload arrived COMPLETE', () => {
     // The sentinel-less-provider guard. This reader documents that some
-    // OpenAI-compatible gateways (a LiteLLM/vLLM proxy — llm.example.com) never send
+    // OpenAI-compatible gateways (a LiteLLM/vLLM proxy — llm.cql.ca) never send
     // `[DONE]` and just close the socket. On such a path EVERY turn reads
     // streamCompleted:false, so firing on the sentinel alone would re-emit
     // EVERY tool-calling turn forever — doubled spend on the very endpoint this

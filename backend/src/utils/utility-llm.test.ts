@@ -1141,7 +1141,7 @@ describe('utility role override latch — an unreachable custom seat is skipped 
 // every call, and the warn is the DESIGNED operator signal for an owner-side
 // seat misconfiguration: in prod the 'utility' seat resolves to
 // llm-cql:stanne-qwen3-4b-utility on the owner's LiteLLM gateway
-// (llm.example.com), whose origin is dead after the 2026-10-11 incident retirement
+// (llm.cql.ca), whose origin is dead after the 2026-10-11 incident retirement
 // — the gateway restore is owner-side (backlog FO f124, oq_63f66). Like the
 // credential-gate lead of family 5ae52ca3, this emit site stays UNTAGGED on
 // purpose: a recurring owner-action-needed class must keep sweep-filing

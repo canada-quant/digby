@@ -6,7 +6,7 @@ import {
 
 const T0 = 1_790_000_000_000;
 
-/** The two prod bodies (2026-09-27 18:26–18:45Z, llm.example.com). */
+/** The two prod bodies (2026-09-27 18:26–18:45Z, llm.cql.ca). */
 const TOOLS_TOO_LONG = "litellm.BadRequestError: OpenAIException - Invalid 'tools': array too long. Expected an array with maximum length 128, but got an array with length 195.";
 const EFFORT_UNSUPPORTED = "litellm.BadRequestError: OpenAIException - Function tools with reasoning_effort are not supported for gpt-6-astra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.";
 

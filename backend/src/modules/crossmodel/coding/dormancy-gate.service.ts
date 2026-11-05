@@ -145,7 +145,7 @@ async function readLiveWorkSignals(opts: {
     } catch { /* best-effort: 0 */ }
     // (d) owner-armed recurring schedules on WORK chats.
     try {
-      out.ownerLaneSchedules = Number(await prisma.codingSchedule.count({
+      out.ownerLaneSchedules = Number(await prisma.chatSchedule.count({
         where: {
           sessionId: { in: opts.workChatIds }, enabled: true, kind: 'recurring',
           OR: [{ promptSetBy: 'user' }, { promptSetBy: null }, { ownerSubscribed: true }],
@@ -355,7 +355,7 @@ export async function evaluateAccountDormancy(userId: string, opts: { excludeCha
       projectIds.length
         ? prisma.watchedResource.count({ where: { projectId: { in: projectIds }, OR: [{ reservationEndsAt: null }, { reservationEndsAt: { gt: now } }] } })
         : Promise.resolve(0),
-      prisma.codingSchedule.count({
+      prisma.chatSchedule.count({
         where: { userId, enabled: true, kind: 'recurring', ...(opts.excludeChatId ? { sessionId: { not: opts.excludeChatId } } : {}) },
       }),
     ]);

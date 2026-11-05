@@ -1,14 +1,18 @@
 import { pageMetadata, breadcrumbLd, organizationLd, websiteLd } from '@/lib/site/seo';
 import { Breadcrumbs, JsonLd } from '../_components/SiteChrome';
 import { SiteShell } from '../_components/SiteShell';
+import { brandingFromEnv } from '@/lib/branding';
+
+// Shared branding core (todo d2d32b57): server component, resolved at build.
+const BRANDING = brandingFromEnv();
 
 // Moved from /crossmodel/terms (2026-10-14 — "crossmodel was the old name");
 // next.config.ts + proxy.ts 308 the legacy URL here. Server component inside
 // the public site shell (header + footer with links back to the chat).
 export const metadata = pageMetadata({
   path: '/terms',
-  title: 'Terms of Service · Digby',
-  description: 'The terms that govern your use of Digby at digby.example.com: your account, acceptable use, AI-generated content, your data and our responsibilities.',
+  title: `Terms of Service · ${BRANDING.name}`,
+  description: 'The terms that govern your use of Digby at digby.ai: your account, acceptable use, AI-generated content, your data and our responsibilities.',
 });
 
 const LAST_UPDATED = 'October 14, 2026';
@@ -28,7 +32,7 @@ export default function TermsOfServicePage() {
 
           <h2 className="text-lg font-semibold mt-6 mb-3">1. Acceptance of Terms</h2>
           <p className="text-sm leading-relaxed mb-4">
-            By accessing or using Digby at digby.example.com (&quot;the Service&quot;), you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use the Service.
+            By accessing or using Digby at digby.ai (&quot;the Service&quot;), you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use the Service.
           </p>
 
           <h2 className="text-lg font-semibold mt-6 mb-3">2. Description of Service</h2>
@@ -87,8 +91,8 @@ export default function TermsOfServicePage() {
           <h2 className="text-lg font-semibold mt-6 mb-3">11. Contact</h2>
           <p className="text-sm leading-relaxed mb-4">
             If you have questions about these Terms of Service, please contact us at{' '}
-            <a href="mailto:digby@digby.example.com" className="text-primary underline underline-offset-4 hover:opacity-80">
-              digby@digby.example.com
+            <a href="mailto:digby@digby.ai" className="text-primary underline underline-offset-4 hover:opacity-80">
+              digby@digby.ai
             </a>.
           </p>
 

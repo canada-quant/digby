@@ -226,7 +226,12 @@ export async function sweepPendingFirstPrompts(): Promise<number> {
   const empties = await prisma.chatCodingState.findMany({
     where: {
       createdAt: { lt: cutoff },
-      messages: { none: {} },
+      // MERGE-1 step 10 (2026-11-04): this read `messages: { none: {} }` — the
+      // CodingMessage relation — until that table was dropped. The transcript now
+      // lives on the chat row itself (`crossmodel_messages`), so "zero transcript
+      // turns" is the chat's `chatMessages`. Same predicate, one join deeper: a
+      // session id IS its chat id, so this is the identical set of sessions.
+      chat: { chatMessages: { none: {} } },
       OR: [
         { status: 'ready' },
         ...(errorArmEnabled ? [{ status: 'error', errorMessage: { startsWith: PROVISIONING_FAILED_PREFIX } }] : []),

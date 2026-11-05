@@ -3,7 +3,7 @@ import type { NextRequest } from 'next/server';
 
 /**
  * Clean public URLs for the Digby app (owner 2026-10-14: "remove the exposed
- * routes of digby.example.com/crossmodel … crossmodel was the old name").
+ * routes of digby.ai/crossmodel … crossmodel was the old name").
  *
  * The chat app still LIVES under app/crossmodel/* on disk; users and crawlers
  * only ever see the clean paths:

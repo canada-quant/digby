@@ -97,7 +97,7 @@ export function helpHref(feature: InstanceSetupFeature | null | undefined): stri
 /**
  * The Mac-agent install one-liner for THIS instance: the script and the
  * tarball come from the page's own origin, and the pairing API is this
- * instance's /api — never production digby.example.com (which the installer's own
+ * instance's /api — never production digby.ai (which the installer's own
  * defaults point at).
  */
 export function macAgentInstallCommand(origin: string, pairingCode: string): string {

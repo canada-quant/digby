@@ -1,13 +1,13 @@
 # Digby for Windows — the desktop shell (W2)
 
-A thin native host around **https://digby.example.com/crossmodel**, the Windows port of
+A thin native host around **https://digby.ai/crossmodel**, the Windows port of
 the macOS shell (`macos-app/Sources/Digby/main.swift`). C#/.NET 8 + WinForms +
 [Microsoft Edge WebView2](https://learn.microsoft.com/microsoft-edge/webview2/) —
 chosen per roadmap §2.8 ("smallest conceptual jump from the Swift shell,
 single-file publish"). Self-contained single-file publish means **no runtime
 dependency** on user machines: no .NET install, no admin rights, one `Digby.Shell.exe`.
 
-The web app it hosts is the same digby.example.com everyone uses — every web deploy shows
+The web app it hosts is the same digby.ai everyone uses — every web deploy shows
 up on next launch. The shell only adds: a persistent login profile, an in-app
 host policy, the desktop bridge, close-to-tray, and an update check.
 
@@ -141,7 +141,7 @@ hosts could also hang forever; see `frontend/lib/api-client.ts`.
 
 ## Host policy (keepInApp)
 
-`digby.example.com`, `*.digby.example.com`, and anything containing `google.com`, `github.com`,
+`digby.ai`, `*.digby.ai`, and anything containing `google.com`, `github.com`,
 `githubusercontent.com`, or `apple.com` stays **in-app** (so primary login and
 the Google/GitHub/Apple OAuth flows work inside the shell). Any **user-clicked**
 link to another host is cancelled and opened in the **OS default browser**.
@@ -159,7 +159,7 @@ filters `pkg/dmg/zip/exe/msi` and reveals in Finder — see deviations.)
 ## Updates
 
 On launch and via **File → Check for Updates…** the shell fetches
-`https://digby.example.com/windows-latest.json` (the Windows mirror of the macOS
+`https://digby.ai/windows-latest.json` (the Windows mirror of the macOS
 `desktop-latest.json` feed — same shape: `{version, url, notes?}`), compares
 dotted-numeric versions (`1.10` > `1.9`), and on a newer version offers to
 **open the download URL in the default browser**. It never self-updates and
@@ -246,7 +246,7 @@ processes, removes both Run keys and the agent dir; user data
 - **Windows-agent E2E on a paired box** — CI covers compile + protocol +
   pure units; WGC/UIA/SendInput against a live desktop is W4 scope
   (see docs/WINDOWS_W3_SHIPPING.md §6).
-- **Hosting `Digby-Setup.exe`** publicly (digby.example.com or an Azure blob) —
+- **Hosting `Digby-Setup.exe`** publicly (digby.ai or an Azure blob) —
   owner-gated; today the artifact lives in GitHub Actions (30-day
   retention).
 - Voice mode — if product wants it on Windows.

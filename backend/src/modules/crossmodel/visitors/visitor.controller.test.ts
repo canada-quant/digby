@@ -51,7 +51,7 @@ beforeEach(() => {
 });
 
 const ADMIN = { id: 'a', userId: 'a', email: 'ops@x.com', role: 'ADMIN' };
-const OWNER = { id: 'o', userId: 'o', email: 'paul@sunday.market', role: 'USER' };
+const OWNER = { id: 'o', userId: 'o', email: 'example-user@example.com', role: 'USER' };
 const USER = { id: 'u', userId: 'u', email: 'u@x.com', role: 'USER' };
 
 describe('POST /visit-events (open)', () => {

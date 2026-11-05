@@ -56,10 +56,14 @@ describe('Sidebar loading state (ticket 26edb492) — chats list', () => {
 
   it('the loading arm renders before the error arm and carries the copy + spinner + skeletons', () => {
     // The ternary chain inside the empty-guard: loading → error → empty.
-    const armStart = chatsSection.indexOf('!sidebarHydrated ?');
+    // Ticket b5734922: the chats-section gate is the derived `railReady`
+    // (sidebarHydrated || railSeeded) — a retained first paint suppresses the
+    // skeleton, but the ORDERING of the three arms is unchanged, which is what
+    // this row has always protected.
+    const armStart = chatsSection.indexOf('!railReady ?');
     const errorArm = chatsSection.indexOf('chatListError ?');
     const emptyArm = chatsSection.indexOf('No chats yet. Start chatting!');
-    expect(armStart, 'loading arm (!sidebarHydrated) missing from chats section').toBeGreaterThanOrEqual(0);
+    expect(armStart, 'loading arm (!railReady) missing from chats section').toBeGreaterThanOrEqual(0);
     expect(errorArm, 'error arm (chatListError) missing from chats section').toBeGreaterThan(armStart);
     expect(emptyArm, 'empty arm missing from chats section').toBeGreaterThan(errorArm);
 
@@ -73,17 +77,18 @@ describe('Sidebar loading state (ticket 26edb492) — chats list', () => {
     expect(chatsSection).toContain('aria-label="Loading chats"');
   });
 
-  it('the error and empty arms only render after hydration (never over an in-flight fetch)', () => {
-    // Both downstream arms sit behind the !sidebarHydrated ternary in the
-    // same conditional — pinned by the ordering test above. Additionally the
-    // LoadErrorState / Empty blocks must not render standalone: assert the
-    // empty guard still keys on the derived lists, and that the old
-    // unconditional fallthrough ("ungroupedChats.length === 0 && treeProjects.length === 0 && ("
-    // — treeProjects since 7acaa7ba merged shared folders into the empty-state
-    // gate) is now followed by the hydration check.
+  it('the error and empty arms never render over already-painted rows', () => {
+    // The outer condition requires the lists to be EMPTY as well as the gate to
+    // be ready — so once retained rows are painted (ticket b5734922), the outer
+    // condition is false and neither the error nor the empty arm can render over
+    // them. Both downstream arms sit behind the same `!railReady` ternary.
     expect(chatsSection).toContain(
-      '(!sidebarHydrated || (ungroupedChats.length === 0 && treeProjects.length === 0)) && (\n                    !sidebarHydrated ?',
+      '(!railReady || (ungroupedChats.length === 0 && treeProjects.length === 0)) && (\n                    !railReady ?',
     );
+    // The empty-list requirement is what keeps an error from replacing painted
+    // rows, so pin it explicitly rather than relying on the string above.
+    const guard = chatsSection.slice(0, chatsSection.indexOf('!railReady ?'));
+    expect(guard).toContain('ungroupedChats.length === 0 && treeProjects.length === 0');
   });
 });
 
@@ -135,7 +140,12 @@ describe('Sidebar loading state (ticket 26edb492; 2026-10-20 one flip after ALL 
   it('both sections paint only once hydrated — no partial list before the skeletons clear', () => {
     const foldersSection = region(PAGE, '{/* ── FOLDERS SECTION ── */}', '{/* ── UNGROUPED CHATS SECTION ── */}');
     expect(foldersSection).toContain('!sidebarHydrated || treeProjects.length === 0 ? (');
-    expect(PAGE).toContain('{sidebarHydrated && ungroupedChats.length > 0 && groupRowsByRecency(');
+    // Ticket b5734922: the chats list gates on the derived `railReady`
+    // (sidebarHydrated || railSeeded) so a retained first paint renders rows
+    // immediately; `railSeeded` is one-shot and only ever set from retained
+    // (server-confirmed) rows, so it cannot paint a partial list.
+    expect(PAGE).toContain('{railReady && ungroupedChats.length > 0 && groupRowsByRecency(');
+    expect(PAGE).toContain('const railReady = sidebarHydrated || railSeeded;');
   });
 
   it('the flag never re-arms — no reset-to-false call site exists', () => {

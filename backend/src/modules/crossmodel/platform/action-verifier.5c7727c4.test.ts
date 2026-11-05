@@ -14,7 +14,7 @@
  * 95499211 04:26:20Z → start_coding_session b6b1e0e1 04:28:01Z). The
  * post-delivery verifier then audited the DELIVERED text, the LLM extractor
  * quoted the harness line's items ("[dispatch] dispatch a probe lane to
- * check RED-SNOW health directly on S1:8000 + the llm.example.com route, restart
+ * check RED-SNOW health directly on S1:8000 + the llm.cql.ca route, restart
  * zero-drift per ONCALLRUNBOOK.md if down, and post the verdict with
  * receipts in this chat") — platform-authored promise text, no in-run
  * receipt — and the mishap ticket fired ("Supervisor phantom claim:
@@ -32,7 +32,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
@@ -59,7 +59,7 @@ const USER = 'u-1';
 
 /** owner-answer-first.ts followThroughContinuationLine output for the
  * incident's Follow-through items — the harness-appended line verbatim. */
-const INCIDENT_LINE = 'Still working on this in the background — dispatch a probe lane to check RED-SNOW health directly on S1:8000 + the llm.example.com route, restart zero-drift per ONCALLRUNBOOK.md if down, and post the verdict with receipts in this chat. I will post the result here.';
+const INCIDENT_LINE = 'Still working on this in the background — dispatch a probe lane to check RED-SNOW health directly on S1:8000 + the llm.cql.ca route, restart zero-drift per ONCALLRUNBOOK.md if down, and post the verdict with receipts in this chat. I will post the result here.';
 /** The model's honest prose the answer actually delivered (04:22:26Z, msg
  * 50cb0628): the "Not done" section is the model's OWN admission — no
  * completed-action claim anywhere in it. (The live note's goal-id citation
@@ -76,7 +76,7 @@ const INCIDENT_NOTE = `${MODEL_PROSE}\n\n${INCIDENT_LINE}`;
 /** The extractor's coin flip on the incident note, as the ticket records it
  * (the [dispatch] claim quoting the harness line's items). */
 const INCIDENT_EXTRACTION = JSON.stringify({
-  claims: [{ kind: 'dispatch', detail: 'dispatch a probe lane to check RED-SNOW health directly on S1:8000 + the llm.example.com route, restart zero-drift per ONCALLRUNBOOK.md if down, and post the verdict with receipts in this chat', id: '' }],
+  claims: [{ kind: 'dispatch', detail: 'dispatch a probe lane to check RED-SNOW health directly on S1:8000 + the llm.cql.ca route, restart zero-drift per ONCALLRUNBOOK.md if down, and post the verdict with receipts in this chat', id: '' }],
 });
 
 beforeEach(() => {
@@ -246,7 +246,7 @@ describe('ticket 5c7727c4 — the harness continuation line is platform text, no
 
   it('DETECTOR-RECALL REPLAY — ticket 16469005 true positive: the fabricated-id dispatch claim still convicts with the anchor on', async () => {
     const note = [
-      '**ctrl.example.com wake — gap matrix follow-up.**',
+      '**ctrl.cql.ca wake — gap matrix follow-up.**',
       'ACTIONS TAKEN',
       '- Dispatched a fresh lane for the gap matrix (receipt 77aabbcc)',
     ].join('\n');
@@ -274,7 +274,7 @@ describe('ticket 5c7727c4 — the harness continuation line is platform text, no
     // must be dropped by the 587e9d64 grounding lane (the window is the
     // model prose only). Pin that grounding holds on the stripped window.
     mockUtilityChat.mockResolvedValue(JSON.stringify({
-      claims: [{ kind: 'dispatch', detail: 'dispatch a probe lane to check RED-SNOW health directly on S1:8000 + the llm.example.com route, restart zero-drift per ONCALLRUNBOOK.md if down, and post the verdict with receipts in this chat', id: '' }],
+      claims: [{ kind: 'dispatch', detail: 'dispatch a probe lane to check RED-SNOW health directly on S1:8000 + the llm.cql.ca route, restart zero-drift per ONCALLRUNBOOK.md if down, and post the verdict with receipts in this chat', id: '' }],
     }));
     const comp = await computePhantomClaims({
       chatId: CHAT, userId: USER, finalText: INCIDENT_NOTE, parts: [] as any[], receipts: [] as any[],

@@ -74,6 +74,14 @@ export interface SessionBrowserActionResponse {
   links?: Array<{ text: string; href: string }>;
   error?: string;
   truncated?: boolean;
+  /**
+   * Machine-readable failure class from the service (ticket 169d5080). The
+   * service now answers a NON-2xx status for a failed action, so the class is
+   * forwarded here instead of being flattened into a bare `error` string.
+   */
+  errorCode?: string;
+  /** The HTTP status the service answered (200 on success). */
+  status?: number;
 }
 
 /** Execute one browser action in the session's own persistent context. */
@@ -86,11 +94,34 @@ export async function sessionBrowserAction(
   if (!c) return { ok: false, action: action.name, error: 'hosted browser service not configured (BROWSER_SERVICE_SECRET unset)' };
   try {
     const res = await c.http.post('/v1/action', { sessionId: sessionKey, action });
-    return res.data as SessionBrowserActionResponse;
+    return { ...(res.data as SessionBrowserActionResponse), status: res.status };
   } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { error?: string } }; message?: string });
-    const detail = msg.response?.data?.error || msg.message || String(e);
-    return { ok: false, action: action.name, error: `hosted browser service error: ${detail}`.slice(0, 500) };
+    // Ticket 169d5080: the service answers a NON-2xx status for a real failure
+    // (invalid/incomplete URL, missing selector, element action failed, page
+    // failed to render, oversized screenshot, at capacity). axios throws on
+    // those, so the body is the ONLY place the class + partial content live —
+    // keep them instead of collapsing everything into a bare string.
+    const err = e as {
+      response?: { status?: number; data?: Partial<SessionBrowserActionResponse> };
+      message?: string;
+    };
+    const data = err.response?.data;
+    if (data && typeof data === 'object') {
+      return {
+        ...(data as SessionBrowserActionResponse),
+        ok: false,
+        action: data.action || action.name,
+        status: err.response?.status,
+        error: (data.error || `hosted browser service error (HTTP ${err.response?.status ?? '?'})`).slice(0, 500),
+      };
+    }
+    const detail = err.message || String(e);
+    return {
+      ok: false,
+      action: action.name,
+      status: err.response?.status,
+      error: `hosted browser service error: ${detail}`.slice(0, 500),
+    };
   }
 }
 

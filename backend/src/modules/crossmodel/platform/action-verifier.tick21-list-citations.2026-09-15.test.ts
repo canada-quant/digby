@@ -24,7 +24,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
@@ -61,7 +61,7 @@ beforeEach(() => {
   mockPrisma.crossModelMessage.findFirst.mockResolvedValue(null); mockPrisma.crossModelMessage.findMany.mockResolvedValue([]);
   mockPrisma.crossModelChat.findFirst.mockResolvedValue(null); mockPrisma.crossModelChat.findMany.mockResolvedValue([]);
   mockPrisma.chatCodingState.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue(null); mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue(null); mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null); mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
   mockPrisma.projectGoal.findFirst.mockResolvedValue(null); mockPrisma.projectGoal.findMany.mockResolvedValue([]);
   mockPrisma.projectTodo.findFirst.mockResolvedValue(null); mockPrisma.projectTodo.findMany.mockResolvedValue([]);

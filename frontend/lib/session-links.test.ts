@@ -66,19 +66,19 @@ describe('linkifySessionRefs (feedback b8e1b0a3 — session interlinks)', () => 
   });
 
   it('leaves the app OWN full deep-link URL untouched (pasted verbatim)', () => {
-    const s = `open https://digby.example.com/crossmodel?chatId=${ID} now`;
+    const s = `open https://digby.ai/crossmodel?chatId=${ID} now`;
     expect(linkifySessionRefs(s)).toBe(s);
   });
 
   // Review B2: GFM also autolinks scheme-less www. URLs and case-variant
   // schemes — those shapes must be protected too.
   it('leaves a scheme-less www. URL with a UUID untouched', () => {
-    const s = `open www.digby.example.com/crossmodel?chatId=${ID} now`;
+    const s = `open www.digby.ai/crossmodel?chatId=${ID} now`;
     expect(linkifySessionRefs(s)).toBe(s);
   });
 
   it('leaves an uppercase-scheme URL with a UUID untouched', () => {
-    const s = `open HTTPS://digby.example.com/crossmodel?chatId=${ID} now`;
+    const s = `open HTTPS://digby.ai/crossmodel?chatId=${ID} now`;
     expect(linkifySessionRefs(s)).toBe(s);
   });
 

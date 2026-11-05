@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useBranding } from "@/app/branding/BrandingProvider";
 
 const DISMISSED_KEY = "pwa-install-dismissed";
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -11,6 +12,7 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 export function PWAInstallPrompt() {
+  const branding = useBranding();
   const [visible, setVisible] = useState(false);
   const deferredPrompt = useRef<BeforeInstallPromptEvent | null>(null);
 
@@ -77,19 +79,19 @@ export function PWAInstallPrompt() {
   return (
     <div
       role="dialog"
-      aria-label="Install Digby"
+      aria-label={`Install ${branding.name}`}
       className="fixed left-1/2 z-(--z-rail) flex w-[calc(100%-2rem)] max-w-sm -translate-x-1/2 items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 shadow-2xl"
       style={{ bottom: 'calc(7.25rem + env(safe-area-inset-bottom, 0px))' }}
     >
       <img
-        src="/icon-192x192.png"
+        src={branding.assets.icon192}
         alt=""
         width={32}
         height={32}
         className="shrink-0 rounded-lg"
       />
       <p className="flex-1 text-sm text-card-foreground">
-        Install Digby for the best experience
+        Install {branding.name} for the best experience
       </p>
       <button
         type="button"

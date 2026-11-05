@@ -37,7 +37,6 @@ jest.mock('./deliverable-handoff', () => ({
 }));
 jest.mock('../chat-agent/task-events', () => ({
   __esModule: true,
-  taskCardDisabled: () => process.env.TASK_CARD_DISABLED === '1',
   buildTaskEvent: (p: any) => ({ steps: { done: 0, total: 0 }, receipts: { ok: 0, total: 0 }, spendUsd: 0, artifacts: [], startedAt: 'now', updatedAt: 'now', ...p }),
   persistTaskCard: (...a: any[]) => mockPersistTaskCard(...a),
   emitTaskEvent: (...a: any[]) => mockEmitTask(...a),
@@ -64,7 +63,6 @@ describe('escalateChildRunFailure', () => {
     mockAppendMessage.mockImplementation(async () => ({ id: 'row-fail-1' }));
     mockPersistTaskCard.mockImplementation(async () => 'answer-row-1');
     mockPrisma.crossModelChat.findUnique.mockReset();
-    for (const k of ['TASK_CARD_DISABLED']) delete process.env[k];
   });
   const chatRows = (child: any, parent: any) => mockPrisma.crossModelChat.findUnique.mockImplementation(async ({ where }: any) => (where.id === CHILD ? child : where.id === PARENT ? parent : null));
 
@@ -146,7 +144,7 @@ describe('escalateChildRunFailure', () => {
       expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({ kind: 'handoff_parent_wake_skipped', meta: expect.objectContaining({ reason: 'failed_card_flipped', cardFlipped: 0 }) }));
     });
 
-    it('falls back to the wake when the row cannot be posted and when the task card is off', async () => {
+    it('falls back to the wake when the row cannot be posted', async () => {
       chatRows(child, PLAIN_PARENT);
       mockAppendMessage.mockRejectedValueOnce(new Error('db down'));
       expect(await escalateChildRunFailure({ chatId: CHILD, runId: 'r-a', cause: CAUSE, triggerKind: 'hook' })).toEqual({ escalated: true, reason: 'woken', parentChatId: PARENT });
@@ -154,11 +152,7 @@ describe('escalateChildRunFailure', () => {
       store.clear();
       mockAppendMessage.mockResolvedValueOnce(null as any); // no row id
       expect(await escalateChildRunFailure({ chatId: CHILD, runId: 'r-b', cause: CAUSE, triggerKind: 'hook' })).toMatchObject({ reason: 'woken' });
-      store.clear();
-      process.env.TASK_CARD_DISABLED = '1';
-      expect(await escalateChildRunFailure({ chatId: CHILD, runId: 'r-d', cause: CAUSE, triggerKind: 'hook' })).toMatchObject({ reason: 'woken' });
-      delete process.env.TASK_CARD_DISABLED;
-      expect(mockWake).toHaveBeenCalledTimes(3);
+      expect(mockWake).toHaveBeenCalledTimes(2);
       expect(mockAppendMessage).toHaveBeenCalledTimes(2); // the two attempts that reached the row post
     });
 

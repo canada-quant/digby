@@ -52,8 +52,8 @@ describe('probeDeployHealth', () => {
   it('GETs / and /api/health on the base URL and returns the classified, uncached answer', async () => {
     const check = jest.fn(async (url: string) => (url.endsWith('/api/health') ? 200 : 200));
     const r = await probeDeployHealth({ now: T0, check });
-    expect(r).toEqual({ status: 'healthy', checkedAt: T0.toISOString(), frontendCode: 200, backendCode: 200, baseUrl: 'https://digby.example.com', cached: false });
-    expect(check.mock.calls.map((c) => c[0])).toEqual(['https://digby.example.com/', 'https://digby.example.com/api/health']);
+    expect(r).toEqual({ status: 'healthy', checkedAt: T0.toISOString(), frontendCode: 200, backendCode: 200, baseUrl: 'https://digby.ai', cached: false });
+    expect(check.mock.calls.map((c) => c[0])).toEqual(['https://digby.ai/', 'https://digby.ai/api/health']);
   });
 
   it('caches for DEPLOY_HEALTH_CACHE_MS (one probe per burst); fresh:true and expiry re-probe', async () => {

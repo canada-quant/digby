@@ -294,7 +294,8 @@ itself); the refusal also covers `delegate_parallel` legs.
 On the first worktree provision, if the repo has no `AGENTS.md`/`.digby`,
 `scaffolding.service.ts` detects the stack from **ground truth** (manifests /
 lockfiles only, no execution) and writes a lean project-specific `AGENTS.md`,
-`.digby/config.json` (commands + verify chain + `loop` block), `.digbyignore`,
+`.digby/config.json` (commands + verify chain + `loop` block, plus a starter
+repo-owned `hooks` section when the detected tooling supports one), `.digbyignore`,
 `.digby/notes/learnings.md`, `.digby/README.md`, then commits on the session
 branch. An existing `AGENTS.md` is respected, never clobbered. Full detail in
 [`DIGBY_CODE_HARNESS.md`](./DIGBY_CODE_HARNESS.md).
@@ -482,7 +483,10 @@ Per-user (`user_preferences`): `codingModel` (stored default `glm-5.2` — a leg
 alias that `normalizeCodingModel` resolves to **`glm-5.3`**, today's effective
 coding default), `codingPermissionMode`.
 Per-project (`.digby/config.json`): `commands`, `verify` chain, `loop.*` (incl.
-`gatePullRequest`).
+`gatePullRequest`), and an optional `hooks` section (repo-level `postEdit` /
+`preCommand` rules — `coding/repo-hooks.ts`; a starter `postEdit` section is
+scaffolded only when the repo root declares *and* resolves the formatter/linter
+it names).
 
 `verify[]` entry shapes (the tt-rd defect, dispatched 2026-10-01 23:49Z — a
 hand-authored object-form chain was silently emptied before #1202): each entry
@@ -512,20 +516,20 @@ To unlock full SPA previews, serve previews from a **dedicated origin** so the f
 is structurally isolated from the app (its JS runs on a different origin and can't
 reach the app's `localStorage`), which lets the iframe safely use `allow-same-origin`:
 
-1. **DNS**: add `preview.digby.example.com` (an A/CNAME to the same EC2).
-2. **TLS**: issue a cert covering it (or a wildcard `*.digby.example.com`).
-3. **nginx**: a server block for `preview.digby.example.com` that proxies **only** the preview
+1. **DNS**: add `preview.digby.ai` (an A/CNAME to the same EC2).
+2. **TLS**: issue a cert covering it (or a wildcard `*.digby.ai`).
+3. **nginx**: a server block for `preview.digby.ai` that proxies **only** the preview
    path to the backend, preserving the path:
    ```nginx
    server {
-     server_name preview.digby.example.com;
+     server_name preview.digby.ai;
      # … TLS …
      location /api/crossmodel/coding/ { proxy_pass http://127.0.0.1:<active-backend-port>; }
      location / { return 404; }
    }
    ```
-4. **Env**: set `CODING_PREVIEW_HOST=preview.digby.example.com` (backend) **and**
-   `NEXT_PUBLIC_CODING_PREVIEW_HOST=preview.digby.example.com` (frontend build), then redeploy.
+4. **Env**: set `CODING_PREVIEW_HOST=preview.digby.ai` (backend) **and**
+   `NEXT_PUBLIC_CODING_PREVIEW_HOST=preview.digby.ai` (frontend build), then redeploy.
 
 With it set, the backend swaps `X-Frame-Options: SAMEORIGIN` for
 `Content-Security-Policy: frame-ancestors <app origin>` (so only the app may frame it),

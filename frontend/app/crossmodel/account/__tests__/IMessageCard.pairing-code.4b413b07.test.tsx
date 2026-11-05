@@ -3,7 +3,7 @@
  * cqlstannembp1 paired 2026-10-22T06:55Z, filed 20:54Z the same day).
  *
  * What happened: the new Mac's agent showed its native prompt — "Enter your
- * Digby pairing code. Get it from digby.example.com → Account → Integrations → iMessage
+ * Digby pairing code. Get it from digby.ai → Account → Integrations → iMessage
  * → Connect your Mac." — but inside the DESKTOP app that dialog rendered NO
  * code anywhere: the desktop branch was one-click-only by design (the code
  * rides in env DIGBY_PAIR_CODE and is never displayed), and the dialog's own
@@ -11,7 +11,7 @@
  * REQUIRES the code. A user stuck on the manual path — as the owner was, with
  * the DMG's bundled 0.6.3 agent — was sent to a dialog that never showed the
  * thing being asked for. ("no code>" — the arrows are the prompt's own
- * "digby.example.com → Account → Integrations" breadcrumb.)
+ * "digby.ai → Account → Integrations" breadcrumb.)
  *
  * The fix: the pairing code renders in EVERY macOS consumption branch of the
  * dialog — the desktop one-click branch (new), the browser .pkg branch (as

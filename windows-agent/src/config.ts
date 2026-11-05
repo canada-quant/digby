@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync }
 import { randomUUID } from 'crypto';
 
 export interface AgentConfig {
-  apiBaseUrl: string;   // e.g. https://digby.example.com/api
+  apiBaseUrl: string;   // e.g. https://digby.ai/api
   agentId: string;
   agentToken: string;
   /** Stable per-device identity (multi-device): a uuid generated on this PC at

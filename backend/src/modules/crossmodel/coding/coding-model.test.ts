@@ -790,7 +790,7 @@ describe('Moonshot context caching (MOONSHOT_CONTEXT_CACHE)', () => {
 });
 
 /**
- * Raw-text SSE tolerance (owner report 2026-09-05, endpoint llm.example.com): a
+ * Raw-text SSE tolerance (owner report 2026-09-05, endpoint llm.cql.ca): a
  * LiteLLM/vLLM gateway that streams PLAIN TEXT tokens in each `data:` line
  * instead of OpenAI JSON delta chunks. The parser used to JSON.parse every
  * line and discard the failures as keepalives → the endpoint answered blank.
@@ -823,7 +823,7 @@ describe('runModelTurn raw-text SSE fallback', () => {
   }
   beforeEach(() => mockPostRaw.mockReset());
 
-  it('assembles raw-text tokens into content instead of dropping them (llm.example.com shape)', async () => {
+  it('assembles raw-text tokens into content instead of dropping them (llm.cql.ca shape)', async () => {
     // The exact wire shape observed: empty keepalive lines interleaved with tokens.
     mockPostRaw.mockImplementationOnce(() => Promise.resolve({ data: rawTextStream(['', 'Hello', ' world', '']) }));
     const seen: string[] = [];

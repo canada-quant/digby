@@ -112,7 +112,7 @@ describe('rowReplayPin — the evidence gate', () => {
   it('reads the pin from a MULTI-SEGMENT block without cross-segment contamination', () => {
     const note =
       'Adjudicated: sibling — same root cause as the lead.\n' +
-      `[machine-close evidence: replay test ${PIN_PATH} (verified: exists + cites ${PREFIX}); PR https://github.com/canada-quant/digby/pull/1977; deploy run 40239422237]`;
+      `[machine-close evidence: replay test ${PIN_PATH} (verified: exists + cites ${PREFIX}); PR https://github.com/example-org/crossmodel/pull/1977; deploy run 40239422237]`;
     expect(rowReplayPin({ id: 'fc1fd22f-0000-0000-0000-000000000000', adminNote: note })).toBe(PIN_PATH);
     // The PR segment cites a number, not the prefix; the deploy segment
     // neither — only the pin segment vouches.

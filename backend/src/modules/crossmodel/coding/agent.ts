@@ -53,7 +53,7 @@ import {
 import { spendModelKey, replaysReasoning } from './coding-model';
 import type { MachineFiringEffort } from './machine-firing-effort';
 import {
-  resolveWorkerModel, buildWorkerSummary, workerEnvelopeInstruction,
+  resolveWorkerModel, buildWorkerSummary, workerEnvelopeInstruction, parseWorkerEnvelope,
   spliceCompletedDelegationsNote, CompletedDelegation, readOnlyFileWriteRefusal,
   WORKER_ROLE_SEATS,
 } from './delegation';
@@ -81,6 +81,7 @@ import {
 // build 2026-10-08 A2b: the turn plan's lane picks the starting tool set.
 import { readToolLaneHint, decideLaneToolSets, chatLaneDiet, laneDietMeta, type ToolLaneHint, type ChatLaneDiet } from './tool-diet';
 import { reportClipV2Disabled, workerReportCapChars } from './report-clip';
+import { persistWorkerReport, readWorkerReport } from './worker-report-store';
 import { RunReadCache, runReadCacheDisabled } from './run-read-cache';
 import { classifyInvalidRequest, latchSeatInvalidRequest, seatInvalidRequestLatch, INVALID_REQUEST_KIND_LABELS, classifyContentFilter, contentFilterLaneDisabled, contentFilterModelNote } from './seat-invalid-request';
 import { isSystemOrderRejection, systemFirstNormalizeDisabled } from './system-first';
@@ -103,7 +104,12 @@ import { getRecentJournalEntries, formatJournalBlock, RunJournalEntryShape, JOUR
 import { RECEIPT_TOOLS, extractReceipt, receiptHeads, ToolReceipt, WEB_PROBE_RECEIPT_TOOLS_SET, CONDITION_WAKE_RECEIPT_TOOLS_SET } from './run-receipts';
 // build 2026-10-08 D-2 / D-1: the tool-intent journal + the delegation ledger's background-worker seam (both SHADOW).
 import { createIntentJournal, type IntentJournal } from './tool-intents';
-import { noteBackgroundWorkerPhase, noteBackgroundWorkersLost } from '../platform/delegation-tasks';
+import { noteBackgroundWorkerPhase, noteBackgroundWorkersLost, sweepOrphanedBackgroundWorkerTasks } from '../platform/delegation-tasks';
+// SAA-1.6 PHASE 3a/3b (todo e49dfd07) — the async-tool eligibility leaf (pure, no I/O) and the
+// pending-result registry that delivers a handed-off call's result at a step boundary.
+import { planAsyncToolCall } from '../platform/async-tool-calls';
+import type { AsyncToolPlan } from '../platform/async-tool-calls';
+import { AsyncToolRegistry, formatAsyncToolResult, formatOwedToolResults, type AsyncToolDone } from '../platform/async-tool-registry';
 import { originalRequest, shouldRunIndependentReview, independentReviewBrief, isUsableReviewReport, originalRequestAuditBlock, reviewFindingsBlock, countWorkToolCalls, REVIEW_WORK_TOOLS, addOpenChoices, reviewKeepAnswerDisabled, keptAnswerWithReviewLine, selfAuditReviewerSkipDisabled, reviewerIsCrossFamily, reviewerReplacesAuditMessage } from './independent-review';
 import { independentReviewDiffGateDisabled, isAssignedWorkRequest, readRunStartHead, reviewDiffGate, countMutatingWorkCalls, isMutatingWorkCall } from './review-diff-gate';
 import { selfAuditGateDecide, completedStepIds, selfAuditReopened, recordSelfAuditOutcome, recordSelfAuditStepOutcomes, labelSelfAuditOutcome, type SelfAuditGateDecision } from './self-audit-gate';
@@ -121,7 +127,7 @@ import { ContextGauge, contextGaugeDisabled, chatClearingDecision, chatFastPathC
 import { classifyMalformedToolHistory, repairMalformedToolCallArguments, historyRepairDisabled, MAX_HISTORY_REPAIRS_PER_RUN } from './context-clearing'; // build 2026-10-08 C-2
 import { groundingHaystack, findUngroundedIdArgs, detectIntendedToolChannels, ungroundedIdRefusal, toolNotOfferedRefusal, isNoopShellCommand, detectNarratedToolIntent, sameNarration, wakePromptHaystack, intentMismatchDiscount, intentMeasureSystemExcludeDisabled } from './tool-preflight';
 import { createToolIntentShadow } from './tool-intent-gate';
-import { parseToolArguments, toolArgumentRejection, classifyToolCallLoss, isUnrecoveredSeverance } from './tool-arguments'; // ticket 5bdbb126: lossless arg repair at the execution seam; ticket aa59535b: per-class rejection text; 8b62e61e: classify a cut from the TURN's own arithmetic (severed-in-transit vs unclassified); 1425001e: the LOSS-signal predicate for the acceptance metric
+import { parseToolArguments, toolArgumentRejection, classifyToolCallLoss, isUnrecoveredSeverance, isTransportSeveredRejection, type ToolCallTurnEvidence } from './tool-arguments'; // ticket 5bdbb126: lossless arg repair at the execution seam; ticket aa59535b: per-class rejection text; 8b62e61e: classify a cut from the TURN's own arithmetic (severed-in-transit vs unclassified); 1425001e: the LOSS-signal predicate for the acceptance metric; cffd0d0a: a never-executed (severed) call is exempt from the repeat-break loops
 import { createEvidenceLedger } from '../chat-agent/evidence-ledger';
 import { isAccountTool } from '../platform/account-tools';
 // Cause-level fix for the kimi-k3 wrong-tool emission class (owner 2026-09-22):
@@ -135,7 +141,8 @@ import {
 } from './tool-scope';
 import { PLATFORM_TOOL_NAMES } from '../platform/platform-tool-names';
 import { getValidToken } from '../github/token-manager';
-import { ensureSessionContainer, execInContainer, isContainerMode, reapOrphanedBuildProcesses, workspaceExecExposure } from './container.service';
+import { ensureSessionContainer, execInContainer, isContainerMode, reapOrphanedBuildProcesses, workspaceExecExposure, noteSessionContainerIdentity, recoverSessionShellContainer } from './container.service';
+import { containerReplacementNotice } from './container-identity';
 import { gatherSessionCredentialEnv, credentialEnvNote } from './session-credentials';
 import { credentialScrubValues, ghProxyShellPrefix } from './credential-proxy'; // build 2026-10-08 ISO (+ 2026-10-11 ISO-GH: the gh kit prefix)
 import { getPlan, applyPlan, planToUpdate, renderPlanReminder, getLastSelfAuditPlanSig, recordSelfAuditPlanSig } from './plan.service';
@@ -329,7 +336,8 @@ import { newWebToolCapState, webToolCapCheck, webToolCapRefusal, webToolsOfClass
 import {
   BackgroundWorkerPool, BackgroundUsageAccumulator, backgroundLatePostGraceMs, backgroundRunEndWaitMs, backgroundStartedText, backgroundStatusMaxWaitMs,
   backgroundWorkerCap, delegateBackgroundDisabled, formatInjectedReport, lostBackgroundWorkerIds, lostWorkersNotice,
-  postBackgroundReportMessage, sessionCanReceiveLatePost, type BackgroundTaskSpec, type BackgroundWorker,
+  postBackgroundReportMessage, sessionCanReceiveLatePost, recoverBackgroundReportsOnResume, formatRecoveredReport,
+  spillBackgroundReport, clearBackgroundReportSpills, finalizeSpillClearIds, type BackgroundTaskSpec, type BackgroundWorker,
 } from './background-delegation';
 
 const execFileAsyncAgent = promisify(execFile);
@@ -1201,7 +1209,7 @@ ${viewImageToolDisabled() ? '' : `${VIEW_IMAGE_PROMPT_LINE}\n`}- **Memory first:
 - **Watched resources (money on the meter):** when your work holds an EXTERNAL resource that costs money or expires unattended (a GPU reservation, a training box, a paid sandbox), call **register_watched_resource** the moment you acquire it (label, $/h, when the reservation ends, how often you'll check) and **observe_resource** after every real check — an unobserved resource alarms the owner. Record what it produces with **register_artifact** (checkpoint/dataset/eval/model + its durable uri) and, once you have CONFIRMED the artifact exists outside the resource (an ls/HEAD/s3-ls this run), stamp it with **verify_durable**. NEVER release or tear down a watched resource until every artifact it produced verifies durable — hours of training that existed only on the box you just released is the exact loss this exists to prevent. If durability cannot be verified, keep the resource, say so, and flag the owner. When the resource is DONE (torn down, reservation ended, or you spot a stale/duplicate registration in get_account_overview → watchedResources), retire it with **release_watched_resource** so the watchdog never ghost-alarms the owner — resources past their reservationEndsAt are auto-suppressed, everything else needs this explicit release.
 - **Tickets vs project work:** file_feedback tickets are ONLY for the Digby platform itself (the product hosting this session) — NEVER for this project. A problem the user reports in this chat is presumptively about THIS project: reproduce and fix it here (or in a child session), do not file it as a Digby ticket. A genuine Digby-platform filing from here requires about='digby_platform' plus digbyEvidence (positive evidence it is Digby's, not this project's). If you cannot tell whether they mean their app or Digby, ask the user.
 - Finish with a short summary of what changed and how you verified it — not a replay of every step.
-- **Claim discipline (always on, every run):** a completion claim (merged / pushed / deployed / probed / fixed / verified) is only true if a tool actually executed it THIS run — cite the tool result (PR#, sha, exit code). No fresh tool result = report the step as not done. An honest "blocked" or "unfinished — here's why" is a CORRECT outcome; an uncited completion claim is marked UNVERIFIED by the harness evidence guard (its notes are appended to your delivered answer). When a machine-triggered (scheduled/hook-fired) run's final claims a push, PR, deploy, ticket update, message/dispatch, commit, or verify action, you MAY end the final with a fenced claims block the harness auto-verifies against its own tool receipts: open with a line that is exactly \`\`\`claims (backticks and the word on ONE line), put a JSON array of {"type":"...","ref":"..."} entries inside (type: push | pr | merge | deploy | commit | ticket_update | message_sent | dispatch | file_change | verify | schedule_armed | email_sent | state_update — a \`commit\` entry is a LOCAL commit, sha ref, vouched by a git_commit receipt, never a push; ref: the receipt-visible id from THIS run — commit sha, PR number, or the receipt id from the tool's result envelope; a verify entry is vouched ONLY by a this-run verify-tool receipt — checks executed via run_command cannot vouch it, so report those as prose with the quoted output line, never as a verify entry; an entry may add optional "scope":"session" (work an earlier run of THIS chat did) or "scope":"relayed" (a receipt you read with get_run_receipts this run) — a scoped entry that matched no this-run receipt is re-checked against the chat's recent receipt history instead of being struck), and close with a line that is exactly \`\`\`. Receipt-verified entries downgrade prose-mining convictions; an entry with no matching receipt is marked UNVERIFIED — never list work you did not execute this run.
+- **Claim discipline (always on, every run):** a completion claim (merged / pushed / deployed / probed / fixed / verified) is only true if a tool actually executed it THIS run — cite the tool result (PR#, sha, exit code). No fresh tool result = report the step as not done. An honest "blocked" or "unfinished — here's why" is a CORRECT outcome; an uncited completion claim is marked UNVERIFIED by the harness evidence guard (its notes are appended to your delivered answer). When a machine-triggered (scheduled/hook-fired) run's final claims a push, PR, deploy, ticket update, message/dispatch, commit, or verify action, you MAY end the final with a fenced claims block the harness auto-verifies against its own tool receipts: open with a line that is exactly \`\`\`claims (backticks and the word on ONE line), put a JSON array of {"type":"...","ref":"..."} entries inside (type: push | pr | merge | deploy | commit | ticket_update | message_sent | dispatch | file_change | verify | schedule_armed | email_sent | state_update | probe | benchmark — a \`commit\` entry is a LOCAL commit, sha ref, vouched by a git_commit receipt, never a push; ref: the receipt-visible id from THIS run — commit sha, PR number, or the receipt id from the tool's result envelope; a verify entry is vouched ONLY by a this-run verify-tool receipt — checks executed via run_command cannot vouch it, so report those as prose with the quoted output line, never as a verify entry; an entry may add optional "scope":"session" (work an earlier run of THIS chat did) or "scope":"relayed" (a receipt you read with get_run_receipts this run) — a scoped entry that matched no this-run receipt is re-checked against the chat's recent receipt history instead of being struck), and close with a line that is exactly \`\`\`. Receipt-verified entries downgrade prose-mining convictions; an entry with no matching receipt is marked UNVERIFIED — never list work you did not execute this run.
 
 ## Safety (always, even in AUTO mode)
 
@@ -1211,6 +1219,31 @@ Never run destructive commands without an explicit reason you've stated: no \`rm
 ${input.fleetNotice?.trim() ? `${input.fleetNotice.trim()}\n\n` : ''}${repoContext}${input.chatSystemPrompt?.trim() ? `\n\n═══ CHAT INSTRUCTIONS (highest precedence — this chat's own directive) ═══\n${input.chatSystemPrompt.trim()}\n═══════════════════` : ''}${memoryBlock ? `\n\n${memoryBlock}` : ''}
 
 ${dateTimeBlock}${input.schedulerNotice ? `\n\n[SCHEDULER NOTICE]\n${input.schedulerNotice}` : ''}${input.machineClaimBar ? `\n\n[MACHINE RUN EVIDENCE RULE]\n${input.machineClaimBar}` : ''}`;
+}
+
+/**
+ * The turn's OWN transport arithmetic, in the one shape every consumer reads.
+ *
+ * Extracted so the dispatch-rejection text and the loop breakers cannot drift
+ * apart (the "two writers, one fact" rule this file already applies to the
+ * gateway verdict). Ticket cffd0d0a: the repeat breaker must reach the SAME
+ * verdict `toolArgumentRejection` reaches — from the SAME evidence — or a cut
+ * classified one way for the model would be classified another way for the
+ * breaker.
+ */
+function turnEvidenceOf(ctx: ToolContext): ToolCallTurnEvidence {
+  return {
+    finishReason: ctx.turnFinishReason,
+    receivedBytes: ctx.turnStreamTrace?.receivedBytes,
+    accumulatedBytes: ctx.turnStreamTrace?.accumulatedBytes,
+    droppedBytes: ctx.turnStreamTrace?.droppedBytes,
+    undrainedBufferBytes: ctx.turnStreamTrace?.undrainedBufferBytes,
+    unreadArgBytes: ctx.turnStreamTrace?.unreadArgBytes,
+    skippedRawLines: ctx.turnStreamTrace?.skippedRawLines,
+    multilineDataEvents: ctx.turnStreamTrace?.multilineDataEvents,
+    parseFailLines: ctx.turnStreamTrace?.parseFailLines,
+    parseFailToolCalls: ctx.turnStreamTrace?.parseFailToolCalls,
+  };
 }
 
 /** Execute one assembled tool call; returns the string result for the model. */
@@ -1232,18 +1265,11 @@ async function runTool(
     // `ec` and the model-facing classification can never disagree about the
     // class — the "two writers, one fact" rule this region already enforces for
     // the gateway verdict.
-    const turnEvidence = {
-      finishReason: ctx.turnFinishReason,
-      receivedBytes: ctx.turnStreamTrace?.receivedBytes,
-      accumulatedBytes: ctx.turnStreamTrace?.accumulatedBytes,
-      droppedBytes: ctx.turnStreamTrace?.droppedBytes,
-      undrainedBufferBytes: ctx.turnStreamTrace?.undrainedBufferBytes,
-      unreadArgBytes: ctx.turnStreamTrace?.unreadArgBytes,
-      skippedRawLines: ctx.turnStreamTrace?.skippedRawLines,
-      multilineDataEvents: ctx.turnStreamTrace?.multilineDataEvents,
-      parseFailLines: ctx.turnStreamTrace?.parseFailLines,
-      parseFailToolCalls: ctx.turnStreamTrace?.parseFailToolCalls,
-    };
+    // Built ONCE by `turnEvidenceOf` so the durable row's `ec`, the
+    // model-facing classification AND the loop breakers' "did this call ever
+    // execute?" test can never disagree about the class — the "two writers, one
+    // fact" rule this region already enforces for the gateway verdict.
+    const turnEvidence = turnEvidenceOf(ctx);
     const lossClass = classifyToolCallLoss(parsedArgs, turnEvidence);
     // Ticket efdb3d31 (2026-10-29, SEVENTH observation — the UNMISSABLE seam).
     // CORRECTION TO PR #2082's PREMISE (same run, minutes later): the finalize
@@ -1630,6 +1656,18 @@ async function agentLoop(
     maxSteps: number; allowSubagents: boolean; eventPrefix?: string; role?: CodingRole; agentLabel?: string;
     /** Orchestrator only: receives the run's background-worker pool so runCodingAgent's finally can close it on a throw. */
     bgHolder?: { pool?: BackgroundWorkerPool };
+    /**
+     * Orchestrator only: receives the async-tool registry's run-end close so
+     * runCodingAgent's finally can run it on a THROW too (ticket 9ecabc73).
+     *
+     * The close used to sit inline, only reachable on the success/cancel path —
+     * so a run that threw never closed the registry and a handed-off result it
+     * was holding was lost with no post, no progress event and no metric, which
+     * is precisely the silence the ticket reports. `closeRun` is idempotent and
+     * the closure is a no-op once closed, so the finally may call it safely after
+     * the inline call already ran.
+     */
+    asyncHolder?: { closeAtRunEnd?: () => void };
     /** Seat label for the usage ledger when it differs from `role` (AgentRunInput.usageRole — the L2 reconcile pass). */
     usageRole?: string;
     /**
@@ -1864,6 +1902,9 @@ async function agentLoop(
   // appended below (same content shape as the fresh-run init above). ──
   const resume = input.resumeFrom && input.resumeFrom.version === 1 && Array.isArray(input.resumeFrom.messages) && input.resumeFrom.messages.length
     ? input.resumeFrom : undefined;
+  // Ticket 458342f5: handles whose report this run RECOVERED from the durable
+  // spill (cleared at run finalize — a terminal run is never resumed).
+  const recoveredSpillIds: string[] = [];
   if (resume) {
     // Keep the JUST-BUILT system message (fresh datetime block): replaying the
     // checkpoint's messages[0] would resurrect the original run-start clock, so
@@ -1879,14 +1920,28 @@ async function agentLoop(
     const cleaned = stripTransientHarnessMessages(rest);
     messages.length = 0;
     messages.push(freshSystem, ...cleaned);
-    // Background workers the checkpointed run started died with its process —
-    // say so once, so the resumed lead re-delegates instead of waiting.
+    // Background workers the checkpointed run started died with its process.
+    // Ticket 458342f5: a worker that had already FINISHED is not lost — its
+    // report was spilled to the durable store the moment it settled, so recover
+    // those and inject them, and announce only the workers with no completed
+    // report (they were still running when the process died).
     if (opts.allowSubagents) {
       const lost = lostBackgroundWorkerIds(cleaned);
       if (lost.length) {
-        messages.push({ role: 'user', content: lostWorkersNotice(lost) });
-        recordLoopMetric({ kind: LOOP_METRIC_KINDS.DELEGATE_BACKGROUND, sessionId: input.sessionId, runId: input.runId, meta: { phase: 'lost_on_resume', workerIds: lost, count: lost.length } });
-        noteBackgroundWorkersLost(lost, { sessionId: input.sessionId }); // build 2026-10-08 D-1: their ledger tasks fail (lost_on_resume)
+        const resumeChatId = input.sessionId.startsWith('anon-') ? '' : input.sessionId;
+        const { recovered, stillLost } = await recoverBackgroundReportsOnResume(resumeChatId, lost);
+        for (const r of recovered) {
+          messages.push({ role: 'user', content: formatRecoveredReport(r) });
+          recoveredSpillIds.push(r.id);
+        }
+        if (recovered.length) {
+          recordLoopMetric({ kind: LOOP_METRIC_KINDS.DELEGATE_BACKGROUND, sessionId: input.sessionId, runId: input.runId, meta: { phase: 'recovered_on_resume', workerIds: recovered.map(r => r.id), count: recovered.length } });
+        }
+        if (stillLost.length) {
+          messages.push({ role: 'user', content: lostWorkersNotice(stillLost) });
+          recordLoopMetric({ kind: LOOP_METRIC_KINDS.DELEGATE_BACKGROUND, sessionId: input.sessionId, runId: input.runId, meta: { phase: 'lost_on_resume', workerIds: stillLost, count: stillLost.length } });
+          noteBackgroundWorkersLost(stillLost, { sessionId: input.sessionId }); // build 2026-10-08 D-1: their ledger tasks fail (lost_on_resume)
+        }
       }
     }
     messages.push({
@@ -2050,7 +2105,12 @@ async function agentLoop(
 
   // Prefer the session's isolated container for shell tools; fall back to
   // in-process bash when container mode is off or the container isn't available.
-  const useContainer = profile.workspaceTools ? await ensureSessionContainer(input.sessionId) : false;
+  // `let`, not `const`: the shell executor re-resolves this once mid-run when it
+  // is false (ticket 093e9a61) so a single miss at run start cannot disable
+  // every shell tool for the whole firing. See execShell below.
+  let useContainer = profile.workspaceTools ? await ensureSessionContainer(input.sessionId) : false;
+  // One bounded lazy re-resolve per run (ticket 093e9a61) — never per tool call.
+  let shellRecoveryTried = false;
   if (useContainer) emit('progress', { message: 'Using isolated session container', stage: 'container' });
   // Orphan reaper (ticket db25c401): exec legs (tsc/jest/prisma) from prior
   // "terminated" runs survive their wrappers and pin the container cgroup at
@@ -2062,6 +2122,22 @@ async function agentLoop(
   if (useContainer) {
     const reaped = await reapOrphanedBuildProcesses(input.sessionId).catch(() => 0);
     if (reaped > 0) emit('progress', { message: `Reaped ${reaped} orphaned build process(es) left by earlier runs — freed container memory for this run's verify chain`, stage: 'container' });
+  }
+  // Container-replacement detection (ticket c25f8b7e). The container NAME is
+  // deterministic per session, so a deploy/restart wave that swaps it is
+  // invisible by name — the docker ID is the only witness. This records the id
+  // the session now runs in on the durable coding_session_env volume and comes
+  // back with a replacement when it differs from the one on file. The lane then
+  // learns, IN ITS PROMPT (below), that everything it started in the previous
+  // container is gone — instead of rediscovering it from a bare "No such
+  // container" hours later with a half-written artifact (the 2026-11-03
+  // Schooltime lanes 19dd22bc / 60dfc8a8). Best-effort by contract: a first
+  // sighting, an unreadable id or a bookkeeping failure reports nothing.
+  const containerReplacement = useContainer
+    ? await noteSessionContainerIdentity(input.sessionId).catch(() => null)
+    : null;
+  if (containerReplacement) {
+    emit('progress', { message: 'Session container was replaced since the last run — background processes and container-local files from the old container are gone', stage: 'container' });
   }
   // Chat-parity credentials for the session shell: the user's connected GitHub /
   // Google / Slack / Asana tokens + the MCP gateway token, merged into every
@@ -2084,7 +2160,15 @@ async function agentLoop(
     const note = credentialEnvNote(credEnv);
     if (note) messages[0].content += note;
     // Fresh-shell discipline (applies to every coding mode).
-    messages[0].content += `\n\n[SHELL STATE]\nEach run_command runs in a FRESH shell — cd, export, and PATH changes do NOT persist to the next command. So:\n- Reference tools/files by ABSOLUTE path, or cd inside the SAME command (\`cd sub && npm test\`).\n- To install a CLI, use its standard installer/prefix; $HOME/.local/bin, $HOME/bin and /usr/local/bin are ALWAYS on PATH, so a normally-installed tool is found next command. Check with \`command -v <tool>\` before assuming it's missing. $HOME IS /tmp: under disk pressure a pre-exec guard wipes /tmp between commands (preserving ONLY $HOME/.local, $HOME/bin and /tmp/digby-proc), so installs elsewhere in /tmp (pip --target /tmp/…, scratch tool dirs) can vanish before the next command — put tool payloads in $HOME/.local (pip install --user) or in the worktree.\n- To make an env var or PATH addition PERSIST across commands, append it to $DIGBY_ENV (already exported; sourced before every command): \`echo 'export FOO=bar' >> "$DIGBY_ENV"\`. Do NOT re-run installs or re-symlink each turn — persist once via $DIGBY_ENV.\n- FILE TOOLS ARE WORKTREE-SCOPED: read_file/write_file/edit_file/list_dir reject absolute paths outside the worktree, and the shell's real /tmp is a DIFFERENT filesystem than a worktree "tmp/" dir — a write_file to "/tmp/x" would never reach run_command's /tmp (this split-brain ran a stale script in prod once). Keep scratch files shared with the shell INSIDE the worktree and reference them relative to the worktree (the shell's cwd), or write them inside run_command itself.`;
+    messages[0].content += `\n\n[SHELL STATE]\nEach run_command runs in a FRESH shell — cd, export, and PATH changes do NOT persist to the next command. So:\n- Reference tools/files by ABSOLUTE path, or cd inside the SAME command (\`cd sub && npm test\`).\n- To install a CLI, use its standard installer/prefix; $HOME/.local/bin, $HOME/bin and /usr/local/bin are ALWAYS on PATH, so a normally-installed tool is found next command. Check with \`command -v <tool>\` before assuming it's missing. $HOME IS /tmp: under disk pressure a pre-exec guard wipes /tmp between commands (preserving ONLY $HOME/.local, $HOME/bin and /tmp/digby-proc), so installs elsewhere in /tmp (pip --target /tmp/…, scratch tool dirs) can vanish before the next command — put tool payloads in $HOME/.local (pip install --user) or in the worktree. That keep-list survives the WIPE, not a CONTAINER REPLACEMENT (ticket 9a391db3): the whole writable layer — including $HOME/.local and $HOME/bin when HOME=/tmp — goes with a swapped container, so a tool that answered fine earlier and now exits 127 is that, not a broken PATH: re-check with \`command -v <tool>\` and reinstall it (image-shipped bins in /usr/local/bin and anything vendored in the worktree survive).\n- To make an env var or PATH addition PERSIST across commands, append it to $DIGBY_ENV (already exported; sourced before every command): \`echo 'export FOO=bar' >> "$DIGBY_ENV"\`. Do NOT re-run installs or re-symlink each turn — persist once via $DIGBY_ENV.\n- FILE TOOLS ARE WORKTREE-SCOPED: read_file/write_file/edit_file/list_dir reject absolute paths outside the worktree, and the shell's real /tmp is a DIFFERENT filesystem than a worktree "tmp/" dir — a write_file to "/tmp/x" would never reach run_command's /tmp (this split-brain ran a stale script in prod once). Keep scratch files shared with the shell INSIDE the worktree and reference them relative to the worktree (the shell's cwd), or write them inside run_command itself.`;
+  }
+  // Container-replacement notice (ticket c25f8b7e) — its own block, placed
+  // BEFORE the standing shell-state notes so it cannot be skimmed past: it
+  // invalidates work, and the lane must re-check artifacts it remembers
+  // producing. Only ever present when a swap was actually detected this run.
+  if (containerReplacement && messages[0]?.role === 'system') {
+    messages[0].content += `\n\n${containerReplacementNotice(containerReplacement)}`;
+    messages[0].content += `\n[next scheduled firing / background workers you START this run are unaffected: this run already has a working shell. The warning above is about the PREVIOUS container. If you were relying on a job started by an earlier run, assume it stopped and check what it actually wrote before continuing from it.]`;
   }
   // A4 (One-Digby): scrub the user's credential VALUES out of shell output before
   // it reaches the model/transcript. Transcripts are persisted (coding_messages)
@@ -2120,8 +2204,26 @@ async function agentLoop(
     // silently fall back to execInProcess — that runs arbitrary agent/repo code
     // INSIDE the backend container (every provider secret + every tenant's files).
     // Refuse instead; the run surfaces the degraded state rather than leaking.
+    // LIVE binding, not the run-start constant (ticket 093e9a61). `useContainer`
+    // is resolved ONCE per run (below), so a single miss at run start used to
+    // disable EVERY shell tool for the whole firing — no command, no probe, no
+    // way to diagnose it — until the next run boundary. A deploy/restart wave
+    // re-provisioning the container at that moment is exactly how a lane lost a
+    // firing (family deploy-kills-lane-background-workers: 08:29-08:32Z on two
+    // Schooltime lanes). One bounded re-resolve per run recovers the firing.
+    // Only the transition false->true is attempted, so the added cost to a lane
+    // with no container at all is ONE provisioning attempt per run, not per call.
+    if (isContainerMode() && !useContainer && !shellRecoveryTried) {
+      shellRecoveryTried = true;
+      if (await recoverSessionShellContainer(input.sessionId).catch(() => false)) {
+        useContainer = true;
+        emit('progress', { message: 'Session shell recovered — the session container was re-provisioned mid-run (a deploy/restart wave or a transient Docker miss at run start). Shell tools work again for the rest of this run; background processes and container-local files from the old container are gone — re-check any artifact an earlier run produced before relying on it.', stage: 'container' });
+      }
+    }
     if (isContainerMode() && !useContainer) {
-      return { stdout: '', stderr: 'Isolated execution is temporarily unavailable (the session container is not healthy). Shell/command tools are disabled until it recovers — do not retry in a loop; report this and continue with non-shell work if possible.' };
+      // Still no container after the one recovery attempt: say WHY it is
+      // unrecoverable and that it is infra, not the lane's command.
+      return { stdout: '', stderr: 'Isolated execution is temporarily unavailable (the session container is not healthy and re-provisioning it failed). Shell/command tools are disabled — do not retry in a loop; report this and continue with non-shell work if possible. The worktree on disk is untouched and the next run re-provisions automatically.' };
     }
     const wrapped = shellPrefix + command;
     const r = useContainer
@@ -2136,6 +2238,17 @@ async function agentLoop(
   let workerProgressCalls = 0;
   // audit 2026-10-08 W2-13: the model the harness's independent reviewer ACTUALLY ran on (cross-family check).
   let harnessReviewModel: string | null = null;
+  // ticket d7e82531: the DURABLE full-report path of that same harness reviewer.
+  // The reviewer is always a FOREGROUND worker, so persistWorkerReport always
+  // writes its report to the worktree (needDiskReport = !env). The injection
+  // site names this path when the audit-message clip has to drop findings, so
+  // the lane can read_file the whole verdict instead of losing it.
+  let harnessReviewReportPath: string | null = null;
+  // ticket d7e82531 / review finding B2: the reviewer's TRUE full length, so the
+  // injection can state how much the delegate seam's carrier clip already
+  // dropped even when no durable copy is readable (e.g. REPORT_CLIP_V2_DISABLED,
+  // whose raw slice appends no "(… N more chars)" tail).
+  let harnessReviewFullChars = 0;
   // Delegations that COMPLETED inside the current turn (delegation resume-notes):
   // a 'dispatch' resume rewinds the whole in-flight turn (trimToPreModel), tool
   // results included — so a finished worker's summary would vanish and the
@@ -2184,6 +2297,16 @@ async function agentLoop(
     const fileWriteRefusal = profile.kind === 'coding' && !dOpts?.harnessReview ? readOnlyFileWriteRefusal(role, task) : null;
     if (fileWriteRefusal) return fileWriteRefusal;
     delegationCount += 1;
+    // SNAPSHOT this delegation's ordinal NOW (ticket 95210e7e review finding 2):
+    // `delegationCount` is a live closure variable, so reading it at COMPLETION
+    // time gives the WRONG number as soon as another delegation is prepared
+    // in between. `delegate_parallel` runs `Promise.all`, which prepares every
+    // task first and only then awaits them — with a live read, all N workers
+    // persisted under the last-prepared ordinal, and same-role workers landing
+    // in the same millisecond OVERWROTE each other's durable report while the
+    // resume note still pointed at the survivor. The ordinal must be the one
+    // this delegation was dispatched with.
+    const myOrdinal = delegationCount;
     // Model tiering (audit #10): an explicit per-delegation tier override
     // wins ('helper'/'premium' from the delegate tool, or a concrete model
     // id from programmatic callers); else helperTier roles run on the FAST
@@ -2270,15 +2393,44 @@ async function agentLoop(
         // FULL text in the worktree's git-ignored scratch and the clipped summary
         // names the file (read_file). REPORT_CLIP_V2_DISABLED=1 = the 4,000 slice.
         const workerFull = sub.finalText || '';
-        let workerRestHint: string | undefined;
-        if (!reportClipV2Disabled() && workerFull.length > workerReportCapChars() && input.worktree && profile.workspaceTools) {
-          const rel = `.digby/session/worker-reports/${new Date().toISOString().replace(/[:.]/g, '-')}-${role}-${delegationCount}.md`;
-          try {
-            await fs.mkdir(path.join(input.worktree, '.digby', 'session', 'worker-reports'), { recursive: true });
-            await fs.writeFile(path.join(input.worktree, rel), `# ${title || role} (${role} worker report)\n\n${workerFull}\n`, 'utf8');
-            workerRestHint = `the FULL report is in ${rel} — read_file it for the rest`;
-          } catch { workerRestHint = undefined; /* the clipped summary still says what was cut */ }
+        // DURABLE AT COMPLETION (ticket 95210e7e): write the worker's FULL text
+        // to the worktree scratch NOW — unconditionally for a FOREGROUND
+        // worker, not only when the report overflows the clip cap. The write
+        // used to be over-cap-only, so an ordinary 4–8k reviewer verdict left
+        // no durable artefact at all: a mid-turn restart (deploy) orphaned it
+        // and the regenerated turn's note carried a 200-char head as the only
+        // surviving copy. The worktree outlives a process restart, a redeploy
+        // and a container replacement, so this is the report's lifeboat.
+        //
+        // BACKGROUND workers keep the PRE-EXISTING over-cap gate on purpose:
+        // they already have their own durable recovery (the chat-scoped spill,
+        // ticket 458342f5), and an extra await inside their `execute` would
+        // delay the pool's settlement signal — which is what decides the turn
+        // boundary their report is injected at.
+        //
+        // Gated on the WORKTREE alone for the foreground case: a chat run has
+        // none (nothing to write to), a coding run always does.
+        // qa: the write is best-effort (never throws); a null result falls back
+        // to the in-memory summary exactly as before.
+        const needDiskReport = !env
+          || (!reportClipV2Disabled() && workerFull.length > workerReportCapChars());
+        const workerReportRel = needDiskReport && input.worktree
+          ? await persistWorkerReport({ worktree: input.worktree, role, title, ordinal: myOrdinal, report: workerFull })
+          : null;
+        // ticket d7e82531: remember the harness reviewer's durable copy so the
+        // audit-message injection can name it instead of severing the verdict.
+        if (dOpts?.harnessReview) {
+          harnessReviewFullChars = workerFull.length;
+          if (workerReportRel) harnessReviewReportPath = workerReportRel;
         }
+        let workerRestHint: string | undefined;
+        if (workerReportRel && !reportClipV2Disabled() && workerFull.length > workerReportCapChars()) {
+          workerRestHint = `the FULL report is in ${workerReportRel} — read_file it for the rest`;
+        }
+        // The note's OWN carrier for this worker. The durable file keeps the raw
+        // text (faithful artefact); the inline copy drops the JSON status footer
+        // so the note's budget is spent on findings, not on envelope syntax.
+        const workerProse = parseWorkerEnvelope(workerFull)?.prose.trim() || workerFull.trim();
         const ws = buildWorkerSummary(
           workerFull,
           `[WORKER FAILED — produced no output after a retry. Do this task yourself inline now with your own tools; do NOT re-delegate it. Task was: ${task.slice(0, 300)}]`,
@@ -2297,7 +2449,13 @@ async function agentLoop(
         // transcript as an injected harness message (checkpointed preModel),
         // never as this turn's tool result — no in-flight resume note.
         if (!env) {
-          turnDelegations.push({ title: title || role, role, status: ws.status, summary: ws.summary });
+          turnDelegations.push({
+            title: title || role, role, status: ws.status, summary: ws.summary,
+            // Ticket 95210e7e: the note is the only thing that survives a
+            // mid-turn restart — it must point at the durable full report
+            // (or carry the report itself when no durable copy exists).
+            ...(workerReportRel ? { reportPath: workerReportRel } : { report: workerProse }),
+          });
           checkpoint('dispatch');
         }
         // Link the result back to the plan step, if one was named. The parsed
@@ -2334,6 +2492,125 @@ async function agentLoop(
   // only. The pool is created on the first background start; runCodingAgent's
   // finally closes it too (a thrown run still posts its late reports).
   let bgPool = null as BackgroundWorkerPool | null; // cast: assigned in closures — keep TS from narrowing it to null
+  /**
+   * SAA-1.6 PHASE 3b (platform/async-tool-registry.ts) — handed-off tool calls.
+   * Created on the FIRST eligible call of the run, closed in the run's `finally`
+   * (so a thrown run still REPORTS what it owed rather than dropping it
+   * silently). `apply` is the plan's own flag: true only when the switch says
+   * `apply`/`rewrite`, so a deploy in the default observe mode records the
+   * threshold crossings and changes no timing at all.
+   */
+  let asyncTools = null as AsyncToolRegistry | null;
+  const ensureAsyncTools = (plan: AsyncToolPlan): AsyncToolRegistry => {
+    if (asyncTools) return asyncTools;
+    asyncTools = new AsyncToolRegistry({
+      afterMs: plan.afterMs,
+      apply: plan.applied,
+      metric: (phase, e) => {
+        try {
+          recordLoopMetric({
+            kind: LOOP_METRIC_KINDS.ASYNC_TOOL_CALLS_DELIVER,
+            sessionId: input.sessionId,
+            ...(input.runId ? { runId: input.runId } : {}),
+            stamp: metricStamp,
+            ...(typeof e.elapsedMs === 'number' ? { value: e.elapsedMs, unit: 'ms' } : {}),
+            meta: {
+              tool: e.tool,
+              phase,
+              ...(e.correlationId ? { id: e.correlationId } : {}),
+              ...(phase === 'threshold_crossed' ? { apply: e.apply === true } : {}),
+              ...(typeof e.ok === 'boolean' ? { ok: e.ok } : {}),
+            },
+          });
+        } catch { /* metrics never break a call */ }
+      },
+      log: (m) => agentWarn(`coding agent [${agentLabel}]: ${m}`),
+      // Ticket 9ecabc73: a handed-off result that lands AFTER this run ended used
+      // to be dropped into a log line — the "Started" text had already promised
+      // the model it would reach the transcript, so silence here is exactly the
+      // severed-write the ticket reports. Post it as a real chat message instead.
+      onLateResult: (done: AsyncToolDone) => {
+        // A guest/chatless session has no chat row to post into. The hand-off
+        // still happened, so say so in the log rather than dropping it mutely —
+        // and note WHY, so the run-end path is not mistaken for a broken post.
+        if (!runChatId) {
+          agentWarn(`coding agent [${agentLabel}]: chattess session cannot receive late background result ${done.tool} ${done.correlationId} (no chat row) — result dropped`);
+          return;
+        }
+        // A post that FAILS must not be silent either — that is the defect this
+        // ticket reports (reviewer finding c).
+        void postBackgroundReportMessage(runChatId, formatOwedToolResults([{ ...done, settled: true }]), {
+          kind: 'background_tool_result', origin: 'background_tool', correlationId: done.correlationId, tool: done.tool, runId: input.runId ?? null, late: true,
+        }).then((ok) => {
+          if (ok) return;
+          agentWarn(`coding agent [${agentLabel}]: failed to post late background result ${done.tool} ${done.correlationId} to chat ${runChatId}`);
+          try {
+            recordLoopMetric({
+              kind: LOOP_METRIC_KINDS.ASYNC_TOOL_CALLS_DELIVER, sessionId: input.sessionId,
+              ...(input.runId ? { runId: input.runId } : {}), stamp: metricStamp,
+              meta: { tool: done.tool, phase: 'run_end_post', id: done.correlationId, ok: false },
+            });
+          } catch { /* metrics never break a run */ }
+        }).catch(() => { /* a late post must never throw into the settle path */ });
+      },
+    });
+    return asyncTools;
+  };
+  // Ticket 9ecabc73 (reviewer finding d): the close is reachable from BOTH the
+  // inline run-end path and runCodingAgent's `finally`, so a run that THROWS
+  // still posts what it owed instead of losing it. `closeRun` is idempotent —
+  // the second caller gets [] — so double invocation posts nothing twice.
+  const closeAsyncToolsAtRunEnd = (): void => {
+    if (!asyncTools) return;
+    try {
+      const owed = asyncTools.closeRun();
+      if (!owed.length) return;
+      // A result already in hand is POSTED, never merely mourned. The old path
+      // wrote a log line and a progress event — neither of which is a
+      // transcript row — while the "Started" text had promised the model the
+      // result would land in the transcript. A still-running call is announced
+      // here too, and its eventual result arrives through `onLateResult`;
+      // either way the chat gets a terminal status, never silence.
+      const settledCount = owed.filter(o => o.settled).length;
+      agentWarn(`coding agent [${agentLabel}]: run ended owing ${owed.length} handed-off tool call(s) (${owed.map(o => `${o.tool} ${o.correlationId}${o.settled ? ' [result held]' : ' [still running]'}`).join(', ')}) — posting to the chat`);
+      if (runChatId) {
+        // A post that FAILS must not be silent either — that is the very defect
+        // this ticket reports. Record the outcome so a lost write is visible.
+        void postBackgroundReportMessage(runChatId, formatOwedToolResults(owed), {
+          kind: 'background_tool_result',
+          origin: 'background_tool',
+          runId: input.runId ?? null,
+          correlationIds: owed.map(o => o.correlationId),
+          settledCount,
+          runningCount: owed.length - settledCount,
+        }).then((ok) => {
+          if (ok) return;
+          agentWarn(`coding agent [${agentLabel}]: failed to post ${owed.length} owed background tool result(s) to chat ${runChatId}`);
+          try {
+            recordLoopMetric({
+              kind: LOOP_METRIC_KINDS.ASYNC_TOOL_CALLS_DELIVER, sessionId: input.sessionId,
+              ...(input.runId ? { runId: input.runId } : {}), stamp: metricStamp,
+              meta: { phase: 'run_end_post', ok: false, count: owed.length },
+            });
+          } catch { /* metrics never break a run */ }
+        }).catch(() => { /* postBackgroundReportMessage never throws, but a promise chain must not either */ });
+      } else {
+        agentWarn(`coding agent [${agentLabel}]: chattess session cannot receive ${owed.length} owed background tool result(s) (no chat row) — results dropped`);
+      }
+      emit('progress', {
+        // Only claim "posted" when there is a chat to post into (reviewer
+        // finding: the old line asserted a delivery that may not have happened).
+        message: !runChatId
+          ? `${owed.length} background tool call(s) finished without a chat to report into`
+          : settledCount
+            ? `${settledCount} background tool result${settledCount === 1 ? '' : 's'} posted to this chat (the run ended before ${settledCount === 1 ? 'it' : 'they'} could be delivered in-loop)`
+            : `${owed.length} background tool call(s) still running at run end — their results will be posted here when they finish`,
+        stage: 'background',
+      });
+    } catch { /* closing the registry never breaks a finishing run */ }
+  };
+  // Expose it so runCodingAgent's `finally` covers the THROW path too.
+  if (opts.asyncHolder) opts.asyncHolder.closeAtRunEnd = closeAsyncToolsAtRunEnd;
   const bgMetric = (phase: string, w: BackgroundWorker | null, extra?: Record<string, unknown>): void => {
     const ms = w ? (w.finishedAt ?? Date.now()) - w.startedAt : (typeof extra?.ms === 'number' ? extra.ms : undefined);
     recordLoopMetric({
@@ -2359,6 +2636,11 @@ async function agentLoop(
         : false),
       log: (m) => agentWarn(`coding agent [${agentLabel}]: ${m}`),
       latePostGraceMs: backgroundLatePostGraceMs(),
+      // Ticket 458342f5: a finished report must outlive this process. Spill it
+      // at settle; drop it once the report is durable elsewhere (a landed late
+      // post, or run finalize for a delivered report).
+      spillReport: (w) => spillBackgroundReport(runChatId as string, w, input.runId ?? null),
+      clearSpills: (ids) => Promise.resolve(runChatId ? clearBackgroundReportSpills(runChatId, ids) : 0),
     }, backgroundWorkerCap());
     bgPool = pool;
     if (opts.bgHolder) opts.bgHolder.pool = pool;
@@ -3679,8 +3961,7 @@ async function agentLoop(
       // ── Compaction: keep the running transcript within the context window.
       // v2 (P6): trigger at ~70% of the budget and compact the oldest third —
       // several cheap early compactions instead of one 100% cliff that
-      // summarizes everything at once (COMPACTION_V2_DISABLED restores the
-      // exact-budget cliff + old body). ──
+      // summarizes everything at once. ──
       if (messagesChars(messages) > compactionTriggerChars(effectiveContextBudget())) { // audit 2026-10-06 T1-1: learned ceiling caps a family budget
         // build 2026-10-08 C-1: chat FAST PATH — on a chat seat with a ≤150k-char budget, a deterministic clear of
         // old tool results replaces the ~9 s LLM summary when it gets under the trigger (owner canary acts; the rest
@@ -3775,6 +4056,28 @@ async function agentLoop(
             parts.push(stampPart({ type: 'subagent', title: w.title, role: w.role, summary: w.report ?? '', background: true, handle: w.id }));
           }
           emit('progress', { message: `Background worker report${ready.length === 1 ? '' : 's'} arrived: ${ready.map(w => w.title).join(', ')}`, stage: 'background' });
+        }
+      }
+
+      // ── SAA-1.6 PHASE 3b (platform/async-tool-registry.ts) — DEFERRED TOOL
+      // RESULTS. A call that outlived the elapsed threshold was answered
+      // "Started" with a correlation id; its real result is drained HERE, at a
+      // step boundary, through the same seam as the background-worker report
+      // below. Framed as DATA with the id and elapsed time, so the model can
+      // join it to the "Started" it saw, and so it is never mistaken for
+      // instructions (a tool result may quote a scraped page).
+      if (topLevel && asyncTools) {
+        const done = asyncTools.takeReady();
+        if (done.length) {
+          messages.push({ role: 'user', content: done.map(formatAsyncToolResult).join('\n\n') });
+          for (const d of done) {
+            toolTexts.push(d.result);
+            emit('tool_result', { name: d.tool, result: d.result, background: true, correlationId: d.correlationId });
+          }
+          emit('progress', {
+            message: `Background tool result${done.length === 1 ? '' : 's'} arrived: ${done.map(a => `${a.tool} (${a.correlationId})`).join(', ')}`,
+            stage: 'background',
+          });
         }
       }
 
@@ -5577,7 +5880,20 @@ async function agentLoop(
         // already read `severedStreamRecovered` at this turn's start, so the
         // recovery row's own turn keeps `re:0` and the retry gets `re:1`.
         noteReemit(severedReemitCarry, turn.toolCalls.map(tc => (tc.arguments || '').length).join(','));
-        agentWarn(`coding agent: ${provider.model} stream ended ${turn.streamCompleted === false ? 'WITHOUT [DONE]' : 'CLEANLY ([DONE] seen)'} after ${turn.toolCalls.length} tool call(s) (finish=${turn.finishReason ?? 'null'}, sc=${turn.streamCompleted === false ? 0 : 1}, reasoning ${(turn.reasoning || '').length} chars, partial args ${partial || 'none'}) — the assembled payload stops mid-structure; re-emitting the turn once instead of dispatching a partial call (severed-stream recovery)`);
+        // LOG-SIGNAL bb6a3aa3 (family lane 3556c8a4, 2026-11-03): this notice is
+        // EXTERNAL, not an internal fault. What it reports is the UPSTREAM
+        // gateway ending a turn mid-payload — measured in efdb3d31 as recv==acc,
+        // drop=0, buf=0 (every byte the gateway sent we appended; the payload
+        // simply stopped) — and the turn is RECOVERED right here, by design.
+        // Untagged at warn, the hourly sweep fingerprinted it as a framework
+        // fault and re-filed it every week (35 rows / 13 distinct hours).
+        // The LOSS signal is untouched and stays instrumented on the
+        // severed_stream_recovery / tool_call_unrecovered_severance loop_metric
+        // rows, so tagging the notice cannot hide a severance regression — it
+        // only stops a designed recovery from filing tickets about itself.
+        // `agentWarn`'s object form carries meta verbatim (splat-safe — see
+        // utils/log-level.ts), so sessionId/runId/source all survive the tag.
+        agentWarn(`coding agent: ${provider.model} stream ended ${turn.streamCompleted === false ? 'WITHOUT [DONE]' : 'CLEANLY ([DONE] seen)'} after ${turn.toolCalls.length} tool call(s) (finish=${turn.finishReason ?? 'null'}, sc=${turn.streamCompleted === false ? 0 : 1}, reasoning ${(turn.reasoning || '').length} chars, partial args ${partial || 'none'}) — the assembled payload stops mid-structure; re-emitting the turn once instead of dispatching a partial call (severed-stream recovery)`, { logClass: 'external' });
         emit('progress', { message: 'The model stream was cut short mid-tool-call — re-requesting that turn…', stage: 'severed-stream-recovery' });
         recordLoopMetric({
           kind: LOOP_METRIC_KINDS.SEVERED_STREAM_RECOVERY,
@@ -5725,6 +6041,46 @@ async function agentLoop(
         }
         parts.push(stampPart({ type: 'tool_call', name: tc.name, args: argsPreview }));
         emit('tool_call', { name: tc.name, args: argsPreview });
+
+// SAA-1.6 PHASE 3b (todo e49dfd07, platform/async-tool-calls.ts +
+        // platform/async-tool-registry.ts) — THE ARMED PATH.
+        // Plan the call, then let the registry race it against the elapsed
+        // threshold. Nothing about a FAST call changes: the tool starts now, and
+        // if it settles before `afterMs` its own result returns through the same
+        // expression as today (the other arm never wins). Only a call still
+        // RUNNING at the threshold is handed off — the model gets "Started" plus
+        // a correlation id, and the eventual result is queued for the next step
+        // boundary (drained below, beside the background-worker pool).
+        // Eligibility is a TOOL-CLASS question now, not a declared-duration
+        // guess: measuring elapsed time removes the prediction Phase 3a had to
+        // make (and which wrongly excluded run_command / computer use).
+        // In `observe` mode the crossing is RECORDED and the call still blocks,
+        // so a deploy cannot change the loop's timing. Kill switch
+        // ASYNC_TOOL_CALLS_DISABLED=1 → reason 'kill_switch', today's behaviour,
+        // no row, no race. Telemetry never blocks a call.
+        let asyncPlanForCall: AsyncToolPlan | null = null;
+        try {
+          asyncPlanForCall = planAsyncToolCall({ tool: tc.name, args: argsPreview });
+          if (asyncPlanForCall.eligible) {
+            recordLoopMetric({
+              kind: LOOP_METRIC_KINDS.ASYNC_TOOL_CALLS_OBSERVE,
+              sessionId: input.sessionId,
+              ...(input.runId ? { runId: input.runId } : {}),
+              value: 1,
+              meta: { tool: tc.name, afterMs: asyncPlanForCall.afterMs, declaredMs: asyncPlanForCall.declaredMs, reason: asyncPlanForCall.reason, mode: asyncPlanForCall.mode },
+            });
+          }
+          // TOP-LEVEL ONLY (review P1). `agentLoop` is the loop shared by the
+          // orchestrator AND worker subagents, but the drain and the run-end
+          // closeRun below are `topLevel`-gated. Without this guard a SUB-loop
+          // that handed a call off would queue its result into a registry that
+          // nothing ever drains or closes: no `delivered` row, no `orphaned`
+          // row, no warn — and the worker would sit on a "Started" it can never
+          // resolve. Nulling the plan here makes a sub-loop block exactly as it
+          // does today; the readout above still records, so the rate for
+          // delegated calls stays measurable.
+          if (!topLevel) asyncPlanForCall = null;
+        } catch { /* SAA-1.6: telemetry never blocks a tool call */ }
 
         // Backstop timeout so one wedged tool can't freeze the whole run. Clear the
         // timer once the tool settles so we don't leak a 4-min timer per tool call.
@@ -5972,6 +6328,10 @@ async function agentLoop(
           } catch { /* the audit must never break a dispatch */ }
         }
         let result: string;
+        // SAA-1.6 PHASE 3b: set only when this call was HANDED OFF — the loop then
+        // skips the result-processing tail (offload, receipts, truncation) because
+        // there is no result yet; that work runs when the real result is drained.
+        let asyncStarted: { correlationId: string; startedText: string } | null = null;
         // W2-12: an identical allowlisted read served from this loop's cache (no re-execution, no new receipt).
         let servedFromReadCache = false;
         // build 2026-10-11 DL-2: a side effect answered from the tool-intent journal instead of run (no re-run, no new
@@ -5989,8 +6349,25 @@ async function agentLoop(
           // deadline like injectSystem waits (2026-09-08 audit: a chat-profile
           // run got a forced tool-less FINAL TURN right after the owner answered).
           const askT0 = tc.name === 'ask_user' || tc.name === 'wait_for_chat' ? Date.now() : 0;
-          result = await runTool(ctx, tc);
-          if (askT0) deadlineOffsetMs += Date.now() - askT0;
+          const delegationWork = runTool(ctx, tc);
+          // SAA-1.6: wait_for_chat lives HERE (it is a wait, not this run's work),
+          // so the async race must wrap this branch too — otherwise the one tool
+          // that declares a real 600 s bound would be the one never handed off.
+          if (asyncPlanForCall?.eligible) {
+            const outcome = await ensureAsyncTools(asyncPlanForCall).run(tc.name, delegationWork);
+            if (outcome.kind === 'handed_off') {
+              asyncStarted = { correlationId: outcome.correlationId, startedText: outcome.startedText };
+              result = outcome.startedText;
+              // A handed-off wait keeps running off-deadline; do not charge its
+              // elapsed time to the loop (it is not this run's work either way).
+            } else {
+              result = outcome.result;
+              if (askT0) deadlineOffsetMs += Date.now() - askT0;
+            }
+          } else {
+            result = await delegationWork;
+            if (askT0) deadlineOffsetMs += Date.now() - askT0;
+          }
         } else {
           // build 2026-10-08 D-2 (SHADOW): a side-effecting call gets its PENDING intent row + idempotency key before
           // it runs (issued fire-and-forget — nothing waits on the DB) and is settled after; the key rides the ctx so
@@ -6010,15 +6387,37 @@ async function agentLoop(
             if (intent) ctx.intentKey = intent.idemKey;
             // build 2026-10-09 VS: the hard timer re-arms by the QUEUED ms this call reported (a verify waiting for a slot
             // is never "exceeded 900s"); nothing reported ⇒ the old race exactly (tool-hard-timeout.ts).
-            result = await raceToolHardTimeout(
+            const hardTimedWork = raceToolHardTimeout(
               runTool(ctx, tc), TOOL_HARD_TIMEOUT_MS,
               () => `Tool "${tc.name}" exceeded ${Math.round(TOOL_HARD_TIMEOUT_MS / 1000)}s and was aborted. Do not retry it; proceed with what you have.`,
               () => toolQueuedMs,
             );
-            readCache?.record(tc.name, tc.arguments, result, step, receiptId);
-            if (intent) {
+            // SAA-1.6 PHASE 3b — race the call against the ELAPSED threshold. The
+            // tool has ALREADY started above; this only decides what the loop does
+            // if it is still running at `afterMs`. Sub-threshold ⇒ the tool's own
+            // result comes back through this same expression, byte-identical.
+            if (asyncPlanForCall?.eligible) {
+              const outcome = await ensureAsyncTools(asyncPlanForCall).run(tc.name, hardTimedWork);
+              if (outcome.kind === 'handed_off') {
+                asyncStarted = { correlationId: outcome.correlationId, startedText: outcome.startedText };
+                result = outcome.startedText;
+              } else {
+                result = outcome.result;
+              }
+            } else {
+              result = await hardTimedWork;
+            }
+            // A handed-off call has no result yet — caching its "Started" text would
+            // answer a later identical read with "Started" and never run it.
+            if (!asyncStarted) readCache?.record(tc.name, tc.arguments, result, step, receiptId);
+            if (intent && !asyncStarted) {
               delete ctx.intentKey;
               intentJournal.finish(intent, result, { receiptId, failureShaped: looksLikeToolFailure(result || '') });
+            } else if (intent && asyncStarted) {
+              // Handed off: the call has NOT settled, so the intent stays open
+              // rather than being settled on text that is not a result.
+              delete ctx.intentKey;
+              intentJournal.finish(intent, result, { receiptId, failureShaped: false });
             }
           }
         }
@@ -6026,7 +6425,7 @@ async function agentLoop(
         toolGroups?.noteUse(tc.name); // LRU: a used group is the last to be evicted
         // build 2026-10-08 F-1: get_run_receipts rows (relayed evidence) + email sends / file writes (executed tier);
         // build 2026-10-11 FA-1: + every READ tool (the read index a `verify` claim rests on); DL: a withheld resend never counts as executed.
-        if (finishRun && preflightResult === null && finishRunObservesTool(tc.name)) finishRun.observeToolResult(tc.name, argsPreview, result, intentReplay !== 'withheld' && !looksLikeToolFailure(result || ''));
+        if (finishRun && preflightResult === null && !asyncStarted && finishRunObservesTool(tc.name)) finishRun.observeToolResult(tc.name, argsPreview, result, intentReplay !== 'withheld' && !looksLikeToolFailure(result || ''));
         // F2: a red verify chain from the lane's own `verify` call counts toward the frontier council (tools.ts
         // answers "Verify FAILED at "<stage>": …" — deferred / unverified / no-chain answers are not reds).
         if (frontierCouncil && tc.name === 'verify' && typeof result === 'string' && result.startsWith('Verify FAILED at')) {
@@ -6039,7 +6438,7 @@ async function agentLoop(
         // >8k run_command/verify/process output carried a FALSE pointer. Every
         // >8k result is now offloaded (head+tail for huge ones) and the marker
         // states what actually happened. ──
-        const isContentRead = OFFLOAD_TOOLS.has(tc.name) && !!result && result.length > 200;
+        const isContentRead = !asyncStarted && OFFLOAD_TOOLS.has(tc.name) && !!result && result.length > 200;
         // Ticket f03b739c: gate every offload through the SERP/failure
         // sanitizer — a failed search surface never embeds its body (a compact
         // error record lands instead), and a SERP payload distills to its
@@ -6938,6 +7337,42 @@ async function agentLoop(
         derailNoticeChurned = false;
       }
 
+      // ── TICKET cffd0d0a (2026-11-03): A CALL THAT NEVER RAN IS NEVER GROUNDS
+      // FOR PERMANENT REMOVAL ──────────────────────────────────────────────────
+      // `sevThisTurn` is true when a dispatched call's arguments were severed in
+      // the TRANSPORT — the harness rejected it at dispatch, so the tool never
+      // executed and NOTHING was written (`toolArgumentRejection`'s own words).
+      //
+      // The escalation ladder below ends in `permaWithheld`, which is right for
+      // the class it was built for: a decoder lock that keeps re-emitting a call
+      // whose result it ALREADY HAS. That premise needs the call to have RUN. It
+      // does not hold for a severance, and the difference is load-bearing:
+      //
+      // MEASURED DEFECT (chat 99e63f86, 2026-11-03). A cut this seam itself
+      // classifies `severed-in-transit` re-cuts a re-sent payload at the SAME byte
+      // (5/5 measured on that seat), so the arguments are byte-identical across
+      // turns BY CONSTRUCTION. The exact leg therefore read a TRANSPORT fault as a
+      // decoder lock, escalated 1 round → 3 rounds → `permaWithheld`, and removed
+      // `goal_update` from the schema for the rest of the run — `tool_repeat_break`
+      // struck at 20:23:09Z and 20:28:07Z on that chat with tool=goal_update. A
+      // transient wire fault became a permanent capability loss, so the
+      // supervisor's owner-halt marker could NEVER land: the ticket's "then tool
+      // loop-broken".
+      //
+      // WHY CAP RATHER THAN EXEMPT. Dropping these turns out of the signature
+      // would leave a model that never closes its JSON with NO breaker at all (it
+      // can emit an unfinished fragment every turn forever), and the supervisor /
+      // chat profiles that hit this are the ones whose `runDeadlineMs` is the only
+      // outer bound. So the streak arithmetic is left EXACTLY as it was — a wedge
+      // still trips, still gets the notice, still loses the tool for 1 then 3
+      // rounds — and only the PERMANENT removal is withheld for a never-executed
+      // class. That keeps the tool re-offered so a reshaped retry can land the
+      // write, which is the whole point, while a genuine loop stays bounded.
+      //
+      // This does not need to tell a transport cut from a model that emitted half
+      // an object (it cannot): for BOTH, keeping the tool offered is correct and
+      // the bounded withhold is the right response.
+      const sevThisTurn = turn.toolCalls.some((tc) => isTransportSeveredRejection(tc.arguments, turnEvidenceOf(ctx)));
       // Reflection tracking: count consecutive identical tool signatures.
       const sig = turn.toolCalls.map(tc => `${tc.name}:${tc.arguments}`).join('|');
       if (sig && sig === lastToolSig) repeatCount += 1; else { repeatCount = 0; lastToolSig = sig; }
@@ -7000,7 +7435,13 @@ async function agentLoop(
           const nearOnly = repeatCount < 2;
           const repeatTrips = (repeatTripCounts.get(loopTool) ?? 0) + 1;
           repeatTripCounts.set(loopTool, repeatTrips);
-          const repeatPerma = repeatTrips >= 3;
+          // TICKET cffd0d0a: the PERMANENT rung is unreachable for a turn whose
+          // call was rejected at dispatch (see the comment block above the streak
+          // arithmetic). The streak itself is untouched, so the bounded rungs
+          // still fire every time — a wedged lane is still interrupted, still
+          // told, and still loses the tool for 1 then 3 rounds, repeatedly.
+          const severanceCapped = repeatTrips >= 3 && sevThisTurn;
+          const repeatPerma = repeatTrips >= 3 && !sevThisTurn;
           const withholdRounds = repeatTrips === 1 ? 1 : 3;
           if (repeatPerma) {
             permaWithheld.add(loopTool);
@@ -7017,12 +7458,12 @@ async function agentLoop(
           const identicalPhrase = nearOnly
             ? `NEAR-IDENTICAL ${loopTool} calls 4 turns in a row (arguments differ only by numbers — the noop1, noop2, … numbering loop)`
             : `the IDENTICAL ${loopTool} call with the same arguments 3 turns in a row`;
-          messages.push({ role: 'user', content: `[HARNESS NOTICE — not typed by the user] You have made ${identicalPhrase}${repeatTrips > 1 ? ` — for the ${repeatTrips === 2 ? 'second' : 'third'} time this run` : ''} — the result adds no new information.${fillerNote} To break the loop, ${loopTool} ${repeatPerma ? 'is now removed from your tool list for the REST OF THIS RUN' : withholdRounds === 1 ? 'has been temporarily removed from your tool list for the next round — it returns the round after' : `has been temporarily removed from your tool list for the next ${withholdRounds} rounds`}. Call a DIFFERENT tool that advances the task, mark the step blocked via update_plan, or write your final answer now.${repeatPerma ? ' Three identical-call loops on one tool is a decoder lock, not work; every other tool remains, and the result of that call is already in your context.' : ''}` });
-          emit('progress', { message: `${loopTool} ${nearOnly ? 'near-identical numbering loop 4×' : 'repeated identically 3×'}${noopFillerLoop ? ' (shell no-op filler)' : ''} — ${repeatPerma ? 'withheld for the rest of the run (third loop)' : `withheld for ${withholdRounds === 1 ? 'one round' : `${withholdRounds} rounds`} to break the loop`}`, stage: 'repeat-break' });
+          messages.push({ role: 'user', content: `[HARNESS NOTICE — not typed by the user] You have made ${identicalPhrase}${repeatTrips > 1 ? ` — for the ${repeatTrips === 2 ? 'second' : 'third'} time this run` : ''} — the result adds no new information.${fillerNote} To break the loop, ${loopTool} ${repeatPerma ? 'is now removed from your tool list for the REST OF THIS RUN' : withholdRounds === 1 ? 'has been temporarily removed from your tool list for the next round — it returns the round after' : `has been temporarily removed from your tool list for the next ${withholdRounds} rounds`}. Call a DIFFERENT tool that advances the task, mark the blocked step via update_plan, or write your final answer now.${repeatPerma ? ' Three identical-call loops on one tool is a decoder lock, not work; every other tool remains, and the result of that call is already in your context.' : ''}${severanceCapped ? ` NOTE: those calls were rejected at DISPATCH — the arguments never arrived complete, so NOTHING was executed and no result exists in your context. Re-sending the same bytes tends to be cut at the same place. Re-issue ${loopTool} with SHORTER argument values (e.g. a brief description, no long prose) so the payload fits.` : ''}` });
+          emit('progress', { message: `${loopTool} ${nearOnly ? 'near-identical numbering loop 4×' : 'repeated identically 3×'}${noopFillerLoop ? ' (shell no-op filler)' : ''} — ${repeatPerma ? 'withheld for the rest of the run (third loop)' : `withheld for ${withholdRounds === 1 ? 'one round' : `${withholdRounds} rounds`} to break the loop`}${severanceCapped ? ' (severed at dispatch — not the run)' : ''}`, stage: 'repeat-break' });
           recordLoopMetric({
             kind: LOOP_METRIC_KINDS.GUARD_STRIKE,
             sessionId: input.sessionId, runId: input.runId, stamp: metricStamp,
-            meta: { seam: 'tool_repeat_break', tool: loopTool, trips: repeatTrips, rounds: repeatPerma ? 'run' : withholdRounds, ...(noopFillerLoop ? { noopFiller: true } : {}), ...(nearOnly ? { near: true } : {}) },
+            meta: { seam: 'tool_repeat_break', tool: loopTool, trips: repeatTrips, rounds: repeatPerma ? 'run' : withholdRounds, ...(severanceCapped ? { severanceCapped: true } : {}), ...(noopFillerLoop ? { noopFiller: true } : {}), ...(nearOnly ? { near: true } : {}) },
           });
         }
       }
@@ -7342,7 +7783,20 @@ async function agentLoop(
             const report = await ctx.delegate('reviewer', independentReviewBrief(req), 'Independent review', undefined, { harnessReview: true }).catch((e: any) => `[review failed: ${e?.message || e}]`);
             reviewMeta.ms = Date.now() - t0;
             if (isUsableReviewReport(report) && !/^\[review failed:/.test(report)) {
-              auditExtra += `\n${reviewFindingsBlock(report)}`;
+              // ticket d7e82531 + review finding B1: `report` here is the delegate
+              // seam's CLIPPED carrier summary, not the reviewer's verdict. Clipping
+              // that again lost the closing findings before they ever reached the
+              // audit message. Read the durable FULL text instead; fall back to the
+              // summary and state how much the carrier already dropped.
+              const fullReview = harnessReviewReportPath
+                ? await readWorkerReport(input.worktree, harnessReviewReportPath)
+                : null;
+              const reviewText = fullReview || report;
+              const carrierOmitted = Math.max(0, harnessReviewFullChars - report.length);
+              auditExtra += `\n${reviewFindingsBlock(reviewText, {
+                reportPath: harnessReviewReportPath || undefined,
+                omittedBefore: fullReview ? 0 : carrierOmitted,
+              })}`;
               reviewMeta.ran = true;
               reviewMeta.reportChars = report.length;
               reviewMeta.fails = (report.match(/\bFAIL\b/g) || []).length;
@@ -7680,7 +8134,19 @@ async function agentLoop(
   // posted to the session as its own message (now, or when it finishes).
   if (topLevel && bgPool) {
     void bgPool.closeRun({ cancelled: input.isCancelled?.() === true });
+    // Ticket 458342f5: drop the durable spill of every report this run actually
+    // DELIVERED into its own transcript. See finalizeSpillClearIds for why
+    // 'posted_late' and 'unposted' MUST NOT be cleared here (review finding).
+    const toClear = finalizeSpillClearIds(bgPool.all(), recoveredSpillIds);
+    if (toClear.length && runChatId) void clearBackgroundReportSpills(runChatId, toClear);
   }
+  // SAA-1.6 PHASE 3b — close the async-tool registry at run end. A handed-off
+  // call that has not settled is NOT cancelled (the same discipline
+  // tool-hard-timeout follows); whatever the run still owes is POSTED to the
+  // chat (ticket 9ecabc73). The same closure is invoked from runCodingAgent's
+  // `finally` via asyncHolder, so a run that THROWS reports too — `closeRun` is
+  // idempotent, so the second call posts nothing twice.
+  if (topLevel) closeAsyncToolsAtRunEnd();
 
   // Persist this run's spend into the durable whole-session totals (idempotent
   // per runId) and push the final numbers so the meter survives run end.
@@ -7946,9 +8412,26 @@ export async function runCodingAgent(input: AgentRunInput): Promise<AgentRunResu
   // closeRun — close it here so its workers' reports are still posted
   // (closeRun is idempotent; a stopped run cancels them).
   const bgHolder: { pool?: BackgroundWorkerPool } = {};
+  // Ticket 9ecabc73 (reviewer finding d): the async-tool registry's run-end close
+  // is reachable from THIS finally, so a run that THROWS still posts the
+  // background tool results it was holding — no post, no progress event and no
+  // metric is exactly the silence the ticket reports. `closeRun` is idempotent
+  // (the inline run-end path already called it on success/cancel), so the second
+  // invocation posts nothing twice.
+  const asyncHolder: { closeAtRunEnd?: () => void } = {};
   try {
-    return await agentLoop(input, { maxSteps: profile.maxSteps, allowSubagents: true, bgHolder });
+    // Ticket d5974d65: heal THIS session's orphaned background-worker ledger
+    // rows (a worker that outlived an earlier TERMINAL run and never delivered
+    // — its process died or it hung — would otherwise sit 'working' forever;
+    // a completed run leaves no resume checkpoint for lost_on_resume to see).
+    // Fire-and-forget, session-scoped; the nightly reconcile sweeps globally.
+    void sweepOrphanedBackgroundWorkerTasks({ parentChatId: input.sessionId });
+    return await agentLoop(input, { maxSteps: profile.maxSteps, allowSubagents: true, bgHolder, asyncHolder });
   } finally {
+    // Ticket 9ecabc73: order matters — close the async-tool registry FIRST so a
+    // held background tool result is posted while the run is still finalizing,
+    // then the worker pool (whose late posts are their own rows).
+    try { asyncHolder.closeAtRunEnd?.(); } catch { /* a finishing run never throws on cleanup */ }
     if (bgHolder.pool) void bgHolder.pool.closeRun({ cancelled: input.isCancelled?.() === true });
     ledger?.release();
   }

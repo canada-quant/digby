@@ -76,7 +76,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) }, // coding_sessions (ticket f1cb73ff lane)
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) }, // the ticket lane's existence + near-miss probes (b216475a)
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -187,8 +187,8 @@ beforeEach(() => {
   // rows — exonerated live on existence.
   mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: 'e083ff2e-de98-412a-85df-86923572db1d' });
   mockPrisma.chatCodingState.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: '65ab9436-0000-4000-8000-000000000000' });
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: '65ab9436-0000-4000-8000-000000000000' });
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null);
   mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
 });

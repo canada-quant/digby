@@ -18,7 +18,7 @@ const mockResolveProviderForRun = jest.fn(async (..._a: any[]) => null);
 const mockRunHelperCompletion = jest.fn(async (..._a: any[]) => ({ text: '', hadReasoning: false, finishReason: 'stop' }));
 jest.mock('../coding/coding-model', () => ({ __esModule: true, resolveProviderForRun: (...a: any[]) => mockResolveProviderForRun(...a) }));
 jest.mock('../coding/helper-completion', () => ({ __esModule: true, runHelperCompletion: (...a: any[]) => mockRunHelperCompletion(...a) }));
-const PROVIDER: any = { url: 'https://llm.example.com/chat/completions', apiKey: 'k', model: 'mimo-v26-flash-rl', label: 'cql-litellm (custom endpoint)', extra: {}, maxTools: 32 };
+const PROVIDER: any = { url: 'https://llm.cql.ca/chat/completions', apiKey: 'k', model: 'mimo-v26-flash-rl', label: 'cql-litellm (custom endpoint)', extra: {}, maxTools: 32 };
 jest.mock('../chat-agent/handback-detector', () => ({ __esModule: true, findHandback: (i: any) => (/say the word/i.test(String(i?.finalText)) ? { phrase: 'say the word' } : null) }));
 
 import {
@@ -423,7 +423,7 @@ describe('runLiveChatAuditOnce', () => {
   });
 
   // Ticket 18bce3f9 (2026-10-07): 4 of 5 hand-back sample chats were model-bench
-  // traffic (claudebot@digby.example.com, titles 'model-bench …') — synthetic answers drove
+  // traffic (claudebot@digby.ai, titles 'model-bench …') — synthetic answers drove
   // the '6 hand-backs' count and re-filed the ticket nightly. The answer query must
   // exclude the bench account's chats (by account email AND by title prefix — the
   // belt for rows written before the synthetic stamp existed).
@@ -438,7 +438,7 @@ describe('runLiveChatAuditOnce', () => {
     expect(sql).toMatch(/coalesce\(c\."title", ''\) NOT LIKE /);
     const params = first.slice(1).map((x: any) => (x instanceof Date ? x.toISOString() : String(x)));
     // the bound params include the bench account email and the title prefix
-    expect(params.some((x: string) => /claudebot@digby\.example\.com/.test(x))).toBe(true);
+    expect(params.some((x: string) => /claudebot@digby\.ai/.test(x))).toBe(true);
     expect(params.some((x: string) => /^model-bench%?$/.test(x))).toBe(true);
     // 18bce3f9 review finding 3: the transcript checks (duplicate answers, verifier
     // corrections) exclude bench traffic too — the population must agree across signals.
@@ -450,7 +450,7 @@ describe('runLiveChatAuditOnce', () => {
       const sql = String(c[0]);
       expect(sql).toMatch(/bu\."id" IS NULL/);
       expect(sql).toMatch(/NOT LIKE /);
-      expect(c.slice(1).some((x: any) => /claudebot@digby\.example\.com/.test(String(x)))).toBe(true);
+      expect(c.slice(1).some((x: any) => /claudebot@digby\.ai/.test(String(x)))).toBe(true);
     }
   });
 

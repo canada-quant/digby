@@ -69,15 +69,15 @@ describe('resolveMaxTools precedence', () => {
 
 describe('learned caps', () => {
   it('learns the smaller cap and folds it into the effective limit', () => {
-    const key = toolLimitKey('https://llm.example.com/v1/chat/completions', 'api-openai-gpt-6-astra');
+    const key = toolLimitKey('https://llm.cql.ca/v1/chat/completions', 'api-openai-gpt-6-astra');
     expect(learnedToolLimit(key)).toBeUndefined();
     expect(learnToolLimit(key, 128)).toBe(128);
     expect(learnToolLimit(key, 200)).toBe(128); // never widens
     expect(learnToolLimit(key, 64)).toBe(64);
-    expect(effectiveToolLimit({ url: 'https://LLM.example.com/v1/chat/completions', model: 'api-openai-gpt-6-astra' })).toBe(64);
-    expect(effectiveToolLimit({ url: 'https://llm.example.com/v1/chat/completions', model: 'api-openai-gpt-6-astra', maxTools: 32 })).toBe(32);
-    expect(effectiveToolLimit({ url: 'https://llm.example.com/v1/chat/completions', model: 'other', maxTools: 32 })).toBe(32);
-    expect(effectiveToolLimit({ url: 'https://llm.example.com/v1/chat/completions', model: 'other' })).toBeUndefined();
+    expect(effectiveToolLimit({ url: 'https://LLM.cql.ca/v1/chat/completions', model: 'api-openai-gpt-6-astra' })).toBe(64);
+    expect(effectiveToolLimit({ url: 'https://llm.cql.ca/v1/chat/completions', model: 'api-openai-gpt-6-astra', maxTools: 32 })).toBe(32);
+    expect(effectiveToolLimit({ url: 'https://llm.cql.ca/v1/chat/completions', model: 'other', maxTools: 32 })).toBe(32);
+    expect(effectiveToolLimit({ url: 'https://llm.cql.ca/v1/chat/completions', model: 'other' })).toBeUndefined();
   });
 });
 
@@ -193,8 +193,8 @@ describe('trimToolsToLimit', () => {
 });
 
 describe('the provider limit — NO blanket default (2026-09-27 late: "who said 128 is the limit??")', () => {
-  const custom = { url: 'https://llm.example.com/v1/chat/completions', model: 'api-openai-gpt-6-astra', label: 'cql-litellm (custom endpoint)' };
-  const kimiProxy = { url: 'https://llm.example.com/v1/chat/completions', model: 'api-optimize-moonshot-kimi-k3', label: 'api-optimize (custom endpoint)' };
+  const custom = { url: 'https://llm.cql.ca/v1/chat/completions', model: 'api-openai-gpt-6-astra', label: 'cql-litellm (custom endpoint)' };
+  const kimiProxy = { url: 'https://llm.cql.ca/v1/chat/completions', model: 'api-optimize-moonshot-kimi-k3', label: 'api-optimize (custom endpoint)' };
   const builtin = { url: 'https://api.z.ai/api/paas/v4/chat/completions', model: 'glm-5.3', label: 'ZAI direct' };
   afterEach(() => { delete process.env.CUSTOM_ENDPOINT_TOOLS_MAX; });
 

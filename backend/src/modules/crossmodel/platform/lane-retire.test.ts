@@ -54,7 +54,7 @@ const mockPrisma: any = {
     findMany: jest.fn(async ({ where }: any) => { guard('liveRuns'); return world.runs.filter((r) => inList(r.sessionId, where.sessionId) && inList(r.status, where.status)); }),
     groupBy: jest.fn(async ({ where }: any) => { guard('runMax'); return groupMax(world.runs.filter((r) => inList(r.sessionId, where.sessionId)), 'sessionId', 'updatedAt'); }),
   },
-  codingSchedule: {
+  chatSchedule: {
     findMany: jest.fn(async ({ where }: any) => { guard('familySchedules'); return world.schedules.filter((x) => inList(x.sessionId, where.sessionId) && x.enabled).map((x) => ({ sessionId: x.sessionId })); }),
     groupBy: jest.fn(async ({ where }: any) => {
       guard('schedules');

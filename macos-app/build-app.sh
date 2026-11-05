@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Build a SIGNED + NOTARIZED macOS app (Digby.dmg) — a native WKWebView wrapper
-# around digby.example.com. Real .app, dock icon, native menus; no Xcode project needed.
+# around digby.ai. Real .app, dock icon, native menus; no Xcode project needed.
 #
 # ⚠️  Run on a Mac with Xcode Command Line Tools (swiftc) + your Developer ID
 #     Application cert + the `digby-notary` notarytool profile (same setup as
@@ -245,7 +245,7 @@ AGENT_VERSION="$(node -p "require('$ROOT/imessage-agent/package.json').version")
 cat > "$ROOT/frontend/public/desktop-latest.json" <<EOF
 {
   "version": "$VERSION",
-  "url": "https://digby.example.com/Digby.dmg",
+  "url": "https://digby.ai/Digby.dmg",
   "agentVersion": "$AGENT_VERSION",
   "notes": "$NOTES"
 }
@@ -254,6 +254,6 @@ EOF
 echo ""
 echo "✓ Built + notarized: $OUT_DMG"
 echo "✓ Staged: frontend/public/Digby.dmg + desktop-latest.json (v$VERSION)"
-echo "  Publish so digby.example.com serves it:"
+echo "  Publish so digby.ai serves it:"
 echo "    git add frontend/public/Digby.dmg frontend/public/desktop-latest.json"
 echo "    git commit -m 'chore: publish Digby.dmg $VERSION' && git push origin main"

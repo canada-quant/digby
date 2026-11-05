@@ -16,7 +16,7 @@
  *    single authApi calls are still there, marketing added no auth logic.
  * 3. Contact addresses: the whole frontend source tree is walked and must
  *    contain NONE of the legacy contact addresses (help@ / hello@ /
- *    support@ / contact@digby.example.com) — the site address is digby@digby.example.com
+ *    support@ / contact@digby.ai) — the site address is digby@digby.ai
  *    (owner directive 2026-09-25). The mobile SUPPORT_EMAIL surfaces are
  *    pinned the same way.
  *
@@ -48,7 +48,14 @@ const CARD_TITLES = [
 
 describe('Login marketing surface (ticket ad9ef768)', () => {
   it('keeps the brand headline and lands the differentiator subhead', () => {
-    expect(page).toContain('Ask once. Get the best of every AI.');
+    // The headline is the branding core's default tagline (2026-11-05, todo
+    // d2d32b57): a self-hosted operator replaces it with DIGBY_BRAND_TAGLINE,
+    // so the pin is "the panel renders branding.tagline, and the shipped
+    // default is still the owner's headline" — never a page-local literal.
+    expect(page).toContain('{branding.tagline}');
+    expect(read(fileURLToPath(new URL('../../lib/branding/index.ts', import.meta.url)))).toContain(
+      "tagline: 'Ask once. Get the best of every AI.'"
+    );
     expect(page).toContain(
       'One question, every frontier model, one blended answer — with long-running coding sessions that ship real PRs.'
     );
@@ -74,7 +81,7 @@ describe('Login marketing surface (ticket ad9ef768)', () => {
   });
 
   it('trust strip carries only repo-verifiable claims', () => {
-    expect(page).toContain('Live at digby.example.com');
+    expect(page).toContain('Live at digby.ai');
     expect(page).toContain('Self-hostable — MIT licensed');
     expect(page).toContain('Frontier &amp; open-source models');
   });
@@ -94,12 +101,12 @@ describe('Login auth surface untouched (ticket ad9ef768 constraint)', () => {
 
 // ── contact-address migration ────────────────────────────────────────────────
 
-/** Legacy contact addresses the owner retired in favour of digby@digby.example.com. */
+/** Legacy contact addresses the owner retired in favour of digby@digby.ai. */
 const LEGACY_ADDRESSES = [
-  'help@digby.example.com',
-  'hello@digby.example.com',
-  'support@digby.example.com',
-  'contact@digby.example.com',
+  'help@digby.ai',
+  'hello@digby.ai',
+  'support@digby.ai',
+  'contact@digby.ai',
 ];
 
 /** Text extensions worth scanning (skips binaries in public/ and lockfiles). */
@@ -131,8 +138,8 @@ function collectTextFiles(root: string, out: string[] = []): string[] {
   return out;
 }
 
-describe('Contact-address migration — digby@digby.example.com everywhere (ticket ad9ef768)', () => {
-  it('no legacy contact address (help@/hello@/support@/contact@digby.example.com) anywhere in frontend source', () => {
+describe('Contact-address migration — digby@digby.ai everywhere (ticket ad9ef768)', () => {
+  it('no legacy contact address (help@/hello@/support@/contact@digby.ai) anywhere in frontend source', () => {
     const offenders: string[] = [];
     for (const abs of collectTextFiles(FRONTEND_ROOT)) {
       const src = read(abs);
@@ -144,15 +151,28 @@ describe('Contact-address migration — digby@digby.example.com everywhere (tick
     expect(offenders, `legacy contact addresses found:\n${offenders.join('\n')}`).toEqual([]);
   });
 
-  it('ToS, privacy, landing footer and login footer all use digby@digby.example.com', () => {
+  it('ToS, privacy, landing footer and login footer all use digby@digby.ai', () => {
     for (const rel of [
       'app/(site)/terms/page.tsx',
       'app/(site)/privacy/page.tsx',
       'app/crossmodel/page.tsx',
       'app/login/page.tsx',
     ]) {
-      expect(read(join(FRONTEND_ROOT, rel)), `${rel}`).toContain('mailto:digby@digby.example.com');
+      expect(read(join(FRONTEND_ROOT, rel)), `${rel}`).toContain('mailto:digby@digby.ai');
     }
   });
 
+  it('mobile SUPPORT_EMAIL surfaces use digby@digby.ai (settings + chat report + privacy labels doc)', () => {
+    for (const rel of [
+      'apps/mobile/app/settings.tsx',
+      'apps/mobile/app/chat/[id].tsx',
+      'docs/MOBILE_PRIVACY_LABELS.md',
+    ]) {
+      const src = read(join(REPO_ROOT, rel));
+      expect(src, `${rel} must carry digby@digby.ai`).toContain('digby@digby.ai');
+      for (const legacy of LEGACY_ADDRESSES) {
+        expect(src.toLowerCase(), `${rel} still carries ${legacy}`).not.toContain(legacy);
+      }
+    }
+  });
 });

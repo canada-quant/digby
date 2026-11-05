@@ -35,6 +35,14 @@ describe('decision-gate:fit entry resolution', () => {
     expect(script).toMatch(/"\$@"/);
   });
 
+  it('the repo-root wrapper and the Dockerfile point at the new location', () => {
+    const wrapper = fs.readFileSync(path.join(backendRoot, '..', 'scripts', 'decision-gate-fit-temperature.ts'), 'utf8');
+    expect(wrapper).toContain("resolve(backendDir, 'src', 'scripts', 'decision-gate-fit-temperature.ts')");
+    const dockerfile = fs.readFileSync(path.join(backendRoot, 'Dockerfile'), 'utf8');
+    // dist/ ships in the production stage (COPY --chown since deploy_speedups #2, 2026-09-26).
+    expect(dockerfile).toMatch(/COPY --from=build(?: --chown=\S+)? \/app\/dist \.\/dist/);
+    expect(dockerfile).toContain('dist/scripts/decision-gate-fit-temperature.js');
+  });
 });
 
 describe('CLI pure builders', () => {

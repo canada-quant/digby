@@ -91,7 +91,7 @@ const mockPrisma: any = {
   crossModelChat: { findUnique: jest.fn(async () => ({ userId: 'u1' })) },
   agentRun: { update: jest.fn(async () => ({})), updateMany: jest.fn(async () => ({ count: 1 })), count: jest.fn(async () => 0) },
   agentEvent: { create: jest.fn(async () => ({})), aggregate: jest.fn(async () => ({ _max: { seq: 0 } })) },
-  codingSchedule: {
+  chatSchedule: {
     update: jest.fn(async () => ({})),
     findUnique: jest.fn(async (): Promise<any> => ({ enabled: true })),
     count: jest.fn(async (): Promise<number> => 0),
@@ -291,7 +291,9 @@ jest.mock('./coding-data.service', () => ({
   getCodingSessionTitle: (...args: any[]) => mockGetCodingSessionTitle(...args),
   getFirstUserCodingMessage: (...args: any[]) => mockGetFirstUserCodingMessage(...args),
   getCodingSessionTitleSource: (...args: any[]) => mockGetCodingSessionTitleSource(...args),
-  transcriptDualWriteEnabled: () => !process.env.TRANSCRIPT_DUAL_WRITE_OFF_IN_TESTS,
+  // MERGE-1 step 9 (2026-11-04): the `transcriptDualWriteEnabled` mock key was removed
+  // with the seam. run-executor now stamps ANSWER_MSG_ID unconditionally, because a
+  // crossmodel_messages row always exists for a persisted final message.
 }));
 
 const mockStageAndDescribe: jest.Mock = jest.fn(async () => ({ staged: [], note: '' }));
@@ -396,7 +398,7 @@ const OK_AGENT_RESULT = { finalText: 'Honest status: budget exhausted mid-downlo
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetPlan.mockResolvedValue(planWithUnfinished);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockRunCodingAgent.mockResolvedValue({ ...OK_AGENT_RESULT });
   mockGetSessionForUser.mockResolvedValue(SESSION);
 });
@@ -416,7 +418,7 @@ describe('ticket c2ee04a1 — user-attended run finalizing with pending plan ste
   });
 
   it('when the session HAS an enabled schedule, the note acknowledges it instead of warning idle', async () => {
-    mockPrisma.codingSchedule.count.mockResolvedValueOnce(1);
+    mockPrisma.chatSchedule.count.mockResolvedValueOnce(1);
     await executeClaimedRun(userClaim());
     const final = assistantFinal();
     expect(final).toContain('this run ended with 2 unfinished plan step(s)');

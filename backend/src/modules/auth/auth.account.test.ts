@@ -151,7 +151,7 @@ describe('authService.deleteAccount (M2-prep 5.1.1(v))', () => {
 
     expect(tx.crossModelChat.findMany).toHaveBeenCalledWith({ where: { userId: 'u1' }, select: { id: true } });
     expect(tx.contextStoreEntry.deleteMany).toHaveBeenCalledWith({
-      where: { namespacePath: { in: ['fs-chat:thread', 'fs-chat:supervisor-archive', 'plain-chat:thread', 'plain-chat:supervisor-archive'] } },
+      where: { namespacePath: { in: ['fs-chat:thread', 'fs-chat:supervisor-archive', 'fs-chat:background-report', 'plain-chat:thread', 'plain-chat:supervisor-archive', 'plain-chat:background-report'] } },
     });
     // the store sweep runs BEFORE the cascade (in the same transaction)
     const sweepOrder = tx.contextStoreEntry.deleteMany.mock.invocationCallOrder[1];
@@ -177,7 +177,7 @@ describe('authService.deleteAccount (M2-prep 5.1.1(v))', () => {
 
     // the default client (not the tx) — after the cascade
     expect(mockedPrisma.contextStoreEntry.deleteMany).toHaveBeenCalledWith({
-      where: { namespacePath: { in: ['fs-chat:thread', 'fs-chat:supervisor-archive'] } },
+      where: { namespacePath: { in: ['fs-chat:thread', 'fs-chat:supervisor-archive', 'fs-chat:background-report'] } },
     });
     expect(mockedPrisma.contextStoreEntry.deleteMany.mock.invocationCallOrder[0]).toBeGreaterThan(tx.user.delete.mock.invocationCallOrder[0]);
   });
@@ -236,9 +236,9 @@ describe('purgeUserAccount — the shared FK-less cleanup (self-service + admin 
     expect(mockedCompare).not.toHaveBeenCalled();
     expect(tx.userMemoryFact.deleteMany).toHaveBeenCalledWith({ where: { userId: 'u9' } });
     expect(tx.contextStoreEntry.deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { startsWith: 'u9:' } } });
-    expect(tx.contextStoreEntry.deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { in: ['fs-chat:thread', 'fs-chat:supervisor-archive'] } } });
+    expect(tx.contextStoreEntry.deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { in: ['fs-chat:thread', 'fs-chat:supervisor-archive', 'fs-chat:background-report'] } } });
     expect(tx.user.delete).toHaveBeenCalledWith({ where: { id: 'u9' } });
-    expect(mockedPrisma.contextStoreEntry.deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { in: ['fs-chat:thread', 'fs-chat:supervisor-archive'] } } });
+    expect(mockedPrisma.contextStoreEntry.deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { in: ['fs-chat:thread', 'fs-chat:supervisor-archive', 'fs-chat:background-report'] } } });
     expect(mockMemClear).toHaveBeenCalledWith({ type: 'chat', id: 'fs-chat' });
   });
 

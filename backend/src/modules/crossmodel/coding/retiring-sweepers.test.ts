@@ -22,7 +22,7 @@ const mockHookFindMany = jest.fn(async (..._a: any[]): Promise<any[]> => []);
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       findMany: (...a: any[]) => mockScheduleFindMany(...a),
       deleteMany: (...a: any[]) => mockScheduleDeleteMany(...a),
       update: jest.fn(async () => ({})),

@@ -13,7 +13,10 @@
 
 jest.mock('../../../utils/logger', () => ({
   __esModule: true,
-  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  // `log` is required by utils/log-level.ts logExternal (object-form, ticket
+  // 97fb076a): this suite's fixture predated that call and stubbed only the
+  // level methods, so the container-gone case threw here instead of asserting.
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), log: jest.fn() },
 }));
 
 import { startBackgroundProcess, waitForProcessOutput, processSnapshot, listProcesses } from './process.service';

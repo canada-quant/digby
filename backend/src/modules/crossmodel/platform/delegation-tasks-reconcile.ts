@@ -4,7 +4,13 @@
  *
  * The ledger (platform/delegation-tasks.ts) is written from event seams; this
  * job MEASURES it against each kind's own source of truth and never edits a
- * task (a reconcile that wrote states would make agreement trivially 100 %):
+ * task FOR THE MEASUREMENT (a reconcile that wrote states would make agreement
+ * trivially 100 %). One exception AFTER the measurement row is written
+ * (ticket d5974d65): the orphan sweep (sweepOrphanedBackgroundWorkerTasks)
+ * fails/cancels background_worker rows whose parent run is long terminal —
+ * their worker can no longer deliver a phase, so the row would otherwise sit
+ * 'working' forever. The sweep runs after recordLoopMetric so the readout
+ * always reflects pre-sweep reality.
  *   session · message_ask · schedule_firing  the child chat's first agent_runs
  *                       row that was still running at / started after the
  *                       task's creation (coding chats), else the first
@@ -35,7 +41,7 @@ import logger from '../../../utils/logger';
 import { recordLoopMetric, LOOP_METRIC_KINDS } from './loop-metrics.service';
 import {
   delegationTasksDisabled, fromBackgroundPhase, fromRunStatus, fromTaskCardStatus, fromTicketStatus,
-  isTerminalDelegationState, PARENT_REQUIRED_KINDS, type DelegationState,
+  isTerminalDelegationState, PARENT_REQUIRED_KINDS, sweepOrphanedBackgroundWorkerTasks, type DelegationState,
 } from './delegation-tasks';
 import { toolIntentJournalDisabled } from '../coding/tool-intents';
 
@@ -241,7 +247,14 @@ async function reconcileLedger(now: Date): Promise<{ summary: string; meta: Reco
     pruned: Number(pruned?.count ?? 0), byKind: tally.byKind, samples: tally.samples,
   };
   recordLoopMetric({ kind: LOOP_METRIC_KINDS.DELEGATION_TASK_RECONCILE, value: pct, unit: 'pct', meta });
-  return { summary: `ledger ${tally.checked} checked, ${pct}% agree, missingParent ${missingParent}, missingRows ${missingRows}, stale ${stale}`, meta };
+  // Ticket d5974d65: AFTER the measurement (the agreement bar reads pre-sweep
+  // reality), reconcile orphaned background-worker rows — a worker whose
+  // parent run went terminal past the grace bound can no longer deliver its
+  // terminal phase, so its row fails/cancels here instead of sitting
+  // 'working' forever. Global (every session; the per-run-start sweep in
+  // coding/agent.ts covers sessions that run again).
+  const orphans = await sweepOrphanedBackgroundWorkerTasks({ now }).catch(() => ({ scanned: 0, swept: 0, byReason: {} }));
+  return { summary: `ledger ${tally.checked} checked, ${pct}% agree, missingParent ${missingParent}, missingRows ${missingRows}, stale ${stale}, orphans swept ${orphans.swept}/${orphans.scanned}`, meta };
 }
 
 async function summarizeJournal(now: Date): Promise<{ summary: string; meta: Record<string, unknown> }> {

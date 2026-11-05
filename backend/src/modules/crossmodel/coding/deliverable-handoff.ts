@@ -1141,16 +1141,17 @@ export function defaultHandoffDeps(): HandoffDeps {
     async appendMessage(targetChatId, content, metadata) {
       const prisma = await db();
       // Route by what the TARGET is (cohesive chat live fixes 2026-09-28): the
-      // coding transcript (coding_messages + its crossmodel_messages mirror in
-      // one transaction) ONLY when the target chat IS a coding session — a
+      // coding transcript ONLY when the target chat IS a coding session — a
       // PLAIN parent chat has no coding_sessions row, and the first cut's
-      // unconditional dual-write failed on it with
+      // unconditional write-through-coding-path failed on it with
       // `coding_messages_sessionId_fkey` (prod parent b9ee9c20, 05:27:36Z:
       // posted:false, no result row, the card stuck on "running"). A plain
-      // chat gets the chat row only.
+      // chat gets the chat row only. Since MERGE-1 completed the coding path
+      // also writes crossmodel_messages, so the routing is now about the
+      // metadata/strip treatment, not about which table is written.
       const data = await import('./coding-data.service');
       const codingTarget = !!(await prisma.chatCodingState.findUnique({ where: { id: targetChatId }, select: { id: true } }).catch(() => null));
-      if (codingTarget && data.transcriptDualWriteEnabled()) {
+      if (codingTarget) {
         const row = await data.appendCodingMessage({ chatId: targetChatId, role: 'assistant', content, metadata });
         await data.touchChat(targetChatId).catch(() => {});
         return { id: row.id };

@@ -10,9 +10,9 @@
  *     the chain; the PR body carries a "docs-only, unverified" note and a
  *     guard_strike {seam:'pr_gate_docs_only', state:'observed'} row is recorded;
  *   - otherwise the tool RUNS the chain itself (one round instead of three),
- *     opens on green, and still refuses on red — with the failing stage's tail;
- *   - PR_GATE_AUTO_VERIFY_DISABLED=1 restores the previous behaviour (the old
- *     refusal text is byte-identical).
+ *     opens on green, and still refuses on red — with the failing stage's tail.
+ *     (The 2026-09-27 release switch that restored the previous refusal was
+ *     retired by RSW-1 on 2026-11-12: the auto-verify arm is unconditional.)
  *
  * Real temp git repo with a local `main` (merge-base falls back from
  * origin/main) + a REAL .digby/config.json (gatePullRequest defaults true); the
@@ -85,6 +85,44 @@ jest.mock('axios', () => ({
   __esModule: true,
   default: { get: (...a: any[]) => axiosGet(...a), post: (...a: any[]) => axiosPost(...a) },
 }));
+// ── Network-egress recorder (ticket c269df25, 2026-11-03) ────────────────────
+// This suite drives the REAL open_pull_request switch case, so any seam it
+// forgets to stub escapes to the real network. That is exactly how CI shard 3/4
+// went red on main 5ea54216: `git cat-file -e <sha>` missed (the mocked remote
+// sha 'abc' is not a local object), so the dependency-advisory head fetch ran a
+// REAL `git fetch -q https://x-access-token:…@github.com/o/r abc` that burned
+// ~4999 ms and tripped jest's 5000 ms default budget — 3 tests red, the "Stop —
+// CI is red on this commit" deploy job failed, and the wave was blocked.
+// Hoisting note: jest.mock factories run when `child_process` is first required
+// (during the import phase, BEFORE this module's const initialisers), so the
+// recorder MUST live on globalThis — a module-scope `const` would be in TDZ.
+jest.mock('child_process', () => {
+  const actual = jest.requireActual('child_process');
+  const util = jest.requireActual('util');
+  const g = globalThis as any;
+  if (!Array.isArray(g.__a5GitEgress)) g.__a5GitEgress = [];
+  const note = (a: any[]) => {
+    try {
+      if (JSON.stringify(a.slice(0, 3)).includes('https://')) {
+        g.__a5GitEgress.push(String(a[1]?.[a[1].length - 1] ?? a[0]));
+      }
+    } catch { /* recording is best-effort — never break a spawn */ }
+  };
+  const wrapped: any = (...a: any[]) => { note(a); return (actual.execFile as any)(...a); };
+  // tools.ts does `promisify(execFile)` at import time and destructures
+  // `{ stdout }`. This suite therefore MUST preserve execFile's
+  // util.promisify.custom (the built-in that resolves {stdout, stderr}) —
+  // replacing it with a plain callback wrapper makes promisify resolve only
+  // stdout, and every `const { stdout } = await git(...)` then explodes.
+  const CUSTOM = util.promisify.custom;
+  if ((actual.execFile as any)[CUSTOM]) {
+    wrapped[CUSTOM] = (...a: any[]) => { note(a); return (actual.execFile as any)[CUSTOM](...a); };
+  }
+  return { ...actual, execFile: wrapped };
+});
+
+/** Every https URL this suite handed to git — MUST stay empty (see above). */
+const gitEgress = (): string[] => (globalThis as any).__a5GitEgress ?? [];
 
 import { executeCodingTool, ToolContext } from './tools';
 import { getVerifyState } from './verify-state';
@@ -93,7 +131,48 @@ import * as fs from 'fs/promises';
 import * as os from 'os';
 import * as path from 'path';
 
-beforeAll(() => { process.env.VERIFY_ENV_RETRY_BACKOFF_MS = '1'; });
+/** The suite must be HERMETIC — this test file used to reach the real internet.
+ *
+ *  ticket 539a99c3 lane, 2026-11-03: CI shard 3/4 went red on an unchanged tree
+ *  (check 126128817828, run attempt 2) with three "Exceeded timeout of 5000 ms"
+ *  failures, which stopped the deploy of 5ea54216 and left main red fleet-wide.
+ *  Root cause was NOT a slow test to be given a bigger budget — the suite was
+ *  making REAL network calls. `open_pull_request`'s boarding advisory runs
+ *  whenever no explicit baseBranch is given (batch-train.service.ts
+ *  batchTrainGithubApi), and it issues a raw `fetch()` to
+ *  api.github.com/repos/<o>/<r>/git/matching-refs/heads/batch/. The
+ *  `jest.mock('axios')` above cannot intercept that — a different transport.
+ *  So every case that actually CREATES a PR paid a live HTTPS round-trip
+ *  (DNS + TLS + 404) inside its 5000 ms budget, and on a loaded CI runner that
+ *  round-trip stretched past the bar.
+ *
+ *  Measured on box-c, same tree: the three PR-creating cases ran 4223 / 4574 /
+ *  4594 ms with the live call, and 1368 / 1002 / 1030 ms with fetch stubbed —
+ *  the wire cost was most of their wall time.
+ *
+ *  Stubbing fetch (404 = "no batch branches") is exactly what discovery already
+ *  fail-opens on, so the production code path is still exercised; only the
+ *  transport is replaced. Keep this stub: a green local run that secretly
+ *  depends on api.github.com being reachable is the flake, not the fix.
+ *
+ *  The budget below is the second half, and it is NOT a substitute for the stub:
+ *  even with the wire gone, each case still builds a real temp git repo in
+ *  beforeEach and drives real git subprocesses, so wall time tracks the runner's
+ *  load. Measured after the stub on a busy box-c: 5089 / 5040 ms — still at the
+ *  5000 ms edge. 30 s is headroom for real work, not permission to hang: every
+ *  test here is bounded by construction (no unbounded poll; the one slow path
+ *  already uses a bounded 5 s poll and an explicit 40 ms deadline case). */
+const realFetch = global.fetch;
+jest.setTimeout(30_000);
+beforeAll(() => {
+  process.env.VERIFY_ENV_RETRY_BACKOFF_MS = '1';
+  global.fetch = jest.fn(async () => ({
+    status: 404,
+    ok: false,
+    json: async () => ({ message: 'Not Found' }),
+  })) as unknown as typeof fetch;
+});
+afterAll(() => { global.fetch = realFetch; });
 
 describe('A5: open_pull_request verify gate — docs-only bypass + auto-verify', () => {
   let wt: string;
@@ -122,13 +201,34 @@ describe('A5: open_pull_request verify gate — docs-only bypass + auto-verify',
     ...over,
   } as unknown as ToolContext);
 
-  const ENV_KEYS = ['PR_GATE_AUTO_VERIFY_DISABLED', 'PR_GATE_AUTO_VERIFY_DEADLINE_MS', 'UNVERIFIED_GATE_ENFORCE'] as const;
+  const ENV_KEYS = ['PR_GATE_AUTO_VERIFY_DEADLINE_MS', 'UNVERIFIED_GATE_ENFORCE'] as const;
   const savedEnv: Record<string, string | undefined> = {};
+  /** The worker's real fetch (globalThis is per-worker, not per-file). */
+  let savedFetch: typeof globalThis.fetch;
 
   const commitAll = (msg: string) => { g(['add', '-A']); g(['commit', '-qm', msg]); };
 
   beforeEach(async () => {
     for (const k of ENV_KEYS) { savedEnv[k] = process.env[k]; delete process.env[k]; }
+    // ── Hermeticity (ticket c269df25) ────────────────────────────────────────
+    // The dependency-advisory block is the ONLY thing in the PR-create path that
+    // shells out to git over the network: it probes `git cat-file -e <headSha>`
+    // and, on a miss, runs `git fetch <authed url> <sha>`. Every test here mocks
+    // the remote sha (axios) — never the git object graph — so the probe always
+    // missed and the fetch always ran for real (measured 4999 ms; see the
+    // recorder's header note). The sanctioned kill switch (the same one
+    // dependency-advisories-head.4dbd09fa.test.ts uses) removes the egress
+    // entirely; nothing in this file asserts on advisories.
+    savedEnv.DEPENDENCY_ADVISORY_CHECK_DISABLED = process.env.DEPENDENCY_ADVISORY_CHECK_DISABLED;
+    process.env.DEPENDENCY_ADVISORY_CHECK_DISABLED = '1';
+    (globalThis as any).__a5GitEgress = [];
+    // The boarding-train advisory reads GitHub through `fetch` (batch-train
+    // builds its own client, NOT the axios seam mocked above), so stub it too.
+    // Saved/restored: globalThis is per-WORKER, not per-file, so a stub left
+    // behind would silently hermeticise (or break) the next suite in this
+    // worker — push/infra-watch suites both treat the real fetch as ground truth.
+    savedFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({ status: 404, ok: false, json: async () => null })) as any;
     mockRecordLoopMetric.mockClear();
     axiosGet.mockReset(); axiosPost.mockReset();
     memStore.clear();
@@ -150,6 +250,20 @@ describe('A5: open_pull_request verify gate — docs-only bypass + auto-verify',
   afterEach(async () => {
     await fs.rm(wt, { recursive: true, force: true });
     for (const k of ENV_KEYS) { if (savedEnv[k] === undefined) delete process.env[k]; else process.env[k] = savedEnv[k]; }
+    if (savedEnv.DEPENDENCY_ADVISORY_CHECK_DISABLED === undefined) delete process.env.DEPENDENCY_ADVISORY_CHECK_DISABLED;
+    else process.env.DEPENDENCY_ADVISORY_CHECK_DISABLED = savedEnv.DEPENDENCY_ADVISORY_CHECK_DISABLED;
+    // ── REGRESSION PIN (ticket c269df25) ─────────────────────────────────────
+    // Restore FIRST: in exactly the failure mode this pin exists for, the
+    // assertion below throws and jest aborts the hook — a restore placed after
+    // it would leak the stub into every later suite in this worker (globalThis
+    // is per-worker, not per-file). Reviewer finding, 2026-11-03.
+    globalThis.fetch = savedFetch;
+    // Fails the moment ANY test in this suite hands git an https URL — i.e. the
+    // exact class that reddened main 5ea54216 (a real `git fetch` blowing the
+    // 5 s default budget). Asserting it HERE rather than inside one test means
+    // every current and future test in the file is covered by construction, and
+    // the failure names the egress instead of surfacing as an opaque timeout.
+    expect(gitEgress()).toEqual([]);
   });
 
   const docsOnlyBranch = async () => {
@@ -255,15 +369,6 @@ describe('A5: open_pull_request verify gate — docs-only bypass + auto-verify',
     }));
   });
 
-  it('PR_GATE_AUTO_VERIFY_DISABLED=1: the previous refusal text, byte-identical, no chain run', async () => {
-    process.env.PR_GATE_AUTO_VERIFY_DISABLED = '1';
-    await codeBranch();
-    const sh = shell();
-    const out = await executeCodingTool(mkCtx({ execShell: sh.execShell }), 'open_pull_request', { title: 'code' });
-    expect(out).toBe('PR blocked: the verify chain (test) has not passed this session. Run verify and get it green, and have the reviewer sign off, before opening the PR.');
-    expect(sh.verifyRuns()).toBe(0);
-  });
-
   it('STALE pass (verified, then a code edit): auto-verify re-runs on the CURRENT content and proceeds', async () => {
     await codeBranch();
     const sh = shell();
@@ -279,18 +384,6 @@ describe('A5: open_pull_request verify gate — docs-only bypass + auto-verify',
     expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({
       meta: expect.objectContaining({ seam: 'pr_gate_auto_verify', reason: 'stale', passed: true }),
     }));
-  });
-
-  it('STALE pass + PR_GATE_AUTO_VERIFY_DISABLED=1: the previous STALE refusal', async () => {
-    process.env.PR_GATE_AUTO_VERIFY_DISABLED = '1';
-    await codeBranch();
-    const sh = shell();
-    const ctx = mkCtx({ execShell: sh.execShell });
-    await executeCodingTool(ctx, 'verify', {});
-    await fs.writeFile(path.join(wt, 'src', 'a.ts'), 'export const a = 4;\n');
-    const out = await executeCodingTool(ctx, 'open_pull_request', { title: 'code' });
-    expect(out).toContain('PR blocked: the verify pass is STALE');
-    expect(sh.verifyRuns()).toBe(1);
   });
 
   it('a fresh green pass on the current content: neither bypass nor auto-verify fires (unchanged fast path)', async () => {

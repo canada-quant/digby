@@ -110,7 +110,7 @@ export function extractDomains(text: string): string[] {
 
 /** The domains that name Digby itself (the platform surface). Pure. */
 export function isPlatformDomain(d: string): boolean {
-  return d === 'digby.example.com' || d === 'digby' || d.endsWith('.digby.example.com') || d === 'digby.example.com.';
+  return d === 'digby.ai' || d === 'digby' || d.endsWith('.digby.ai') || d === 'digby.ai.';
 }
 
 /** "https://github.com/owner/name.git" | "owner/name" | "git@github.com:owner/name" → "owner/name". Pure. */
@@ -130,7 +130,7 @@ export function isPlatformProjectShape(p: ProjectShape | null | undefined): bool
   if (!p) return false;
   if (typeof p.name === 'string' && p.name.trim().toLowerCase() === PLATFORM_NAME) return true;
   const slug = repoSlugOf(p.repoUrl);
-  return !!slug && slug.toLowerCase() === 'canada-quant/digby';
+  return !!slug && slug.toLowerCase() === 'example-org/crossmodel';
 }
 
 /** Name/repo tokens a product project carries for domain matching. Pure. */

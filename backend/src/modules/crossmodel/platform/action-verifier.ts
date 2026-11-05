@@ -2514,7 +2514,7 @@ export async function citedMessageRowExists(id: string): Promise<boolean> {
 export async function citedScheduleRowExists(id: string): Promise<boolean> {
   const where = id.length >= 36 ? { id } : { id: { startsWith: id } };
   try {
-    const row = await prisma.codingSchedule.findFirst({ where, select: { id: true } });
+    const row = await prisma.chatSchedule.findFirst({ where, select: { id: true } });
     return !!row;
   } catch {
     return true; // fail toward MISS — an unverifiable citation is never a conviction
@@ -2567,7 +2567,7 @@ export async function citedIdExistsAnywhere(id: string): Promise<boolean> {
   const probes: Array<() => Promise<unknown>> = [
     () => prisma.crossModelMessage.findFirst({ where, select: { id: true } }),
     () => prisma.crossModelChat.findFirst({ where, select: { id: true } }),
-    () => prisma.codingSchedule.findFirst({ where, select: { id: true } }),
+    () => prisma.chatSchedule.findFirst({ where, select: { id: true } }),
     () => prisma.userFeatureRequest.findFirst({ where, select: { id: true } }),
     () => prisma.projectGoal.findFirst({ where, select: { id: true } }),
     () => prisma.projectTodo.findFirst({ where, select: { id: true } }),
@@ -3408,7 +3408,7 @@ export async function samePrefixRealIds(
       return rows.map((r) => `${r.id} (chat ${r.chatId.slice(0, 8)}, ${r.createdAt.toISOString()})`);
     }
     if (kind === 'schedule') {
-      const rows = await prisma.codingSchedule.findMany({
+      const rows = await prisma.chatSchedule.findMany({
         where: { id: { startsWith: prefix }, ...(userId ? { userId } : {}) },
         select: { id: true, sessionId: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
@@ -3537,12 +3537,12 @@ export async function citedArtifactExists(kind: ClaimKind, id: string, chatId?: 
   const where = id.length >= 36 ? { id } : { id: { startsWith: id } };
   try {
     if (kind === 'schedule') {
-      // CodingSchedule has NO updatedAt (schema.prisma) — a creation-recency
+      // ChatSchedule has NO updatedAt (schema.prisma) — a creation-recency
       // check alone makes day-old truthful restatements unexonerable. Liveness
       // signals instead: recently created, recently fired, or enabled with a
       // future run. (A cancelled schedule stays inherently unexonerable — the
       // row is gone/disabled; the ledger/state-JSON check is its exoneration.)
-      const row = await prisma.codingSchedule.findFirst({
+      const row = await prisma.chatSchedule.findFirst({
         where,
         select: { createdAt: true, lastFiredAt: true, nextRunAt: true, enabled: true },
       }).catch(() => null);
@@ -3707,7 +3707,17 @@ function failureReportAttempted(claim: ExtractedClaim, executed: ExecutedAction[
   // (ticket 9bd94417) outcome-shaped task narration reports the TASK attempt —
   // "Discord failed to open on its screen" vouches on a computer_task attempt
   // exactly like the tool-name idiom does.
-  if (isTaskDelegationClaimDetail(claim.detail) || isTaskOutcomeClaimDetail(claim.detail)) {
+  // (3cf9190c review F3) The OUTCOME disjunct is scoped to the DISPATCH kind.
+  // The f6dbcb66 arm widened isTaskOutcomeClaimDetail to device-task-subject
+  // prose, and this helper acquits on a bare idiom match with no slot and no
+  // kind check — so a MESSAGE/TICKET claim was acquitted by an unrelated task
+  // attempt ("the Mac task ran but the send to the owner chat failed" →
+  // EXONERATED, while the task-less control CONVICTED). Scoping the outcome
+  // surface to `dispatch` confines the widening to the one kind whose budget
+  // the arm was written for, and leaves the pre-existing tool-name idiom
+  // (isTaskDelegationClaimDetail) exactly as it was for every kind.
+  if (isTaskDelegationClaimDetail(claim.detail)
+    || (claim.kind === 'dispatch' && isTaskOutcomeClaimDetail(claim.detail))) {
     return executed.some((a) => isTaskDelegationTool(a.tool));
   }
   const tools = KIND_TOOLS[claim.kind as ClaimKind] ?? [];
@@ -3725,7 +3735,21 @@ function failureReportAttempted(claim: ExtractedClaim, executed: ExecutedAction[
  */
 export function claimNarratesAnyTrackedAction(claim: ExtractedClaim): boolean {
   const detail = String(claim.detail ?? '');
-  if (isTaskDelegationClaimDetail(detail) || isTaskOutcomeClaimDetail(detail) || isStagingClaimDetail(detail)) return true;
+  // (3cf9190c review F4) An outcome idiom sitting UNDER an incompletion
+  // subordinator states the task did NOT complete — "I ran out of turn before
+  // the Mac task completed", "stopped without the browser task finishing".
+  // This tier is only consulted for run-self-incompletion details (the call
+  // site gates on it), and the f6dbcb66 arm made the outcome idiom match that
+  // subordinate phrase, so the honest shape stopped acquitting — a NEW false
+  // strike created by a false-strike fix. The tool-NAME idiom and the staging
+  // idiom are untouched: the documented 61b9200a laundering shape ("I ran a
+  // computer task … but ran out of time" — no task slot on record) still
+  // narrates a tracked action via isTaskDelegationClaimDetail and still
+  // convicts.
+  const outcomeUnderIncompletion = /\b(?:before|without|until)\b[^.;\n]*$/i.test(detail);
+  if (isTaskDelegationClaimDetail(detail)
+    || isStagingClaimDetail(detail)
+    || (isTaskOutcomeClaimDetail(detail) && !outcomeUnderIncompletion)) return true;
   return (Object.keys(KIND_ACTION_IDIOM) as ClaimKind[]).some((k) => KIND_ACTION_IDIOM[k].test(detail));
 }
 
@@ -4376,6 +4400,106 @@ export const isCompletedActionItems = (items: string): boolean =>
   COMPLETED_ACTION_ITEMS_RE.test(String(items ?? ''));
 
 /**
+ * (ticket 3cf9190c, chat 65c98b82) CLAUSE-HEAD ANCHORING — the judging gate.
+ *
+ * COMPLETED_ACTION_ITEMS_RE above is an UNANCHORED substring test over a whole
+ * clause, so it cannot tell a completed action from a verb that merely APPEARS
+ * later in an intent-shaped clause. The house rule this file already documents
+ * (§ "Verb-bound, house style" on the items regex) is that the verb must HEAD
+ * a clause and be a completed-action form — present/past/perfect, never the
+ * infinitive/future/gerund intent forms. Nothing enforced it, and the
+ * supervisor incident is the cost: the harness continuation line's items were
+ *
+ *   "steer restored lane f7e14cf8 with the Pi diagnosis brief (reachability,
+ *    dashboard service + today's logs, LAN IP vs 192.168.1.126); apply minimal
+ *    fix, verify the dashboard URL answers, report root cause here…"
+ *
+ * — an INFINITIVE-headed promise whose "restored" is an attributive participle
+ * modifying "lane" (the lane WAS restored; the steer was NOT sent). The
+ * unanchored test saw "restored" and mined the clause; MINER_KINDS then found
+ * no dispatch verb ("dispatched|started|spawned|launched"), the `?? 'dispatch'`
+ * default in mineContinuationClaims classified it, the id-less claim found no
+ * dispatch slot, and the note's OWN promise was struck as a phantom ~15s
+ * after the note itself said "NOT done yet: the diagnostic itself hasn't been
+ * dispatched". A false strike on an honest note — doctrine 587e9d64 calls that
+ * strictly worse than a miss.
+ *
+ * So: the clause's FIRST word must be a completed-action form. "steer",
+ * "apply", "verify", "report", "probe", "check", "restart", "post" — every
+ * imperative/infinitive head — no longer mines, while the register's true
+ * positives ("pushed the hotfix and confirmed prod green", "dispatched the
+ * probe lane on the RED-SNOW goal") keep their head verb and still convict.
+ * A leading adverb ("also", "then", "successfully") is tolerated because it
+ * never changes the clause's mood.
+ */
+const COMPLETED_HEAD_ADVERBS = /^(?:also|then|and|successfully|finally|already|just|now)[\s,]+/i;
+// (3cf9190c review F1) EVERY alternative here is a PAST-only spelling. `push`
+// was the single base form left in the allowlist, and the allowlist is tested
+// BEFORE the denylist, so a base-form imperative head mined and convicted one
+// verb over from the incident's own harm class:
+//   isCompletedActionClause('push the hotfix to origin once CI is green') → true
+// It is now `pushed`, which lets IMPERATIVE_ACTION_HEAD_RE's `push` win.
+const COMPLETED_ACTION_HEAD_RE = /^(?:pushed|shipped|deployed|merged|landed|filed|flagged|sent|messaged|archived|cancelled|canceled|created|chartered|spawned|dispatched|launched|started|restored|updated|closed|verified|confirmed|checked|posted|published|wrote|wired|fixed)\b/i;
+/**
+ * (3cf9190c review F2) LABEL-PREFIXED completed clauses. The house style for a
+ * supervisor's follow-through list is "Label: verb phrase" — "Update: closed the
+ * ticket 8aa5688f", "Note: archived the lane". Those bare label nouns are in
+ * IMPERATIVE_ACTION_HEAD_RE (update, verify, deploy…), so post-fix the head test
+ * rejected the whole clause and stripContinuationLine DELETED it from every
+ * audited surface (mining is the only route back into the window) — a recall
+ * loss, i.e. a laundering channel, not just a trim.
+ *
+ * Deliberately a CONSERVATIVE label set: a label is stripped only when it is NOT
+ * itself an action verb. "Verify:", "Deploy:" and "Steer:" stay unstripped —
+ * "Steer: restored lane f7e14cf8" is the incident's own shape with a colon, and
+ * re-admitting it would reopen the false strike this ticket exists to fix.
+ * Doctrine 587e9d64: a false strike is strictly worse than a miss, so the
+ * ambiguous action-verb labels keep the conservative (miss) direction.
+ */
+const CLAUSE_LABEL_PREFIX = /^(?:update|note|status|result|summary|next|todo|plan|done|remaining|follow-?up)\s*:\s*/i;
+/**
+ * BASE-FORM (infinitive/imperative) action heads — the forms the house rule
+ * says are the armed round's PROMISE, never a completed-action claim. Kept as
+ * a DENYLIST rather than an allowlist on purpose: a clause with any other head
+ * keeps the pre-3cf9190c judgement byte-for-byte, so only the imperative class
+ * changes and no prior true positive loses its conviction (a detector change
+ * must never quietly stop a real phantom from firing).
+ */
+const IMPERATIVE_ACTION_HEAD_RE = /^(?:steer|apply|verify|report|probe|check|restart|post|send|dispatch|launch|start|push|merge|deploy|ship|file|flag|update|close|create|spawn|charter|write|wire|fix|restore|archive|cancel|message|confirm|publish|land)\b/i;
+
+/**
+ * Exported for tests: does this clause narrate a COMPLETED action, or is it an
+ * intent-shaped (imperative/infinitive-headed) promise?
+ *
+ * true  ← the head is a completed-action form ("pushed the hotfix …")
+ * false ← the head is a base-form action verb ("steer restored lane …")
+ * otherwise the pre-existing unanchored test decides, unchanged.
+ */
+export function isCompletedActionClause(clause: string): boolean {
+  // (3cf9190c review F2) Strip a NON-action label ("Update:", "Note:") before
+  // the head test so the house "Label: verb phrase" form keeps mining. Action
+  // labels ("Verify:", "Deploy:") are deliberately NOT stripped — they keep
+  // the conservative direction (see CLAUSE_LABEL_PREFIX).
+  const text = String(clause ?? '').trim().replace(COMPLETED_HEAD_ADVERBS, '').replace(CLAUSE_LABEL_PREFIX, '').trim();
+  if (!text) return false;
+  if (COMPLETED_ACTION_HEAD_RE.test(text)) return true;
+  if (IMPERATIVE_ACTION_HEAD_RE.test(text)) return false;
+  return isCompletedActionItems(text);
+}
+
+/**
+ * (ticket 3cf9190c) Split a harness continuation line's ITEMS into clauses —
+ * the exact segmentation mineContinuationClaims has always used, hoisted so
+ * the head judgement and the miner read the same spans (never drift).
+ */
+export function splitContinuationClauses(items: string): string[] {
+  return String(items ?? '')
+    .split(/\s*(?:;|\bthen\b|·)\s*/i)
+    .map((raw) => raw.trim().replace(/^[-*•]\s*/, '').replace(/[.;,\s]+$/, ''))
+    .filter((clause) => clause.length >= 8);
+}
+
+/**
  * The args-scan surface (ticket e65061e1): each tracked tool_call's args from
  * the run's parts, JSON-stringified, pre-gated to blobs that could even carry
  * an action claim (length floor + the shared keyword gate) — claim-free args
@@ -4636,9 +4760,15 @@ async function computePhantomClaimsInner(input: PhantomClaimAuditInput, gateRef:
    */
   const mineContinuationClaims = (items: string): ExtractedClaim[] => {
     const out: ExtractedClaim[] = [];
-    for (const raw of String(items ?? '').split(/\s*(?:;|\bthen\b|·)\s*/i)) {
-      const clause = raw.trim().replace(/^[-*•]\s*/, '').replace(/[.;,\s]+$/, '');
-      if (clause.length < 8 || !isCompletedActionItems(clause)) continue;
+    for (const clause of splitContinuationClauses(items)) {
+      // (ticket 3cf9190c) HEAD-anchored: the completed-action verb must HEAD
+      // the clause. The unanchored isCompletedActionItems precheck stays as a
+      // cheap whole-string gate (it decides whether mining is worth starting);
+      // the PER-CLAUSE judgement is isCompletedActionClause, so an
+      // infinitive-headed promise that merely CONTAINS a past participle in
+      // attributive position ("steer restored lane f7e14cf8 with the brief")
+      // is the armed round's promise, never a completed-action claim.
+      if (!isCompletedActionItems(clause) || !isCompletedActionClause(clause)) continue;
       const kind = MINER_KINDS.find((r) => r.verbs.test(clause) && r.nouns.test(clause))?.kind ?? 'dispatch';
       const id = (clause.match(MINER_RECEIPT_ID)?.[1] ?? '').toLowerCase();
       out.push({ kind, detail: clause.slice(0, 200), ...(id ? { id } : {}) });
@@ -4659,7 +4789,13 @@ async function computePhantomClaimsInner(input: PhantomClaimAuditInput, gateRef:
       return { text, staleAnchor: true, minedItems: null };
     }
     const items = parseContinuationItems(anchoredContinuationLine);
-    const minedItems = items && isCompletedActionItems(items) ? items : null;
+    // (ticket 3cf9190c) HEAD-anchored mining decision: mine only when at
+    // least one clause HEADS with a completed-action verb. The pre-fix test
+    // was `isCompletedActionItems(items)` over the WHOLE items string, which
+    // an intent-shaped clause could satisfy from a participle buried inside
+    // it ("steer restored lane …") — that is exactly how the incident's own
+    // promise got mined and struck.
+    const minedItems = items && splitContinuationClauses(items).some((clause) => isCompletedActionClause(clause)) ? items : null;
     const head = text.slice(0, lineStart).replace(/\n{3,}/g, '\n\n');
     const tail = text.slice(lineEnd).replace(/^\n+/, '');
     return { text: `${head}${head && tail ? '\n' : ''}${tail}`, staleAnchor: false, minedItems };
@@ -7378,7 +7514,7 @@ export async function scheduleClockHaystack(userId: string): Promise<string[]> {
   if (!userId) return [];
   try {
     const since = new Date(Date.now() - 12 * 60 * 60 * 1000);
-    const rows = await prisma.codingSchedule.findMany({
+    const rows = await prisma.chatSchedule.findMany({
       where: { userId, enabled: true, nextRunAt: { gte: since } },
       select: { id: true, nextRunAt: true, lastFiredAt: true },
       take: 400,
@@ -7455,7 +7591,7 @@ async function guardMachineWakeFinalAnswerInner(input: PhantomClaimAuditInput, c
     let scheduleFiringTimes: number[] = [];
     if (input.userId) {
       try {
-        const rows = await prisma.codingSchedule.findMany({
+        const rows = await prisma.chatSchedule.findMany({
           where: { userId: input.userId, enabled: true, nextRunAt: { gte: new Date(futureClockNow.getTime() - 10 * 60_000), lte: new Date(futureClockNow.getTime() + 24 * 60 * 60_000) } },
           select: { nextRunAt: true },
           take: 500,

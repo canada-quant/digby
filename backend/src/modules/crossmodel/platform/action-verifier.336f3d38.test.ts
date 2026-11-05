@@ -1,11 +1,11 @@
 /**
- * Ticket 336f3d38 — REPLAY: the ctrl.example.com project supervisor's 16:31:43Z machine-wake note
+ * Ticket 336f3d38 — REPLAY: the ctrl.cql.ca project supervisor's 16:31:43Z machine-wake note
  * (chat 99e63f86, msg fdd722fc) cited THREE evidence ids that exist nowhere — dispatch
  * "d12f21f1", message "d031a112", schedule "2b3cf15b" — on a run whose receipt ledger is EMPTY
  * (zero rows 13:09:05Z → 16:38:20Z; the first attempt at 16:30:37Z was replaced pre-delivery and
  * the retry, delivered 16:31:43.972Z, shipped the same invented ids). Ground truth, pulled fresh
  * this lane: all three ids resolve in no store (resolve_id ×3 empty; the verifier's own
- * crossModelMessage / codingSchedule / crossModelChat probes found no row); the peer lane
+ * crossModelMessage / chatSchedule / crossModelChat probes found no row); the peer lane
  * 69fb25fc refuted the actions first-hand at 16:33:40Z (lane 24f1950e STILL archived, amd-1 key
  * STILL revoked — "Permission denied (publickey)"); the REAL actions ran seven minutes later
  * under entirely different ids (receipt ff30a27d archive 24f1950e, c2eca357 → schedule 24d810d9,
@@ -43,7 +43,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
@@ -198,7 +198,7 @@ describe('ticket 336f3d38 — the guard\'s durable records state the actual deli
     // consequenceScope 'citation-only' the consequences are suppressed
     // (f16cc02a). The warn must say exactly that.
     const ACTION_NOTE = [
-      '**ctrl.example.com wake — gap matrix follow-up.**',
+      '**ctrl.cql.ca wake — gap matrix follow-up.**',
       'ACTIONS TAKEN',
       '- Steered the spark-cluster lane onto the gap-matrix follow-up',
     ].join('\n');
@@ -236,7 +236,7 @@ describe('ticket 336f3d38 — the guard\'s durable records state the actual deli
   it('KILL SWITCH (BRIEFING-UNVERIFIED-FILTER): ACTION_CLASS_ANNOTATE_DISABLED=1 restores the UNMODIFIED / no-annotation phrase for the same ACTION-class strike', async () => {
     process.env.ACTION_CLASS_ANNOTATE_DISABLED = '1';
     const ACTION_NOTE = [
-      '**ctrl.example.com wake — gap matrix follow-up.**',
+      '**ctrl.cql.ca wake — gap matrix follow-up.**',
       'ACTIONS TAKEN',
       '- Steered the spark-cluster lane onto the gap-matrix follow-up',
     ].join('\n');
@@ -258,9 +258,9 @@ describe('ticket 336f3d38 — the guard\'s durable records state the actual deli
   it('CONTROL — an honest note citing ids that EXIST (receipt id and sched id with real rows) strikes nothing and logs no PRE-DELIVERY strike', async () => {
     // Real rows for the receipt-cited message id and the schedule id: the
     // receipt-citation lane exonerates ids present in run_tool_receipts, the
-    // schedule lane on a codingSchedule row.
+    // schedule lane on a chatSchedule row.
     mockPrisma.runToolReceipt.findFirst.mockResolvedValueOnce({ id: 'real-receipt-row' });
-    mockPrisma.codingSchedule.findFirst.mockResolvedValueOnce({ id: 'real-sched-row' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValueOnce({ id: 'real-sched-row' });
     const honest = [
       '**Wake — grant re-verified against the ledger.**',
       `**Ack to the requester** (receipt d031a112): delivered — the row exists in run_tool_receipts.`,

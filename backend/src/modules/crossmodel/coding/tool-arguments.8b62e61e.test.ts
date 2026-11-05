@@ -220,9 +220,18 @@ describe('8b62e61e — the class reaches the durable row (the one the fleet coun
   it('the class and the model text come from ONE shared evidence object', () => {
     // Two writers over one fact is how the reject row and the text could
     // disagree; both are fed the same `turnEvidence`.
-    expect(src).toContain('const turnEvidence = {');
+    // TICKET cffd0d0a (2026-11-03): the inline literal moved into a named
+    // builder (`turnEvidenceOf`) so the repeat breakers can ask the same
+    // "did this call ever execute?" question from the SAME fields. The rule
+    // this test owns is unchanged and now covers a third consumer: ONE
+    // builder, every reader.
+    expect(src).toContain('function turnEvidenceOf(ctx: ToolContext): ToolCallTurnEvidence');
+    expect(src).toContain('const turnEvidence = turnEvidenceOf(ctx)');
     expect(src).toContain('classifyToolCallLoss(parsedArgs, turnEvidence)');
     expect(src).toContain('toolArgumentRejection(tc.name, parsedArgs, turnEvidence)');
+    // …and the inline copy must not come back: a second literal is exactly the
+    // drift this pin exists to prevent.
+    expect(src).not.toMatch(/const turnEvidence = \{\s*finishReason:/);
   });
 
   it('feeds the seam the turn\'s arithmetic, not a re-derivation', () => {

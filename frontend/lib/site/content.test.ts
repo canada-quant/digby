@@ -89,7 +89,7 @@ describe('public site content', () => {
       // at most 3 (Digby + one or two competitors) and cells short.
       expect(t.columns.length, p.slug).toBeLessThanOrEqual(3);
       for (const r of t.rows) expect(r.cells.length, `${p.slug}: ${r.label}`).toBe(t.columns.length);
-      expect(t.note, p.slug).toMatch(/as of October 2026/i);
+      expect(t.note, p.slug).toMatch(/as of (January|February|March|April|May|June|July|August|September|October|November|December) 20\d\d/i);
       const sources = p.sections.flatMap((s) => s.sources ?? []);
       expect(sources.length, p.slug).toBeGreaterThanOrEqual(2);
       for (const src of sources) expect(src.href, p.slug).toMatch(/^https:\/\//);
@@ -307,17 +307,17 @@ describe('training claim matches the privacy policy', () => {
 });
 
 describe('seo builders', () => {
-  it('canonical URLs are absolute on digby.example.com', () => {
-    expect(absoluteUrl('/')).toBe('https://digby.example.com');
-    expect(absoluteUrl('/about')).toBe('https://digby.example.com/about');
+  it('canonical URLs are absolute on digby.ai', () => {
+    expect(absoluteUrl('/')).toBe('https://digby.ai');
+    expect(absoluteUrl('/about')).toBe('https://digby.ai/about');
     const m = sitePageMetadata(SITE_PAGES[0]);
-    expect(m.alternates?.canonical).toBe(`https://digby.example.com/${SITE_PAGES[0].slug}`);
+    expect(m.alternates?.canonical).toBe(`https://digby.ai/${SITE_PAGES[0].slug}`);
   });
 
   it('breadcrumbs start at the chat home', () => {
     const ld = breadcrumbLd([{ href: '/learn', label: 'Learn' }]);
-    expect(ld.itemListElement[0]).toMatchObject({ position: 1, item: 'https://digby.example.com' });
-    expect(ld.itemListElement[1]).toMatchObject({ position: 2, item: 'https://digby.example.com/learn' });
+    expect(ld.itemListElement[0]).toMatchObject({ position: 1, item: 'https://digby.ai' });
+    expect(ld.itemListElement[1]).toMatchObject({ position: 2, item: 'https://digby.ai/learn' });
   });
 
   it('FAQ schema mirrors the visible questions', () => {

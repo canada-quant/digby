@@ -7,7 +7,7 @@
  *   - a PR the run only MERGED, typed `pr` (af1340f8 #10/#12, 4d9661a7 #14/#16/#19,
  *     3532d1ad #66, 7bd45d57 #62, 0fb177d5 #1276),
  *   - a PR opened in the PREVIOUS run of the session (5ebc6180 #67, eeee03db #1300),
- *   - an email typed message_sent (dddbf9ba "…@digby.example.com"), a schedule typed
+ *   - an email typed message_sent (dddbf9ba "…@digby.ai"), a schedule typed
  *     "schedule" (bb8f1073), a commit typed "commit" (3d99cc0c),
  *   - one-object-per-line JSON (13 of 16 malformed: "Unexpected non-whitespace
  *     character after JSON"),
@@ -55,7 +55,7 @@ describe('finish_run parsing — forgiving, never throws', () => {
   it('aliases the names models actually wrote in the fence (pr / merge / commit / schedule / email), case-insensitive', () => {
     const p = parseFinishRunArgs({ status: 'Done', summary: 's', claims: [
       { type: 'PR', ref: '67' }, { type: 'merge', ref: '9' }, { type: 'commit', ref: '4e1adb7' },
-      { type: 'schedule', ref: 'abcd1234' }, { type: 'Email', ref: 'paul@example.com' },
+      { type: 'schedule', ref: 'abcd1234' }, { type: 'Email', ref: 'example-user@example.com' },
     ] });
     expect(p.errors).toEqual([]);
     expect(p.claims.map((c) => c.type)).toEqual(['pr_opened', 'pr_merged', 'commit', 'schedule_armed', 'email_sent']);
@@ -145,11 +145,11 @@ describe('finish_run ontology — typed for the real receipt shapes (the 2026-10
 
   it('dddbf9ba: an email typed message_sent is wrong_type → email_sent (the send ran this run); email_sent verifies on the executed tier', async () => {
     const executed = [{ tool: 'send_email_as_digby', ok: true }];
-    const wrong = await verify1(claim('message_sent', 'b38cc4f0-a976-5fae-e085-c58f62a13a3b@digby.example.com'), { executed });
+    const wrong = await verify1(claim('message_sent', 'b38cc4f0-a976-5fae-e085-c58f62a13a3b@digby.ai'), { executed });
     expect(wrong).toMatchObject({ outcome: 'unverified', reason: 'wrong_type', suggestType: 'email_sent' });
-    expect(await verify1(claim('email_sent', 'paul@example.com'), { executed })).toMatchObject({ outcome: 'verified', via: 'tool_result' });
+    expect(await verify1(claim('email_sent', 'example-user@example.com'), { executed })).toMatchObject({ outcome: 'verified', via: 'tool_result' });
     // a FAILED send proves nothing
-    expect((await verify1(claim('email_sent', 'paul@example.com'), { executed: [{ tool: 'send_email_as_digby', ok: false }] })).outcome).toBe('unverified');
+    expect((await verify1(claim('email_sent', 'example-user@example.com'), { executed: [{ tool: 'send_email_as_digby', ok: false }] })).outcome).toBe('unverified');
   });
 
   it('5f90c628 "verify 1225": a verify ref naming the PR whose gate ran green verifies; a run_command output text is unverifiable, not a conviction', async () => {
@@ -401,7 +401,7 @@ describe('FR-2 — decorated refs are matched on the id tokens inside them', () 
       claim('push', '5e3f3e90 (fo/f107-state merge of moved origin/main, push ancestry-verified)'),
       claim('pr_merged', '783cdbae (PR #1387 squash, merged:true confirmed, CI 6/6 green)'),
       claim('push', 'digby/session-6eee904c@7148fc9eff39eebd5fc62cffac8a71a04612dacf'),
-      claim('verify', 'PR #19 canada-quant/schooltime'),
+      claim('verify', 'PR #19 example-org/schooltime'),
     ]) expect((await verify1(c, { thisRun })).outcome).toBe('verified');
     expect(await verify1(claim('ticket_update', 'a9cc9ecf (lane report)'), { thisRun })).toMatchObject({ outcome: 'unverified', reason: 'no_receipt' });
   });
@@ -412,7 +412,7 @@ describe('FR-2 — decorated refs are matched on the id tokens inside them', () 
     expect(refIdTokens('oq_af086e16-9ccd-495b-9517-85a3a1ad1372')).toEqual(['oq_af086e16-9ccd-495b-9517-85a3a1ad1372']);
     expect(refIdTokens('d9e277ec-state')).toEqual(['d9e277ec']);
     expect(refIdTokens('deadbeef save_supervisor_state')).toEqual([]);
-    expect(refPrNumbers('PR #19 canada-quant/schooltime')).toEqual([19]);
+    expect(refPrNumbers('PR #19 example-org/schooltime')).toEqual([19]);
   });
 });
 
@@ -527,7 +527,7 @@ describe('FR-4..8 — notify_user, observation reads, shell git, schedule_self, 
 
   it('FR-6 shell git (27c76183 / 74d7bfce shapes): the push range proves the pushed sha, a commit line the commit; the OLD side proves only a commit', async () => {
     const notice = '[publish-intent notice] this command looks like "git push" via raw shell, which bypasses Digby\'s git_push / open_pull_request.';
-    const pushOut = `[command OK]\n${notice}\nTo https://github.com/canada-quant/digby.git\n   cb5da7733..902d54c71  artifact-publish -> main`;
+    const pushOut = `[command OK]\n${notice}\nTo https://github.com/example-org/crossmodel.git\n   cb5da7733..902d54c71  artifact-publish -> main`;
     expect(gitShellShas({ command: 'git push origin artifact-publish:main 2>&1 | tail -2' }, pushOut)).toEqual({ committed: [], pushed: ['902d54c71'], pushedFrom: ['cb5da7733'] });
     const s = new FinishRunSession();
     s.observeToolResult('run_command', { command: 'git push origin artifact-publish:main 2>&1 | tail -2' }, pushOut, true);

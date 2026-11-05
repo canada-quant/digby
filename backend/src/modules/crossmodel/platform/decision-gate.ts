@@ -91,7 +91,7 @@
  *
  * LAYA FOLLOW-UP (2026-09-26 — scope scratchpad/laya/followup-scope.md; the
  * live probe facts are in AGENTS.md "Laya via LiteLLM"):
- *   · TRANSPORT `systemone_chat` — a LiteLLM typed-decision proxy (llm.example.com
+ *   · TRANSPORT `systemone_chat` — a LiteLLM typed-decision proxy (llm.cql.ca
  *     `agx-laya`): POST <baseUrl>/chat/completions { model, messages:[{role:
  *     'user', content:<state text>}], questions } → answers =
  *     JSON.parse(choices[0].message.content).result.answers (a top-level
@@ -162,6 +162,11 @@ import {
   allFailedCauseText, classifyAllLegsFailed, decisionStallRecoveryDisabled, dispatchMark, legTiming, loopMark, loopSince, notePostIssued, stallRetryDeadline,
   type AllFailedCause, type DecisionPostHook, type DispatchMark, type LegTiming,
 } from './decision-gate-stall';
+// SAA-1.3 PHASE 1 (todo 2ef2b254) — the `decision_gate` spill surface. Static
+// import of a PURE leaf (no imports, no I/O, no clock), so this adds no load-time
+// graph and keeps the module acyclic; it is also the only shape available, because
+// stateTextDetailed is SYNC and sits on the hot decide() path.
+import { planInlineSpill } from './inline-spill';
 
 // ── Contract ─────────────────────────────────────────────────────────────────
 
@@ -1414,10 +1419,37 @@ async function resolveBackendChainLive(purpose: DecisionPurpose): Promise<{ back
 
 // ── State / question hygiene ─────────────────────────────────────────────────
 
-/** The state as text, cut at `maxChars` (default the global cap) — and whether it was cut. */
+/** The state as text, cut at `maxChars` (default the global cap) — and whether it was cut.
+ *
+ *  SAA-1.3 PHASE 1 (todo 2ef2b254) — the `decision_gate` surface, landed
+ *  OBSERVE-ONLY AND TRUTHFULLY:
+ *   · This surface has NO read-back tool. Nothing can return the whole gate state
+ *     to a model the way `get_chat_messages({messageId})` returns a clipped
+ *     message — the state is a caller-assembled object (drain batches, wake
+ *     snapshots, gate payloads) that exists only for the duration of this call.
+ *     So the segment carries an EMPTY `readCall`, and planInlineSpill's
+ *     `followable` test makes `applied` false by rule: this surface can never
+ *     claim a rewrite it cannot deliver.
+ *   · NO metric write here. stateTextDetailed is a private SYNC helper on the hot
+ *     decide() path (called once to stamp stateTruncated, once per systemone/serial
+ *     leg); the metric channel (loop-metrics.service) is already imported in this
+ *     module, but a write here would emit a row per LEG rather than per decision,
+ *     and the loss is ALREADY visible through the existing `stateTruncated` stamp —
+ *     `stateTruncated:true` rides every DecideResult and its loop-metrics row
+ *     (see the stateTruncated meta at the outcome/settle sites). So the plan is
+ *     computed and DROPPED: no I/O, no await, no async, no behaviour change.
+ *   · WHY CALL IT AT ALL, THEN: it exercises the closed-set surface name in
+ *     production code (a name that is only ever referenced in a test proves
+ *     nothing about the wiring), and it keeps the elided count computable at the
+ *     one place that knows it, so a future read-back tool for this state is a
+ *     one-line change rather than a re-derivation.
+ */
 function stateTextDetailed(state: unknown, maxChars: number = DECISION_STATE_MAX_CHARS): { text: string; truncated: boolean } {
   const s = typeof state === 'string' ? state : JSON.stringify(state ?? '', null, 1);
   if (s.length <= maxChars) return { text: s, truncated: false };
+  // Observe-only, zero I/O (see the doc comment): empty readCall ⇒ applied is
+  // false in every mode, including 'apply'.
+  planInlineSpill({ surface: 'decision_gate', segments: [{ id: 'decision-state', elidedChars: s.length - maxChars, readCall: '' }] });
   return { text: `${s.slice(0, maxChars)}\n…[state truncated at ${maxChars} chars]`, truncated: true };
 }
 
@@ -1661,7 +1693,7 @@ export function temperAnswer(a: DecisionAnswer, temperature: number): DecisionAn
 
 /**
  * 2026-09-26: the typed-decision CHAT proxy's envelope (LiteLLM serving Laya —
- * live-probed on llm.example.com `agx-laya`): the OpenAI chat completion's
+ * live-probed on llm.cql.ca `agx-laya`): the OpenAI chat completion's
  * `choices[0].message.content` is a JSON STRING
  *   { model: 'laya-typed-decisions', state_kind: 'str',
  *     result: { model: 'laya-rl-agent', answers: { <key>: { type, noul?, choice?,
@@ -2236,11 +2268,40 @@ function noteStallRetryRecovered(purpose: DecisionPurpose, answered: string, fir
 let lastFallThroughWarnAt = 0;
 /** Throttled (once / 5 min) warn when an earlier leg failed and a later one
  *  answered — under act mode that swaps the calibrated backend for another
- *  silently; the row's meta.legErrors carries every instance regardless. */
+ *  silently; the row's meta.legErrors carries every instance regardless.
+ *
+ *  LOG-SIGNAL d883ae45 (family lane 3556c8a4, 2026-11-03) — this row is
+ *  EXTERNAL, not an internal fault, and it is now TAGGED as such. The class was
+ *  already adjudicated a NON-defect three times (f68b611e compute_policy,
+ *  0c86f97f task_kind, 22afdd2d turn_plan): an earlier leg on the seat's
+ *  per-purpose chain — the owner-side llm.cql.ca gateway — times out inside its
+ *  legShareCap share, the built-in TypeSafe Jev answers, and the ask is
+ *  ANSWERED. The warn is the designed WI-H visibility for that silent backend
+ *  swap. Every prior lane pinned the contract and left the emit site untagged,
+ *  so the hourly sweep kept fingerprinting the designed swap as a framework
+ *  fault and re-filing it weekly (29 rows / 12 distinct hours on this ticket).
+ *  isNonFaultLogRow() honours logClass:'external'; that is the only thing that
+ *  actually stops the mill. The per-instance trace is NOT lost — it stays on
+ *  loop_metrics decision_gate meta.legErrors (the row this message points at),
+ *  so a real degradation is still measurable and still alertable.
+ *
+ *  OBJECT FORM IS LOAD-BEARING (the 5ae52ca3 splat lesson): the leg-error text
+ *  this message splices in is provider/HTTP body prose (`timeout of 599ms`,
+ *  Cloudflare 502 HTML, `LIKE '%x%'`) and can carry a printf token. As a
+ *  two-arg `logger.warn(message, meta)` winston would format the META into the
+ *  message and destroy logClass exactly on the interesting rows. The object
+ *  form has no splat args, so the message persists verbatim and the tag sticks.
+ *  (Deliberately NOT `logExternal`: its `logger.log` seam is absent from the
+ *  platform suites' logger mocks, and the tag — not the helper — is what the
+ *  sweep reads.) */
 function warnFallThroughThrottled(purpose: DecisionPurpose, answered: string, legErrors: string[]): void {
   if (Date.now() - lastFallThroughWarnAt < 5 * 60_000) return;
   lastFallThroughWarnAt = Date.now();
-  logger.warn(`decision-gate[${purpose}]: earlier leg(s) failed, ${answered} answered — ${legErrors.map(scrubLegError).join(' | ')} (further fall-throughs in loop_metrics decision_gate meta.legErrors)`);
+  logger.warn({
+    level: 'warn',
+    message: `decision-gate[${purpose}]: earlier leg(s) failed, ${answered} answered — ${legErrors.map(scrubLegError).join(' | ')} (further fall-throughs in loop_metrics decision_gate meta.legErrors)`,
+    logClass: 'external',
+  });
 }
 
 /**
@@ -2563,10 +2624,18 @@ export async function decide(
     let attribution: AllLegsFailedAttribution | undefined;
     if (stallOn) {
       const askBusy = loopSince(askLoopMark);
+      // Round 5 (91912bee): the ask's own window is handed to the classifier — a leg the stall itself starved has a
+      // window too short for the per-leg rule to ever confirm, so the ask reading is what convicts it as a stall.
+      // Review N1: classify on the SAME rounded values the row stores (Math.round / toFixed(3) below), so the
+      // in-process streak and the infra-watch sweep — which re-reads them off the row — can never split a boundary
+      // (activeMs 199.6 → 200, utilization 0.7996 → 0.800).
+      const askWindow = askBusy
+        ? { activeMs: Math.round(askBusy.activeMs), utilization: Number(askBusy.utilization.toFixed(3)) }
+        : null;
       attribution = {
-        cause: classifyAllLegsFailed(legTimings, latchedSkips),
+        cause: classifyAllLegsFailed(legTimings, latchedSkips, askWindow),
         legTimings,
-        ...(askBusy ? { loopBusyMs: Math.round(askBusy.activeMs), loopBusy: Number(askBusy.utilization.toFixed(3)) } : {}),
+        ...(askWindow ? { loopBusyMs: askWindow.activeMs, loopBusy: askWindow.utilization } : {}),
         stallRetried: !!stallRetry,
       };
     }

@@ -1,6 +1,6 @@
 /**
  * Replay pin — ticket 323093a9 (mishap, breaker trip 2026-09-20 ~05:53Z,
- * session ddd26be0-723d-4745-8bb5-be3ff4752d52 "QB2 Qwen3.8 Speed Mission
+ * session ddd26be0-723d-4745-8bb5-be3ff4752d52 "node-a Qwen3.8 Speed Mission
  * Successor", project tt-rd, kimi-k3, run c3240002-bef9-4862-9512-
  * cecfd5030cb6, scheduled firing 80; first streak this run; NO intended-tool
  * annotation on the filing).
@@ -175,7 +175,7 @@ const IDS = ['placeholder', 'placeholder', 'placeholder2'];
  *  verbatim-occurrence echo grounds the calls so they EXECUTE into the
  *  existence check instead of dying in the pre-flight). */
 const BRIEF = [
-  '[QB2 speed mission — DEVICE-TIME window]',
+  '[node-a speed mission — DEVICE-TIME window]',
   'The bench digests placeholder and placeholder2 are stand-in artifacts from',
   'prior ticks; refresh them after the measurement window closes. Shell work',
   'goes through the terminal. Every claim cites a this-run receipt.',

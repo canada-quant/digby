@@ -21,7 +21,7 @@
  * already-rotated-out tokens/hour through exactly those two IPs, 401s correctly
  * returned, zero user impact) crossed the 30/60min threshold every hour and
  * re-flagged. That steady class is ACCEPTED BASELINE: baseline IPs (default
- * {"10.0.0.1","10.0.0.2"}, override via AUTH_SIGNAL_BASELINE_IPS —
+ * {"10.0.0.12","10.0.0.13"}, override via AUTH_SIGNAL_BASELINE_IPS —
  * comma-separated; empty/whitespace means UNSET (docker-compose `${VAR:-}`
  * passes '' for a host-unset var — reading that as "none" neutered the
  * retune fleet-wide on 2026-10-14), the explicit token 'none' = NO baseline
@@ -45,7 +45,7 @@ const WINDOW_SECONDS = 3600;
 export const INVALID_TOKEN_SPIKE_THRESHOLD = 30;
 
 /** Default baseline class: the two ALB AZ node IPs all external traffic funnels through. */
-const DEFAULT_BASELINE_IPS = ['10.0.0.1', '10.0.0.2'] as const;
+const DEFAULT_BASELINE_IPS = ['10.0.0.12', '10.0.0.13'] as const;
 const DEFAULT_BASELINE_SPIKE_THRESHOLD = 300;
 
 /**

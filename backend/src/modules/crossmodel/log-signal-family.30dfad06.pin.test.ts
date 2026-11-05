@@ -308,8 +308,8 @@ describe('d7a1ad46 — the low-yield warn is emitted once per attempt and arms a
 });
 
 describe('9b296637 — a 524 from one Image-reader provider falls through the seat chain (designed resilience)', () => {
-  const SEAT = { model: 'api-optimize-zai-glm-5.3-flash', label: 'llm-cql (custom endpoint)', url: 'https://llm.example.com/v1/chat/completions', apiKey: 'k' };
-  const FALLBACK = { model: 'cql-vision', label: 'cql', url: 'https://llm.example.com/v1/chat/completions', apiKey: '' };
+  const SEAT = { model: 'api-optimize-zai-glm-5.3-flash', label: 'llm-cql (custom endpoint)', url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'k' };
+  const FALLBACK = { model: 'cql-vision', label: 'cql', url: 'https://llm.cql.ca/v1/chat/completions', apiKey: '' };
   const ok = (text: string) => ({ text, reasoning: '', toolCalls: [], finishReason: 'stop', hadReasoning: false });
 
   beforeEach(() => {

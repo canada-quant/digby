@@ -27,6 +27,8 @@
  */
 
 import logger from '../../../utils/logger';
+import { logExternal } from '../../../utils/log-level';
+import { isExecTransportFailure } from './exec-transport';
 
 type ExecShell = (command: string, cwd?: string, timeoutMs?: number) => Promise<{ stdout: string; stderr: string }>;
 
@@ -217,7 +219,40 @@ export async function startBackgroundProcess(
   // before. pgid=null with clean stderr stays the benign 0.2s runner race.
   if (!pgid && stderr && execFailedHard(stderr)) {
     const detail = stderr.trim().split('\n').slice(0, 4).join('\n').slice(0, 400);
-    logger.warn(`coding process: background launch FAILED for session ${sessionId} — not registering a handle: ${detail}`);
+    // LOG TAXONOMY (ticket 97fb076a, family log-signal — 501 rows / 14 hours).
+    // TWO different things reach this branch and they are NOT the same class:
+    //
+    //  1. The exec TRANSPORT died — the session container was replaced or
+    //     stopped under a live run by a deploy/restart wave or a host
+    //     reprovision ("No such container: digby-dev-…", "container <id> is
+    //     not running", a wrapper SIGKILL). container.service.ts ALREADY owns
+    //     this: it detects the daemon's refusal, re-provisions, and hands the
+    //     lane a "THIS COMMAND DID NOT RUN … the container has now been
+    //     re-provisioned" addendum (c25f8b7e / e2f40d10), and this rail's
+    //     fail-closed return is the e3f24291 phantom-handle guard WORKING.
+    //     Nothing is wrong with our code, so an untagged warn made the hourly
+    //     log-signal sweep fingerprint an environmental class as an internal
+    //     fault and re-file it every week, forever. Tag it logExternal (the
+    //     utils/log-level.ts three-way convention) so the sweep can tell it
+    //     from a real fault — the same adjudication the cf7baffd family made
+    //     for three other designed-outcome sites.
+    //  2. The command itself never produced a shell for a reason that IS ours
+    //     (a genuine spawn/OCI failure with no transport signature). That
+    //     stays an UNTAGGED warn so it still files.
+    //
+    // isExecTransportFailure is the leaf predicate (./exec-transport, no
+    // imports) that already names exactly this class elsewhere in the harness,
+    // so this seam cannot drift from the rest of the exec layer. Never weaken
+    // the return below: the handle must not be registered either way.
+    const message = `coding process: background launch FAILED for session ${sessionId} — not registering a handle: ${detail}`;
+    if (isExecTransportFailure(stderr)) {
+      // OBJECT form on purpose: `detail` can carry printf tokens (a provider
+      // body, SQL with '%foo%'), and the two-arg splat form would format the
+      // meta into the message and DESTROY the logClass tag (see log-level.ts).
+      logExternal(message, { source: 'coding-process' });
+    } else {
+      logger.warn(message);
+    }
     return { handle: '', name: opts.name || command.slice(0, 40), pgid: null, logPath: '', error: `Background launch failed — the process never started (the command was NOT run).\n${detail}` };
   }
   s.handles.set(handle, {

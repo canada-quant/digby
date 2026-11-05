@@ -3334,7 +3334,7 @@ describe('GUARD 4 — quoted-output verification (ticket 7cb26cb0)', () => {
   });
 
   it('round-6 (review F1 blocker): imperative "run" command suggestions stay shielded even with a cue word in the window', () => {
-    const probe = 'curl -s https://digby.example.com/api/health | jq .status';
+    const probe = 'curl -s https://digby.ai/api/health | jq .status';
     for (const intro of [
       'Run curl to probe the box:',
       'Check the probe output yourself.\nTo verify, run:',
@@ -3375,7 +3375,7 @@ describe('GUARD 4 — quoted-output verification (ticket 7cb26cb0)', () => {
     const cases: Array<[string, string]> = [
       ['To see the full error output, simply run npm test:', 'npm test -- --watchAll=false'],
       ['Then run npm test:', 'npm test -- --watchAll=false'],
-      ['Now run curl -s https://digby.example.com/api/health | jq .status:', 'curl -s https://digby.example.com/api/health | jq .status'],
+      ['Now run curl -s https://digby.ai/api/health | jq .status:', 'curl -s https://digby.ai/api/health | jq .status'],
       ['Check the probe output.\nExecute:', 'npm test -- --watchAll=false'],
       ['Just execute the migration and check the output:\nExecute:', 'npx prisma migrate deploy --skip-seed'],
     ];

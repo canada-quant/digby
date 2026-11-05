@@ -83,7 +83,7 @@ import { encryptValue } from '../modules/crossmodel/coding/credentials.service';
 
 const TUNNEL_TOKEN = `dgi_${'a'.repeat(48)}`;
 
-const seedLink = (state = 'linked', cloudUrl = 'https://digby.example.com') => {
+const seedLink = (state = 'linked', cloudUrl = 'https://digby.ai') => {
   linkRow.current = {
     id: 'link-1',
     cloudUrl,
@@ -134,7 +134,7 @@ describe('start', () => {
     await tunnel.start();
     expect(FakeWebSocket.instances).toHaveLength(1);
     const ws = FakeWebSocket.instances[0];
-    expect(ws.url).toBe('wss://digby.example.com/api/crossmodel/instances/tunnel');
+    expect(ws.url).toBe('wss://digby.ai/api/crossmodel/instances/tunnel');
     expect(ws.opts.headers.authorization).toBe(`Bearer ${TUNNEL_TOKEN}`);
 
     ws.emit('open');
@@ -290,7 +290,7 @@ describe('pending-pair mode (device activation — the edge minted the code)', (
   const seedPending = () => {
     linkRow.current = {
       id: 'link-1',
-      cloudUrl: 'https://digby.example.com',
+      cloudUrl: 'https://digby.ai',
       tokenEnc: '', // no token until the relay answers with a paired frame
       instanceName: 'home-lab',
       pairedByUserId: 'admin-1',
@@ -303,7 +303,7 @@ describe('pending-pair mode (device activation — the edge minted the code)', (
     await tunnel.startPendingPairing('ABCD2345', Date.now() + 600_000);
     expect(FakeWebSocket.instances).toHaveLength(1);
     const ws = FakeWebSocket.instances[0];
-    expect(ws.url).toBe('wss://digby.example.com/api/crossmodel/instances/tunnel?name=home-lab');
+    expect(ws.url).toBe('wss://digby.ai/api/crossmodel/instances/tunnel?name=home-lab');
     expect(ws.opts.headers.authorization).toBe('Bearer dgp_ABCD2345');
 
     // An accepted dial is NOT a live tunnel yet — no connected flag, no pings.
@@ -369,7 +369,7 @@ describe('pending-pair mode (device activation — the edge minted the code)', (
     jest.advanceTimersByTime(1_500);
     expect(FakeWebSocket.instances).toHaveLength(2);
     expect(FakeWebSocket.instances[1].opts.headers.authorization).toBe(`Bearer ${token}`);
-    expect(FakeWebSocket.instances[1].url).toBe('wss://digby.example.com/api/crossmodel/instances/tunnel');
+    expect(FakeWebSocket.instances[1].url).toBe('wss://digby.ai/api/crossmodel/instances/tunnel');
   });
 
   it('a malformed paired frame (no dgi_ token) → error state, no retry', async () => {

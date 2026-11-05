@@ -208,9 +208,9 @@ export interface GateFailure {
 // cap bounces as today). One wait per PR HEAD: the attempt record remembers
 // `waitedHeadSha`, so a second call on the same head bounces immediately.
 // Fail-open everywhere — any error inside the wait path falls through to
-// today's bounce. Kill switch SELF_MERGE_WAIT_ONCE_DISABLED=1.
+// today's bounce.
 
-export type MergeWaitKind = 'ci_pending' | 'merge_in_progress' | 'server_5xx';
+export type MergeWaitKind = 'ci_pending' | 'merge_in_progress' | 'server_5xx' | 'red_window_in_flight';
 
 /** Upper bound of one wait (env SELF_MERGE_WAIT_ONCE_MAX_MS overrides; ≤ 10 min — the tool hard timeout is 15). */
 export const SELF_MERGE_WAIT_ONCE_MAX_MS = 10 * 60_000;
@@ -225,12 +225,6 @@ export const MERGE_WAIT_MAX_CONCURRENT_DEFAULT = 4;
 /** History window for the repo CI p50 (loop_metrics merge_gate_failure(ci) → merge_success deltas). */
 export const REPO_CI_P50_WINDOW_DAYS = 30;
 export const REPO_CI_P50_MIN_SAMPLES = 3;
-
-/** SELF_MERGE_WAIT_ONCE_DISABLED=1 — the tool bounces every gate failure at once, as before 2026-09-27. */
-export function selfMergeWaitOnceDisabled(): boolean {
-  const v = String(process.env.SELF_MERGE_WAIT_ONCE_DISABLED ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'on';
-}
 
 export function selfMergeWaitOnceMaxMs(): number {
   const n = Number(process.env.SELF_MERGE_WAIT_ONCE_MAX_MS);
@@ -617,7 +611,7 @@ export async function evaluateMergeGates(opts: {
   // the SAME single-source selection rule the guard script implements
   // (leaf: red-window-merge-gate.ts; parity pinned by
   // red-window-merge-gate.2bccefe0.test.ts). Scope: the instance's OWN repo
-  // only (ownRepoSlug — prod: canada-quant/digby; a self-hosted instance:
+  // only (ownRepoSlug — prod: example-org/crossmodel; a self-hosted instance:
   // its SELF_REPO) and the repo's DEFAULT branch — the guard's own scope;
   // user-project repos keep their existing gates untouched. The deploy-fix
   // label is the SAME lawful override the check exposes (a deploy-repair PR
@@ -660,7 +654,30 @@ export async function evaluateMergeGates(opts: {
                   { headSha });
               }
               if (w.state === 'unproven') {
-                notes.push('red_window: a deploy run on the default branch is in flight — window UNPROVEN, failing OPEN');
+                // Ticket 5e3453bb (2026-11-04) — an ACTIVE run never CLEARS a
+                // window: only a completed run can. This branch used to discard
+                // the newest confirmed verdict and hand back a bare 'unproven',
+                // so the SAME repo state refused when nothing was running and
+                // was admitted the moment a deploy became active — an in-flight
+                // wave laundered a RED main window into an allow. The shadow is
+                // now carried through: RED stays a REFUSAL (raised as a TIMING
+                // class, so the merge intent re-runs the gates and lands this
+                // merge the moment the wave concludes CLEAN — the ticket's
+                // bounded hold, no lane churn); a CLEAN shadow is the ordinary
+                // coalescing wave and stays admissible, because holding every
+                // one of those would freeze the fleet (measured deploy-queue
+                // occupancy 86.4% of 2026-11-02T22:56Z..2026-11-04T04:39Z, n=100
+                // runs, median completed run 41.8 min — the 2026-10-17 P0 class).
+                const shadow = `newest completed deploy on ${baseRef || defaultBranch}: ${w.conclusion ?? 'none'}${w.runId ? ` (run ${w.runId}, concluded ${w.concludedAt ?? 'unknown'})` : ' (none concluded yet)'}`;
+                const active = `${w.activeRuns ?? 1} deploy run(s) in flight`;
+                if (w.conclusion === 'failure') {
+                  return fail('red_window',
+                    `main's deploy window is RED behind an in-flight deploy wave — ${shadow}; ${active}. An active run does not clear a red window, so merging now stacks this PR's deploy onto a failed deploy run`,
+                    `state=unproven shadow=red run=${w.runId} conclusion=${w.conclusion} sha=${w.runSha} concluded=${w.concludedAt} activeRuns=${w.activeRuns ?? 1} base=${baseRef || defaultBranch} (FRESH at merge time — ticket 5e3453bb: only a COMPLETED run clears a red window)`,
+                    `the harness holds this merge and re-runs the gates: it lands as soon as the in-flight wave concludes CLEAN. To go now instead, add the '${DEPLOY_FIX_LABEL}' label to this PR (the lawful deploy-repair override)`,
+                    { headSha, transient: 'red_window_in_flight' });
+                }
+                notes.push(`red_window: ${active}, so the window is UNPROVEN — but ${shadow}, and an active run never clears a completed verdict, so no red window is being laundered: merge allowed (ticket 5e3453bb)`);
               } else {
                 notes.push(`red_window: no red window (last completed deploy on ${baseRef || defaultBranch}: ${w.conclusion}, run ${w.runId})`);
               }

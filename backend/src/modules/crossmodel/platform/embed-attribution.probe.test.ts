@@ -101,6 +101,76 @@ describe('the population is the failure population, per surface', () => {
   });
 });
 
+describe('the GATEWAYLESS carve-out keeps the numerator honest (rule iv)', () => {
+  // Supervisor ruling 2026-11-04, consistency limb. The naive check
+  // "unattributed == failure rows with a typed abort but no leg" silently
+  // OVERCOUNTS once the carve-out exists: a `provider_error` on a PROVEN
+  // gatewayless lane has a typed abort and no leg, yet IS attributed. The
+  // report therefore exposes `typedAbortNoLeg` as a diagnostic and the two are
+  // deliberately allowed to diverge — by exactly the rows the rule attributed
+  // on purpose, never silently.
+
+  test('a proven-gatewayless provider_error is attributed, and typedAbortNoLeg still counts it', () => {
+    const report = normalizeEmbedAttribution([
+      { surface: 'unified_memory_embed_failed', meta: { bucket: 'store', abort: 'provider_error', leg: null, gwless: 'direct' } },
+    ], 24);
+    expect(report.totalFailures).toBe(1);
+    // Attributed on purpose — the bar is now reachable.
+    expect(report.unattributed).toBe(0);
+    // The diagnostic still sees the shape, so no reader can mistake this for
+    // a row that vanished from the population.
+    expect(report.typedAbortNoLeg).toBe(1);
+  });
+
+  test('the two counters diverge by EXACTLY the proven-gatewayless rows', () => {
+    // Isolate the effect: two failures, identical but for the gateway proof.
+    const proven = normalizeEmbedAttribution([
+      { surface: 'unified_memory_embed_failed', meta: { bucket: 'store', abort: 'provider_error', leg: null, gwless: 'direct' } },
+    ], 24);
+    const unproven = normalizeEmbedAttribution([
+      { surface: 'unified_memory_embed_failed', meta: { bucket: 'store', abort: 'provider_error', leg: null } },
+    ], 24);
+    // Proven: attributed, but the diagnostic still SEES the legless shape.
+    expect(proven.unattributed).toBe(0);
+    expect(proven.typedAbortNoLeg).toBe(1);
+    // Unproven: the same shape WITHOUT the positive fact stays in the numerator
+    // — this is the gatewayed-lane-lost-its-headers defect, never exonerated.
+    expect(unproven.unattributed).toBe(1);
+    expect(unproven.typedAbortNoLeg).toBe(1);
+    // So typedAbortNoLeg - unattributed == the proven-gatewayless rows, i.e. the
+    // old naive check would have overcounted by exactly those.
+    expect(proven.typedAbortNoLeg - proven.unattributed).toBe(1);
+    expect(unproven.typedAbortNoLeg - unproven.unattributed).toBe(0);
+  });
+
+  test('the mixed window: the carve-out does NOT swallow the real defect', () => {
+    const rows = [
+      // attributed by leg
+      { surface: 'rag_embed_call' as const, meta: { bucket: 'store', abort: 'provider_error', leg: 'id:deploy', ok: false } },
+      // attributed by the carve-out
+      { surface: 'unified_memory_embed_failed' as const, meta: { bucket: 'store', abort: 'provider_error', leg: null, gwless: 'direct' } },
+      // NOT attributed: a gatewayed lane that lost its headers — the real defect
+      { surface: 'unified_memory_embed_failed' as const, meta: { bucket: 'store', abort: 'provider_error', leg: null } },
+      // NOT attributed: untyped
+      { surface: 'rag_embed_call' as const, meta: { bucket: 'store', abort: 'unknown', leg: null, gwless: 'direct', ok: false } },
+    ];
+    const report = normalizeEmbedAttribution(rows, 24);
+    expect(report.totalFailures).toBe(4);
+    expect(report.unattributed).toBe(2);
+    // typedAbortNoLeg counts the gatewayless row too (it has a typed abort and
+    // no leg), so it reads 2 — one attributed-on-purpose, one real gap.
+    expect(report.typedAbortNoLeg).toBe(2);
+    expect(report.typedAbortNoLeg - report.unattributed).toBe(0);
+  });
+
+  test('a legless provider_error with NO proof stays in the numerator (the defect path)', () => {
+    const report = normalizeEmbedAttribution([
+      { surface: 'rag_embed_call', meta: { bucket: 'store', abort: 'provider_error', leg: null, ok: false } },
+    ], 24);
+    expect(report.unattributed).toBe(1);
+  });
+});
+
 describe('the live read asks the database the right question', () => {
   test('it selects only embed kinds, excludes roll-ups, and never pools successes', async () => {
     mockQueryRaw.mockResolvedValue([

@@ -161,7 +161,7 @@ export async function isLaneAlive(sessionId: string, excludeScheduleId: string):
     // v1#12 successor honesty: only an enabled RECURRING row is a successor —
     // a pending one-shot (a continuation, a "remind me once") is not a lane
     // heartbeat, and counting it auto-suppressed real dead-lane decisions.
-    const successors = await prisma.codingSchedule.count({
+    const successors = await prisma.chatSchedule.count({
       where: { sessionId, enabled: true, kind: 'recurring', id: { not: excludeScheduleId } },
     });
     if (successors > 0) return true;
@@ -201,7 +201,7 @@ export async function maybeFileStoppedScheduleDecision(
 ): Promise<StoppedScheduleFileResult> {
   try {
     const prisma = await db();
-    const row = await prisma.codingSchedule.findUnique({ where: { id: scheduleId } });
+    const row = await prisma.chatSchedule.findUnique({ where: { id: scheduleId } });
     if (!row) return { filed: false, reason: 'not_found' }; // GC'd — nothing to resume
     if (row.kind !== 'recurring') return { filed: false, reason: 'not_recurring' };
     if (row.enabled) return { filed: false, reason: 'still_enabled' }; // resumed before the re-check

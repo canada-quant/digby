@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import { getHelpDocContent, getHelpDocMeta, getHelpManifest } from '@/lib/help-docs';
+import { brandingFromEnv } from '@/lib/branding';
 import { HelpDoc } from '../help-doc';
 
 // Reads content/help from disk at request time (see ./page.tsx).
@@ -11,7 +12,10 @@ type Params = { params: Promise<{ slug: string }> };
 export async function generateMetadata({ params }: Params): Promise<Metadata> {
   const { slug } = await params;
   const meta = getHelpDocMeta(slug);
-  return { title: meta ? `${meta.title} — Digby Help` : 'Help — Digby' };
+  // Shared branding core (todo d2d32b57) — read per request (this route is
+  // force-dynamic), so a rebranded instance names itself in every help title.
+  const branding = brandingFromEnv();
+  return { title: meta ? `${meta.title} — ${branding.name} Help` : `Help — ${branding.name}` };
 }
 
 export default async function HelpDocPage({ params }: Params) {

@@ -331,7 +331,7 @@ export const ACCOUNT_TOOL_SCHEMA = [
     type: 'function' as const,
     function: {
       name: 'send_email_as_digby',
-      description: "Send an email AS DIGBY from its own address (digby@digby.example.com) — NOT from the user's Gmail (that is gmail_send_email). Works in machine-triggered runs WITHOUT confirmation (a digest firing or a monitor can send one). WHEN: the user asked to be emailed — now or as the end of a schedule. One recipient per call (to, optional cc), plain-text body; for notifications/digests the owner asked for, never for mass/bulk sends. Rate cap 30/hour per instance. If the result says not configured, tell the user the instance owner must configure Digby's email sender, and do NOT claim an email was sent.",
+      description: "Send an email AS DIGBY from its own address (digby@digby.ai) — NOT from the user's Gmail (that is gmail_send_email). Works in machine-triggered runs WITHOUT confirmation (a digest firing or a monitor can send one). WHEN: the user asked to be emailed — now or as the end of a schedule. One recipient per call (to, optional cc), plain-text body; for notifications/digests the owner asked for, never for mass/bulk sends. Rate cap 30/hour per instance. If the result says not configured, tell the user the instance owner must configure Digby's email sender, and do NOT claim an email was sent.",
       parameters: {
         type: 'object',
         properties: {
@@ -472,7 +472,7 @@ export const KNOWLEDGE_CAPS = { chatHourly: KNOWLEDGE_CHAT_HOURLY_CAP, userDaily
  * rule sharing.service's shareUrlForToken uses. Contains NO credential.
  */
 function accountIntegrationsUrl(): string {
-  const host = process.env.FRONTEND_URL?.split(',')[0] ?? 'http://crossmodel.cozz';
+  const host = process.env.FRONTEND_URL?.split(',')[0] ?? 'http://example-local.test';
   return `${host}/account?tab=integrations`;
 }
 

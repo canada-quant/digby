@@ -35,7 +35,7 @@ const mockPromptHistoryCount = jest.fn(async (..._a: any[]): Promise<number> => 
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       create: (...a: any[]) => mockCreate(...a),
       count: (...a: any[]) => mockCount(...a),
       findMany: (...a: any[]) => mockFindMany(...a),

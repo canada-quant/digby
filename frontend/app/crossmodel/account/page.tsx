@@ -69,7 +69,7 @@ export default function AccountPage() {
   const [loading, setLoading] = useState(true);
   const { prefs, update } = usePreferences();
 
-  const isAdmin = user?.role === 'ADMIN' || user?.email?.toLowerCase() === 'paul@sunday.market';
+  const isAdmin = user?.role === 'ADMIN' || user?.email?.toLowerCase() === 'example-user@example.com';
 
   // Build tabs dynamically — include Admin tab right after Profile for admin users
   // (placed early so it's visible on mobile without horizontal scrolling)

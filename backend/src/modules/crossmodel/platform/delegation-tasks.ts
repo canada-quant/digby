@@ -29,7 +29,11 @@
  *            hook (run_completed / run_failed / attention_needed), the task
  *            card's lifecycle (persistTaskCard — the hand-off's artifacts ride
  *            it), the background pool's phases, the ticket drain's close /
- *            re-dispatch-exhausted passes.
+ *            re-dispatch-exhausted passes, and the background-orphan sweep
+ *            (sweepOrphanedBackgroundWorkerTasks — a worker whose parent run
+ *            is TERMINAL past a grace bound can no longer deliver a phase, so
+ *            its row is failed/canceled instead of sitting 'working' forever;
+ *            ticket d5974d65).
  * Every map from an existing vocabulary into the ONE vocabulary is a pure
  * function below (fromRunStatus / fromHookEvent / fromTaskCardStatus /
  * fromBackgroundPhase / fromTicketStatus) so the reconcile and the writers
@@ -77,7 +81,7 @@ export type DelegationKind = typeof DELEGATION_KINDS[number];
 /** Kinds whose completion IS the child chat's next run outcome. */
 export const RUN_BOUND_KINDS: readonly DelegationKind[] = ['session', 'message_ask', 'schedule_firing'];
 
-/** A task with no terminal state past this age is STALE (counted by the reconcile, shown in the admin view — never auto-failed in shadow). */
+/** A task with no terminal state past this age is STALE (counted by the reconcile, shown in the admin view). Background workers past this age with no usable parent-run pointer are additionally FAILED by the orphan sweep (ticket d5974d65); every other kind is never auto-failed in shadow. */
 export const DELEGATION_STALE_AFTER_MS: Readonly<Record<DelegationKind, number>> = Object.freeze({
   session: 24 * 3_600_000,
   message_ask: 12 * 3_600_000,
@@ -157,6 +161,9 @@ export function fromBackgroundPhase(phase: unknown): DelegationState | null {
     case 'injected': case 'status': case 'posted_late': return 'completed';
     case 'cancelled': return 'canceled';
     case 'unposted': case 'lost_on_resume': return 'failed';
+    // 'recovered_on_resume' is a RESUME event, not a worker lifecycle state;
+    // 'spill_failed' is a durability warning about a working worker. Neither
+    // may move a delegation task's state.
     default: return null;
   }
 }
@@ -535,6 +542,90 @@ export function noteBackgroundWorkersLost(workerIds: string[], ctx: { sessionId:
       { kind: 'background_worker', parentChatId: ctx.sessionId, childRef: id },
       'failed', 'background_lost_on_resume', { reason: 'lost_on_resume' },
     ));
+  }
+}
+
+/**
+ * How long a background worker may outlive a TERMINAL parent run before its
+ * task is an orphan (ticket d5974d65). The pool deliberately lets a worker
+ * outlive a completed run so its late report still posts (end-wait 120 s +
+ * late-post grace 5 s is the normal case) — past this grace the report is
+ * never coming (the process died, or the worker hung) and the row must go
+ * terminal instead of sitting 'working' forever.
+ */
+export const BACKGROUND_ORPHAN_GRACE_MS = 60 * 60_000;
+
+export interface OrphanSweepResult { scanned: number; swept: number; byReason: Record<string, number> }
+
+/**
+ * ORPHAN SWEEP (ticket d5974d65 — a web_researcher's task row sat 'working'
+ * 11 h after its parent run completed): fail (or cancel) every OPEN
+ * background_worker task whose PARENT RUN is already terminal past the grace
+ * bound — the worker's own terminal phase can no longer land (its process is
+ * gone; a COMPLETED run leaves no resume checkpoint, so lost_on_resume never
+ * sees it). A cancelled parent run cancels the task; completed / failed
+ * parents fail it (the worker never delivered). Tasks whose parent run is
+ * still live (queued / running / interrupted — it may resume), inside the
+ * grace window, or already terminal are untouched; a worker that DOES settle
+ * after being swept is counted as a terminal_conflict, never applied.
+ * Parent-less rows (no parentRunId, or the run row is gone) sweep only past
+ * the kind's stale bound. Never throws; safe to call fire-and-forget.
+ * Callers: every coding run start (session-scoped — agent.ts runCodingAgent)
+ * and the nightly reconcile (global — delegation-tasks-reconcile.ts).
+ */
+export async function sweepOrphanedBackgroundWorkerTasks(opts: { parentChatId?: string; now?: Date; graceMs?: number } = {}): Promise<OrphanSweepResult> {
+  const out: OrphanSweepResult = { scanned: 0, swept: 0, byReason: {} };
+  if (delegationTasksDisabled()) return out;
+  try {
+    const now = opts.now ?? new Date();
+    const graceMs = Math.max(0, Number(opts.graceMs ?? BACKGROUND_ORPHAN_GRACE_MS) || 0);
+    const rows: Array<{ id: string; state: string; parentChatId: string | null; parentRunId: string | null; childRef: string | null; createdAt: Date }> = await db().findMany({
+      where: {
+        kind: 'background_worker', state: { in: OPEN_STATES as unknown as string[] },
+        ...(opts.parentChatId ? { parentChatId: opts.parentChatId } : {}),
+        createdAt: { gte: new Date(now.getTime() - 30 * 86_400_000) },
+      },
+      select: { id: true, state: true, parentChatId: true, parentRunId: true, childRef: true, createdAt: true },
+      orderBy: { createdAt: 'asc' }, // oldest first — under the cap the rows most needing the heal are swept first
+      take: 200,
+    });
+    if (!rows.length) return out;
+    out.scanned = rows.length;
+    const runIds = [...new Set(rows.map((r) => r.parentRunId).filter((x): x is string => !!x))];
+    const runs: Array<{ id: string; status: string; finishedAt: Date | null; createdAt: Date }> = runIds.length
+      ? await prisma.agentRun.findMany({ where: { id: { in: runIds } }, select: { id: true, status: true, finishedAt: true, createdAt: true } }).catch(() => [])
+      : [];
+    const runBy = new Map(runs.map((r) => [r.id, r]));
+    const noParentMs = Math.max(graceMs, DELEGATION_STALE_AFTER_MS.background_worker);
+    for (const r of rows) {
+      let to: DelegationState | null = null;
+      let reason: string | null = null;
+      let ref: string | null = null;
+      const run = r.parentRunId ? runBy.get(r.parentRunId) : undefined;
+      if (run) {
+        const parentState = fromRunStatus(run.status);
+        if (!parentState || !TERMINAL.has(parentState)) continue; // parent still live — the worker may legitimately be running
+        const anchor = new Date(run.finishedAt ?? run.createdAt ?? r.createdAt).getTime();
+        if (now.getTime() - anchor < graceMs) continue; // inside the late-post window
+        to = parentState === 'canceled' ? 'canceled' : 'failed';
+        reason = `orphaned_parent_run_${String(run.status).slice(0, 24)}`;
+        ref = run.id;
+      } else {
+        // No usable parent pointer: sweep only when the task is older than the kind's stale bound.
+        if (now.getTime() - new Date(r.createdAt).getTime() < noParentMs) continue;
+        to = 'failed';
+        reason = 'orphaned_no_parent_run';
+        ref = r.parentRunId ?? null;
+      }
+      await serial(`bg:${r.parentChatId ?? ''}:${r.childRef ?? r.id}`, () => transitionTasks({ id: r.id }, to as DelegationState, 'orphan_sweep', { reason, ref }));
+      out.swept++;
+      out.byReason[reason] = (out.byReason[reason] ?? 0) + 1;
+    }
+    if (out.swept) metric({ phase: 'orphan_sweep', swept: out.swept, scanned: out.scanned, byReason: out.byReason, scope: opts.parentChatId ? 'session' : 'global' }, opts.parentChatId ?? null);
+    return out;
+  } catch (err) {
+    warn('orphan_sweep', err);
+    return out;
   }
 }
 

@@ -1,7 +1,7 @@
 // Digby Windows shell (W2) — entry point + single-instance guard.
 //
 // The Windows port of macos-app/Sources/Digby/main.swift: a WinForms host
-// around https://digby.example.com/ rendered by Microsoft Edge WebView2, with
+// around https://digby.ai/ rendered by Microsoft Edge WebView2, with
 // the same behavior contract (host allowlist, in-app new windows, the
 // __digbyDesktop bridge, close-hides-not-quits, launch update check).
 // See windows-shell/README.md for the full port + deviation table.

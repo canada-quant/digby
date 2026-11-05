@@ -61,7 +61,16 @@ export const BLOCKER_PRIORITY: ReadonlyArray<{ token: string; reason: string }> 
   // ── Physical / cryptographic impossibilities (cannot be worked around) ──
   {
     token: 'filevault',
-    reason: 'FileVault is on — macOS cannot auto-login to a FileVault volume; turn FileVault off for this Mac first',
+    // Scoped to AUTO-LOGIN on purpose (ticket 539a99c3). FileVault does not
+    // block remote control: the brokered Screen Sharing channel authenticates
+    // at the login window with its own credential and has no `filevault`
+    // blocker at all (REMOTE_BLOCKER_PRIORITY). Only the auto-login mechanism
+    // — which types the password before any unlocked volume exists — needs it
+    // off. Saying "turn FileVault off" without that scope reads as "Digby
+    // needs your disk unencrypted to reach this Mac", which is false and was
+    // reported as a workaround-for-no-reason.
+    reason:
+      'FileVault is on — auto-login at boot is impossible on an encrypted volume (the pre-boot unlock runs before any account exists); the remote-control channel does NOT need FileVault off — turn it off only if you want this Mac to boot straight into a session',
   },
   {
     token: 'bitlocker-pin',
@@ -157,15 +166,48 @@ export interface UnattendedVerdict {
   ready: boolean;
   /** The ONE reason when ready is false; '' when ready. */
   reason: string;
+  /** TICKET 36d1c99f: the RAW blocker tokens, in priority order ([] when
+   *  ready/off/unavailable). `reason` collapses them to the first one, which is
+   *  right for a one-line badge but forces any consumer that needs a SPECIFIC
+   *  blocker to substring-match prose — and prose is exactly what drifts.
+   *
+   *  The guided enable flow (owner ruling oq_1f11df6b, option A) must know
+   *  "is FileVault on?" BEFORE it offers a privileged step, because auto-login
+   *  cannot coexist with FileVault and enabling it silently would downgrade
+   *  the device's at-rest protection. Reading `blockers.includes('filevault')`
+   *  is a fact; grepping `reason` for "FileVault" is a guess that breaks the
+   *  moment someone rewords the sentence. */
+  blockers: string[];
 }
+
+/** Where the macOS agent's CLI shim actually lives (ticket 36d1c99f).
+ *
+ *  A stock install does NOT put `digby-agent` on `PATH`: the .pkg postinstall
+ *  and the one-line installer both write the shim to
+ *  `~/Library/Application Support/Digby/bin/digby-agent` and nothing adds that
+ *  directory to the user's `PATH`. So a bare `digby-agent …` — which is what
+ *  this module used to print, and what docs/UNATTENDED_DEVICES.md leads with —
+ *  fails with `command not found` even on a perfectly healthy install. The
+ *  owner read that as "the feature does not exist".
+ *
+ *  Reason strings therefore name the ABSOLUTE path. `$HOME` is deliberately
+ *  left unexpanded: it is correct for fenced bash (`"$HOME/…"`), and it is the
+ *  one form that also works under `sudo`, which RESETS `PATH` (so even a user
+ *  who added the directory to their `PATH` cannot run `sudo digby-agent …`). */
+export const MAC_AGENT_CLI_PATH = '$HOME/Library/Application Support/Digby/bin/digby-agent';
 
 /** The exact on-device command per platform — the ONE working enable path, so
  *  the reason strings name something the owner can actually run instead of
- *  "the preset". Kept in step with the card's `unattendedEnableCmd`. */
+ *  "the preset". Kept in step with the card's `unattendedEnableCmd`.
+ *
+ *  macOS prints the shim's ABSOLUTE path (ticket 36d1c99f): the bare name is
+ *  not on `PATH` on a stock install, and a printed remedy that fails with
+ *  `command not found` is worse than no remedy — it reads as a missing feature
+ *  and sends the owner to support instead of to a working command. */
 export function unattendedEnableCmd(platform: string | null | undefined): string {
   return platform === 'windows'
     ? 'digby-win-agent unattended enable'
-    : 'digby-agent unattended enable';
+    : `"${MAC_AGENT_CLI_PATH}" unattended enable`;
 }
 
 /**
@@ -254,6 +296,7 @@ export function unattendedVerdict(
       state: 'unavailable',
       enabled: false,
       ready: false,
+      blockers: [],
       reason:
         `not reported — the Digby agent on this device has never reported the unattended preset, ` +
         `so the fleet cannot say whether it is on; update the agent, then run \`${cmd}\` on the device`,
@@ -267,12 +310,21 @@ export function unattendedVerdict(
       state: 'off',
       enabled: false,
       ready: false,
+      blockers: [],
       reason: `preset not enabled on this device — it is opt-in, per device, off by default (run \`${cmd}\` on the device to turn it on)`,
     };
   }
   const first = BLOCKER_PRIORITY.find((b) => advert.blockers.includes(b.token));
-  if (first) return { state: 'blocked', enabled: true, ready: false, reason: first.reason };
-  return { state: 'ready', enabled: true, ready: true, reason: '' };
+  if (first) {
+    return {
+      state: 'blocked',
+      enabled: true,
+      ready: false,
+      blockers: advert.blockers,
+      reason: first.reason,
+    };
+  }
+  return { state: 'ready', enabled: true, ready: true, blockers: [], reason: '' };
 }
 
 /** Convenience for a stored row: normalize then verdict. Never throws.

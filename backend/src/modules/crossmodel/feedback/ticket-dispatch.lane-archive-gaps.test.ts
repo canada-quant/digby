@@ -140,7 +140,7 @@ const mockPrisma: any = {
     }),
     findMany: jest.fn(async () => []),
   },
-  codingSchedule: {
+  chatSchedule: {
     // WHERE- and SELECT-faithful: sessionId IN / id IN, enabled, and the owner-armed OR
     // (promptSetBy user|null, ownerSubscribed, renewedFromId not null).
     findMany: jest.fn(async ({ where, select }: any) => [...schedules.values()]
@@ -645,7 +645,7 @@ describe('B4 + B5 — orphaned previous lanes are retired', () => {
   it('FAIL CLOSED: a guard read failure archives nothing this drain', async () => {
     lane('guardfail-01'); ranAgo('guardfail-01', 7 * H);
     tickets = [holder('holder00-9', ['guardfail-01'])];
-    mockPrisma.codingSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
+    mockPrisma.chatSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
     await drainOpenTicketsToLane();
     expect(mockArchiveChat).not.toHaveBeenCalled();
     await drainOpenTicketsToLane();
@@ -843,7 +843,7 @@ describe('review fixes (2026-10-21)', () => {
     it('FAIL CLOSED: an owner-schedule guard read failure archives nothing; the next drain archives the lane', async () => {
       lane('own-fail-001'); ranAgo('own-fail-001', 3 * H);
       tickets = [ticket('ownfail0-1', { status: 'done', context: laneCtx('own-fail-001') })];
-      mockPrisma.codingSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
+      mockPrisma.chatSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
       await drainOpenTicketsToLane();
       expect(mockArchiveChat).not.toHaveBeenCalled();
       await drainOpenTicketsToLane();
@@ -1460,14 +1460,14 @@ describe('fourth review (2026-10-22) — a restore is read independently of the 
   it('FAIL CLOSED: a failed batched owner-schedule read keeps every closed ticket\'s lane this drain; the next drain archives', async () => {
     lane('own-pre-fail'); ranAgo('own-pre-fail', 3 * H);
     tickets = [closedRow('ownprefa-1', 'own-pre-fail')];
-    const faithful = mockPrisma.codingSchedule.findMany.getMockImplementation();
-    mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) => {
+    const faithful = mockPrisma.chatSchedule.findMany.getMockImplementation();
+    mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) => {
       if (Array.isArray(args?.where?.OR)) throw new Error('db down');
       return faithful!(args);
     });
     await drainOpenTicketsToLane();
     expect(mockArchiveChat).not.toHaveBeenCalled();
-    mockPrisma.codingSchedule.findMany.mockImplementation(faithful);
+    mockPrisma.chatSchedule.findMany.mockImplementation(faithful);
     await drainOpenTicketsToLane();
     expect(archivedIds()).toEqual(['own-pre-fail']);
   });
@@ -1728,7 +1728,7 @@ describe('KILL SWITCH TICKET_LANE_ARCHIVE_GAPS_DISABLED=1 — the pre-fix archiv
     expect(archivedIds()).not.toContain('sw-starved-1');
     expect(mockPrisma.chatCodingState.findUnique).not.toHaveBeenCalled();
     expect(mockHealOrphanedRunningSession).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.findMany).not.toHaveBeenCalled();
     const meta = lastQueueMeta();
     for (const k of ['archivedAwaiting', 'archivedPrevious', 'healedRunning', 'closedScanRows']) expect(meta).not.toHaveProperty(k);
   });

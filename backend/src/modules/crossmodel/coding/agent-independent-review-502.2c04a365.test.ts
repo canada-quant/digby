@@ -6,7 +6,7 @@
  * hourly log-signal-sweep filed (10 rows across 5 distinct hours, Oct 24) is
  * the SAME designed-resilience class as lead ticket 1ece90ad — the sibling
  * fingerprint the 1ece90ad lane (1f46af47, PR #1967) already named as one
- * root cause: the llm.example.com custom-endpoint gateway (Cloudflare/LiteLLM
+ * root cause: the llm.cql.ca custom-endpoint gateway (Cloudflare/LiteLLM
  * edge) flapping 502s. Not a defect.
  *
  * WHAT THE ROWS ARE: an Independent-review worker (delegate({role:'reviewer'})
@@ -34,7 +34,7 @@
  * pass cannot "fix" the warn into silence without breaking this suite.
  *
  * Harness mirrors agent-delegation.test.ts (the delegate tool-call path) with
- * the 1ece90ad file's gateway/registry mocks (llm.example.com + the built-in).
+ * the 1ece90ad file's gateway/registry mocks (llm.cql.ca + the built-in).
  */
 jest.mock('../../../utils/logger', () => ({
   __esModule: true,
@@ -76,10 +76,10 @@ jest.mock('../imessage/imessage.service', () => ({
 }));
 jest.mock('../imessage/agent-link', () => ({ agentBroker: { dispatch: jest.fn() } }));
 
-// The incident gateway: llm.example.com (label 'llm-cql' — coding-model.ts appends
+// The incident gateway: llm.cql.ca (label 'llm-cql' — coding-model.ts appends
 // ' (custom endpoint)' on the failing-seat label, so the warn replays the
 // prod fingerprint verbatim).
-const GW_URL = 'https://llm.example.com/v1/chat/completions';
+const GW_URL = 'https://llm.cql.ca/v1/chat/completions';
 const REGISTRY: Record<string, any> = {
   'llm-cql:api-optimize-alibaba-deepseek-v4.1-flash': {
     url: GW_URL, apiKey: 'sk-cql', model: 'api-optimize-alibaba-deepseek-v4.1-flash', label: 'llm-cql',
@@ -246,7 +246,7 @@ afterEach(() => {
   __resetProviderCooldownForTests();
 });
 
-describe('log-signal 2c04a365 — [Independent review] worker on the flapping llm.example.com gateway (2026-10-24): designed resilience, characterized', () => {
+describe('log-signal 2c04a365 — [Independent review] worker on the flapping llm.cql.ca gateway (2026-10-24): designed resilience, characterized', () => {
   it('REPLAYS the prod row verbatim: the reviewer worker\'s custom-endpoint seat 502s, THIS TURN moves to the built-in glm-5.3, the worker SURVIVES, and the warn IS the fingerprint', async () => {
     // The orchestrator runs on the BUILT-IN (input.model = glm-5.3): the
     // worker reaches the dead gateway ONLY through the coding_reviewer seat

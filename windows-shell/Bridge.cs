@@ -157,7 +157,7 @@ internal static class Bridge
             // the env before ever prompting for a code — then the poll loop starts.
             startInfo.EnvironmentVariables["DIGBY_PAIR_CODE"] = pairingCode;
             startInfo.EnvironmentVariables["DIGBY_API_URL"] =
-                string.IsNullOrWhiteSpace(apiBase) ? "https://digby.example.com/api" : apiBase;
+                string.IsNullOrWhiteSpace(apiBase) ? "https://digby.ai/api" : apiBase;
 
             // NOT `using` — the detached log-pump task below owns the handle.
             var process = System.Diagnostics.Process.Start(startInfo);

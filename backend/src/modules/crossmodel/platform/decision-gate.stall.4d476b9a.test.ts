@@ -73,12 +73,14 @@ import {
   DECISION_STALL_LEG_NEED,
   DECISION_STALL_RETRY_MIN_MS,
   allFailedCauseText,
+  askWindowSaturated,
   classifyAllLegsFailed,
   decisionStallRecoveryDisabled,
   isStallExemptAllFailedRow,
   isStallRetryLegError,
   laterLegsReserveMs,
   legFailureOf,
+  legStallConfirmedUnderAsk,
   legTiming,
   setDecisionDispatchProbe,
   setDecisionLoopMeter,
@@ -902,5 +904,90 @@ describe('decision-gate-stall (pure)', () => {
     expect(decisionStallRecoveryDisabled({ DECISION_GATE_STALL_RECOVERY_DISABLED: 'true' })).toBe(true);
     expect(decisionStallRecoveryDisabled({ DECISION_GATE_STALL_RECOVERY_DISABLED: '0' })).toBe(false);
     expect(decisionStallRecoveryDisabled({})).toBe(false);
+  });
+
+  // ── Round 5 — ticket 91912bee (2026-11-04): the burst where a PURE event-loop stall was counted as a backend-down ──
+  // Prod 22:10:07–22:10:20.681Z: four asks whose own window was 100 % busy for 1154–1282 ms. The first leg of each ate
+  // the shared deadline late, so the LATER legs were handed residuals of 36 / 136 / 169 / 190 / 199 ms — every one under
+  // DECISION_STALL_BUSY_MIN_MS (200), so `loopSaturated` on the leg window could only answer false however hot the loop
+  // ran. Those legs read stallConfirmed:false, the ask classified 'mixed' instead of 'stall', the in-process streak
+  // advanced 1→4 and decision-backend-down fired. The 199 ms leg missed the floor by ONE millisecond.
+  const burstLegs = (over: Record<string, any> = {}) => ([
+    // attempt 1 — a REAL window, saturated: confirmed by its own evidence (round 2), unchanged by this round.
+    { failure: 'timeout' as const, budgetMs: 599, lateMs: 381, busyMs: 361, busy: 1, stall: true, stallConfirmed: true, ...over },
+    // the STARVED legs — windows shorter than the floor, all at busy 1.0.
+    { failure: 'timeout' as const, budgetMs: 190, lateMs: 40, busyMs: 36, busy: 1, stall: false, stallConfirmed: false },
+    { failure: 'timeout' as const, budgetMs: 169, lateMs: 22, busyMs: 136, busy: 1, stall: false, stallConfirmed: false },
+    { failure: 'timeout' as const, budgetMs: 190, lateMs: 30, busyMs: 190, busy: 1, stall: false, stallConfirmed: false },
+    { failure: 'timeout' as const, budgetMs: 199, lateMs: 12, busyMs: 199, busy: 1, stall: false, stallConfirmed: false },
+  ]);
+  const burstAsk = { activeMs: 1234, utilization: 1 };
+
+  it('91912bee: a leg the stall itself STARVED is confirmed by the ask window — a pure stall no longer classifies mixed', () => {
+    // The defect, reproduced: without the ask reading the starved legs read unconfirmed and the ask is 'mixed'.
+    expect(classifyAllLegsFailed(burstLegs())).toBe('mixed');
+    // With the ask's own reading (which decide() already records on the row) the same legs are a stall.
+    expect(classifyAllLegsFailed(burstLegs(), 0, burstAsk)).toBe('stall');
+    // Every leg of the burst is individually covered — the 199 ms one included (the one that missed by 1 ms).
+    for (const leg of burstLegs()) expect(legStallConfirmedUnderAsk(leg, burstAsk)).toBe(true);
+  });
+
+  it('91912bee: the ask window only covers legs it could not judge — a real un-saturated leg still reads egress and still counts', () => {
+    // A leg with a REAL window (≥ the 200 ms floor) that was NOT saturated keeps its own verdict: the backend hung on a
+    // free-ish loop. That is exactly the egress class the alert exists for — the ask reading must NOT launder it.
+    const slowWire = [
+      { failure: 'timeout' as const, budgetMs: 2000, busyMs: 1800, busy: 0.9, stallConfirmed: true },   // own evidence: saturated
+      { failure: 'timeout' as const, budgetMs: 2000, busyMs: 1800, busy: 0.1, stallConfirmed: false },  // hot window, idle loop ⇒ wire
+    ];
+    expect(classifyAllLegsFailed(slowWire, 0, burstAsk)).toBe('mixed');
+    expect(classifyAllLegsFailed([slowWire[1]], 0, burstAsk)).toBe('egress');
+    // An UNMEASURED leg (no window at all) under a saturated ask is still a stall: there is no counter-evidence.
+    expect(legStallConfirmedUnderAsk({ failure: 'timeout', stallConfirmed: false }, burstAsk)).toBe(true);
+    // …and with no ask reading at all the behaviour is EXACTLY the pre-round-5 rule (every existing test above holds).
+    expect(classifyAllLegsFailed(burstLegs(), 0, null)).toBe('mixed');
+    expect(classifyAllLegsFailed(burstLegs(), 0, { activeMs: 199, utilization: 1 })).toBe('mixed');  // ask under the floor
+    expect(classifyAllLegsFailed(burstLegs(), 0, { activeMs: 1234, utilization: 0.5 })).toBe('mixed'); // ask not saturated
+    expect(askWindowSaturated(burstAsk)).toBe(true);
+    expect(askWindowSaturated({ activeMs: 199, utilization: 1 })).toBe(false);
+    expect(askWindowSaturated({ activeMs: 1234, utilization: 0.49 })).toBe(false);
+    expect(askWindowSaturated(undefined)).toBe(false);
+  });
+
+  it('91912bee: the SWEEP reaches the same verdict as decide() for the burst row — the row carries loopBusyMs/loopBusy', () => {
+    // Replay of the prod row shape (meta.stall is folded flat into the row for the sweep's reader).
+    const row = { event: 'all_legs_failed', cause: 'stall', loopBusyMs: 1234, loopBusy: 1, legTimings: burstLegs() };
+    expect(isStallExemptAllFailedRow(row, {})).toBe(true);
+    // A starved leg WITHOUT the ask reading on the row cannot be excused — the evidence must be on the row itself.
+    expect(isStallExemptAllFailedRow({ ...row, loopBusyMs: undefined, loopBusy: undefined }, {})).toBe(false);
+    // An egress row is never exempt, whatever the ask window says.
+    expect(isStallExemptAllFailedRow({ ...row, cause: 'egress' }, {})).toBe(false);
+    // The kill switch still disarms the whole exemption.
+    expect(isStallExemptAllFailedRow(row, { DECISION_GATE_STALL_RECOVERY_DISABLED: '1' })).toBe(false);
+  });
+
+  it('DETECTOR-RECALL REPLAY 91912bee: the prior convicting cases STILL convict — a free-loop timeout burst is never excused', () => {
+    // Widening what CONFIRMS a stall could, if done carelessly, stop the alert firing on the class it exists for:
+    // a provider/egress burst on a HEALTHY process. Every prior true positive is replayed here and must STILL fire.
+    // True positives of rounds 1–4, re-run against the widened rule: on a free loop nothing is confirmed, so a
+    // provider/egress burst classifies egress and the row counts. This is the class the alert was built for.
+    const free = [
+      { failure: 'timeout' as const, budgetMs: 2000, busyMs: 40, busy: 0.02, stallConfirmed: false },
+      { failure: 'timeout' as const, budgetMs: 2000, busyMs: 55, busy: 0.03, stallConfirmed: false },
+    ];
+    expect(classifyAllLegsFailed(free, 0, { activeMs: 2000, utilization: 0.02 })).toBe('egress');
+    expect(classifyAllLegsFailed(free, 0, null)).toBe('egress');
+    expect(isStallExemptAllFailedRow({ event: 'all_legs_failed', cause: 'egress', loopBusyMs: 2000, loopBusy: 0.02, legTimings: free }, {})).toBe(false);
+    // A genuine wire-timeout burst on a BUSY-but-not-blocked process: the ask window is below the utilization bar.
+    const wireWhileBusy = [
+      { failure: 'timeout' as const, budgetMs: 2000, busyMs: 1200, busy: 0.55, stallConfirmed: false },
+      { failure: 'timeout' as const, budgetMs: 2000, busyMs: 1400, busy: 0.6, stallConfirmed: false },
+    ];
+    expect(classifyAllLegsFailed(wireWhileBusy, 0, { activeMs: 2000, utilization: 0.6 })).toBe('egress');
+    // Provider errors next to timeouts still count as mixed, ask window or not.
+    expect(classifyAllLegsFailed([...burstLegs(), { failure: 'error', stallConfirmed: false }], 0, burstAsk)).toBe('mixed');
+    // No leg called at all is still a budget miss, never a stall.
+    expect(classifyAllLegsFailed([{ failure: 'budget', stallConfirmed: false }], 0, burstAsk)).toBe('budget');
+    // The kill switch still disarms every exemption path.
+    expect(isStallExemptAllFailedRow({ event: 'all_legs_failed', cause: 'stall', loopBusyMs: 1234, loopBusy: 1, legTimings: burstLegs() }, { DECISION_GATE_STALL_RECOVERY_DISABLED: '1' })).toBe(false);
   });
 });

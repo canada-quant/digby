@@ -1,5 +1,5 @@
 /** web_pipe — deterministic search→scrape→embed→digest pipeline. */
-import { runWebPipe, isTextLikeUrl, looksLikeJsShell, JS_SHELL_NOTE, nextSameHostGap, topLinks } from './web-pipe';
+import { runWebPipe, isTextLikeUrl, looksLikeJsShell, JS_SHELL_NOTE, nextSameHostGap, topLinks, WEB_PIPE_SERP_RESUME_BUDGET_MS } from './web-pipe';
 import { callMcpTool, extractPdfTextFromUrl } from '../mcp-search';
 import { clearSerpRedirectCache } from '../serp-redirects';
 import { storeFindings } from './coding-retrieval.service';
@@ -13,7 +13,7 @@ jest.mock('../model-endpoints/model-roles.service', () => ({ __esModule: true, r
 // Helper-seat health fallback (owner 2026-09-14): a custom coding_helper seat
 // resolves through the registry; the fallback records seat_fallback telemetry.
 const CQL_REG = {
-  url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql',
+  url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql',
   model: 'qwen3-4b', label: 'cql', supportsVision: false, coding: true, thinkingOff: false,
 };
 jest.mock('../model-endpoints/model-endpoints.service', () => ({
@@ -749,6 +749,46 @@ describe('straggler cut — search-derived sources; a straggler = a scrape in fl
     const r = await runWebPipe('sess-cut4', { query: 'q' }, undefined, QUICK);
     expect(r.sources.filter(s => s.stored)).toHaveLength(4);
     expect(r.timing).toMatchObject({ stragglers: 0, good: 4 });
+  });
+});
+
+describe('D3-R — the pipe\'s resume budget covers the provider\'s CANONICAL stated throttle (WRP-1, 2026-11-03)', () => {
+  // BrightData's own auto-throttle body prints `x-brd-rate-limit-period-ms:
+  // 60000`. Before this pin the pipe passed 45_000, so `now + 60000 <= deadline`
+  // was false on entry, the ladder never ran, and no `web_serp_resume` row for
+  // the canonical shape was possible. These assertions are the regression gate:
+  // the budget must exceed the canonical period with margin, AND the pipe must
+  // actually hand that budget to callMcpTool.
+  test('the budget constant clears the canonical 60 s period with margin', () => {
+    expect(WEB_PIPE_SERP_RESUME_BUDGET_MS).toBeGreaterThan(60_000);
+    // Enough margin to absorb the direct-tier attempt + gateway entry before
+    // `resumeDeadline` is stamped (see the constant's comment).
+    expect(WEB_PIPE_SERP_RESUME_BUDGET_MS - 60_000).toBeGreaterThanOrEqual(5_000);
+  });
+
+  test('the pipe passes that budget on its OWN search call — the whole point of the constant', async () => {
+    mockMcp.mockImplementation(async (tool: string) => (tool === 'search_engine' ? SERP : 'x'.repeat(500)));
+    await runWebPipe('sess-d3r', { query: 'polk county' }, undefined, { sameHostGapMs: 0 });
+    const scoped = mockMcp.mock.calls.find(c => c[0] === 'search_engine');
+    expect(scoped).toBeTruthy();
+    expect(scoped![3]?.resumeBudgetMs).toBe(WEB_PIPE_SERP_RESUME_BUDGET_MS);
+    // The provider's throttle detail (for the honest failure text) rides too.
+    expect(typeof scoped![3]?.onSerpProviderError).toBe('function');
+  });
+
+  test('the pipe\'s other two search calls stay budget-free — only the primary call buys the wait', async () => {
+    // In-band SERP-error retry: bounded, and deliberately NOT given the resume
+    // budget (it runs after the primary already spent it).
+    mockMcp.mockImplementation(async (tool: string, _a: any, _t: any, o: any) => {
+      if (tool !== 'search_engine') return 'x'.repeat(500);
+      o?.onSerpProviderError?.({ code: 'sr_rate_limit', status: 429, retryable: true, minWaitMs: 60_000, snippet: 'auto-throttled' });
+      return null;
+    });
+    await runWebPipe('sess-d3r2', { query: 'q' }, undefined, { sameHostGapMs: 0, serpRetryMs: 0 });
+    const searches = mockMcp.mock.calls.filter(c => c[0] === 'search_engine');
+    expect(searches.length).toBeGreaterThanOrEqual(1);
+    // Every call AFTER the primary one carries no resume budget.
+    for (const call of searches.slice(1)) expect(call[3]?.resumeBudgetMs).toBeUndefined();
   });
 });
 

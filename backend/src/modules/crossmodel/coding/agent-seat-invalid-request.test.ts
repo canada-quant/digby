@@ -119,13 +119,13 @@ jest.mock('./verify-state', () => ({ __esModule: true, recordVerify: jest.fn(asy
 /** The incident seat (an OpenAI-like id behind the owner's LiteLLM proxy) + the admin's custom fallback for the SUPERVISOR seat. */
 const REGISTRY: Record<string, any> = {
   'cql-litellm:api-openai-gpt-6-astra': {
-    url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1',
+    url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1',
     apiKey: 'sk-cql', model: 'api-openai-gpt-6-astra', label: 'cql-litellm',
     coding: true, chatCapable: true, kind: 'chat', thinkingOff: false, supportsVision: false,
     providerClass: 'openai', maxTools: 128, maxToolsSource: 'class', reasoningEffort: 'auto',
   },
   'cql-litellm:api-anthropic-claude-fable-5-1': {
-    url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1',
+    url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1',
     apiKey: 'sk-cql', model: 'api-anthropic-claude-fable-5-1', label: 'cql-litellm',
     coding: true, chatCapable: true, kind: 'chat', thinkingOff: false, supportsVision: false,
     providerClass: 'anthropic', maxToolsSource: 'none', reasoningEffort: 'auto',
@@ -226,7 +226,7 @@ describe('deterministic-4xx seat fallback + latch (the gpt-6-astra incident)', (
     //     — progressive disclosure: the core + the two gateway tools, no trim row,
     //     every core tool present.
     const first = mockRunModelTurn.mock.calls[0];
-    expect(first[0].url).toBe('https://llm.example.com/v1/chat/completions');
+    expect(first[0].url).toBe('https://llm.cql.ca/v1/chat/completions');
     expect(first[2].length).toBeLessThanOrEqual(128);
     expect(toolNames(first)).toEqual(expect.arrayContaining(['read_file', 'run_command', 'search_engine', 'ask_user', 'list_tool_groups', 'load_tools']));
     expect(toolNames(first)).not.toContain('gmail_search'); // a connector group, on demand
@@ -238,9 +238,9 @@ describe('deterministic-4xx seat fallback + latch (the gpt-6-astra incident)', (
     //     64 is below the core, so the residual priority trim runs with the
     //     HONEST source 'learned' (the only trim row this run writes).
     const second = mockRunModelTurn.mock.calls[1];
-    expect(second[0].url).toBe('https://llm.example.com/v1/chat/completions');
+    expect(second[0].url).toBe('https://llm.cql.ca/v1/chat/completions');
     expect(second[2]).toHaveLength(64);
-    expect(learnedToolLimit(toolLimitKey('https://llm.example.com/v1/chat/completions', 'api-openai-gpt-6-astra'))).toBe(64);
+    expect(learnedToolLimit(toolLimitKey('https://llm.cql.ca/v1/chat/completions', 'api-openai-gpt-6-astra'))).toBe(64);
     expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({ kind: 'tool_list_trimmed', meta: expect.objectContaining({ limit: 64, to: 64, source: 'learned', mode: 'core_residual' }) }));
     expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({ kind: 'provider_rejected', meta: expect.objectContaining({ lane: 'invalid_request', fingerprint: 'tools_too_long', outcome: 'trim_retry', cap: 64 }) }));
 
@@ -278,7 +278,7 @@ describe('deterministic-4xx seat fallback + latch (the gpt-6-astra incident)', (
     // the blanket default is gone (2026-09-27 late): the FULL list goes, untrimmed,
     // and nothing was learned for it.
     expect(mockRunModelTurn.mock.calls[1][2].length).toBeGreaterThan(128);
-    expect(learnedToolLimit(toolLimitKey('https://llm.example.com/v1/chat/completions', 'api-anthropic-claude-fable-5-1'))).toBeUndefined();
+    expect(learnedToolLimit(toolLimitKey('https://llm.cql.ca/v1/chat/completions', 'api-anthropic-claude-fable-5-1'))).toBeUndefined();
     expect(mockRecordLoopMetric).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'tool_list_trimmed' }));
     expect(result.seatFallback).toMatchObject({ to: 'cql-litellm:api-anthropic-claude-fable-5-1', customFallback: true });
   });

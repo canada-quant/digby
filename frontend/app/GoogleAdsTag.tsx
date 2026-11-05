@@ -3,7 +3,7 @@
 /**
  * The site's ONE Google tag (gtag.js) — rendered by app/layout.tsx on every page (Google: "every page … Don't add
  * more than one Google tag to each page"). Loaded by the GA4 id (Google's GA snippet); GA4 G-NK7XPHC7FE and Google
- * Ads AW-00000000000 are `config`s in the SAME bootstrap — never a second gtag.js. Ids, the Sign-up conversion and
+ * Ads AW-16512038948 are `config`s in the SAME bootstrap — never a second gtag.js. Ids, the Sign-up conversion and
  * the Digby Kids exclusion: lib/google-ads.ts.
  *
  * Loads after hydration, once the session is known: a visitor or an adult account loads it; a child session never

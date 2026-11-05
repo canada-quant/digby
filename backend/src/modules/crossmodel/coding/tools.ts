@@ -28,7 +28,15 @@ import { redactUrlCredentials } from '../../../utils/redact-credentials';
 import { git } from './workspace.service';
 import { applyPlan, PlanUpdate, validatePlanUpdate, renderPlanValidationFailure } from './plan.service';
 import { readDigbyConfig, readDigbyConfigDetailed, resolveVerifyChain, runVerifyChain, loopConfig, type DigbyConfig, type VerifyChainEntry, type VerifyResult } from './verify.service';
-import { prGateAutoVerifyDisabled, prGateAutoVerifyDeadlineMs, withDeadline, classifyDocsOnly, listPrDiffFiles, docsOnlyPrBodyNote, prHeadMismatchBodyNote } from './pr-gate-docs-only';
+import { stageTimeoutAdvice, killedAtMsFromTail } from './loop-defaults';
+import { prGateAutoVerifyDeadlineMs, withDeadline, classifyDocsOnly, listPrDiffFiles, docsOnlyPrBodyNote, prHeadMismatchBodyNote } from './pr-gate-docs-only';
+// NOTE: imported from the PURE LEAF `exec-transport`, never from
+// container.service — importing that module here would put
+// container.service → prisma → config/database → config/env on tools.ts's
+// module-load path, and parseEnv() process.exit(1)s without DATABASE_URL, so
+// every env-less suite that touches tools would fail to LOAD (29 suites did,
+// 2026-11-03). CI requires the suite to run with no .env.
+import { isExecTransportFailure } from './exec-transport';
 import type { EditDiagnosticsSink } from './edit-diagnostics';
 import { loadRepoHooks, preCommandBlock, runPostEditHooks } from './repo-hooks';
 import { editFileMissDiagnostic, editFileMultiDiagnostic, clipEditFileHint } from './edit-file-hint';
@@ -879,7 +887,7 @@ const BASE_CODING_TOOL_SCHEMA = [
           body: { type: 'string', description: 'Markdown description of the change.' },
           headBranch: { type: 'string', description: 'Optional: open the PR from THIS existing remote branch instead of the worktree branch (verified on the remote first; the worktree push is skipped). REQUIRED when you wrote the commits through the GitHub REST API — without it the PR opens from the worktree branch as an EMPTY-DIFF no-op.' },
           baseBranch: { type: 'string', description: 'Optional: open the PR against THIS remote branch instead of the repo default (verified to exist on the remote first). Use it to board a batch train: pass the active batch/<ts> branch from list_batch_trains while a train is boarding.' },
-          allowBaseDrift: { type: 'boolean', description: 'Override the BASE DRIFT pre-flight: by default a PR that would restore a file to a snapshot the base has already moved past is refused (a stale-base branch silently reverts merged work). The refusal names the base and the affected files; the remedy is rebase and re-open. Pass true only when the reversion is intended.' },
+          allowBaseDrift: { type: 'boolean', description: 'Override the BASE DRIFT pre-flight: by default a PR that restores a file to a snapshot the base has moved past — or DELETES a file the base tracks that this branch never deleted itself — is refused (it would silently revert merged work). The refusal names the files and the base; remedy: rebase and re-open. Pass true only when the reversion is intended.' },
         },
         required: ['title'],
       },
@@ -1546,9 +1554,11 @@ export async function createPullRequestWithHeadCheck(opts: {
 const COMPARE_FILES_CAP = 300;
 /**
  * How many candidate files the base-drift probe reads per PR. Each probe is a
- * local `git rev-list` over one path; the PR's biggest deletions go first. A PR
- * deleting from more files than this still probes the ones that matter most,
- * and `incomplete` surfaces the remainder.
+ * local `git merge-tree` + `git log` over one path; the PR's biggest deletions
+ * go first. NOTE: a PR deleting from MORE files than this probes only the top
+ * `BASE_DRIFT_PROBE_CAP` and the remainder are NOT reported as `incomplete`
+ * (detectBaseDrift never sees them — review finding 6 on ticket 7445695d). The
+ * cap is a deliberate, bounded blind spot, not a surfaced one.
  */
 const BASE_DRIFT_PROBE_CAP = 12;
 
@@ -1585,7 +1595,7 @@ export async function describePrDiff(
     preBytes?: (path: string) => Promise<number | null>;
     priorReceipts?: () => Promise<Array<{ tool: string; ok: boolean; ids: Record<string, unknown>; createdAt: Date }>>;
     /** Merged-tree blob probe for ONE path vs the base's own history (base-drift guard). */
-    driftProbe?: (path: string, t: typeof target) => Promise<{ mergedBlob: string | null; baseBlob: string | null; historyBlobs: string[] } | null>;
+    driftProbe?: (path: string, t: typeof target) => Promise<{ mergedBlob: string | null; baseBlob: string | null; historyBlobs: string[]; deletedByBranch?: boolean | null } | null>;
     now?: Date;
   } = {},
   opts: {
@@ -1660,6 +1670,7 @@ export async function describePrDiff(
                 seam: 'base_drift', state: override ? 'overridden' : 'enforced', outcome: 'observed',
                 repo: `${target.owner}/${target.repo}`, base: target.base,
                 revertingFiles: verdict.revertingFiles.slice(0, 20), revertingCount: verdict.revertingFiles.length,
+                deletedFiles: verdict.deletedFiles.slice(0, 20), deletedCount: verdict.deletedFiles.length,
                 probedFiles: verdict.probedFiles, probeCap: BASE_DRIFT_PROBE_CAP, incomplete: verdict.incomplete,
                 machineRun: !ctx.userTurnAt,
               },
@@ -1863,7 +1874,7 @@ export async function pushSessionBranch(ctx: ToolContext, opts?: { allowBase?: b
   // open_pull_request's push both pass through here). Prod is a no-op.
   // Review F1: the guard keys on repoTargetAllowed (which normalizes the
   // target itself — trailing slash, .git, URL spellings), NEVER on
-  // parseOwnerRepo's result: `https://github.com/canada-quant/digby/`
+  // parseOwnerRepo's result: `https://github.com/example-org/crossmodel/`
   // parses to null there and used to skip the guard entirely.
   const isoRepo = parseOwnerRepo(ctx.repoUrl);
   if (!repoTargetAllowed(ctx.repoUrl)) {
@@ -2396,7 +2407,12 @@ function commandEnv(worktree: string): NodeJS.ProcessEnv {
 // CI observation, receipts). Intercept the UNAMBIGUOUS shapes only:
 //   - `git push` (word-boundary; dash-options between `git` and `push` match —
 //     `git --no-pager push`, `git --git-dir=x push`; a separated-argument form
-//     like `git -C /path push` does NOT match: conservatism over coverage);
+//     (`git -C /path push`) matches by ONE optional separated argument after a
+//     dash-option — PBG-1 2026-11-03; a path-prefixed binary
+//     (`/usr/bin/git push`, `./x/git push`) matches too — same PR);
+//   - a SHELL-WRAPPER invocation: `sh|bash|zsh|dash|ksh -c '<inner>'` is
+//     unwrapped (bounded depth 2) and its payload re-tested — `bash -c "git
+//     push"` used to execute with NO notice and NO metric (PBG-1 2026-11-03);
 //   - `gh pr merge`;
 //   - GitHub REST merge URLs (…/pulls/<n>/merge and …/merges) — only when the
 //     command also carries a WRITE verb marker (-X/--request/--method PUT|POST,
@@ -2418,12 +2434,23 @@ function commandEnv(worktree: string): NodeJS.ProcessEnv {
 // was retired 2026-09-11 — it used to switch off the credential refusal too).
 export const PUBLISH_INTENT_PATTERNS: ReadonlyArray<{ re: RegExp; also?: RegExp; what: string; redirect: string; hardRefuse?: boolean }> = [
   {
-    re: /(?:^|[\s;&|(`])git(?:\s+-{1,2}[\w=./:@-]+)*\s+push\b/,
+    // PBG-1 (2026-11-03) widened this from "bare `git` only" to the shapes a
+    // real shell reaches, WITHOUT the two defects the first cut shipped (found
+    // by independent review, fixed in the follow-up):
+    //   - an EXECUTABLE PATH PREFIX must look like one (`/`, `./`, `../`, `~/`,
+    //     `$VAR/`) — a bare `bin/` used to make path-prefixed PROSE inside a
+    //     quoted string (`echo "please run bin/git push"`) match, and quotes are
+    //     excluded from the class so `grep "bin/git push"` stays unmatched;
+    //   - ONE separated argument after a dash-option (`git -C /p push`), which
+    //     MUST NOT itself look like a flag — that negative lookahead is what
+    //     keeps the group unambiguous, and unambiguity is what keeps matching
+    //     LINEAR (see PUBLISH_SCAN_CAP_CHARS / the timing row in the PIN).
+    re: /(?:^|[\s;&|(`])(?:(?:\/|\.{1,2}\/|~\/|\$\{?\w+\}?\/)[^\s;&|()'"`]*\/)?git(?:\s+-{1,2}[\w=./:@-]+(?:\s+(?!-)[^\s;&|()`]+)?)*\s+push\b/,
     what: 'git push',
     redirect: 'use the git_push tool — it authenticates for you, annotates base-branch pushes, verifies the push by ancestry, observes CI, and leaves a receipt',
   },
   {
-    re: /(?:^|[\s;&|(`])gh\s+pr\s+merge\b/,
+    re: /(?:^|[\s;&|(`])(?:(?:\/|\.{1,2}\/|~\/|\$\{?\w+\}?\/)[^\s;&|()'"`]*\/)?gh\s+pr\s+merge\b/,
     what: 'gh pr merge',
     redirect: 'merge through the merge_pull_request tool — it verifies CI/verify-chain/secrets on fresh API evidence, refuses nothing-changed retries, and only reports success after GitHub confirms merged:true',
   },
@@ -2437,7 +2464,11 @@ export const PUBLISH_INTENT_PATTERNS: ReadonlyArray<{ re: RegExp; also?: RegExp;
     redirect: 'a raw REST merge bypasses every gate: merge through the merge_pull_request tool — it verifies CI/verify-chain/secrets deterministically and confirms merged:true itself',
   },
   {
-    re: /(?:^|[\s;&|(`])git\s+remote\s+(?:add|set-url)\b[^\n]*x-access-token/,
+    // PBG-1 follow-up (review B2): this class MUST accept the same executable
+    // path prefix as the git/gh patterns above. Widening those two without it
+    // manufactured a SILENT bypass of the ONE auto-refused class —
+    // `/usr/bin/git remote set-url … x-access-token …` matched nothing.
+    re: /(?:^|[\s;&|(`])(?:(?:\/|\.{1,2}\/|~\/|\$\{?\w+\}?\/)[^\s;&|()'"`]*\/)?git\s+remote\s+(?:add|set-url)\b[^\n]*x-access-token/,
     what: 'git remote with an embedded x-access-token credential',
     redirect: 'never persist credentials in a remote URL — the git_push tool injects auth per call without storing the token',
     hardRefuse: true,
@@ -2465,11 +2496,91 @@ export function recordAnswerKeyBlock(ctx: Pick<ToolContext, 'sessionId' | 'runId
 
 /** First unambiguous publish/merge intent in a shell command, or null.
  *  `hardRefuse` marks the ONE pattern still refused on machine runs by default
- *  (credential persistence) — every other match is observe-only. */
-export function detectPublishIntent(command: string): { what: string; redirect: string; hardRefuse: boolean } | null {
+ *  (credential persistence) — every other match is observe-only.
+ *
+ *  PBG-1 (2026-11-03): a shell-WRAPPER payload is unwrapped and re-tested.
+ *  `bash -c "git push origin main"` / `sh -c 'gh pr merge 7'` used to execute
+ *  with NO notice and NO metric — the regex never saw the inner command. The
+ *  unwrap is bounded (depth 2) and a wrapper whose payload cannot be extracted
+ *  falls through to the outer scan unchanged (no new false negative).
+ *
+ *  PBG-1 follow-up (independent review N1): the first cut used ONE regex
+ *  requiring the `c` GLUED to the flag cluster, so the ordinary
+ *  `bash -e -c '<payload>'` / `sh -o pipefail -c …` forms still slipped
+ *  through while `bash -ec` matched — the same class split in two. Replaced by
+ *  token scanning (`extractShellWrapperPayload`), which walks the wrapper's own
+ *  argument list: separate flags, glued clusters (`-ec`/`-lc`), `-o <opt>`
+ *  pairs, and `--command[=]` are all handled, and a script-file invocation
+ *  (`bash build.sh`) correctly yields nothing.
+ */
+const SHELL_WRAPPER_HEAD_RE = /(?:^|[\s;&|(`])(?:(?:\/|\.{1,2}\/|~\/|\$\{?\w+\}?\/)[^\s;&|()'"`]*\/)?(?:bash|sh|zsh|dash|ksh)\b/g;
+
+/** The `-c` payload of the FIRST shell wrapper that has one, else null.
+ *  Linear in the command length and allocation-light — it only runs after the
+ *  pattern scan misses, so it never adds cost to the common case. */
+function extractShellWrapperPayload(command: string): string | null {
+  const head = new RegExp(SHELL_WRAPPER_HEAD_RE.source, 'g');
+  let m: RegExpExecArray | null;
+  while ((m = head.exec(command)) !== null) {
+    let i = m.index + m[0].length;
+    let expectPayload = false;
+    for (;;) {
+      while (i < command.length && /\s/.test(command[i])) i++;
+      if (i >= command.length) break;
+      const ch = command[i];
+      if (ch === ';' || ch === '&' || ch === '|' || ch === ')' || ch === '`') break; // wrapper ended
+      let tok: string;
+      if (ch === "'" || ch === '"') {
+        const q = ch;
+        let j = i + 1;
+        while (j < command.length && command[j] !== q) { if (q === '"' && command[j] === '\\') j++; j++; }
+        tok = command.slice(i + 1, j);
+        i = j + 1;
+        if (expectPayload) return tok; // bash -c '<payload>'
+        continue;                      // some other quoted argument
+      }
+      let j = i;
+      while (j < command.length && !/\s/.test(command[j]) && !/[;&|)`]/.test(command[j])) j++;
+      tok = command.slice(i, j);
+      i = j;
+      if (expectPayload) return tok;   // bash -c <payload-unquoted>
+      if (tok.startsWith('--command')) {
+        const inline = tok.startsWith('--command=') ? tok.slice('--command='.length) : '';
+        if (inline) return inline;
+        expectPayload = true;
+        continue;
+      }
+      if (tok.startsWith('-') && !tok.startsWith('--')) {
+        const cluster = tok.slice(1);
+        if (cluster.includes('c')) { expectPayload = true; continue; } // -c / -ec / -lc
+        // `-o <option>` / `-O <option>` consume a SEPARATE argument.
+        if (cluster === 'o' || cluster === 'O') {
+          while (i < command.length && /\s/.test(command[i])) i++;
+          let k = i;
+          while (k < command.length && !/\s/.test(command[k])) k++;
+          i = k;
+          continue;
+        }
+        continue;
+      }
+      break; // `bash something.sh` — a script file, not a -c payload
+    }
+  }
+  return null;
+}
+
+export function detectPublishIntent(command: string, depth = 0): { what: string; redirect: string; hardRefuse: boolean } | null {
   for (const p of PUBLISH_INTENT_PATTERNS) {
     if (p.re.test(command) && (!p.also || p.also.test(command))) {
       return { what: p.what, redirect: p.redirect, hardRefuse: p.hardRefuse === true };
+    }
+  }
+  // Shell-wrapper payload: re-test the INNER command (bounded depth 2).
+  if (depth < 2) {
+    const inner = extractShellWrapperPayload(command);
+    if (inner && inner !== command) {
+      const hit = detectPublishIntent(inner, depth + 1);
+      if (hit) return hit;
     }
   }
   return null;
@@ -2643,10 +2754,33 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
         // NB: single-quote-escape the pattern (shq); never expand it via the shell
         // (unquoted expansion is exactly what made this injectable) or JSON.stringify.
         const spec = shq(`:(glob)${pattern}`);
-        const { stdout } = await ctx.execShell(
+        let execThrew = false;
+        const { stdout, stderr } = await ctx.execShell(
           `(git ls-files -- ${spec} 2>/dev/null; git ls-files --others --exclude-standard -- ${spec} 2>/dev/null) | sort -u | head -300`,
           ctx.worktree, 30_000,
-        ).catch(() => ({ stdout: '' }));
+        ).catch((err: any) => { execThrew = true; return { stdout: '', stderr: `[exec failed] ${err?.message ?? err}` }; });
+        // A DEAD SHELL IS NOT "no matches" (family deploy-kills-lane-background-
+        // workers, ticket 093e9a61). This branch used to `.catch(() => ({stdout:
+        // ''}))` and render the empty string as "(no matches)" — so a container
+        // replaced mid-run, a timeout or a transport death told the lane its
+        // files do not exist. The grep tool was fixed for exactly this false
+        // zero (ticket b6d50f4a); glob never got the same treatment, and it is
+        // the tool a lane reaches for FIRST when it suspects its work was lost.
+        // TWO ways to know the shell did not run: execShell THREW (it never
+        // throws by contract — execInContainer/execInProcess return `[exit: …]`
+        // shapes — so a throw means something broke beneath it), or stderr
+        // carries a transport signature. Either way, with no stdout, this is
+        // INFRA and emphatically not a missing-file verdict.
+        const errText = String(stderr || '').trim();
+        if (!String(stdout || '').trim() && (execThrew || (errText && isExecTransportFailure(errText)))) {
+          const why = (errText.match(/\[exit:[^\]]*\]/)?.[0] || errText.split('\n').find(Boolean) || 'no output').slice(0, 300);
+          // Never advise a fallback that is down for the same reason: when the
+          // exec layer itself is gone, run_command rides the SAME execShell.
+          const fallback = /exec failed|Isolated execution is temporarily unavailable/i.test(errText)
+            ? 'Shell tools share this transport, so switching tools will not help — report this as an infra block and continue with non-shell work.'
+            : 'Retry the SAME call; if it persists, run_command is available.';
+          return `[INFRA] Tool glob failed: the search did not complete (${why}) — the session shell is not available, so this is NOT a "no matches" verdict and NOT a missing file. ${fallback}`;
+        }
         return cap((stdout || '').trim() || '(no matches)');
       }
 
@@ -2721,6 +2855,24 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
           // exec throw). NEVER render this as "(no matches)" — that is the exact
           // false zero this ticket filed.
           const why = (errOut.match(/\[exit:[^\]]*\]/)?.[0] || errOut.split('\n').find(Boolean) || 'no exit marker in output').slice(0, 300);
+          // FAMILY tool-failure-streak (2026-11-03): a DEAD SHELL is not a bad
+          // pattern. Eight auto-filed members carried this exact text for calls
+          // whose pattern AND scope replay GREEN in the worktree — all six
+          // recorded call shapes still exit 0/1 today, so the patterns were
+          // never the problem; the shell died (container reaped mid-run) and the
+          // old advice sent each lane off rewriting a VALID pattern, racking the
+          // 3× streak that withheld `grep` for a model round and auto-filed a
+          // model-blaming mishap.
+          // No sentinel is PROOF of an infra death, by construction: the command
+          // list ends in an UNCONDITIONAL `printf` after `;`, so if bash had run
+          // the list at all the sentinel would be there. A bad pattern never
+          // lands here either — git grep exits 128 with a `fatal:` line and the
+          // sentinel intact (the code!==0 branch below). So: name it INFRA, and
+          // anchor the result with `[INFRA]` so the derail streak
+          // (learnings-index looksLikeToolFailure) never charges it to the model.
+          if (isExecTransportFailure(errOut) || !errOut.replace(/\[exit:[^\]]*\]/g, '').trim()) {
+            return `[INFRA] Tool grep failed: the search did not complete (${why}) — the session shell died before git grep ran (container/exec unavailable), so this is NOT a "no matches" verdict and NOT a bad pattern or scope. Retry the SAME call; changing the pattern/scope will not help. If it persists, run_command is available.`;
+          }
           return `Tool grep failed: the search did not complete (${why}) — this is NOT a "no matches" verdict. Narrow the scope/path, or fall back to run_command with plain grep.`;
         }
         const code = Number(sm[1]);
@@ -2755,26 +2907,78 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
         const isRewrite = name === 'ast_rewrite';
         if (isRewrite && typeof args.rewrite !== 'string') return 'Tool ast_rewrite failed: `rewrite` must be a string (the replacement template — metavariables from the pattern such as $A are substituted; "" deletes the match).';
         const rewrite: string | undefined = isRewrite ? String(args.rewrite) : undefined;
-        const run = async (update: boolean): Promise<string> => {
+        const run = async (update: boolean): Promise<{ stdout: string; stderr: string }> => {
           const cmd = buildAstGrepCommand({ pattern, lang, glob, rewrite, update, scope }, shq);
-          const r = await ctx.execShell(cmd, ctx.worktree, AST_TIMEOUT_MS).catch((err: any) => ({ stdout: `[command failed] ${err?.message ?? err}`, stderr: '' }));
-          return String(r?.stdout ?? '');
+          // KEEP stderr (family tool-failure-streak, residual seam, ticket
+          // 0c6a47de): this used to return stdout ONLY, so the one field that
+          // says "the box died" was thrown away before anything could read it.
+          const r = await ctx.execShell(cmd, ctx.worktree, AST_TIMEOUT_MS)
+            .catch((err: any) => ({ stdout: `[command failed] ${err?.message ?? err}`, stderr: `[exec failed] ${err?.message ?? err}` }));
+          return { stdout: String(r?.stdout ?? ''), stderr: String((r as any)?.stderr ?? '') };
+        };
+        // One classifier for both ast-grep legs. The `2>&1` on the built command
+        // proves ast-grep's own diagnostics never reach exec's stderr — so a
+        // stderr carrying a transport signature means the SHELL died, not the
+        // pattern. But that argument does NOT prove the command never RAN, so the
+        // timeout leg must not claim "changing the pattern/scope will not help":
+        // a 90s ast-grep overrun is most plausibly a genuinely huge scope.
+        // After `beforeWrite` the tree may be PARTIALLY rewritten, so the apply
+        // leg must never say a bare "retry the SAME call".
+        const infraOrNull = (stderr: string, leg: 'search' | 'apply'): string | null => {
+          if (!isExecTransportFailure(stderr)) return null;
+          const why = (stderr.match(/\[exit:[^\]]*\]/)?.[0] || stderr.split('\n').find(Boolean) || 'no output from ast-grep').slice(0, 300);
+          const advice = leg === 'apply'
+            ? 'Check the files with git_diff before re-running; the rewrite may have been applied in part.'
+            : (/timed out/i.test(stderr)
+              ? 'Retry the SAME call once; if it times out again the scope is too large — narrow it with path / glob.'
+              : 'Retry the SAME call; changing the pattern/scope will not help.');
+          return `[INFRA] Tool ${name} failed: ast-grep never ran (${why}) — the session shell died before npx ast-grep could start (container/exec unavailable), so this is NOT a bad pattern and NOT a "no matches" verdict. ${advice} If it persists, run_command is available.`;
         };
         // The search — or the rewrite's DRY RUN (same command minus --update-all).
-        const out = await run(false);
+        const searched = await run(false);
+        const out = searched.stdout;
+        const searchInfra = infraOrNull(searched.stderr, 'search');
+        if (searchInfra) return searchInfra;
+        // An npm/registry outage is INFRASTRUCTURE too, not the lane's pattern:
+        // the command fetches @ast-grep/cli through npx on a cold cache, so a
+        // DNS/registry hiccup would otherwise convict the model for the box's
+        // network — the same harm, different trigger.
         const unavailable = astGrepUnavailableReason(out);
-        if (unavailable) return `Tool ${name} failed: ast-grep is unavailable in this container (${unavailable}) — fall back to grep${isRewrite ? ' + edit_file' : ''}.`;
+        if (unavailable) return `[INFRA] Tool ${name} failed: ast-grep is unavailable in this container (${unavailable}) — that is the box's npm/registry access, not your pattern. Retry the SAME call; if it persists, fall back to grep${isRewrite ? ' + edit_file' : ''}.`;
         const res = parseAstGrepOutput(out);
-        if (!res.parsed) return `Tool ${name} failed: ${out.trim().slice(-400) || 'no output from ast-grep'}`;
+        if (!res.parsed) {
+          // RESIDUAL SEAM of the tool-failure-streak family (2026-11-03, ticket
+          // 0c6a47de): the grep branch was taught to name a dead shell as INFRA
+          // (PR #2390), but THIS branch still rendered the same transport death
+          // as a bare `no output from ast-grep`, which reads as a bad pattern and
+          // is charged to the model by the derail breaker — so the lane rewrites
+          // a VALID pattern three times and auto-files the mishap that IS the
+          // ticket. Unlike grep there is no unconditional pipeline sentinel here
+          // (the ast-grep command ends `2>&1`), so empty output alone is NOT
+          // proof — and a genuinely silent ast-grep keeps the old text and still
+          // counts (handled by the infraOrNull call above, which returns null).
+          const detail = out.trim().slice(-400);
+          if (!detail) return `Tool ${name} failed: no output from ast-grep — this is NOT a "no matches" verdict (ast-grep's exit code is not an error signal). Re-run the SAME call once; if it repeats, use grep${isRewrite ? ' + edit_file' : ''} rather than rewriting the pattern.`;
+          return `Tool ${name} failed: ${detail}`;
+        }
         if (!isRewrite) return cap(renderAstMatches(res));
         if (!res.matches.length) return `(no matches — nothing rewritten)${res.notes.length ? `\n${res.notes.map((n) => `[ast-grep] ${n}`).join('\n')}` : ''}`;
         const files = uniqueFiles(res.matches);
         if (files.length > AST_REWRITE_MAX_FILES) return `Tool ast_rewrite failed: the pattern matches ${res.matches.length} places in ${files.length} files (cap ${AST_REWRITE_MAX_FILES}) — narrow the scope with path / glob and rewrite in slices.`;
         // Checkpoint every file BEFORE the apply — rewind_to_step undoes the rewrite like any edit.
         for (const f of files) await ctx.checkpoints?.beforeWrite(f, path.join(ctx.worktree, f));
-        const applied = await run(true);
+        const appliedRun = await run(true);
+        // The SAME defect one line below the search fix: without this, a dead
+        // shell during `--update-all` yields applied === '' → the "no Applied N
+        // changes line" refusal below, which is ALSO failure-shaped and so counts
+        // against the model. Three of those is the streak this work exists to
+        // prevent. Classified with apply-specific advice: beforeWrite has already
+        // run, so the tree may be PARTIALLY rewritten.
+        const applyInfra = infraOrNull(appliedRun.stderr, 'apply');
+        if (applyInfra) return applyInfra;
+        const applied = appliedRun.stdout;
         const unavailableLate = astGrepUnavailableReason(applied);
-        if (unavailableLate) return `Tool ast_rewrite failed: ast-grep became unavailable between the dry run and the apply (${unavailableLate}) — nothing was changed; re-run.`;
+        if (unavailableLate) return `[INFRA] Tool ast_rewrite failed: ast-grep became unavailable between the dry run and the apply (${unavailableLate}) — that is the box's npm/registry access, not your pattern; nothing was changed, so re-run.`;
         const n = parseAppliedChanges(applied);
         if (n === null) return `Tool ast_rewrite failed: the apply step reported no "Applied N changes" line — check the files with git_diff before trusting the tree:\n${applied.trim().slice(-400)}`;
         const hooks = await loadRepoHooks(ctx.worktree);
@@ -3228,7 +3432,7 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
         // PRODUCTION repo. Hard fail — returned to the model as the tool result
         // (no exception, no silent prod read). This is the write-side twin of
         // the resolver guard: even with a connected GitHub token that CAN write
-        // canada-quant/digby, the merge is refused here.
+        // example-org/crossmodel, the merge is refused here.
         if (!repoTargetAllowed(slug)) {
           return isolationRefusal(slug);
         }
@@ -3262,13 +3466,11 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
         // one wait per PR head (attempt record `waitedHeadSha`), one per call,
         // ≤ MERGE_WAIT_MAX_CONCURRENT per process, and the wait leaves the run
         // deadline through ctx.onShieldedWait (the awaitApproval idiom). Every
-        // error inside the wait path falls through to today's bounce. Kill
-        // switch SELF_MERGE_WAIT_ONCE_DISABLED=1.
+        // error inside the wait path falls through to today's bounce.
         let waitTrail = '';
         let waitMeta: Record<string, unknown> = {};
         const waitOnce = async (kind: import('./self-merge.service').MergeWaitKind, headSha: string | undefined): Promise<boolean> => {
           try {
-            if (sm.selfMergeWaitOnceDisabled()) return false;
             if (waitMeta.waitKind) return false; // one wait per tool call
             if (headSha && prev.waitedHeadSha === headSha) return false; // one wait per PR head
             if (!sm.tryAcquireMergeWaitSlot()) return false; // worker-slot cap — bounce as today
@@ -3584,13 +3786,10 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
                 // A5 (2026-09-27): instead of refusing and sending the lane
                 // through verify → retry (three rounds), run the chain here
                 // and open on green. A red chain still refuses, with the
-                // failing stage's tail. PR_GATE_AUTO_VERIFY_DISABLED=1
-                // restores the plain refusal.
-                if (prGateAutoVerifyDisabled()) {
-                  return needsVerify === 'stale'
-                    ? `PR blocked: the verify pass is STALE — it was recorded ${vs?.sha ? `at commit ${String(vs.sha).slice(0, 12)}` : 'against an earlier workspace state'} and the workspace content has changed since (new commits or edits). Run verify again on the CURRENT state, then open the PR.`
-                    : `PR blocked: the verify chain (${chain.map(c => c.key).join(' → ')}) has not passed this session${vs?.failedStage ? ` (last failure: ${vs.failedStage})` : ''}. Run verify and get it green, and have the reviewer sign off, before opening the PR.`;
-                }
+                // failing stage's tail. (The release switch that restored the
+                // plain refusal was retired by RSW-1 — the auto-verify arm is
+                // unconditional; a lane that wants the old refusal just runs
+                // `verify` itself first.)
                 const why = needsVerify === 'stale'
                   ? `the recorded verify pass was STALE (workspace content changed since${vs?.sha ? ` commit ${String(vs.sha).slice(0, 12)}` : ''})`
                   : `the verify chain had not passed this session${vs?.failedStage ? ` (last failure: ${vs.failedStage})` : ''}`;
@@ -4029,12 +4228,48 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
             : '';
         if (!results.length) return `No stored memory matched${noProjectNote} (nothing offloaded/indexed yet, or no match). Try different keywords or a different scope/source; to gather NEW material, delegate an explorer/web_researcher or read the files directly.`;
         const memAnswer = results.map((r, i) => `[${i + 1}] (${r.source}${r.ref ? ` · ${r.ref}` : ''})\n${cap(r.content)}`).join('\n\n') + noProjectNote;
+        // ── SAA-1.4 PHASE 1 (todo 2ef2b254): the `search_memory` chain surface ──
+        // A memory hit carries a `ref` but not the ids of the objects BEHIND it, so
+        // walking from a finding to its authoring chat is another SEARCH. Hops here
+        // are deliberately the cheap, TRUTHFUL ones: this chat itself (a real id the
+        // caller already has) plus up to three receipt refs the results actually
+        // returned. Nothing is invented — a ref that is not a plain id shape
+        // (`[A-Za-z0-9_-]+`) is skipped rather than mangled into a hop, because a
+        // hop that cannot be pasted into a read tool is worse than no hop. When
+        // there is no session id and no safe ref, `hops` is empty and the plan is
+        // an empty observe plan: `applied:false` ⇒ renderRecallChain returns
+        // `memAnswer` BY REFERENCE, so a default box is byte-identical to before.
+        let memAnswerOut = memAnswer;
+        try {
+          const recall = await import('../platform/chain-of-recall');
+          const hops: Array<{ kind: 'run' | 'goal' | 'todo' | 'receipt' | 'chat' | 'schedule'; id: string }> = [];
+          if (ctx.sessionId) hops.push({ kind: 'chat', id: String(ctx.sessionId) });
+          for (const r of results.slice(0, 3)) {
+            const ref = typeof r?.ref === 'string' ? r.ref.trim() : '';
+            if (ref && /^[A-Za-z0-9_-]+$/.test(ref)) hops.push({ kind: 'receipt', id: ref });
+          }
+          const chain = recall.planRecallChain({ surface: 'search_memory', hops });
+          memAnswerOut = recall.renderRecallChain(memAnswer, chain);
+          // Telemetry last, and only when there is something to say (the leaf
+          // returns null when the switch is off or the chain is empty, so an idle
+          // recall writes no row). `recordLoopMetric` is already imported statically
+          // at the top of this module and is fire-and-forget / fail-open itself.
+          const rememberMeta = recall.recallChainMetricMeta(chain, { tool: 'search_memory' });
+          if (rememberMeta) {
+            try {
+              recordLoopMetric({ kind: LOOP_METRIC_KINDS.CHAIN_OF_RECALL_OBSERVE, sessionId: ctx.sessionId, value: 1, meta: rememberMeta });
+            } catch { /* telemetry never blocks a recall */ }
+          }
+        } catch { /* chain-of-recall: never blocks a recall */ }
         // Review 2026-10-23: a supervisor's recall of owner words follows the
         // chat-read rule (get_chat_messages / get_run_receipts, D4) — a MACHINE
         // wake reads it redacted, an owner turn reads its own words verbatim.
+        // SAA-1.4: redaction runs on the RENDERED text (memAnswerOut), i.e. AFTER
+        // the `next:` line is appended — a hop id must go through the same secret
+        // scan as the prose it rides, never around it.
         return memPlan.supervisor
-          ? redactChatReadSecrets(memAnswer, { machineRun: ctx.machineTriggered === true || !ctx.userTurnAt }).text
-          : memAnswer;
+          ? redactChatReadSecrets(memAnswerOut, { machineRun: ctx.machineTriggered === true || !ctx.userTurnAt }).text
+          : memAnswerOut;
       }
 
       case 'search_code_semantic': {
@@ -4188,6 +4423,33 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
         }
         if (result.passed) return `Verify PASSED: ${summary}`;
         const failed = result.stages[result.stages.length - 1];
+        // FAMILY tool-failure-streak (2026-11-03): the SAME infra/model confusion
+        // as the grep branch, one seam over. verify.service.ts already CLASSIFIES
+        // a diagnostics-free / wrapper-killed stage as `environmental` or
+        // `terminated` and its own outputTail literally says "infra, NOT a code
+        // failure" / "NOT a test verdict" — yet the tool rendered it as a bare
+        // `Verify FAILED at …`, so it fed the derail streak exactly like a real
+        // code red (member 744b2798: two typecheck "reds" whose only diagnostic
+        // was "container … is not running"). Anchor it `[INFRA]` so the breaker
+        // (looksLikeToolFailure) never counts infrastructure, and tell the lane
+        // the truth: retry, do not go "fix" byte-identical code.
+        if (failed && (failed.environmental || failed.terminated)) {
+          // TICKET 91120212: a STAGE TIMEOUT must be answered BEFORE this
+          // infra branch. A timeout kills the wrapper before it echoes
+          // __DIGBY_EXIT__, so `terminated` is true and this branch used to fire
+          // first — telling the lane "the stage did not produce a code verdict.
+          // Do NOT edit code, tests or verify config" even though verify.service
+          // had already classified it stageTimeout:true and REFUSED to call it
+          // environmental (the T2e split). That text forbade the one sanctioned
+          // remedy (`loop.perCommandTimeoutMs`) and the lane, obeying it, burned
+          // four identical kills on a 329 s suite against a 300 s cap. A timeout
+          // is a cap the lane may raise, not a dead box to retry.
+          if (failed.stageTimeout) {
+            return `Verify FAILED at "${result.failedStage}": ${summary}\n${stageTimeoutAdvice(killedAtMsFromTail(failed.outputTail))}\n--- ${failed.key} output tail ---\n${failed.outputTail}`;
+          }
+          const cause = failed.environmental ? 'environmental death (SIGKILL/OOM or zero diagnostics)' : 'wrapper death before an exit marker (truncated stream, NOT a test verdict)';
+          return `[INFRA] Verify FAILED at "${result.failedStage}": ${summary}\n${cause} — the stage did not produce a code verdict. Do NOT edit code, tests or verify config in response to this; the stage already took its in-chain retry. Re-run verify (the box may be under memory pressure) or proceed with other pending work and re-run before finishing.\n--- ${failed.key} output tail ---\n${failed.outputTail}`;
+        }
         return `Verify FAILED at "${result.failedStage}": ${summary}\n--- ${failed.key} output tail ---\n${failed.outputTail}`;
       }
 

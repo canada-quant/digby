@@ -179,13 +179,13 @@ describe('box health', () => {
       const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'digby-bk-'));
       try {
         expect(await readBackupState(dir, NOW)).toEqual({ count: 0, ageH: null });
-        await fsp.writeFile(path.join(dir, 'digby_db-20260916-083423.dump'), 'x');
-        await fsp.writeFile(path.join(dir, 'digby_db-20260918-083325.dump'), 'y');
+        await fsp.writeFile(path.join(dir, 'admin_db-20260916-083423.dump'), 'x');
+        await fsp.writeFile(path.join(dir, 'admin_db-20260918-083325.dump'), 'y');
         await fsp.writeFile(path.join(dir, 'env-overrides-20260918-083325.env'), 'z'); // not a dump
         const old = new Date(NOW.getTime() - 48 * 3_600_000);
         const fresh = new Date(NOW.getTime() - 11.2 * 3_600_000);
-        await fsp.utimes(path.join(dir, 'digby_db-20260916-083423.dump'), old, old);
-        await fsp.utimes(path.join(dir, 'digby_db-20260918-083325.dump'), fresh, fresh);
+        await fsp.utimes(path.join(dir, 'admin_db-20260916-083423.dump'), old, old);
+        await fsp.utimes(path.join(dir, 'admin_db-20260918-083325.dump'), fresh, fresh);
         const st = await readBackupState(dir, NOW);
         expect(st).toMatchObject({ count: 2, ageH: 11.2 });
         expect(st!.newestAt).toBe(fresh.toISOString());
@@ -205,9 +205,9 @@ describe('box health', () => {
       const dir = await fsp.mkdtemp(path.join(os.tmpdir(), 'digby-bk-status-'));
       try {
         // no marker (pre-2026-09-25 script) → the age rule alone, exactly as before
-        await fsp.writeFile(path.join(dir, 'digby_db-20260918-133000.dump'), 'x');
+        await fsp.writeFile(path.join(dir, 'admin_db-20260918-133000.dump'), 'x');
         const dumpAt = new Date(NOW.getTime() - 6.5 * 3_600_000);
-        await fsp.utimes(path.join(dir, 'digby_db-20260918-133000.dump'), dumpAt, dumpAt);
+        await fsp.utimes(path.join(dir, 'admin_db-20260918-133000.dump'), dumpAt, dumpAt);
         expect(await readBackupState(dir, NOW)).toMatchObject({ count: 1, ageH: 6.5 });
         // the 2026-09-25 08:31Z shape: yesterday's dump still young, today's run FAILED
         await fsp.writeFile(path.join(dir, 'backup-status.json'), '{"status":"failed","at":"2026-09-18T14:00:00Z","error":"no dump source succeeded"}');
@@ -219,8 +219,8 @@ describe('box health', () => {
         expect(renderBackupAlert({ kind: 'backup', severity: 'failed', host: 'box-a', statusError: 'no dump source succeeded' }, NOW)).toContain('[INFRA ALERT — backup FAILED]');
         // a dump NEWER than the failed marker supersedes it (the manual re-run landed)
         const newer = new Date(NOW.getTime() - 1 * 3_600_000);
-        await fsp.writeFile(path.join(dir, 'digby_db-20260918-190000.dump'), 'y');
-        await fsp.utimes(path.join(dir, 'digby_db-20260918-190000.dump'), newer, newer);
+        await fsp.writeFile(path.join(dir, 'admin_db-20260918-190000.dump'), 'y');
+        await fsp.utimes(path.join(dir, 'admin_db-20260918-190000.dump'), newer, newer);
         const st2 = await readBackupState(dir, NOW);
         expect(st2).toMatchObject({ status: 'failed' });
         expect(classifyBackupAge([{ ...rowA, backup: st2 } as any], NOW)).toBeNull();

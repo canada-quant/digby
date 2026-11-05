@@ -124,7 +124,7 @@ describe("search_code_semantic on an ungrouped chat (projectId 'chat')", () => {
     mockSupervisorFlag.mockResolvedValue(true);
     mockFindMany.mockResolvedValue([
       { id: 'proj-user-app', name: 'app', repoUrl: 'https://github.com/someone/app' },
-      { id: 'proj-platform', name: 'crossmodel', repoUrl: 'https://github.com/canada-quant/digby.git' },
+      { id: 'proj-platform', name: 'crossmodel', repoUrl: 'https://github.com/example-org/crossmodel.git' },
     ]);
     mockReadState.mockImplementation(async (id: string) => (id === 'proj-platform'
       ? { files: { 'frontend/app/crossmodel/GhostToggle.tsx': 'h' }, lastSyncAt: new Date(Date.now() - 5.5 * 60_000).toISOString(), indexedSha: SHA, branch: 'main' }

@@ -138,7 +138,7 @@ export interface EndpointModel {
   usdPerMTokOut?: number;
   /** Laya follow-up (2026-09-26): THIS model on an OpenAI-compatible endpoint is a
    *  TYPED-DECISION model served through /chat/completions (LiteLLM fronting Laya
-   *  — llm.example.com `agx-laya` on the `cql-litellm` endpoint). The decision gate
+   *  — llm.cql.ca `agx-laya` on the `cql-litellm` endpoint). The decision gate
    *  then calls it with the systemone_chat transport (questions in the body, the
    *  JSON answers envelope in the message content) instead of the logprob
    *  readout, which that proxy refuses. Never flag a chat model. */

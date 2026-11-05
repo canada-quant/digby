@@ -2,7 +2,7 @@
  * Replay pin — tickets a152e770 + 47d006d0 (mishaps, auto-filed at breaker
  * trips 2026-09-21T07:21:10Z / 07:26:28Z; session
  * ddd26be0-723d-4745-8bb5-be3ff4752d52, run 0e81392f-d04d-4dfb-b91f-fb2a5431c8b9
- * — the tt-rd "QB2 Qwen3.8 Speed Mission Successor" lane's firing-105 derail.
+ * — the tt-rd "node-a Qwen3.8 Speed Mission Successor" lane's firing-105 derail.
  * Harness end-note 07:20:23Z: "repeated wrong-tool derailment (3 episodes;
  * intended tool appears to be run_command)"; the derail-rescue continuation
  * named "looping tool(s): update_feedback, update_schedule" and confirmed the

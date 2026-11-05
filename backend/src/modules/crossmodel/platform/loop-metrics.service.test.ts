@@ -281,6 +281,14 @@ describe('LOOP_METRIC_KINDS', () => {
       // Telemetry only since the 2026-09-11 gate flip (no action rows, no
       // kill-switch — CONTAINMENT_LADDER_DISABLED/ACTIONS are retired).
       CONTAINMENT_LADDER: 'containment_ladder',
+      // ticket c25f8b7e (2026-11-03): a session's container was REPLACED under a
+      // live lane — the docker id resolved for the session differs from the one
+      // on record (a deploy/restart wave, a host reprovision, or an operator
+      // recycle). Everything the lane had running INSIDE the old container is
+      // gone. meta { container, previousSeenAt, replacedAt }. A burst of these in
+      // one minute is a wave that killed N lanes' background workers; a lone row
+      // is one session reprovisioned.
+      CONTAINER_REPLACED: 'container_replaced',
       // Self-merge follow-on (owner 2026-09-09): one row per merge_pull_request
       // gate refusal, meta { gate, cause, repo, pullNumber, cycles }.
       MERGE_GATE_FAILURE: 'merge_gate_failure',
@@ -439,6 +447,13 @@ describe('LOOP_METRIC_KINDS', () => {
       AUTH_LOGIN_FAILED: 'auth_login_failed',
       AUTH_PASSWORD_CHANGED: 'auth_password_changed', // change-password (2026-10-12)
       HOOK_SIBLING_DRAIN: 'hook_sibling_drain',
+      // SAA-1.1 Phase 1 (todo eb328629): the deterministic trigger-admission
+      // policy's observe row — one per batch it had a NON-default opinion about.
+      HOOK_SOURCE_POLICY_OBSERVE: 'hook_source_policy_observe',
+      // SAA-1.2 Phase 1 (todo c0b8b8cf): the thread pass-through observe row —
+      // one per delivery group whose wildcard supervisor wake had a DIFFERENT
+      // owning lane to name. Observe-only: no wake is ever re-targeted.
+      HOOK_THREAD_PASSTHROUGH_OBSERVE: 'hook_thread_passthrough_observe',
       WAKE_QUEUE_RIDER: 'wake_queue_rider',
       // Firing 11 (2026-09-23): one row per Google WRITE tool call — the
       // 32d0ebc8 owner-steered ok/reason distribution.
@@ -507,6 +522,12 @@ describe('LOOP_METRIC_KINDS', () => {
       // class) — meta { from, to, userId }.
       TODO_CREATE_PREFIX_RESOLVED: 'todo_create_prefix_resolved',
       TODO_ASSIGNEE_PREFIX_RESOLVED: 'todo_assignee_prefix_resolved',
+      // TD-1 (Cluster 5, 2026-11-03): one row per todo_create that arrived with
+      // NO assigneeChatId, recording the decision the assignee policy made
+      // (auto_assign / refuse / unassigned, plus `wouldBe` in observe-only mode).
+      TODO_CREATE_ASSIGNEE_POLICY: 'todo_create_assignee_policy',
+      // TD-1 audit pass: one row per `in_progress` todo found with no assignee.
+      TODO_ASSIGNEE_AUDIT: 'todo_assignee_audit',
       GOAL_TODO_NEAR_MATCH_RESOLVED: 'goal_todo_near_match_resolved',
       // 99ad288e + 636b622b (2026-09-28): a full-shape id with an invented
       // suffix resolved to the unique visible same-prefix row — meta
@@ -618,6 +639,7 @@ describe('LOOP_METRIC_KINDS', () => {
       OWNER_QUESTION_SECRET_DELIVERED: 'owner_question_secret_delivered',
       // 2026-10-16 todo fea78360 (monitor lesson 6): replacement card that does not name what it replaces.
       OWNER_CARD_CHAIN_UNLINKED: 'owner_card_chain_unlinked',
+      CONSOLE_ASK_SPECLESS: 'console_ask_specless',
       // Ticket be06c812 (log-signal family lane, 2026-10-18, PR #1709): a closed
       // adjudicated row absorbed a same-type standing-class sighting in the
       // reopen pass's short-circuit; and the bar-breach counterpart (the
@@ -657,6 +679,17 @@ describe('LOOP_METRIC_KINDS', () => {
       // inline). Both count-only; neither can change what an agent is shown in Phase 0.
       INLINE_SPILL_OBSERVE: 'inline_spill_observe',
       CHAIN_OF_RECALL_OBSERVE: 'chain_of_recall_observe',
+      // SAA-1.6 PHASE 3a/3b (2026-11-04, todo e49dfd07): the async-tool readout — which
+      // dispatched calls are eligible to be handed off. PHASE 3b changed the RULE
+      // (a tool CLASS measured against an ELAPSED 60 s threshold, not a declared
+      // duration) and widened `applied` to a real boolean, so this row is no longer
+      // "shadow only" — but in the default observe mode it still records without
+      // changing any timing, and the kill switch stops it entirely.
+      ASYNC_TOOL_CALLS_OBSERVE: 'async_tool_calls_observe',
+      // SAA-1.6 PHASE 3b (2026-11-04, todo e49dfd07): the lifecycle of one handed-off
+      // call — `threshold_crossed` / `delivered` / `orphaned`. The `delivered` phase is
+      // the evidence that a deferred result actually reached the model at a step boundary.
+      ASYNC_TOOL_CALLS_DELIVER: 'async_tool_calls_deliver',
     });
   });
 });

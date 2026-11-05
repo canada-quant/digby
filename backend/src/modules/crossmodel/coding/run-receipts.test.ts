@@ -4,6 +4,9 @@
  * Leaf module, no mocks needed.
  */
 import { extractReceipt, receiptHeads, receiptMatchesClaim, RECEIPT_HEAD_CHARS, RECEIPT_TOOLS, sha256, CONTROL_COORD_RECEIPT_TOOLS } from './run-receipts';
+import { answerKeyBlockedMessage } from './answer-key-guard';
+import * as fs from 'fs';
+import * as path from 'path';
 
 describe('receiptHeads (E8, 2026-09-25) — scrubbed ≤200-char args/result heads for the self-audit gate', () => {
   it('collapses whitespace, caps at RECEIPT_HEAD_CHARS with an ellipsis, and tolerates non-JSON args', () => {
@@ -192,6 +195,21 @@ describe('extractReceipt — coding-side tools', () => {
     expect(extractReceipt('run_command', {}, '[command OK]\ntotal 0', NOW)).toMatchObject({ ok: true });
   });
 
+  it('CT-5 (todo 76fd0cce): run_command carries the verdict into ids — exitCode + commandHash — so a TYPED probe/benchmark claim can name its command', () => {
+    // the OK banner and the appended exit tail, both shapes tools.ts emits
+    expect(extractReceipt('run_command', { command: 'git rev-parse HEAD' }, '[command OK]\n7d38730f6c', NOW)).toMatchObject({ ok: true, ids: { commandHash: expect.any(String) } });
+    expect(extractReceipt('run_command', { command: 'x' }, 'out\n[exit: 0]', NOW)).toMatchObject({ ok: true, ids: { exitCode: 0 } });
+    expect(extractReceipt('run_command', { command: 'x' }, '[command FAILED — exit 3]\nboom', NOW)).toMatchObject({ ok: false, ids: { exitCode: 3 } });
+    // the same command text hashes the same — the ref a lane cites is stable
+    const a = extractReceipt('run_command', { command: 'git rev-parse HEAD' }, '[command OK]', NOW)!;
+    const b = extractReceipt('run_command', { command: 'git rev-parse HEAD' }, '[command OK]', NOW)!;
+    expect((a.ids as any).commandHash).toBe((b.ids as any).commandHash);
+    const c = extractReceipt('run_command', { command: 'git status' }, '[command OK]', NOW)!;
+    expect((a.ids as any).commandHash).not.toBe((c.ids as any).commandHash);
+    // no command args ⇒ no hash invented
+    expect((extractReceipt('run_command', {}, '[command OK]', NOW)!.ids as any).commandHash).toBeUndefined();
+  });
+
   it('run_command: normal return → ok:true (even a non-zero exit EXECUTED); the hard-timeout abort → ok:false', () => {
     expect(extractReceipt('run_command', { command: 'ls' }, 'total 0\n', NOW)).toMatchObject({ ok: true, ids: {} });
     const abort = extractReceipt('run_command', {}, 'Tool "run_command" exceeded 900s and was aborted. Do not retry it; proceed with what you have.', NOW);
@@ -296,14 +314,9 @@ describe('receiptMatchesClaim', () => {
     expect(receiptMatchesClaim(claim, [pushWithSha('84fe3ae0cafebabe')])).toBe(true); // cited prefix of actual, both ≥8
     // Finding A1 (2026-09-27): a git_commit receipt proves the WORKTREE has the
     // sha, never origin — it no longer id-matches a push claim (canlaw 710
-    // commits / 1 push passed this line). Kill switch restores the old match.
+    // commits / 1 push passed this line). RSW-1 2026-11-03: the kill switch is
+    // gone — the split is unconditional.
     expect(receiptMatchesClaim(claim, [commitReceipt('84fe3ae0cafebabe')])).toBe(false);
-    process.env.COMMIT_LOCAL_CLAIM_GUARD_DISABLED = '1';
-    try {
-      expect(receiptMatchesClaim(claim, [commitReceipt('84fe3ae0cafebabe')])).toBe(true);
-    } finally {
-      delete process.env.COMMIT_LOCAL_CLAIM_GUARD_DISABLED;
-    }
     expect(receiptMatchesClaim(claim, [pushWithSha('84fe3ae0cafebabe', false)])).toBe(false); // failed push: no id-match, no ok external
     expect(receiptMatchesClaim({ kind: 'commit_pushed', sha: 'deadbeef99', text: '' }, [commitReceipt('84fe3ae0', false)])).toBe(false);
   });
@@ -457,11 +470,11 @@ describe('extractReceipt — web-probe tools (ticket 66007a6e)', () => {
   it('ok:true — the DOWN shape "Failed to fetch <url> — the page may be unavailable…" (the fetch was really attempted; the DOWN observation is what an uptime watchdog must stamp)', () => {
     const down = extractReceipt(
       'scrape_as_markdown',
-      { url: 'https://example.com/api/health' },
-      'Failed to fetch https://example.com/api/health — the page may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don\'t hammer the same URL repeatedly. If it keeps failing, answer from the search results you already have.',
+      { url: 'https://cql.ca/api/health' },
+      'Failed to fetch https://cql.ca/api/health — the page may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don\'t hammer the same URL repeatedly. If it keeps failing, answer from the search results you already have.',
       NOW,
     );
-    expect(down).toMatchObject({ tool: 'scrape_as_markdown', ok: true, ids: { url: 'https://example.com/api/health' } });
+    expect(down).toMatchObject({ tool: 'scrape_as_markdown', ok: true, ids: { url: 'https://cql.ca/api/health' } });
   });
 
   it('ok:true — "No search results found. Try a different query." (executed, empty)', () => {
@@ -531,5 +544,57 @@ describe('extractReceipt — web-probe tools (ticket 66007a6e)', () => {
   it('RECEIPT_TOOLS non-membership unchanged — a non-receipt, non-web tool still returns null', () => {
     expect(extractReceipt('fetch_image', {}, 'image data', NOW)).toBeNull();
     expect(extractReceipt('read_file', {}, 'x', NOW)).toBeNull();
+  });
+
+  // ── WP-1 (backlog 2026-11-03, todo 52050bfb; review 66007a6e advisory A1) ──
+  // youtube_pipe's infrastructure-failure heads used to ride the ok:true
+  // default, so a youtube-only probe lane whose search backend was down could
+  // stamp observe_resource on a call that retrieved nothing.
+  it('WP-1 ok:false — youtube_pipe search-backend heads (both) + the no-transcript head', () => {
+    // verbatim heads from youtube-pipe.ts:431 / :438 / :458
+    const errBody = 'youtube_pipe found no videos: the search backend answered with an error/debug body instead of results (x-brd-error-code=unexpected_q, HTTP 502) — the search provider is failing; retry shortly, use search_engine to confirm, or pass known video urls directly.';
+    const serpErr = 'youtube_pipe found no videos: the search backend failed (SERP error, x-brd-error-code=rate_limited) — the search provider answered with an error instead of results; retry shortly, use search_engine to confirm, or pass known video urls directly.';
+    const noTranscript = 'youtube_pipe could not get a transcript for any of the 3 video(s) (no captions, the STT fallback was unavailable or failed, and the BrightData dataset fallback returned no transcript).';
+    for (const text of [errBody, serpErr, noTranscript]) {
+      const r = extractReceipt('youtube_pipe', { query: 'polk county fla' }, text, NOW);
+      expect(r).toMatchObject({ tool: 'youtube_pipe', ok: false, ids: {} });
+    }
+    // A REAL transcript reshape still mints ok:true (the marker must not over-reach).
+    expect(extractReceipt('youtube_pipe', { query: 'q' }, 'Transcript: hello world\n\nSOURCES:\n- a (https://youtu.be/x)', NOW))
+      .toMatchObject({ ok: true });
+  });
+
+  it('WP-1 ok:true — the BARE youtube_pipe zero-target head (resolution path ran, nothing asked)', () => {
+    const r = extractReceipt('youtube_pipe', {}, 'youtube_pipe found no videos (no YouTube urls given and search returned none).', NOW);
+    expect(r).toMatchObject({ ok: true, ids: {} });
+  });
+
+  it('WP-1 anchor discipline — every marker matches text its producing site can actually emit', () => {
+    // The heads are read from the PRODUCING SOURCE, not retyped: a marker that
+    // drifts from youtube-pipe.ts fails here rather than silently in prod.
+    const src = fs.readFileSync(path.join(__dirname, 'youtube-pipe.ts'), 'utf8');
+    expect(src).toContain('youtube_pipe found no videos: the search backend answered with an error/debug body instead of results');
+    expect(src).toContain('youtube_pipe found no videos: the search backend failed (SERP error');
+    expect(src).toContain('youtube_pipe could not get a transcript for any of the ${targets.length} video(s)');
+    expect(src).toContain('youtube_pipe found no videos (no YouTube urls given and search returned none).');
+  });
+
+  // ── WP-2 (advisory A2) — the answer-key guard's PRE-phase refusal ──────────
+  it('WP-2 answer-key guard: pre-phase refusal mints ok:false, post-phase withhold stays ok:true', () => {
+    // Built by the REAL producer (answer-key-guard is a dependency-free leaf).
+    const pre = answerKeyBlockedMessage({ tool: 'scrape_as_markdown', label: 'terminal-bench', phase: 'pre', target: 'https://raw.githubusercontent.com/harbor-framework/x' } as any);
+    const post = answerKeyBlockedMessage({ tool: 'scrape_as_markdown', label: 'terminal-bench', phase: 'post', target: 'https://raw.githubusercontent.com/harbor-framework/x' } as any);
+    expect(pre).toMatch(/^\[ANSWER-KEY GUARD\] scrape_as_markdown refused before any network access/);
+    expect(post).toMatch(/^\[ANSWER-KEY GUARD\] scrape_as_markdown output withheld/);
+    // pre = refused ⇒ nothing fetched ⇒ ok:false (never a stampable observation)
+    expect(extractReceipt('scrape_as_markdown', { url: 'https://raw.githubusercontent.com/harbor-framework/x' }, pre, NOW)).toMatchObject({ ok: false, ids: {} });
+    // post = the fetch DID run; only its output is withheld ⇒ ok:true
+    expect(extractReceipt('scrape_as_markdown', { url: 'https://raw.githubusercontent.com/harbor-framework/x' }, post, NOW)).toMatchObject({ ok: true });
+  });
+
+  it('WP-2 anchor discipline — the refusal head is the one answerKeyBlockedMessage emits', () => {
+    const src = fs.readFileSync(path.join(__dirname, 'answer-key-guard.ts'), 'utf8');
+    expect(src).toContain('refused before any network access — nothing was fetched.');
+    expect(src).toContain('output withheld');
   });
 });

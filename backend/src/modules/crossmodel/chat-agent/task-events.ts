@@ -26,8 +26,12 @@
  * (the persisted card is the durable copy), persist swallows every error and
  * answers null — a task card must never fail the run it describes.
  *
- * Kill switch: TASK_CARD_DISABLED=1 — no event is emitted and no part is
- * written; every caller keeps working (both helpers return false / null).
+ * RSW-1 delete-with-ledger 2026-11-02 (goal 393f731e, cluster 35): the
+ * TASK_CARD_DISABLED kill switch is GONE — every card is always on. Its OFF
+ * half was never reachable by any build (NF_INERT: 0 hits across every
+ * docker-compose file and both Dockerfiles, no bracket access, no `on(k)`
+ * closure), so the enabled branch was the only one that ever shipped and
+ * inlining it leaves production byte-identical.
  */
 import prisma from '../../../config/database';
 import logger from '../../../utils/logger';
@@ -83,15 +87,6 @@ const ARTIFACT_KINDS: readonly TaskArtifactKind[] = ['file', 'pr', 'canvas'];
 
 /** Rows scanned (newest first) for the assistant row that already carries a task card. */
 const TASK_ROW_SCAN = 20;
-
-export function taskCardDisabled(): boolean {
-  return process.env.TASK_CARD_DISABLED === '1';
-}
-
-/** The spawn-time SESSION card — governed by the task-card kill switch alone. */
-export function sessionTaskCardDisabled(): boolean {
-  return taskCardDisabled();
-}
 
 // ── Hand-off polish (2026-09-28, audit CT-2 / E17) ──────────────────────────
 // The spawn turn always ends after a successful start_coding_session and the
@@ -256,11 +251,10 @@ export function parseTaskEvent(raw: unknown): TaskEvent | null {
  * live-run key (either registration form — a plain chat run or a coding run)
  * and pushes through the run registry, so the attach replay, the Redis mirror
  * and the durable log carry the frame like any other. Returns false (never a
- * throw) when the switch is off, the payload is malformed, or no run is live
- * for the chat — the persisted card is the durable copy.
+ * throw) when the payload is malformed or no run is live for the chat — the
+ * persisted card is the durable copy.
  */
 export function emitTaskEvent(chatId: string, payload: TaskEvent): boolean {
-  if (taskCardDisabled()) return false;
   const parsed = parseTaskEvent({ ...payload, chatId: payload?.chatId || chatId });
   if (!parsed) return false;
   try {
@@ -308,13 +302,12 @@ function metadataTask(payload: TaskEvent): Record<string, unknown> {
  * message since. The caller passes the anchor row id on the first persist.
  * A row with no parts is seeded with its content as the one text part so the
  * transcript keeps rendering the answer beside the card. Returns the row id
- * it wrote, or null (switch off, malformed, no row, DB failure). Never throws.
+ * it wrote, or null (malformed, no row, DB failure). Never throws.
  */
 export async function persistTaskCard(chatId: string, payload: TaskEvent, opts: { messageId?: string; preferCarrier?: boolean } = {}): Promise<string | null> {
   // build 2026-10-08 D-1: every card state passes here — the delegation ledger mirrors it (SHADOW; fire-and-forget,
-  // before the card switch: the lifecycle happened whether or not a card renders).
+  // before the card write: the lifecycle happened whether or not a card renders).
   noteTaskCardLifecycle(chatId, payload);
-  if (taskCardDisabled()) return null;
   const parsed = parseTaskEvent({ ...payload, chatId: payload?.chatId || chatId });
   if (!parsed) return null;
   try {

@@ -7,7 +7,7 @@
  *   turn on glm-5.3
  *
  * ADJUDICATION (lane 1f46af47, 2026-10-25): DESIGNED OBSERVABILITY, not a
- * defect. The llm.example.com gateway (CF tunnel → LiteLLM) flapped in short
+ * defect. The llm.cql.ca gateway (CF tunnel → LiteLLM) flapped in short
  * bursts (502s ~13:37, ~17:01; 524s ~14:46–15:01 — Cloudflare's ~100 s
  * wall). Every resilience layer did its job on every row:
  *   • the lead-seat fallback moved each rejected turn to the built-in
@@ -121,9 +121,9 @@ jest.mock('./datetime-context', () => ({
 jest.mock('./coding-retrieval.service', () => ({ __esModule: true, storeFindings: jest.fn(async () => 0) }));
 jest.mock('./verify-state', () => ({ __esModule: true, recordVerify: jest.fn(async () => {}) }));
 
-// The incident gateway: llm.example.com (label 'llm-cql' — coding-model.ts appends
+// The incident gateway: llm.cql.ca (label 'llm-cql' — coding-model.ts appends
 // ' (custom endpoint)', so the warn replays the prod fingerprint verbatim).
-const GW_URL = 'https://llm.example.com/v1/chat/completions';
+const GW_URL = 'https://llm.cql.ca/v1/chat/completions';
 const REGISTRY: Record<string, any> = {
   'llm-cql:api-optimize-zai-glm-5.3': {
     url: GW_URL, apiKey: 'sk-cql', model: 'api-optimize-zai-glm-5.3', label: 'llm-cql',
@@ -235,7 +235,7 @@ afterEach(() => {
   __resetProviderCooldownForTests();
 });
 
-describe('log-signal 1ece90ad — llm.example.com gateway 502 flap (2026-10-24): designed resilience, characterized', () => {
+describe('log-signal 1ece90ad — llm.cql.ca gateway 502 flap (2026-10-24): designed resilience, characterized', () => {
   it('REPLAYS the prod row verbatim: the custom-endpoint lead seat 502s, the turn moves to the built-in glm-5.3, the run SURVIVES, and the warn IS the fingerprint', async () => {
     rejectOnceThenFinal();
     const result = await runCodingAgent(makeInput('llm-cql:api-optimize-zai-glm-5.3'));
@@ -328,7 +328,7 @@ describe('log-signal 1ece90ad — llm.example.com gateway 502 flap (2026-10-24):
     expect(result.finalText).toContain('Done — the work is finished.');
     expect(mockRunModelTurn).toHaveBeenCalledTimes(1);
     expect(mockRunModelTurn.mock.calls[0][0].url).toContain('api.z.ai');
-    expect(mockRunModelTurn.mock.calls.every((c: any[]) => !String(c[0]?.url ?? '').includes('llm.example.com'))).toBe(true);
+    expect(mockRunModelTurn.mock.calls.every((c: any[]) => !String(c[0]?.url ?? '').includes('llm.cql.ca'))).toBe(true);
     // httpStatus 429 here is the cooldown CLASS the run-start pre-seat stamps
     // (agent.ts run-start lane) — the 502s that tripped it are in the warn above.
     expect(result.seatFallback).toMatchObject({ role: 'coding_default', from: 'llm-cql:api-optimize-zai-glm-5.3', to: 'glm-5.3', status: 'recovered', httpStatus: 429 });
@@ -346,14 +346,14 @@ describe('log-signal 1ece90ad — llm.example.com gateway 502 flap (2026-10-24):
 //   this turn on glm-5.3
 // Adjudication (lane 92dc54d6, 2026-10-27): NOT a framework defect — the
 // SAME class as 1ece90ad (zai-glm-5.3 seat) and its alibaba-flash sibling:
-// one gateway (llm.example.com, the owner's Cloudflare-fronted edge), one
+// one gateway (llm.cql.ca, the owner's Cloudflare-fronted edge), one
 // resilience contract (the SAME turn moves to the off-endpoint built-in and
 // the run survives — zero error-level rows in the 24h windows). The seat name
 // in the fingerprint is the only difference; this block adds the kimi-k3
 // seat so THIS ticket's own fingerprint is replayed by name (its id-named
 // pin for closure) under the same harness the 1ece90ad suite built.
 describe('log-signal 5eea44df — the kimi-k3 seat variant of the gateway-502 class (one gateway, one resilience contract)', () => {
-  it('REPLAYS the prod row: the moonshot-kimi-k3 seat on llm.example.com 502s and the SAME turn answers on glm-5.3 — the run survives, the warn IS the fingerprint', async () => {
+  it('REPLAYS the prod row: the moonshot-kimi-k3 seat on llm.cql.ca 502s and the SAME turn answers on glm-5.3 — the run survives, the warn IS the fingerprint', async () => {
     rejectOnceThenFinal();
     const result = await runCodingAgent(makeInput('llm-cql:api-optimize-moonshot-kimi-k3'));
 

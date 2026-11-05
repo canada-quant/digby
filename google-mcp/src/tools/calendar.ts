@@ -53,7 +53,7 @@ function formatDateTime(
  */
 /**
  * Format an event organizer for the human-readable block the home-page parser
- * consumes. Emit BOTH the display name and the email ("Felipe <felipe@sunday.market>")
+ * consumes. Emit BOTH the display name and the email ("Felipe <example-user@example.com>")
  * when both exist and differ: the parser's organizer-aware cross-account dedup
  * keys off an EMAIL in this line, so a display-name-only line silently defeats
  * the preference and the event keeps its first-occurrence mislabel (ticket

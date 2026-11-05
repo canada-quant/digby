@@ -342,7 +342,7 @@ describe('ticket 0aecbe92 — kimi-k3 wrong-tool derail at run start (run_comman
 
 // ── Post-fix occurrence ledger: d18241b3 (mishap, filed 2026-09-20T10:24:40Z
 // by fleet supervisor c0e22e36; a data point consolidated under class ticket
-// 22c309f4). tt-rd QB2 lane ddd26be0 (kimi-k3) Firing-83 — the direct sequel
+// 22c309f4). tt-rd node-a lane ddd26be0 (kimi-k3) Firing-83 — the direct sequel
 // to the F80/81 run-start kills named above: trigger 08:16:54Z, completed 2/7
 // plan steps, harness-killed 09:37:38Z for repeated wrong-tool derailment (3
 // episodes; intended tool 'verify', absent from that lane's toolset). The

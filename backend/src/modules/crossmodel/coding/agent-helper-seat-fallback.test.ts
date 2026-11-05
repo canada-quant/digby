@@ -78,7 +78,7 @@ jest.mock('../model-endpoints/model-roles.service', () => ({
   resolveRoleModel: (...a: any[]) => mockResolveRoleModel(...(a as [string])),
 }));
 const REG = {
-  url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql',
+  url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql',
   model: 'qwen3-4b', label: 'cql', supportsVision: false, coding: true, thinkingOff: false,
 };
 jest.mock('../model-endpoints/model-endpoints.service', () => ({

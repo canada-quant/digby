@@ -23,7 +23,7 @@ docker compose -f docker-compose.selfhost.yml up -d --build
 Make your account ADMIN (needed for all instance/cloud-link endpoints):
 
 ```bash
-docker exec digby-postgres psql -U admin -d digby_db \
+docker exec digby-postgres psql -U admin -d admin_db \
   -c "UPDATE users SET role='ADMIN' WHERE email='you@example.com';"
 ```
 
@@ -61,7 +61,7 @@ curl -s $EDGE/api/crossmodel/cloud-link/pair \
   -d "{\"cloudUrl\":\"$CLOUD\",\"pairingCode\":\"<code from step 2>\"}" | jq
 ```
 
-The `cloudUrl` is forgiving: `digby.example.com`, `DIGBY.AI`, `https://digby.example.com/` all
+The `cloudUrl` is forgiving: `digby.ai`, `DIGBY.AI`, `https://digby.ai/` all
 normalize to the same thing; a genuinely invalid URL gets a clear 400.
 
 Within a few seconds the edge backend logs the tunnel connect, and:

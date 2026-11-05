@@ -1,6 +1,6 @@
 /**
  * Replay pin — ticket d2c2744b (mishap, breaker trip 2026-09-20T02:29:20Z,
- * session ddd26be0-723d-4745-8bb5-be3ff4752d52 "QB2 Qwen3.8 Speed Mission
+ * session ddd26be0-723d-4745-8bb5-be3ff4752d52 "node-a Qwen3.8 Speed Mission
  * Successor", run 1415eb30-dc35-4b06-90e9-b6d2ed347ba4, auto-filed).
  *
  * THE INCIDENT: a machine-triggered tt-rd lane with NO dispatched feedback

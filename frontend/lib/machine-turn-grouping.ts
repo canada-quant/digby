@@ -506,6 +506,16 @@ export function groupMachineRows<T>(
         // machine run, never one spanning multiple wakes. 'agent'/'system'
         // rows (verifier notices, relays) EXTEND the run that produced them.
         if (k === 'wake') flush();
+        // A CHILD-SESSION RELAY carrying the delivered-result marker also
+        // opens a turn of its own (ticket 739e8191, review finding): a relay
+        // classifies 'agent' and therefore EXTENDS the run around it, so
+        // without a boundary here the group's anchor is some earlier sweep and
+        // the anchor-only childResult read below (and at flush) never sees the
+        // marker — the delivered result stays folded shut. Flushing first makes
+        // the relay the anchor of its OWN group, which is exactly what the
+        // marker already means everywhere else. Never strips: rows without the
+        // marker extend the run exactly as before.
+        if (k === 'agent' && probe.childResult === true) flush();
         // Child-result content-signature fallback (ticket 56d6b204): LEGACY
         // wake rows predate metadata.childResult — the incident chat itself
         // (6e36c834) is one — so the anchor is derived from the rendered

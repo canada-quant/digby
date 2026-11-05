@@ -1,7 +1,7 @@
 /**
  * Mishap ticket f045e581 (2026-10-27, run 238d46fb / Schooltime lane
  * 0037460b): a BACKGROUND web_researcher worker (bg1-ilt9) running on the
- * lane's coding model llm-cql (custom endpoint llm.example.com → LiteLLM →
+ * lane's coding model llm-cql (custom endpoint llm.cql.ca → LiteLLM →
  * moonshot-kimi-k3) had a turn rejected transiently MID-RUN (HTTP 502, the
  * gateway's Cloudflare/LiteLLM edge), and the lead-seat failover lane moved
  * that turn to the built-in glm-5.3 — the worker FINISHED its report there.
@@ -30,7 +30,7 @@
  * mislabeled by a future pass.
  *
  * Harness mirrors agent-helper-seat-fallback.test.ts (the delegate
- * tool-call path) with the 1ece90ad file's llm.example.com registry mocks.
+ * tool-call path) with the 1ece90ad file's llm.cql.ca registry mocks.
  */
 
 jest.mock('../../../utils/logger', () => ({
@@ -94,16 +94,16 @@ jest.mock('./coding-model', () => {
   };
 });
 
-// The incident endpoint: llm.example.com (label 'llm-cql' — coding-model.ts appends
+// The incident endpoint: llm.cql.ca (label 'llm-cql' — coding-model.ts appends
 // ' (custom endpoint)', so the warn replays the prod fingerprint verbatim).
-const GW_URL = 'https://llm.example.com/v1/chat/completions';
+const GW_URL = 'https://llm.cql.ca/v1/chat/completions';
 const SPEC = 'llm-cql:api-optimize-moonshot-kimi-k3';
 // runModelTurn receives the resolved PROVIDER model id (the registry entry's
 // `model`), not the seat spec — the timeline keys on this.
 const PRIMARY_MODEL = 'api-optimize-moonshot-kimi-k3';
 const REGISTRY: Record<string, any> = {
   [SPEC]: {
-    url: GW_URL, baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', model: 'api-optimize-moonshot-kimi-k3',
+    url: GW_URL, baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', model: 'api-optimize-moonshot-kimi-k3',
     label: 'llm-cql', coding: true, thinkingOff: false, supportsVision: false,
   },
 };
@@ -261,7 +261,7 @@ afterEach(() => {
 });
 
 describe('mishap f045e581 — a main-seat web_researcher worker fails over MID-RUN off a transient llm-cql 502, and the orchestrator is honestly told', () => {
-  it('REPLAYS the prod shape: worker turn 502s on llm.example.com, the SAME turn finishes on the built-in glm-5.3, the delegate result carries the main-seat failover footer, and the run survives', async () => {
+  it('REPLAYS the prod shape: worker turn 502s on llm.cql.ca, the SAME turn finishes on the built-in glm-5.3, the delegate result carries the main-seat failover footer, and the run survives', async () => {
     // Call order: orchestrator (primary) → worker on the primary: ONE 502 →
     // the failover lane serves the SAME request on the built-in glm-5.3 →
     // worker completes → orchestrator (primary) final. (The one-hop shape is

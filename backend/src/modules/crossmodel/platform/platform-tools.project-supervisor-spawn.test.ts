@@ -1137,14 +1137,14 @@ describe('audit 2026-10-06 T5-1 — spawning from a PAUSED project supervisor', 
 
 // audit 2026-10-06 T5-2 (ticket 2bae9728): a charter-only spawn starts its charter.
 describe('audit 2026-10-06 T5-2 — a prompt-less spawn with a goalId / todoId charter starts it', () => {
-  const TODO = { id: 'todo-7', title: 'Wire the MiMo routes', goalId: 'goal-3', projectId: 'proj-1' };
+  const TODO = { id: 'todo-7', title: 'Wire the node-b routes', goalId: 'goal-3', projectId: 'proj-1' };
 
   it('todoId + no prompt ⇒ the harness writes the first prompt from the todo (agent origin), the envelope says so', async () => {
     mockTodoFindFirst.mockResolvedValue(TODO);
     mockGoalFindFirst.mockResolvedValue({ title: 'Gateway routes' });
     const out = await executePlatformTool(autoCodingCtx(), 'start_coding_session', { projectId: 'proj-1', todoId: 'todo-7' });
     const call = svc.startCodingSession.mock.calls[0][0];
-    expect(call.prompt).toContain('[CHARTER — this session was started for todo todo-7 "Wire the MiMo routes" (goal goal-3 "Gateway routes")');
+    expect(call.prompt).toContain('[CHARTER — this session was started for todo todo-7 "Wire the node-b routes" (goal goal-3 "Gateway routes")');
     expect(call.prompt).toContain('START it now');
     expect(call.promptOrigin).toMatchObject({ kind: 'agent', sourceChatId: 'sess-sup' });
     const env = JSON.parse(out);

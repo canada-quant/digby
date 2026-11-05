@@ -269,7 +269,7 @@ describe('ticket ed728b87 — claims-block scope:session/relayed entries resolve
   it('RECALL-5 (tier routing unchanged): a scope:relayed email_sent miss lands UNVERIFIABLE (advisory), not unverified', () => {
     const parsed = parseClaimsBlock([
       '```claims',
-      '[{"type":"email_sent","ref":"owner@digby.example.com","scope":"relayed"}]',
+      '[{"type":"email_sent","ref":"owner@digby.ai","scope":"relayed"}]',
       '```',
     ].join('\n'));
     const out = verifyClaimsBlock(parsed.claims!, [], priorReceipts);

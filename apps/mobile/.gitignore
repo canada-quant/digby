@@ -1,0 +1,10 @@
+node_modules/
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+*.tsbuildinfo
+
+# Native folders (prebuild output — a dev-client workflow would generate these)
+ios/
+android/

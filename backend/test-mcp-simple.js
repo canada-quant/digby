@@ -13,7 +13,7 @@ function mcpCall(q) {
       id: id
     });
     var opts = {
-      hostname: 'mcp.digby.example.com',
+      hostname: 'mcp.digby.ai',
       path: '/mcp',
       method: 'POST',
       headers: {

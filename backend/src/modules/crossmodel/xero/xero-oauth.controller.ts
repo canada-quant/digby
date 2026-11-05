@@ -48,7 +48,7 @@ const SCOPES = process.env.XERO_SCOPES || DEFAULT_SCOPES;
 function getConfig() {
   const clientId     = process.env.XERO_CLIENT_ID;
   const clientSecret = process.env.XERO_CLIENT_SECRET;
-  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.example.com')
+  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.ai')
     .split(',')[0].trim();
   // Derived from THIS instance's public URL (self-host setup hardening, 2026-10-20) —
   // the callback the Setup checklist tells the admin to register; the env overrides.
@@ -110,7 +110,7 @@ export class XeroOAuthController {
         // here) — a bare 401 JSON body renders as a white page with no way
         // back inside the Mac app's chromeless webview. Redirect to the real
         // UI, which toasts the reason and keeps navigation chrome.
-        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
         return res.redirect(`${frontendUrl}/account?tab=integrations&xero=auth_required`);
       }
 
@@ -119,7 +119,7 @@ export class XeroOAuthController {
       const clientId     = process.env.XERO_CLIENT_ID;
       const clientSecret = process.env.XERO_CLIENT_SECRET;
       if (!clientId || !clientSecret) {
-        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
         logger.warn('Xero OAuth: XERO_CLIENT_ID / XERO_CLIENT_SECRET not configured');
         // not_configured (2026-10-20, self-host setup hardening): the Integrations tab
         // renders "not set up on this instance" + the admin how-to, not a transient error.
@@ -169,7 +169,7 @@ export class XeroOAuthController {
     logger.info(`Xero OAuth callback hit: url=${req.originalUrl}, params=${JSON.stringify(req.query)}`);
 
     const { code, state, error: oauthError, error_description: oauthErrorDesc } = req.query as Record<string, string>;
-    const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+    const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
     const errorRedirect = `${frontendUrl}/account?tab=integrations&xero=error`;
 
     // Guard: if credentials are missing the token exchange will fail anyway
@@ -325,7 +325,7 @@ export class XeroOAuthController {
   /** GET /api/crossmodel/xero/debug-config — Show OAuth config for debugging (no secrets exposed). */
   async debugConfig(_req: Request, res: Response) {
     const clientId = process.env.XERO_CLIENT_ID || '';
-    const redirectUri = process.env.XERO_OAUTH_REDIRECT_URI || `${(process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim()}/api/crossmodel/xero/callback`;
+    const redirectUri = process.env.XERO_OAUTH_REDIRECT_URI || `${(process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim()}/api/crossmodel/xero/callback`;
     const scopes = SCOPES;
     res.json({
       configured: !!(process.env.XERO_CLIENT_ID && process.env.XERO_CLIENT_SECRET),

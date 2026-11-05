@@ -32,7 +32,7 @@ jest.mock('../platform/owner-questions', () => ({
 const mockPrisma: any = {
   loopMetric: { findMany: jest.fn(async () => []), aggregate: jest.fn(async () => ({ _sum: { value: 0 } })) },
   agentRun: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findFirst: jest.fn(async () => null), update: jest.fn(async () => ({})) },
+  chatSchedule: { findFirst: jest.fn(async () => null), update: jest.fn(async () => ({})) },
   crossModelChat: { findUnique: jest.fn(async () => null) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -78,8 +78,8 @@ beforeEach(() => {
   mockPrisma.loopMetric.findMany.mockResolvedValue([]);
   mockPrisma.loopMetric.aggregate.mockResolvedValue({ _sum: { value: 0 } });
   mockPrisma.agentRun.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.update.mockResolvedValue({});
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
+  mockPrisma.chatSchedule.update.mockResolvedValue({});
   mockPrisma.crossModelChat.findUnique.mockResolvedValue(null);
   mockFlagOwnerQuestion.mockResolvedValue({ kind: 'created', question: { id: 'oq_1' } });
 });
@@ -210,8 +210,8 @@ function expectNoActions() {
   expect(noticeWrites).toHaveLength(0);
   expect(cadenceWrites).toHaveLength(0);
   expect(cardWrites).toHaveLength(0);
-  expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
-  expect(mockPrisma.codingSchedule.findFirst).not.toHaveBeenCalled();
+  expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
+  expect(mockPrisma.chatSchedule.findFirst).not.toHaveBeenCalled();
   expect(mockFlagOwnerQuestion).not.toHaveBeenCalled();
 }
 
@@ -234,7 +234,7 @@ describe('S7 sweepContainmentLadder — TELEMETRY ONLY (gate flip 2026-09-11, ow
 
   it('cadence_halved tier: NO schedule mutation — the interval is never touched (12 halvings on 9 lanes was the harm)', async () => {
     primeLane({ strikeCount: 10, runCount: 20 });
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: 'sched-1', intervalSec: 1800, promptSetBy: 'machine' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: 'sched-1', intervalSec: 1800, promptSetBy: 'machine' });
     expect(await sweepContainmentLadder({ now: NOW })).toBe(1);
     expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({
       meta: expect.objectContaining({ state: 'cadence_halved', outcome: 'observed' }),
@@ -255,7 +255,7 @@ describe('S7 sweepContainmentLadder — TELEMETRY ONLY (gate flip 2026-09-11, ow
   it('the removed CONTAINMENT_LADDER_ACTIONS opt-in re-arms NOTHING — same top-tier lane, env set, still no action', async () => {
     process.env.CONTAINMENT_LADDER_ACTIONS = '1';
     primeLane({ strikeCount: 15, runCount: 30 });
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: 'sched-1', intervalSec: 1800, promptSetBy: 'machine' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: 'sched-1', intervalSec: 1800, promptSetBy: 'machine' });
     mockPrisma.crossModelChat.findUnique.mockResolvedValue({ userId: 'u1', title: 't' });
     expect(await sweepContainmentLadder({ now: NOW })).toBe(1);
     expectNoActions();

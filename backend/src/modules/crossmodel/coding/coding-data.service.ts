@@ -23,7 +23,6 @@ import { relocateFolderChildren } from '../platform/folder-tree-ops';
 import { pgSafeDeep } from '../memory/text-utils';
 import { storeDeleteChatScoped, type StoreDeleteClient } from '../memory/context-store';
 import { recordLoopMetric, LOOP_METRIC_KINDS } from '../platform/loop-metrics.service';
-import { transcriptDualWriteEnabled, transcriptReadMode, pickTranscriptSource, type TranscriptSource } from './transcript-source';
 
 // ── Legacy response shapes (frozen — the /coding/* API contract) ─────────────
 
@@ -662,6 +661,29 @@ export interface ChatCapability {
 }
 
 /**
+ * THE capability rule, in one pure place — both the single-chat and batch
+ * readers below delegate here so they can never drift apart.
+ *
+ * MERGE-1 slice 1 (2026-11-03): the rule used to be re-implemented inline at
+ * three list surfaces and one of them HAD drifted — fleet's supervisor view
+ * computed `codeCapable = !!satellite` with no folder-chain leg, so a
+ * supervisor chat filed in a workspace folder reported codeCapable=false
+ * while the sidebar and the folder tree both said true. Same chat, two
+ * answers. Keeping the predicate here is what makes that impossible.
+ */
+export function capabilityFrom(
+  hasWorkspaceState: boolean,
+  worktreePath: string | null | undefined,
+  folderCodeCapable: boolean,
+): ChatCapability {
+  return {
+    codeCapable: hasWorkspaceState || folderCodeCapable,
+    hasWorkspaceState,
+    workspaceReady: hasWorkspaceState && !!worktreePath,
+  };
+}
+
+/**
  * Capability snapshot for one chat. `preloadedState` lets batch callers (chat
  * lists) skip the per-chat satellite query.
  */
@@ -674,14 +696,61 @@ export async function getChatCapability(
     : await (prisma as any).chatCodingState
         .findUnique({ where: { id: chat.id }, select: { worktreePath: true } })
         .catch(() => null);
-  const hasWorkspaceState = !!state;
-  const workspaceReady = hasWorkspaceState && !!state!.worktreePath;
-  let codeCapable = hasWorkspaceState;
-  if (!codeCapable && chat.projectId) {
+  let folderCodeCapable = false;
+  if (!state && chat.projectId) {
     const { getNearestWorkspaceFolder } = await import('../platform/folder-inheritance');
-    codeCapable = !!(await getNearestWorkspaceFolder(chat.projectId).catch(() => null));
+    folderCodeCapable = !!(await getNearestWorkspaceFolder(chat.projectId).catch(() => null));
   }
-  return { codeCapable, hasWorkspaceState, workspaceReady };
+  return capabilityFrom(!!state, state?.worktreePath, folderCodeCapable);
+}
+
+/**
+ * BATCH capability snapshot for many chats — the canonical source for every
+ * list surface (sidebar `listChats`, project-detail folder tree, fleet
+ * supervisor view, chat status). ONE satellite query for the whole set plus
+ * ONE folder-chain lookup per DISTINCT projectId (the chain is a property of
+ * the folder, not of the chat), then the SAME predicate as the single-chat
+ * reader above. No per-chat N+1, and no second copy of the rule.
+ *
+ * `preloadedStates` lets a caller that already loaded the satellite rows (e.g.
+ * the chat-status poller) reuse them instead of paying a second query.
+ */
+export async function getChatCapabilities(
+  chats: Array<{ id: string; projectId?: string | null }>,
+  preloadedStates?: Map<string, { worktreePath: string | null } | null>,
+): Promise<Map<string, ChatCapability>> {
+  const out = new Map<string, ChatCapability>();
+  if (chats.length === 0) return out;
+
+  let stateByChat = preloadedStates;
+  if (!stateByChat) {
+    const rows: Array<{ id: string; worktreePath: string | null }> = await (prisma as any).chatCodingState
+      .findMany({
+        where: { id: { in: chats.map((c) => c.id) } },
+        select: { id: true, worktreePath: true },
+      })
+      .catch(() => []);
+    stateByChat = new Map(rows.map((s) => [s.id, { worktreePath: s.worktreePath }]));
+  }
+
+  // Memoized per-project folder-chain leg: a 50-chat list in one folder pays
+  // exactly one inheritance query, matching the inline code this replaces.
+  const folderCache = new Map<string, boolean>();
+  const folderLeg = async (projectId: string): Promise<boolean> => {
+    const hit = folderCache.get(projectId);
+    if (hit !== undefined) return hit;
+    const { getNearestWorkspaceFolder } = await import('../platform/folder-inheritance');
+    const capable = !!(await getNearestWorkspaceFolder(projectId).catch(() => null));
+    folderCache.set(projectId, capable);
+    return capable;
+  };
+
+  for (const chat of chats) {
+    const state = stateByChat.get(chat.id) ?? null;
+    const folderCodeCapable = !state && chat.projectId ? await folderLeg(chat.projectId) : false;
+    out.set(chat.id, capabilityFrom(!!state, state?.worktreePath, folderCodeCapable));
+  }
+  return out;
 }
 
 /**
@@ -908,27 +977,24 @@ export async function reconcileCodingUnify(): Promise<{ projects: number; chats:
   return { projects, chats, orphans };
 }
 
-// ── Transcripts (P5-A: dual-write + read-switch) ────────────────────────────
+// ── Transcripts (post-MERGE-1: ONE table, `crossmodel_messages`) ────────────
 //
-// One transcript table, in two steps (DIGBY_PLATFORM_UNIFICATION_PLAN Option 3,
-// phase 5). P5-A (this block):
-//   - WRITE: every CodingMessage insert/update ALSO writes the mirrored
-//     CrossModelMessage in the SAME transaction — same id (uuids are
-//     table-independent, so replays are idempotent), sessionId → chatId,
-//     role/content/parts 1:1, createdAt preserved, metadata left NULL (no
-//     counterpart on CodingMessage). Gate: TRANSCRIPT_DUAL_WRITE !== 'off'
-//     (default ON).
-//   - READ: TRANSCRIPT_READ='merged' (default) serves transcripts from
-//     crossmodel_messages, falling back to coding_messages ONLY for chats with
-//     legacy rows but zero mirrored rows (the not-yet-backfilled window — one
-//     warn per chat). 'legacy' forces the pre-switch behavior.
-// scripts/backfill-coding-transcripts.ts closes the historical gap; P5-B drops
-// the legacy table after the read-switch proves out.
+// DIGBY_PLATFORM_UNIFICATION_PLAN Option 3, phase 5 is COMPLETE (2026-11-04).
+// The legacy `coding_messages` table is dropped in a LATER, separate step; this
+// module no longer reads or writes it in ANY configuration, which is what makes
+// that step a pure removal instead of a migration racing a live writer.
+//
+// There is no write switch and no read switch left: every transcript write lands
+// on `crossmodel_messages` and every transcript read comes from it. The P5-A
+// dual-write window (legacy mirror beside the merged row) and the one-release
+// read-rollback switch that window existed to keep honest were both retired once
+// the merged-only window was proven live; a switch over a non-existent relation
+// would be a runtime landmine, not a lever.
 
-/** The CodingMessage row shape — identical on either side of the read-switch. */
+/** The transcript row shape — the physical `crossmodel_messages` columns. */
 export interface CodingTranscriptRow {
   id: string;
-  chatId: string; // physical column is sessionId on the legacy side
+  chatId: string;
   role: string;
   content: string;
   parts: unknown;
@@ -936,67 +1002,27 @@ export interface CodingTranscriptRow {
   /** Ticket 68916075: last-write stamp (≈ finalize); NULL on rows predating the field. */
   updatedAt: Date | null;
   /**
-   * Json metadata. Historically mirror-only (fleet origin marking rode the
-   * crossmodel_messages mirror); since P4 (CanLaw L5 guardOriginal
-   * attachments) coding_messages carries the column too — writes land on both
-   * sides, toMirror/toMirrorUpdate include it when present.
+   * Json metadata — fleet origin marking, guardOriginal attachments, schedule
+   * digests. It has always been a `crossmodel_messages` column; since the
+   * 2026-11-04 convergence it is the ONLY transcript table, so it needs no
+   * mirror mapping.
    */
   metadata?: unknown;
 }
 
 /**
- * Dual-write gate + read-switch + source picker now live in the LEAF module
- * `transcript-source.ts` and are re-exported here unchanged (MERGE-1 slice 1).
- *
- * They moved because this file's import of `middleware/error-handler` reaches
- * `config/env`, which calls `process.exit(1)` at import time when the env is not fully
- * populated — harmless in production, but it made this module a hostile import for the
- * 24 `schedule*.test.ts` suites that reach it transitively through
- * firing-superseded-gate. Keeping the predicates in a leaf module lets the six former
- * bypass readers share the seam without dragging that edge into every schedule suite.
- * Behaviour is identical: the bodies were moved verbatim.
- */
-export { transcriptDualWriteEnabled, transcriptReadMode, pickTranscriptSource } from './transcript-source';
-export type { TranscriptSource } from './transcript-source';
-
-/** CodingMessage row → CrossModelMessage create data (column mapping, explicit). */
-function toMirror(row: CodingTranscriptRow) {
-  return {
-    id: row.id, // reused across tables — idempotency for free
-    chatId: row.chatId, // sessionId → chatId
-    role: row.role, // 1:1 ('user' | 'assistant' | 'system')
-    content: row.content,
-    ...(row.parts != null ? { parts: row.parts as unknown as object[] } : {}),
-    // Fleet origin marking: metadata has no CodingMessage counterpart — it is
-    // threaded through by appendCodingMessage and lands on the mirror only.
-    ...(row.metadata != null ? { metadata: row.metadata as any } : {}),
-    createdAt: row.createdAt, // preserved — ordering + the backfill checksum depend on it
-  };
-}
-
-/** Mirror update payload for the upsert's update branch (content always; parts + metadata when present). */
-function toMirrorUpdate(row: CodingTranscriptRow) {
-  return {
-    content: row.content,
-    ...(row.parts != null ? { parts: row.parts as unknown as object[] } : {}),
-    ...(row.metadata != null ? { metadata: row.metadata as any } : {}),
-  };
-}
-
-/**
- * Insert a CodingMessage AND — unless dual-write is off — its CrossModelMessage
- * mirror in the SAME transaction. The mirror is an upsert so a retried insert
- * (same id) converges instead of failing. `metadata` (fleet origin marking) is
- * mirror-only — coding_messages has no such column.
+ * Insert a transcript row — `crossmodel_messages` is the ONLY transcript table
+ * since MERGE-1 completed (2026-11-04). Single-table write: no transaction, no
+ * mirror, no switch. A retried insert (same id) is still idempotent by id.
  */
 export async function appendCodingMessage(data: {
   chatId: string; role: string; content: string; parts?: unknown; metadata?: unknown;
 }, id?: string): Promise<CodingTranscriptRow> {
   // 22P05 guard (FO firing 20): lone surrogates / NULs in content, parts or
-  // metadata fail the codingMessage.create AND the crossModelMessage mirror
-  // upsert in one transaction — run e8975be5's final transcript persist failed
-  // 5× on exactly this. Strip at the boundary so a bad byte can never fail a
-  // transcript write (telemetry only when something was dropped).
+  // metadata fail the crossModelMessage.create — run e8975be5's final
+  // transcript persist failed 5× on exactly this. Strip at the boundary so a
+  // bad byte can never fail a transcript write (telemetry only when something
+  // was dropped).
   const report = { stripped: false, dropped: 0 };
   const content = pgSafeDeep(data.content, report);
   const parts = data.parts !== undefined ? pgSafeDeep(data.parts, report) : undefined;
@@ -1005,7 +1031,7 @@ export async function appendCodingMessage(data: {
     recordLoopMetric({ kind: LOOP_METRIC_KINDS.PG_UNSAFE_STRIPPED, value: report.dropped, unit: 'chars',
       sessionId: data.chatId, meta: { seam: 'coding_message_append' } });
   }
-  const create = {
+  const rowData = {
     // fc7b2ca7: an optional caller-supplied id (the steer path pre-generates it
     // so the id can ride the Redis mailbox — the stranded-steer recovery then
     // adopts this row instead of inserting a duplicate). Default: autogen.
@@ -1014,30 +1040,15 @@ export async function appendCodingMessage(data: {
     role: data.role,
     content: content as unknown as string,
     ...(parts !== undefined ? { parts: parts as unknown as object[] } : {}),
-    // coding_messages.metadata exists since P4 (guardOriginal attachments) —
-    // stored on BOTH sides now, still mirrored as before.
     ...(metadata !== undefined ? { metadata: metadata as any } : {}),
   };
-  if (!transcriptDualWriteEnabled()) {
-    return prisma.codingMessage.create({ data: create });
-  }
-  return prisma.$transaction(async tx => {
-    const row = await tx.codingMessage.create({ data: create });
-    const mirrorRow: CodingTranscriptRow = data.metadata !== undefined ? { ...row, metadata: data.metadata } : row;
-    await tx.crossModelMessage.upsert({
-      where: { id: row.id },
-      create: toMirror(mirrorRow),
-      update: toMirrorUpdate(mirrorRow),
-    });
-    return row;
-  });
+  return prisma.crossModelMessage.create({ data: rowData });
 }
 
 /**
- * Update a CodingMessage (the run loop rewrites the assistant row's content +
- * parts as partials accumulate) and mirror the change in the SAME transaction.
- * The mirror upsert CREATES the row when a pre-dual-write message has no mirror
- * yet — the backfill would eventually fill it, but this keeps the mirror live.
+ * Update a transcript row in place — `crossmodel_messages` only (MERGE-1 is
+ * complete; the legacy table is never touched). Single-table write: no mirror,
+ * no transaction, no switch.
  */
 export async function updateCodingMessage(
   id: string,
@@ -1060,37 +1071,24 @@ export async function updateCodingMessage(
     // P4 (CanLaw L5): guardOriginal attachments ride the row + its mirror.
     ...(metadata !== undefined ? { metadata: metadata as any } : {}),
   };
-  if (!transcriptDualWriteEnabled()) {
-    return prisma.codingMessage.update({ where: { id }, data: update });
-  }
-  return prisma.$transaction(async tx => {
-    const row = await tx.codingMessage.update({ where: { id }, data: update });
-    await tx.crossModelMessage.upsert({
-      where: { id: row.id },
-      create: toMirror(row),
-      update: toMirrorUpdate(row),
-    });
-    return row;
-  });
+  return prisma.crossModelMessage.update({ where: { id }, data: update });
 }
 
-/** Fields selected on merged reads so the row shape is byte-identical to CodingMessage. */
+/**
+ * Fields selected on transcript reads. The whole row shape the callers depend on
+ * lives on `crossmodel_messages`; there is no second table to reconcile with.
+ */
 // Ticket 68916075: updatedAt rides the select so transcript reads can distinguish
 // last-write (≈ finalize) from insert-time createdAt for coding-run placeholder rows.
 // 2026-09-15 (owner ask — session status cards + folding machine notes):
-// metadata rides the merged read too. Until now the legacy codingMessage path
-// returned the full row while this select dropped metadata, so a coding
-// session's client never saw origin/kind/status and every harness card or
+// metadata rides the read too. A select that dropped metadata left a coding
+// session's client unable to see origin/kind/status, so every harness card or
 // provenance stamp degraded to plain prose. The controller strips the one
 // large key (guardOriginal, ≤20k chars of audit text) before responding.
 const TRANSCRIPT_SELECT = { id: true, chatId: true, role: true, content: true, parts: true, metadata: true, createdAt: true, updatedAt: true } as const;
 
-/** Session-view transcript, ascending — same shape/order as the legacy codingMessage.findMany. */
+/** Session-view transcript, ascending. */
 export async function listCodingTranscript(chatId: string): Promise<CodingTranscriptRow[]> {
-  const source = await pickTranscriptSource(chatId);
-  if (source === 'legacy') {
-    return prisma.codingMessage.findMany({ where: { chatId }, orderBy: { createdAt: 'asc' } });
-  }
   return prisma.crossModelMessage.findMany({ where: { chatId }, orderBy: { createdAt: 'asc' }, select: TRANSCRIPT_SELECT });
 }
 
@@ -1113,13 +1111,10 @@ export async function listCodingTranscriptPage(
   chatId: string,
   opts: { limit: number; before?: string },
 ): Promise<CodingTranscriptPage> {
-  const source = await pickTranscriptSource(chatId);
   let before: { createdAt: Date; id: string } | undefined;
   if (opts.before) {
     const select = { chatId: true, createdAt: true } as const;
-    const cursor = source === 'legacy'
-      ? await prisma.codingMessage.findUnique({ where: { id: opts.before }, select })
-      : await prisma.crossModelMessage.findUnique({ where: { id: opts.before }, select });
+    const cursor = await prisma.crossModelMessage.findUnique({ where: { id: opts.before }, select });
     if (!cursor || cursor.chatId !== chatId) throw new AppError(400, 'Invalid before cursor for this session');
     before = { createdAt: cursor.createdAt, id: opts.before };
   }
@@ -1133,9 +1128,7 @@ export async function listCodingTranscriptPage(
     : {};
   const orderBy = [{ createdAt: 'desc' as const }, { id: 'desc' as const }];
   const take = opts.limit + 1; // +1 row = the hasMore probe
-  const rows: CodingTranscriptRow[] = source === 'legacy'
-    ? await prisma.codingMessage.findMany({ where: { chatId, ...beforeClause }, orderBy, take })
-    : await prisma.crossModelMessage.findMany({ where: { chatId, ...beforeClause }, orderBy, take, select: TRANSCRIPT_SELECT });
+  const rows: CodingTranscriptRow[] = await prisma.crossModelMessage.findMany({ where: { chatId, ...beforeClause }, orderBy, take, select: TRANSCRIPT_SELECT });
   const hasMore = rows.length > opts.limit;
   const page = rows.slice(0, opts.limit).reverse(); // chronological within the page
   return { rows: page, hasMore, ...(hasMore && page.length ? { nextBefore: page[0].id } : {}) };
@@ -1159,19 +1152,13 @@ export function stripInlineImageData(chatId: string, messages: Array<{ id: strin
   }
 }
 
-/** Newest-first transcript slice (run history) under the same switch. */
+/** Newest-first transcript slice (run history). */
 export async function listRecentCodingTranscript(chatId: string, take: number): Promise<CodingTranscriptRow[]> {
-  const source = await pickTranscriptSource(chatId);
-  if (source === 'legacy') {
-    return prisma.codingMessage.findMany({ where: { chatId }, orderBy: { createdAt: 'desc' }, take });
-  }
   return prisma.crossModelMessage.findMany({ where: { chatId }, orderBy: { createdAt: 'desc' }, take, select: TRANSCRIPT_SELECT });
 }
 
-/** Per-role transcript count (opening-turn detection) under the same switch. */
+/** Per-role transcript count (opening-turn detection). */
 export async function countCodingTranscriptMessages(chatId: string, role: string): Promise<number> {
-  const source = await pickTranscriptSource(chatId);
-  if (source === 'legacy') return prisma.codingMessage.count({ where: { chatId, role } });
   return prisma.crossModelMessage.count({ where: { chatId, role } });
 }
 
@@ -1189,12 +1176,9 @@ export async function getCodingSessionTitleSource(chatId: string): Promise<strin
   return state?.titleSource ?? null;
 }
 
-/** Oldest user transcript message text (title-repair input) under the same switch. */
+/** Oldest user transcript message text (title-repair input). */
 export async function getFirstUserCodingMessage(chatId: string): Promise<string | null> {
-  const source = await pickTranscriptSource(chatId);
-  const row = source === 'legacy'
-    ? await prisma.codingMessage.findFirst({ where: { chatId, role: 'user' }, orderBy: { createdAt: 'asc' }, select: { content: true } })
-    : await prisma.crossModelMessage.findFirst({ where: { chatId, role: 'user' }, orderBy: { createdAt: 'asc' }, select: { content: true } });
+  const row = await prisma.crossModelMessage.findFirst({ where: { chatId, role: 'user' }, orderBy: { createdAt: 'asc' }, select: { content: true } });
   return row?.content ?? null;
 }
 

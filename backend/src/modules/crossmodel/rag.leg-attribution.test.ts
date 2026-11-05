@@ -80,7 +80,7 @@ const AGX_BASE = 'https://agx-a.stanne.local:8001/v1';
 const SPARK_BASE = 'https://spark-a367.stanne.local:8001/v1';
 
 const EMBED_TARGET = {
-  baseUrl: 'https://llm.example.com/v1',
+  baseUrl: 'https://llm.cql.ca/v1',
   model: 'Qwen3-Embedding-8B',
   apiKey: 'gateway-key',
   matryoshka: false,

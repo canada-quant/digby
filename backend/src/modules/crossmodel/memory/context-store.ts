@@ -108,13 +108,15 @@ export async function storePruneNamespace(namespace: string[], before: Date): Pr
 export async function storePut(
   namespace: string[],
   key: string,
-  value: Record<string, unknown>
+  value: Record<string, unknown>,
+  opts: { ttlMs?: number } = {},
 ): Promise<void> {
   const namespacePath = nsPath(namespace);
+  const expiresAt = opts.ttlMs && opts.ttlMs > 0 ? new Date(Date.now() + opts.ttlMs) : null;
   await prisma.contextStoreEntry.upsert({
     where: { namespacePath_key: { namespacePath, key } },
-    create: { namespacePath, key, value: value as any },
-    update: { value: value as any, updatedAt: new Date() },
+    create: { namespacePath, key, value: value as any, ...(expiresAt ? { expiresAt } : {}) },
+    update: { value: value as any, updatedAt: new Date(), ...(expiresAt ? { expiresAt } : {}) },
   });
 }
 
@@ -209,8 +211,16 @@ export async function storeFindByKeyPrefix<T>(
 // delete rides the (namespace_path, key) primary key — no prefix scan.
 /** The supervisor ledger's cold-archive namespace kind ([chatId, this]). */
 export const SUPERVISOR_ARCHIVE_STORE_KIND = 'supervisor-archive';
+/**
+ * A finished background worker's report, spilled so a container replacement
+ * cannot destroy work the model already paid for (ticket 458342f5;
+ * coding/background-delegation.ts BACKGROUND_SPILL_STORE_KIND — the literal is
+ * duplicated here on purpose: this module is the split-ready store boundary and
+ * never imports the coding harness).
+ */
+export const BACKGROUND_REPORT_STORE_KIND = 'background-report';
 /** The chat-keyed namespace kinds storeDeleteChatScoped clears. */
-export const CHAT_SCOPED_STORE_KINDS: readonly string[] = ['thread', SUPERVISOR_ARCHIVE_STORE_KIND];
+export const CHAT_SCOPED_STORE_KINDS: readonly string[] = ['thread', SUPERVISOR_ARCHIVE_STORE_KIND, BACKGROUND_REPORT_STORE_KIND];
 /** Namespace paths of `chatIds`' chat-keyed rows (CHAT_SCOPED_STORE_KINDS). Pure. */
 export function chatScopedStorePaths(chatIds: ReadonlyArray<string>): string[] {
   const ids = [...new Set((chatIds ?? []).filter((c) => typeof c === 'string' && c.length > 0))];

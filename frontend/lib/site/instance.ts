@@ -13,7 +13,7 @@ export function isSelfHostedBuild(env: Record<string, string | undefined> = proc
   return v !== '' && v !== 'prod';
 }
 
-/** The served installers are production builds that sign into digby.example.com — a self-host hides their links. */
+/** The served installers are production builds that sign into digby.ai — a self-host hides their links. */
 export function isInstallerHref(href: string): boolean {
   return /\.(dmg|exe)$/i.test(href);
 }

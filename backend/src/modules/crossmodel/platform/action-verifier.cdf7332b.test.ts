@@ -31,7 +31,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -103,7 +103,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGetRecentChatReceipts.mockResolvedValue([]);
   mockPrisma.crossModelMessage.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
   mockPrisma.crossModelChat.findFirst.mockResolvedValue(null);
   mockPrisma.chatCodingState.findFirst.mockResolvedValue(null);
   emulateTicketStore();

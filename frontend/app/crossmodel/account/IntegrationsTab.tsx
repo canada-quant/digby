@@ -1270,9 +1270,9 @@ export function IntegrationsTab() {
           </div>
           {setup?.instance.selfHosted ? (
             /* Self-host setup hardening (2026-10-20): the signed desktop app is built for
-               digby.example.com (its home URL is fixed at build time) — on this instance use the
+               digby.ai (its home URL is fixed at build time) — on this instance use the
                browser; the Mac agent below pairs against this instance's own API. */
-            <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-muted-foreground" data-testid="mac-app-selfhost">Desktop app: built for digby.example.com — use the browser here</Badge>
+            <Badge variant="outline" className="text-[10px] h-5 px-1.5 text-muted-foreground" data-testid="mac-app-selfhost">Desktop app: built for digby.ai — use the browser here</Badge>
           ) : (
             <a href="/Digby.dmg" download className="flex-shrink-0">
               <Button size="sm" variant="outline" className="h-7 text-xs gap-1.5">
@@ -1989,7 +1989,7 @@ export function IntegrationsTab() {
         <div className="rounded-xl border p-4 space-y-3">
           <p className="text-[11px] text-muted-foreground leading-relaxed">
             {setup?.instance.selfHosted
-              ? 'WhatsApp is a hosted integration planned for digby.example.com; it is not available on a self-hosted instance.'
+              ? 'WhatsApp is a hosted integration planned for digby.ai; it is not available on a self-hosted instance.'
               : <>Connect WhatsApp to let Digby search messages, read chats, send messages, and manage contacts. Digby hosts the integration — just link your account when it&apos;s ready.</>}
           </p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">

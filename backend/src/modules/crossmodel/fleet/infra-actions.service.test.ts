@@ -379,12 +379,12 @@ describe('propose_volume_growth — READ + PROPOSE only (WI-Q, 2026-09-25)', () 
   });
 
   it('fills the volume id from the request or the per-box env; the instance id from the per-box env; the rate from env', async () => {
-    process.env.INFRA_INSTANCE_ID = 'i-0ae7b0080cfc5caf8';
+    process.env.INFRA_INSTANCE_ID = 'i-0123456789abcdef0';
     process.env.INFRA_GP3_USD_PER_GB_MONTH = '0.1';
     const r = await runInfraAction({ kind: 'propose_volume_growth', volumeId: 'vol-0123456789abcdef0', reason: 'x' });
-    expect(r.desired).toMatchObject({ volumeId: 'vol-0123456789abcdef0', instanceId: 'i-0ae7b0080cfc5caf8', monthlyCostDeltaUsd: 10 });
+    expect(r.desired).toMatchObject({ volumeId: 'vol-0123456789abcdef0', instanceId: 'i-0123456789abcdef0', monthlyCostDeltaUsd: 10 });
     expect(String(r.desired?.command)).toBe('aws ec2 modify-volume --region ca-central-1 --volume-id vol-0123456789abcdef0 --size 300');
-    expect(String(r.desired?.discoverCommand)).toContain('Values=i-0ae7b0080cfc5caf8');
+    expect(String(r.desired?.discoverCommand)).toContain('Values=i-0123456789abcdef0');
     process.env.INFRA_VOLUME_ID = 'vol-envdefault00';
     const r2 = await runInfraAction({ kind: 'propose_volume_growth', reason: 'x' });
     expect(r2.desired?.volumeId).toBe('vol-envdefault00');

@@ -35,7 +35,7 @@ export function advertisedAgentUrl(env: NodeJS.ProcessEnv = process.env): string
   return base ? `${base}/digby-imessage-agent.tar.gz` : AGENT_RELEASE.url;
 }
 
-/** The released agent. url is digby.example.com-served (same origin the installer uses). */
+/** The released agent. url is digby.ai-served (same origin the installer uses). */
 export interface AgentReleaseManifest {
   version: string;
   url: string;
@@ -58,10 +58,10 @@ export interface AgentReleaseManifest {
  * artifact, which the sha256 pin then turns into a silent never-update.
  */
 export const AGENT_RELEASE: AgentReleaseManifest = {
-  version: '0.9.19',
-  url: 'https://digby.example.com/digby-imessage-agent.tar.gz',
-  sha256: '41edf44537cef19afb87dfcdf2d51f23385e3156aa67ed4b8415249d2cb38517',
-  notes: "RFB codec fix slice: real Retina/4K/5K screens now fit the relay frame budget (downscaled, change-gated), and relay-decoded clicks prime real geometry so they land instead of being refused.",
+  version: '0.9.23',
+  url: 'https://digby.ai/digby-imessage-agent.tar.gz',
+  sha256: 'c72b92925d58ad4f1db76633a02df10e5c6be71de3f1c42a216412fedef4afcb',
+  notes: "ticket e530220e (0.9.23): re-publish \u2014 the 0.9.22 tarball carried a package-lock.json still stamping 0.9.21, so the artifact misstated its own version; the ship now verifies both files. Carries the 0.9.22 fixes: an administrator Mac no longer reads 'no-admin' because sudo was not primed (group membership decides), and a Mac that never enabled Screen Sharing advertises an honest 'off' instead of staying silent so the card called the agent too old",
   minUpdaterVersion: '0.8.2',
 };
 /** Kill switch (agent-side twin: DIGBY_SELF_UPDATE=0) — stops advertising to everyone. */

@@ -10,6 +10,10 @@ import { getLatestProjectStatus } from './fleet/project-status.service';
 import { resolveViewModeForRequest } from './view/view-mode';
 import { displayParentNestingDisabled } from './platform/display-parent';
 import { isFrameworkProject, frameworkProjectRefusal } from './platform/platform.service';
+// TICKET dca83b85: the framework identity ALSO comes from the pure leaf here —
+// getProject reads it on the RESPONSE shape below, and the platform.service
+// barrel can be mocked away in controller suites (the leaf cannot).
+import { isFrameworkProjectRow, instanceOwnRepoSlugSoft } from './platform/framework-project';
 
 /**
  * Helper: check if the user owns the project or is a member
@@ -209,24 +213,23 @@ export async function getProject(req: Request, res: Response) {
     // P0 2026-09-07 (folder-tree flavor bug): the sidebar folder tree merges
     // these rows into the page's `chats` array and loadChat branches the
     // CodeSessionView flavor on hasWorkspaceState — rows WITHOUT the
-    // capability fields opened coding sessions as PLAIN chats. Same batched
-    // pattern as listChats (crossmodel.service.ts P5-B): ONE satellite query
-    // for the whole list, no per-chat N+1. codeCapable folds in the nearest
-    // workspace folder, computed ONCE — every row here shares THIS project.
-    const codingStates: Array<{ id: string }> = await (prisma as any).chatCodingState
-      .findMany({
-        where: { id: { in: projectChats.map((c) => c.id) } },
-        select: { id: true },
-      })
-      .catch(() => []);
-    const satelliteIds = new Set(codingStates.map((s) => s.id));
-    const { getNearestWorkspaceFolder } = await import('./platform/folder-inheritance');
-    const folderCodeCapable = !!(await getNearestWorkspaceFolder(id).catch(() => null));
-    const chats = projectChats.map((chat) => ({
-      ...chat,
-      hasWorkspaceState: satelliteIds.has(chat.id),
-      codeCapable: satelliteIds.has(chat.id) || folderCodeCapable,
-    }));
+    // capability fields opened coding sessions as PLAIN chats.
+    // MERGE-1 slice 1 (2026-11-03): the capability fields now come from the
+    // canonical batched reader in coding-data.service — ONE satellite query
+    // for the whole list plus ONE memoized folder-chain lookup, and the same
+    // predicate every other surface uses. This block used to restate that
+    // predicate inline; a copy is how the fleet view drifted.
+    const { getChatCapabilities } = await import('./coding/coding-data.service');
+    const capabilities = await getChatCapabilities(projectChats.map((c) => ({ id: c.id, projectId: id })))
+      .catch(() => new Map());
+    const chats = projectChats.map((chat) => {
+      const cap = capabilities.get(chat.id);
+      return {
+        ...chat,
+        hasWorkspaceState: cap?.hasWorkspaceState ?? false,
+        codeCapable: cap?.codeCapable ?? false,
+      };
+    });
 
     // Load documents
     const documents = await prisma.projectDocument.findMany({
@@ -295,7 +298,13 @@ export async function getProject(req: Request, res: Response) {
       autoIngestGmailAttachments: projectSettings.autoIngestGmailAttachments === true,
       // Fleet-supervision opt-in flag (ticket 3217e287) — the settings tab's
       // "Supervise this folder" toggle renders its state from this field.
-      supervised: project.supervised,
+      // TICKET dca83b85 (owner ruling): the framework project is PERMANENTLY
+      // supervised, so it always reads true here and the settings toggle does
+      // not render for it (isFrameworkProject below is the UI's signal).
+      supervised: isFrameworkProjectRow(project, instanceOwnRepoSlugSoft()) ? true : project.supervised,
+      // Framework surface marker — the settings tab hides the fleet-supervision
+      // control for the platform project (there is no disable option for it).
+      isFrameworkProject: isFrameworkProjectRow(project, instanceOwnRepoSlugSoft()),
       // Per-project supervisor lane (#741 + 2026-09-14 rollout): the toggle's
       // state + the lane's chat id (null until the first scaffold).
       projectSupervisorEnabled: (project as any).projectSupervisorEnabled === true,
@@ -452,7 +461,7 @@ export async function addProjectMember(req: Request, res: Response) {
       });
     }
     if (!invitee) {
-      return res.status(404).json({ error: `No user found with email: ${email}. They need to create an account at digby.example.com first, then you can invite them.` });
+      return res.status(404).json({ error: `No user found with email: ${email}. They need to create an account at digby.ai first, then you can invite them.` });
     }
     if (invitee.id === project.userId) {
       return res.status(400).json({ error: 'Cannot add project owner as member' });
@@ -611,7 +620,7 @@ export async function shareProject(req: Request, res: Response) {
         where: { id },
         data: { isPublic: true, shareToken },
       });
-      const host = process.env.FRONTEND_URL?.split(',')[0] ?? 'https://crossmodel.cozz';
+      const host = process.env.FRONTEND_URL?.split(',')[0] ?? 'https://example-local.test';
       res.json({
         shareToken: updated.shareToken,
         shareUrl: `${host}/shared/project/${updated.shareToken}`,

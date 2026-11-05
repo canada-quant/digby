@@ -145,7 +145,7 @@ test('405927c9: build-app.sh refuses a DMG bundling a stale agent', () => {
 });
 
 test('405927c9: the tree agent matches the current release (lockstep pin)', () => {
-  assert.match(configTs, /AGENT_VERSION = '0\.9\.19'/);
+  assert.match(configTs, /AGENT_VERSION = '0\.9\.23'/);
 });
 
 // ── 3. The duplicates — no shape installs beside a self-managed agent ───────
@@ -184,7 +184,7 @@ test('405927c9: isPkgInstallPlist matches BOTH .pkg generations by path prefix',
   assert.equal(isPkgInstallPlist(pkgPlist('/Library/Digby/imessage-agent/node')), true);
   // Not a .pkg install: the bundled helper, a self-managed agent, junk.
   assert.equal(isPkgInstallPlist(pkgPlist('/Applications/Digby.app/Contents/Resources/imessage-agent/DigbyHelper')), false);
-  assert.equal(isPkgInstallPlist(pkgPlist('/Users/x/Library/Application Support/Digby/bin/DigbyAgent')), false);
+  assert.equal(isPkgInstallPlist(pkgPlist('/Users/example/Library/Application Support/Digby/bin/DigbyAgent')), false);
   assert.equal(isPkgInstallPlist(null), false);
   assert.equal(isPkgInstallPlist('<not-a-plist'), false);
   assert.equal(isPkgInstallPlist(pkgPlist('/Library/DigbyFake/imessage-agent/node')), false, 'prefix must not over-match');
@@ -196,7 +196,7 @@ test('405927c9: isRetireablePlist covers both never-updating shapes', () => {
   assert.equal(isRetireablePlist(pkgPlist('/Library/Digby/imessage-agent/node')), true);
   // The self-managed agent's OWN plist is NEVER retireable — it is the one
   // running the retire.
-  assert.equal(isRetireablePlist(pkgPlist('/Users/x/Library/Application Support/Digby/bin/DigbyAgent')), false);
+  assert.equal(isRetireablePlist(pkgPlist('/Users/example/Library/Application Support/Digby/bin/DigbyAgent')), false);
 });
 
 test('405927c9: the .pkg agent never retires anything (identity guard)', () => {
@@ -206,7 +206,7 @@ test('405927c9: the .pkg agent never retires anything (identity guard)', () => {
   assert.equal(runningIsPkgAgent('/Library/Digby/imessage-agent/DigbyAgent'), true);
   assert.equal(runningIsPkgAgent('/Library/Digby/imessage-agent/node'), true);
   assert.equal(runningIsPkgAgent('/Applications/Digby.app/Contents/Resources/imessage-agent/DigbyHelper'), false);
-  assert.equal(runningIsPkgAgent('/Users/x/Library/Application Support/Digby/bin/DigbyAgent'), false);
+  assert.equal(runningIsPkgAgent('/Users/example/Library/Application Support/Digby/bin/DigbyAgent'), false);
   const src = read('src/retire-bundled-helper.ts');
   assert.match(src, /if \(runningIsPkgAgent\(\)\)/);
   assert.match(src, /self: true/);

@@ -151,7 +151,7 @@ jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
     pendingConfirmation: mockConfirmations.api,
-    codingSchedule: {
+    chatSchedule: {
       findFirst: (...a: any[]) => mockScheduleFindFirst(...a),
       findUnique: (...a: any[]) => mockScheduleFindUnique(...a),
       findMany: (...a: any[]) => mockScheduleFindMany(...a),
@@ -401,22 +401,17 @@ describe('B) machine self-cancel policy (cf_241dc replay)', () => {
     expect(svc.cancelSchedule).toHaveBeenCalledWith(expect.objectContaining({ id: OWN, initiator: 'machine' }));
   });
 
-  it('STAGES in a USER-ANCHORED run under WORK_TOOLS_NO_CARD_DISABLED=1 (the machine self-cancel bypass is machine-only — a real user turn confirms through the normal path)', async () => {
-    process.env.WORK_TOOLS_NO_CARD_DISABLED = '1';
-    try {
-      svc.listSchedules.mockResolvedValue([
-        scheduleView({ id: OWN, sessionId: 'lane-1', enabled: true, promptSetBy: 'machine' }),
-        scheduleView({ id: OTHER_ENABLED, sessionId: 'lane-1', enabled: true }),
-      ]);
-      const out = await executePlatformTool(
-        makeCtx({ sessionId: 'lane-1', userTurnAt: new Date() } as any),
-        'cancel_schedule', { id: OWN },
-      );
-      expect(out).toMatch(/needsConfirmation/);
-      expect(svc.cancelSchedule).not.toHaveBeenCalled();
-    } finally {
-      delete process.env.WORK_TOOLS_NO_CARD_DISABLED;
-    }
+  it('STAGES on a Dig-deeper rung of a USER-ANCHORED run (the machine self-cancel bypass is machine-only — a real user turn confirms through the normal path)', async () => {
+    svc.listSchedules.mockResolvedValue([
+      scheduleView({ id: OWN, sessionId: 'lane-1', enabled: true, promptSetBy: 'machine' }),
+      scheduleView({ id: OTHER_ENABLED, sessionId: 'lane-1', enabled: true }),
+    ]);
+    const out = await executePlatformTool(
+      makeCtx({ sessionId: 'lane-1', userTurnAt: new Date(), escalation: true } as any),
+      'cancel_schedule', { id: OWN },
+    );
+    expect(out).toMatch(/needsConfirmation/);
+    expect(svc.cancelSchedule).not.toHaveBeenCalled();
   });
 });
 

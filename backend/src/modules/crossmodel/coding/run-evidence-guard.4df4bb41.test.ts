@@ -76,7 +76,7 @@ afterEach(() => {
  * line asserts fresh probes. "box probe" + "healthy"/"active" on ONE line is
  * the probe pair (PROBE_RE × PROBE_EVIDENCE_RE). The line deliberately avoids
  * every other kind's pattern (no PR number, no push verb + sha clause, no
- * deploy verb / health-check / prod / digby.example.com) so the replay convicts probe
+ * deploy verb / health-check / prod / digby.ai) so the replay convicts probe
  * ONLY — exactly the filing's "zero-evidence completion claims: probe".
  */
 const INCIDENT_FINAL = [

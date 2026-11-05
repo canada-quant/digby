@@ -23,7 +23,7 @@ const mockPrisma: any = {
   supervisorState: { findUnique: jest.fn(), upsert: jest.fn() },
   crossModelChat: { findUnique: jest.fn() },
   projectTodo: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []) },
   // Ticket 8f5a45f7: stalled-todo liveness suppression reads run activity.
   agentRun: { groupBy: jest.fn(async () => []) },
@@ -769,7 +769,7 @@ describe('formatStateForWake', () => {
 describe('buildFleetAttentionBlock', () => {
   beforeEach(() => {
     mockPrisma.projectTodo.findMany.mockReset().mockResolvedValue([]);
-    mockPrisma.codingSchedule.findMany.mockReset().mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockReset().mockResolvedValue([]);
     mockPrisma.ownerQuestion.findMany.mockReset().mockResolvedValue([]);
   });
 
@@ -802,20 +802,20 @@ describe('buildFleetAttentionBlock', () => {
   it('W1-7: a lane chat id is rendered IN FULL (never "…<suffix>"); SUPERVISOR_STATE_FULL_IDS_DISABLED=1 restores the suffix', async () => {
     const LANE = '0037460b-b60b-456e-977f-a3127ec52d82';
     const schedRow = [{ id: '50532ee7-1111-4222-8333-444455556666', sessionId: LANE, createdAt: new Date(Date.now() - 2 * 86400e3) }];
-    mockPrisma.codingSchedule.findMany.mockResolvedValue(schedRow);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue(schedRow);
     let block = await buildFleetAttentionBlock(UID, new Date());
     expect(block).toContain(`on chat ${LANE}`);
     expect(block).not.toMatch(/…[0-9a-f]{8}/);
     process.env.SUPERVISOR_STATE_FULL_IDS_DISABLED = '1';
     try {
-      mockPrisma.codingSchedule.findMany.mockResolvedValue(schedRow);
+      mockPrisma.chatSchedule.findMany.mockResolvedValue(schedRow);
       block = await buildFleetAttentionBlock(UID, new Date());
       expect(block).toContain('on chat …7ec52d82');
     } finally { delete process.env.SUPERVISOR_STATE_FULL_IDS_DISABLED; }
   });
 
   it('flags enabled machine-written schedule prompts for drift review — by the FULL id (ticket 03aef0da)', async () => {
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       { id: 'c461c912-8a2d-441e-a52a-ff2f9a9d9d69', sessionId: '810c924d-1d31-428c-bc6a-8120c132fcc4', createdAt: new Date(Date.now() - 7 * 86400e3) },
     ]);
     const now = new Date();
@@ -829,7 +829,7 @@ describe('buildFleetAttentionBlock', () => {
     expect(block).toContain('schedule_get each by the FULL id');
     expect(block).toContain('reads [stopped] was stopped since — skip it');
     // Still-live rows only: enabled AND not past their lifetime ceiling.
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { userId: UID, enabled: true, promptSetBy: 'machine', OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
     }));
   });
@@ -837,13 +837,13 @@ describe('buildFleetAttentionBlock', () => {
   it('FLEET_ATTENTION_FULL_SCHEDULE_IDS_DISABLED=1 restores the 8-char rendering + enabled-only pull', async () => {
     process.env.FLEET_ATTENTION_FULL_SCHEDULE_IDS_DISABLED = '1';
     try {
-      mockPrisma.codingSchedule.findMany.mockResolvedValue([
+      mockPrisma.chatSchedule.findMany.mockResolvedValue([
         { id: 'f0160206-rest-of-id', sessionId: 'xxxx-84adf975', createdAt: new Date(Date.now() - 86400e3) },
       ]);
       const block = await buildFleetAttentionBlock(UID);
       expect(block).toContain('MACHINE-WRITTEN schedule prompt f0160206…');
       expect(block).toContain('schedule_get');
-      expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
         where: { userId: UID, enabled: true, promptSetBy: 'machine' },
       }));
     } finally {
@@ -909,7 +909,7 @@ describe('buildFleetAttentionBlock', () => {
     mockPrisma.ownerQuestion.findMany.mockResolvedValue([
       { question: 'Decision one?', chatId: 'chat-aaaaaaa1', createdAt: new Date(Date.now() - 3600e3) },
     ]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       { id: 'f0160206-rest-of-id', sessionId: 'xxxx-84adf975', createdAt: new Date(Date.now() - 86400e3) },
     ]);
     const block = await buildFleetAttentionBlock(UID);

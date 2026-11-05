@@ -11,7 +11,7 @@
  * the long sweep paragraph reported "bounty (chat 17f71915) idle, msg
  * 2436f06b, updatedAt 13:27:35Z — F143 self-audit PASSED". `2436f06b` names NO
  * row anywhere — ground-truthed 2026-09-16T13:5xZ on box A (SSM cmd
- * e282f0c8-0b4e-4c6d-922a-4691fe91d70a, instance i-0f4ea2b57cf92d05c, the
+ * e282f0c8-0b4e-4c6d-922a-4691fe91d70a, instance i-0123456789abcdef0, the
  * app's own Prisma client running the lane's exact startsWith query):
  * `PROBE 2436f06b => msg:null sched:null chat:null`. The message the note
  * MEANT is the bounty chat's real F143-firing answer,
@@ -46,7 +46,7 @@
  * paragraph reported the 3e1cae6f stamp-reader firing with "transcript msg
  * 4649f20e — schedule fire \"BOX STAMP READER\", coding status running" —
  * `4649f20e` names NO row anywhere (SSM cmd 7cf1fd7d on box
- * i-0f4ea2b57cf92d05c, the app's own Prisma client running the lane's exact
+ * i-0123456789abcdef0, the app's own Prisma client running the lane's exact
  * startsWith query: `PROBE 4649f20e => msg:null sched:null chat:null`); the
  * message the note MEANT is the lane's real transcript row, 5548f406-…
  * (assistant, updated 13:48:26.751Z). The "Ledger:" line reported "goal
@@ -141,7 +141,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) }, // coding_sessions (ticket f1cb73ff lane)
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) }, // the ticket lane's existence + near-miss probes (b216475a)
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
@@ -360,13 +360,13 @@ beforeEach(() => {
   // deletes); any other probed sched id is a miss. The notes' four bare sched
   // ids (22797abf / 98466f1e / 1fbe4800 / 97afed06) ride no `sched <id>`
   // idiom — never probed, convicting nothing.
-  mockPrisma.codingSchedule.findFirst.mockImplementation(async (args: any) => {
+  mockPrisma.chatSchedule.findFirst.mockImplementation(async (args: any) => {
     const s = JSON.stringify(args);
     if (s.includes(REAL_SCHED_RETIRED)) return { id: `${REAL_SCHED_RETIRED}-e0d0-48c2-b3d0-52560969b8ad` };
     if (s.includes(REAL_SCHED_SUCCESSOR)) return { id: `${REAL_SCHED_SUCCESSOR}-a90f-4394-9634-9f0fb5749a66` };
     return null;
   });
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null);
   mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
   // The GUARD 7 todo lane: all SEVEN sighting-1 cited todos are real rows

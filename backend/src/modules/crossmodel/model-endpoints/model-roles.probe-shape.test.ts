@@ -67,7 +67,7 @@ const mockPost = (axios as any).post as jest.Mock;
 
 const SPEC = 'cql-litellm:api-openai-gpt-6-astra';
 const REG = {
-  url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql-secret',
+  url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql-secret',
   model: 'api-openai-gpt-6-astra', label: 'cql-litellm', supportsVision: false, coding: true, chatCapable: true, kind: 'chat',
   matryoshka: false, thinkingOff: false, providerShape: 'openai_chat', providerClass: 'openai', maxTools: 128, maxToolsSource: 'class', reasoningEffort: 'auto',
 };

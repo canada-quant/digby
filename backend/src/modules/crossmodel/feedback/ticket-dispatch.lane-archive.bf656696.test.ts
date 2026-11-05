@@ -31,7 +31,7 @@
  *      attempts the archive.
  *
  * Harness: the fresh-lanes suite's shape (mocked prisma/redis/platform
- * seams) + codingSchedule rows + the schedule.service pause mock boundary.
+ * seams) + chatSchedule rows + the schedule.service pause mock boundary.
  */
 
 jest.mock('../../../utils/logger', () => ({
@@ -112,7 +112,7 @@ const mockPrisma: any = {
   contextStoreEntry: { findUnique: jest.fn(async () => null) },
   // TICKET-LANE ARCHIVE GAPS review (2026-10-21): archiveTicketLane's
   // owner-armed schedule guard (sessionId IN, enabled, promptSetBy user / NULL).
-  codingSchedule: {
+  chatSchedule: {
     findMany: jest.fn(async ({ where }: any) => [...schedules.values()]
       .filter((s) => where.sessionId.in.includes(s.sessionId) && s.enabled === where.enabled
         && where.OR.some((b: any) => (b.promptSetBy === null ? s.promptSetBy == null : s.promptSetBy === b.promptSetBy)))

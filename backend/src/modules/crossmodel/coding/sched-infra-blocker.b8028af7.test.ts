@@ -3,7 +3,7 @@
  * [FLEET INFRA BLOCKER] advisory (feedback b8028af7).
  *
  * The failure (2026-10-15): blocker ib_261a76b3 sealed ONE AWS box
- * (CQL-Public i-020850b4474761289) as security-incident evidence, but the
+ * (CQL-Public i-0123456789abcdef0) as security-incident evidence, but the
  * advisory's action sentence was blanket — "Before triggering ANY deploy /
  * merge-to-main / publish / release-build step … re-verify each blocker is
  * cleared … HOLD the deploy/publish step" — so crossmodel lanes held five
@@ -36,7 +36,7 @@ const mockAgentRunCreate = jest.fn(async (..._a: any[]): Promise<any> => ({ id: 
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       update: jest.fn(async () => ({})),
       findUnique: jest.fn(async () => ({
         enabled: true, kind: 'recurring', runsCount: 0, maxRuns: null, expiresAt: null, lastFiredAt: null,
@@ -151,7 +151,7 @@ const NOW = new Date('2026-10-15T18:00:00.000Z');
 const BOX_ONLY_SEAL: InfraBlocker = {
   id: 'ib_261a76b3',
   label: 'CQL-Public sealed as security-incident evidence (retired box)',
-  detail: 'no start / SSM / probe / deploy TO box i-020850b4474761289; revoked provider keys are dead',
+  detail: 'no start / SSM / probe / deploy TO box i-0123456789abcdef0; revoked provider keys are dead',
   registeredAt: '2026-10-11T00:00:00.000Z',
   registeredBy: 'supervisor:daee2916',
   expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
@@ -238,7 +238,7 @@ describe('buildInfraBlockerNotice — scoped HOLD rendering (b8028af7)', () => {
     // A surface named past the old 300-char cut must still reach the lane:
     // a clipped scope degrades to "cannot tell" ⇒ fail-closed blanket hold.
     const prefix = 'x'.repeat(320);
-    const surface = 'deploys to box i-020850b4474761289 only';
+    const surface = 'deploys to box i-0123456789abcdef0 only';
     const detail = `${prefix} ${surface}`;
     expect(detail.length).toBeGreaterThan(300); // past the old DETAIL_MAX
     expect(detail.length).toBeLessThanOrEqual(500); // inside the registration cap

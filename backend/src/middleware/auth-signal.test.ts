@@ -136,8 +136,8 @@ describe('caller sample (caller-identification behind the ALB nodes)', () => {
 });
 
 describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the accepted-baseline class)', () => {
-  const BASELINE_IP = '10.0.0.1';
-  const BASELINE_IP_B = '10.0.0.2';
+  const BASELINE_IP = '10.0.0.12';
+  const BASELINE_IP_B = '10.0.0.13';
   const THIRD_IP = '203.0.113.9';
 
   it('a baseline IP at the legacy threshold (30) fires NO error line but still counts', async () => {
@@ -145,24 +145,24 @@ describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the acc
     recordInvalidTokenSignal(BASELINE_IP, 'error-handler');
     await flush();
     expect(mockedLogger.error).not.toHaveBeenCalled();
-    expect(mockIncr).toHaveBeenCalledWith('auth:invalid_token:10.0.0.1');
+    expect(mockIncr).toHaveBeenCalledWith('auth:invalid_token:10.0.0.12');
   });
 
   it('a baseline IP first hit still sets the TTL (counter + TTL machinery unchanged)', async () => {
     mockIncr.mockResolvedValue(1);
     recordInvalidTokenSignal(BASELINE_IP, 'error-handler');
     await flush();
-    expect(mockIncr).toHaveBeenCalledWith('auth:invalid_token:10.0.0.1');
-    expect(mockExpire).toHaveBeenCalledWith('auth:invalid_token:10.0.0.1', 3600);
+    expect(mockIncr).toHaveBeenCalledWith('auth:invalid_token:10.0.0.12');
+    expect(mockExpire).toHaveBeenCalledWith('auth:invalid_token:10.0.0.12', 3600);
     expect(mockedLogger.error).not.toHaveBeenCalled();
   });
 
-  it('the other default baseline IP (10.0.0.2) is equally quiet at 30', async () => {
+  it('the other default baseline IP (10.0.0.13) is equally quiet at 30', async () => {
     mockIncr.mockResolvedValue(INVALID_TOKEN_SPIKE_THRESHOLD);
     recordInvalidTokenSignal(BASELINE_IP_B, 'authenticate');
     await flush();
     expect(mockedLogger.error).not.toHaveBeenCalled();
-    expect(mockIncr).toHaveBeenCalledWith('auth:invalid_token:10.0.0.2');
+    expect(mockIncr).toHaveBeenCalledWith('auth:invalid_token:10.0.0.13');
   });
 
   it('a baseline IP stays quiet at 299 and fires exactly ONE tripwire line at 300', async () => {
@@ -179,12 +179,12 @@ describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the acc
     expect(mockedLogger.error).toHaveBeenCalledTimes(1);
     const line = (mockedLogger.error as jest.Mock).mock.calls[0][0] as string;
     expect(line.startsWith('Invalid-signature JWT spike:')).toBe(true); // byte-identical prefix for the scanners
-    expect(line).toContain('ip=10.0.0.1');
+    expect(line).toContain('ip=10.0.0.12');
     expect(line).toContain('(baseline-IP tripwire)');
     expect(line).toContain('caller='); // the caller render survives the retune
     expect(line).toContain('/api/crossmodel/news');
     // The caller-sample STORE also ran exactly as today (monitoring loses nothing).
-    expect(mockSet).toHaveBeenCalledWith('auth:invalid_token:10.0.0.1:sample', JSON.stringify(sample), { EX: 3600 });
+    expect(mockSet).toHaveBeenCalledWith('auth:invalid_token:10.0.0.12:sample', JSON.stringify(sample), { EX: 3600 });
   });
 
   it('a baseline IP past the tripwire (301) goes quiet again (one line per window)', async () => {
@@ -221,7 +221,7 @@ describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the acc
       await flush();
       expect(mockedLogger.error).toHaveBeenCalledTimes(1);
       const line = (mockedLogger.error as jest.Mock).mock.calls[0][0] as string;
-      expect(line).toContain('ip=10.0.0.1');
+      expect(line).toContain('ip=10.0.0.12');
       expect(line).toContain('(baseline-IP tripwire)');
     } finally {
       delete process.env.AUTH_SIGNAL_BASELINE_IPS;
@@ -240,7 +240,7 @@ describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the acc
     }
   });
 
-  it('AUTH_SIGNAL_BASELINE_IPS="none" (the explicit token) configures NO baseline IPs — 10.0.0.1 fires at 30', async () => {
+  it('AUTH_SIGNAL_BASELINE_IPS="none" (the explicit token) configures NO baseline IPs — 10.0.0.12 fires at 30', async () => {
     process.env.AUTH_SIGNAL_BASELINE_IPS = ' None ';
     try {
       mockIncr.mockResolvedValue(INVALID_TOKEN_SPIKE_THRESHOLD);
@@ -248,7 +248,7 @@ describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the acc
       await flush();
       expect(mockedLogger.error).toHaveBeenCalledTimes(1);
       const line = (mockedLogger.error as jest.Mock).mock.calls[0][0] as string;
-      expect(line).toContain('ip=10.0.0.1');
+      expect(line).toContain('ip=10.0.0.12');
       expect(line).not.toContain('(baseline-IP tripwire)');
     } finally {
       delete process.env.AUTH_SIGNAL_BASELINE_IPS;
@@ -269,14 +269,14 @@ describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the acc
       await flush();
       expect(mockedLogger.error).toHaveBeenCalledTimes(1);
       const line = (mockedLogger.error as jest.Mock).mock.calls[0][0] as string;
-      expect(line).toContain('ip=10.0.0.1');
+      expect(line).toContain('ip=10.0.0.12');
       expect(line).not.toContain('(baseline-IP tripwire)');
     } finally {
       delete process.env.AUTH_SIGNAL_BASELINE_IPS;
     }
   });
 
-  it('AUTH_SIGNAL_BASELINE_DISABLED=1 kills the baseline class — 10.0.0.1 fires at 30', async () => {
+  it('AUTH_SIGNAL_BASELINE_DISABLED=1 kills the baseline class — 10.0.0.12 fires at 30', async () => {
     process.env.AUTH_SIGNAL_BASELINE_DISABLED = '1';
     try {
       mockIncr.mockResolvedValue(INVALID_TOKEN_SPIKE_THRESHOLD);
@@ -284,7 +284,7 @@ describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the acc
       await flush();
       expect(mockedLogger.error).toHaveBeenCalledTimes(1);
       const line = (mockedLogger.error as jest.Mock).mock.calls[0][0] as string;
-      expect(line).toContain('ip=10.0.0.1');
+      expect(line).toContain('ip=10.0.0.12');
       expect(line).not.toContain('(baseline-IP tripwire)');
     } finally {
       delete process.env.AUTH_SIGNAL_BASELINE_DISABLED;
@@ -305,7 +305,7 @@ describe('baseline-IP retune (FO retune, 2026-10-14 — ALB AZ nodes are the acc
       expect(mockedLogger.error).toHaveBeenCalledTimes(1);
       const line = (mockedLogger.error as jest.Mock).mock.calls[0][0] as string;
       expect(line.startsWith('Invalid-signature JWT spike:')).toBe(true);
-      expect(line).toContain('ip=10.0.0.1');
+      expect(line).toContain('ip=10.0.0.12');
       expect(line).toContain('(baseline-IP tripwire)');
     } finally {
       delete process.env.AUTH_SIGNAL_BASELINE_SPIKE_THRESHOLD;
@@ -328,7 +328,7 @@ describe('buildInvalidTokenSample', () => {
     process.env.QUOTA_TRUSTED_PROXY_HOPS = '2';
     try {
       const s = buildInvalidTokenSample({
-        headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1', 'user-agent': 'u'.repeat(300) },
+        headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.12', 'user-agent': 'u'.repeat(300) },
       });
       expect(s.clientIp).toBe('203.0.113.9');
       expect(s.userAgent).toHaveLength(160);
@@ -337,14 +337,14 @@ describe('buildInvalidTokenSample', () => {
       // the prober claims 1.2.3.4 as the first hop; the derivation still names
       // the real client two from the right.
       const forged = buildInvalidTokenSample({
-        headers: { 'x-forwarded-for': '1.2.3.4, 203.0.113.9, 10.0.0.1' },
+        headers: { 'x-forwarded-for': '1.2.3.4, 203.0.113.9, 10.0.0.12' },
       });
       expect(forged.clientIp).toBe('203.0.113.9');
       expect(forged.clientIp).not.toBe('1.2.3.4');
 
       // Unset hop count ⇒ the field is OMITTED, never guessed.
       delete process.env.QUOTA_TRUSTED_PROXY_HOPS;
-      const unset = buildInvalidTokenSample({ headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.1' } });
+      const unset = buildInvalidTokenSample({ headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.12' } });
       expect(unset.clientIp).toBeUndefined();
 
       // Chain shorter than the hop count ⇒ omitted.
@@ -354,7 +354,7 @@ describe('buildInvalidTokenSample', () => {
 
       // A private candidate at the derived position (fully-internal chain) ⇒
       // omitted — there is no external client to recover.
-      const internal = buildInvalidTokenSample({ headers: { 'x-forwarded-for': '10.0.0.9, 10.0.0.1' } });
+      const internal = buildInvalidTokenSample({ headers: { 'x-forwarded-for': '10.0.0.9, 10.0.0.12' } });
       expect(internal.clientIp).toBeUndefined();
     } finally {
       delete process.env.QUOTA_TRUSTED_PROXY_HOPS;

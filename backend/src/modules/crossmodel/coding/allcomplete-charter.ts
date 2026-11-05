@@ -300,7 +300,7 @@ export async function laneLedgerQuietSince(chat: { id: string; projectId?: strin
 
 /** A registered poll (own gate) or a project clock the lane may watch: never idle-skipped. THROWS on a DB error. */
 async function registeredPoll(scheduleId: string, projectId: string | null | undefined, now: Date): Promise<string | null> {
-  const row = await prisma.codingSchedule.findUnique({ where: { id: scheduleId }, select: { deltaGate: true, requiredProbes: true } });
+  const row = await prisma.chatSchedule.findUnique({ where: { id: scheduleId }, select: { deltaGate: true, requiredProbes: true } });
   if (row && ((row as any).deltaGate != null || (row as any).requiredProbes != null)) return 'registered_gate';
   if (projectId) {
     const live = await prisma.watchedResource.count({ where: { projectId, OR: [{ reservationEndsAt: null }, { reservationEndsAt: { gt: now } }] } });

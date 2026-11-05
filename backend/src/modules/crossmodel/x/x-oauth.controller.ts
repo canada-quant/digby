@@ -49,10 +49,10 @@ function oauthConfigured(): boolean {
 function getConfig() {
   const clientId     = process.env.X_OAUTH_CLIENT_ID;
   const clientSecret = process.env.X_OAUTH_CLIENT_SECRET;
-  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
   // The callback derives from THIS instance's public URL (self-host setup
   // hardening 2026-10-20); on production FRONTEND_URL's first entry is
-  // https://digby.example.com, so the derived value is byte-identical.
+  // https://digby.ai, so the derived value is byte-identical.
   const redirectUri  = process.env.X_OAUTH_REDIRECT_URI ||
     `${frontendUrl}/api/crossmodel/x/callback`;
 
@@ -122,7 +122,7 @@ export class XOAuthController {
       if (!oauthConfigured()) {
         // Self-host setup hardening (2026-10-20): the same not_configured redirect
         // Slack/Asana use — the tab says "not set up on this instance" + the how-to.
-        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
         logger.warn('X OAuth: X_OAUTH_CLIENT_ID / X_OAUTH_CLIENT_SECRET not configured');
         res.redirect(`${frontendUrl}/account?tab=integrations&x=not_configured`);
         return;

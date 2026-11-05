@@ -71,7 +71,7 @@ jest.mock('axios', () => ({ __esModule: true, default: { get: jest.fn(), post: j
 
 import codingController from './coding.controller';
 
-const CREATED = { id: 'p1', name: 'crossmodel', repoUrl: 'https://github.com/canada-quant/digby' };
+const CREATED = { id: 'p1', name: 'crossmodel', repoUrl: 'https://github.com/example-org/crossmodel' };
 
 function makeReqRes(body: any) {
   const req: any = { user: { id: 'u1' }, params: {}, body };
@@ -88,9 +88,9 @@ beforeEach(() => {
 describe('POST /coding/projects — validateRepoUrl SSRF jail (capability gap review 2026-09-24)', () => {
   it('an invalid repoUrl is a 400 carrying the validator\'s message verbatim, and NO project is created', async () => {
     mockValidateRepoUrl.mockReturnValue('Private/loopback hosts are not allowed');
-    const { req, res } = makeReqRes({ repoUrl: 'https://10.0.0.22/internal/repo.git' });
+    const { req, res } = makeReqRes({ repoUrl: 'https://10.0.0.11/internal/repo.git' });
     await codingController.importProject(req, res);
-    expect(mockValidateRepoUrl).toHaveBeenCalledWith('https://10.0.0.22/internal/repo.git');
+    expect(mockValidateRepoUrl).toHaveBeenCalledWith('https://10.0.0.11/internal/repo.git');
     expect(res.status).toHaveBeenCalledWith(400);
     expect(res.json).toHaveBeenCalledWith({ error: 'Private/loopback hosts are not allowed' });
     expect(mockCreateCodingProject).not.toHaveBeenCalled();
@@ -124,13 +124,13 @@ describe('POST /coding/projects — validateRepoUrl SSRF jail (capability gap re
   });
 
   it('a valid repoUrl passes the validator and creates the project (name derived from the repo, provider github, branch main)', async () => {
-    const { req, res } = makeReqRes({ repoUrl: 'https://github.com/canada-quant/digby.git' });
+    const { req, res } = makeReqRes({ repoUrl: 'https://github.com/example-org/crossmodel.git' });
     await codingController.importProject(req, res);
-    expect(mockValidateRepoUrl).toHaveBeenCalledWith('https://github.com/canada-quant/digby.git');
+    expect(mockValidateRepoUrl).toHaveBeenCalledWith('https://github.com/example-org/crossmodel.git');
     expect(mockCreateCodingProject).toHaveBeenCalledWith({
       userId: 'u1',
-      name: 'digby',
-      repoUrl: 'https://github.com/canada-quant/digby.git',
+      name: 'crossmodel',
+      repoUrl: 'https://github.com/example-org/crossmodel.git',
       defaultBranch: 'main',
       provider: 'github',
       githubLabel: null,

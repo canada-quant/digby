@@ -56,7 +56,7 @@ const mockPrisma: any = {
   supervisorState: { findUnique: jest.fn(), upsert: jest.fn() },
   crossModelChat: { findUnique: jest.fn() },
   projectTodo: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []) },
   agentRun: { groupBy: jest.fn(async () => []) },
 };
@@ -101,10 +101,10 @@ function mockTodos({ stalled = [] as any[], pending = [] as any[] } = {}) {
     where?.status === 'in_progress' ? stalled : pending,
   );
 }
-/** Route codingSchedule queries: readback pull (no sessionId/promptSetBy) →
+/** Route chatSchedule queries: readback pull (no sessionId/promptSetBy) →
  *  readbackRows; machinePrompts → []; assignee-cadence (sessionId.in) → cadenceRows. */
 function mockSchedules(readbackRows: any[] = [], cadenceRows: any[] = []) {
-  mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) => {
+  mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) => {
     const w = args?.where ?? {};
     if (w.sessionId?.in) return cadenceRows;
     if (w.promptSetBy) return [];
@@ -116,7 +116,7 @@ const runAgg = (sessionId: string, newest: Date): any => ({ sessionId, _max: { u
 beforeEach(() => {
   jest.clearAllMocks();
   mockPrisma.projectTodo.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.ownerQuestion.findMany.mockResolvedValue([]);
   mockPrisma.agentRun.groupBy.mockResolvedValue([]);
 });

@@ -2,7 +2,7 @@
  * Ticket 4dbd09fa — the open_pull_request advisory scan must read the PUSHED
  * PR HEAD TREE, not the lane's on-disk worktree.
  *
- * THE MISHAP (prod, PR #1488 on canada-quant/digby, opened 2026-10-14 off
+ * THE MISHAP (prod, PR #1488 on example-org/crossmodel, opened 2026-10-14 off
  * clean tip aa4632e3): the PR body's [SECURITY ADVISORY] section listed the
  * exact PRE-#1453 dependency set — axios@1.13.5 (backend), axios@1.13.2
  * (frontend), axios@1.18.1 (asana-mcp), axios@1.16.1 (x-mcp), sdk@1.29.0

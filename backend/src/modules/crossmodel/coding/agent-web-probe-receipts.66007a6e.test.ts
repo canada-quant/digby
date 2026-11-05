@@ -59,10 +59,10 @@ jest.mock('./coding-model', () => {
 // (WEB_TOOL_NAMES), not executeCodingTool. The incident's two probe shapes:
 // the DOWN result for the watched health endpoint and a control scrape.
 const DOWN_RESULT =
-  'Failed to fetch https://example.com/api/health — the page may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don\'t hammer the same URL repeatedly. If it keeps failing, answer from the search results you already have.';
+  'Failed to fetch https://cql.ca/api/health — the page may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don\'t hammer the same URL repeatedly. If it keeps failing, answer from the search results you already have.';
 const CONTROL_RESULT = '# Example Domain\n\nThis domain is for use in illustrative examples.';
 const mockToolCacheExec: jest.Mock = jest.fn(async (name: string, args: any) => {
-  if (name === 'scrape_as_markdown' && String(args?.url ?? '') === 'https://example.com/api/health') return DOWN_RESULT;
+  if (name === 'scrape_as_markdown' && String(args?.url ?? '') === 'https://cql.ca/api/health') return DOWN_RESULT;
   return CONTROL_RESULT;
 });
 jest.mock('../tool-executor', () => {
@@ -164,7 +164,7 @@ const probeTurn = (n: number) => ({
   content: '',
   reasoning: 'Probing the watched endpoint and the control.',
   toolCalls: [
-    { id: `t${n}a`, name: 'scrape_as_markdown', arguments: JSON.stringify({ url: 'https://example.com/api/health' }) },
+    { id: `t${n}a`, name: 'scrape_as_markdown', arguments: JSON.stringify({ url: 'https://cql.ca/api/health' }) },
     { id: `t${n}b`, name: 'scrape_as_markdown', arguments: JSON.stringify({ url: 'https://example.com/' }) },
   ],
   finishReason: 'tool_calls',
@@ -188,7 +188,7 @@ describe('ticket 66007a6e — web-probe receipts at the agent seam: collector pu
     const scrapes = receipts.filter((r) => r.tool === 'scrape_as_markdown');
     expect(scrapes).toHaveLength(2);
     expect(scrapes.every((r) => r.ok)).toBe(true);
-    expect(scrapes.map((r) => r.ids.url)).toEqual(expect.arrayContaining(['https://example.com/api/health', 'https://example.com/']));
+    expect(scrapes.map((r) => r.ids.url)).toEqual(expect.arrayContaining(['https://cql.ca/api/health', 'https://example.com/']));
 
     // COLLECTOR-ONLY: no run_tool_receipts write for the web-probe class.
     const persistedTools = mockRecordRunReceiptAsync.mock.calls.map((c) => c[0]?.tool);

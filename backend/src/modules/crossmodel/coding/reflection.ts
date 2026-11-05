@@ -26,6 +26,13 @@ import logger from '../../../utils/logger';
 // an UNCATCHABLE kill that broke 5 reflection.* suites (measured this run).
 import { breakerClassKey, BREAKER_CLASS_KEY_FIELD } from '../feedback/breaker-class-key';
 import { bumpAdjudicatedClassSighting } from '../feedback/adjudicated-class-attach';
+// ALP-1 (tickets 921013a5 → d8395cca): OBSERVE-ONLY attribution of a filed
+// breaker row to the ticket an adjudication lane was dispatched on. Its
+// resolver is fail-open and reads nothing on the decision path; the switch
+// (REPRO_ATTRIBUTION_DISABLED) is read inside it, at call time. Env-free leaf,
+// same import discipline as breaker-class-key above.
+import { resolveReproAttribution, reproContextFields, reproMetricMeta } from './repro-attribution';
+import { recordLoopMetric, LOOP_METRIC_KINDS } from '../platform/loop-metrics.service';
 // N8 (2026-09-25): decision-gate purpose `reflection_route` — a typed remedy
 // choice over the streak evidence, CONCURRENT with the consult (shadow);
 // act = consult only on needs_diagnosis. See the route section below.
@@ -421,6 +428,17 @@ export async function fileStreakInvestigation(ev: StreakEvidence): Promise<strin
     // tool pair the detector convicted on — never the chat title. null for a
     // plain 'failure' streak (no discriminator ⇒ no key ⇒ unchanged filing).
     const classKey = breakerClassKey({ shape: ev.shape, tool: ev.tool, intended: ev.intended });
+    // ALP-1 — OBSERVE-ONLY interaction-level attribution. A lane the
+    // dispatcher bound to a ticket (context.dispatchMode 'ticket_lane' +
+    // dispatchedTo = this session) is ADJUDICATING that ticket, and its
+    // faithful reproduction of the ticket's own recorded probes is what trips
+    // this breaker (921013a5 → d8395cca: the successor was filed 70 min later
+    // by the lane the first ticket was dispatched TO). Attribution is written;
+    // NOTHING is suppressed, exempted or re-counted — the streak already
+    // happened and its count is already decided above this function. Resolved
+    // before the attach so the attached sighting carries it too; fail-open
+    // (null) on the switch, a read error, or any unexpected shape.
+    const repro = await resolveReproAttribution(ev.sessionId);
     const filedContext: Record<string, unknown> = {
       sessionId: ev.sessionId,
       ...(ev.runId ? { runId: ev.runId } : {}),
@@ -429,7 +447,29 @@ export async function fileStreakInvestigation(ev: StreakEvidence): Promise<strin
       surface: 'coding',
       breakerShape: ev.shape ?? 'failure',
       ...(classKey ? { [BREAKER_CLASS_KEY_FIELD]: classKey } : {}),
+      // Spread of {} for an untagged trip ⇒ the context object is
+      // byte-identical to the pre-change filing (pinned by a test).
+      ...reproContextFields(repro),
     };
+    // ALP-1 observe-only READOUT — the number that tells the fleet how much of
+    // its breaker noise is adjudication reproduction. Rides the EXISTING
+    // guard_strike kind under its own seam (the derail-class forensics
+    // convention: `get_fleet_telemetry kind='repro_attribution'` would return
+    // "not a registered kind" even with rows present), fire-and-forget by
+    // contract — recordLoopMetric never throws and never blocks. Emission is
+    // gated on an ATTRIBUTION (so an untagged trip writes zero rows and the
+    // pre-change telemetry is byte-identical), not on the filing outcome: the
+    // count is "breaker trips attributable to an adjudication lane", which is
+    // knowable here and is what the backlog item asks to read.
+    const reproMeta = reproMetricMeta(repro, { sessionId: ev.sessionId, runId: ev.runId, tool: ev.tool, shape: ev.shape });
+    if (reproMeta) {
+      recordLoopMetric({
+        kind: LOOP_METRIC_KINDS.GUARD_STRIKE,
+        sessionId: ev.sessionId,
+        runId: ev.runId ?? undefined,
+        meta: { seam: 'repro_attribution', state: 'filing_with_repro_of', ...reproMeta },
+      });
+    }
     const description =
       `Auto-filed at breaker trip (owner doctrine 2026-09-10: self-heal + attribute, never just escalate).\n`
       + `Session ${ev.sessionId}${ev.runId ? `, run ${ev.runId}` : ''}; ${narrationShape ? `cross-turn narration-repeat break (ticket 03587322 guard) — no tool failed; synthetic label '${ev.tool}';` : `tool ${ev.tool};`}${ev.perma ? ' second' : ' first'} streak this run`

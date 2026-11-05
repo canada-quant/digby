@@ -357,10 +357,11 @@ const UPSTREAM_PORT = 1057;                            // tailscaled's undocumen
  * restarted containers) and once per process on a running container
  * (ensureSessionUser), so a live container is fixed without a restart.
  */
-export const SESSION_USER_SCRIPT = [
-  "getent passwd 1001 >/dev/null 2>&1 || { N=digby; grep -q '^digby:' /etc/passwd && N=digby1001; echo \"$N:x:1001:1001:Digby session:/tmp:/bin/bash\" >> /etc/passwd; } || true",
-  "getent group 1001 >/dev/null 2>&1 || { G=digby; grep -q '^digby:' /etc/group && G=digby1001; echo \"$G:x:1001:\" >> /etc/group; } || true",
-].join('\n');
+// From the leaf module (ticket e2f40d10): the per-session container path needs
+// the same rows, and container.service must not statically import THIS module
+// (which already imports it). Re-exported so existing importers keep working.
+import { SESSION_USER_SCRIPT } from './session-user-row';
+export { SESSION_USER_SCRIPT };
 
 const sessionUserEnsured = new Set<string>();
 

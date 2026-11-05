@@ -52,12 +52,12 @@ test('versionNewer: strictly-newer only (the ticket case 0.6.3 → 0.8.0)', () =
 });
 
 test('advertActionable: shape gate — version + https url + 64-hex sha256', () => {
-  const good = { version: '0.8.0', url: 'https://digby.example.com/x.tar.gz', sha256: SHA };
+  const good = { version: '0.8.0', url: 'https://digby.ai/x.tar.gz', sha256: SHA };
   assert.equal(advertActionable(good, '0.6.3'), true);
   assert.equal(advertActionable(null, '0.6.3'), false);
   assert.equal(advertActionable({}, '0.6.3'), false);
   assert.equal(advertActionable({ ...good, version: 'garbage' }, '0.6.3'), false);
-  assert.equal(advertActionable({ ...good, url: 'http://digby.example.com/x.tar.gz' }, '0.6.3'), false, 'plain http refused');
+  assert.equal(advertActionable({ ...good, url: 'http://digby.ai/x.tar.gz' }, '0.6.3'), false, 'plain http refused');
   assert.equal(advertActionable({ ...good, url: 'file:///etc/passwd' }, '0.6.3'), false);
   assert.equal(advertActionable({ ...good, sha256: 'REPLACE_WITH_TARBALL_SHA256' }, '0.6.3'), false);
   assert.equal(advertActionable({ ...good, sha256: 'zz' }, '0.6.3'), false);
@@ -135,8 +135,8 @@ test('kill switch: DIGBY_SELF_UPDATE=0 disables', () => {
 // ── 2. Version pins ──────────────────────────────────────────────────────────
 
 test('4e75cdea pin: this tree IS 0.9.1 (the self-updating agent line)', () => {
-  assert.match(configSrc, /AGENT_VERSION = '0\.9\.19'/, 'config.ts AGENT_VERSION must be 0.9.19');
-  assert.equal(pkg.version, '0.9.19', 'package.json version must match');
+  assert.match(configSrc, /AGENT_VERSION = '0\.9\.23'/, 'config.ts AGENT_VERSION must be 0.9.23');
+  assert.equal(pkg.version, '0.9.23', 'package.json version must match');
 });
 
 test('4e75cdea pin: the poll response carries the additive update block next to command', () => {

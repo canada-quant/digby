@@ -108,14 +108,14 @@ describe('parse + evaluate (pure)', () => {
   });
 
   it('deploy (review fix): a FAILED deploy.yml followed by a successful "Deployment Health Check" / "Deploy Watchdog" on the same sha reads FAILURE — scheduled / workflow_run runs are never the deploy', () => {
-    const spec = { kind: 'deploy' as const, owner: 'canada-quant', repo: 'digby', sha: SHA };
+    const spec = { kind: 'deploy' as const, owner: 'example-org', repo: 'crossmodel', sha: SHA };
     const runs = [
       // newest first, as the API lists them
       { id: 30, workflow_id: 9, name: 'Deploy Watchdog', path: '.github/workflows/deploy-watchdog.yml', event: 'schedule', status: 'completed', conclusion: 'success', created_at: '2026-10-20T11:20:00Z' },
       { id: 20, workflow_id: 8, name: 'Deployment Health Check', path: '.github/workflows/deploy-healthcheck.yml', event: 'workflow_run', status: 'completed', conclusion: 'success', created_at: '2026-10-20T11:10:00Z' },
       { id: 10, workflow_id: 7, name: 'Deploy to AWS EC2', path: '.github/workflows/deploy.yml', event: 'push', status: 'completed', conclusion: 'failure', created_at: '2026-10-20T10:40:00Z', html_url: 'https://x/10' },
     ];
-    for (const own of ['canada-quant/digby', null]) {
+    for (const own of ['example-org/crossmodel', null]) {
       const v = evaluateDeployProbe(runs, spec, { ownRepoSlug: own });
       expect(v.met).toBe(true);
       expect(v.summary).toContain('CONCLUDED FAILURE (run 10 https://x/10)');
@@ -123,9 +123,9 @@ describe('parse + evaluate (pure)', () => {
       expect(v.summary).not.toContain('SUCCESS');
     }
     // A health check still running AFTER the deploy concluded never holds the verdict either.
-    expect(evaluateDeployProbe([{ ...runs[1], status: 'in_progress', conclusion: null }, runs[2]], spec, { ownRepoSlug: 'canada-quant/digby' }).met).toBe(true);
+    expect(evaluateDeployProbe([{ ...runs[1], status: 'in_progress', conclusion: null }, runs[2]], spec, { ownRepoSlug: 'example-org/crossmodel' }).met).toBe(true);
     // Own repo: only deploy.yml counts — a push-triggered "deploy-docs.yml" is not THE deploy.
-    expect(evaluateDeployProbe([{ id: 5, path: '.github/workflows/deploy-docs.yml', event: 'push', status: 'completed', conclusion: 'success' }], spec, { ownRepoSlug: 'canada-quant/digby' }).met).toBe(false);
+    expect(evaluateDeployProbe([{ id: 5, path: '.github/workflows/deploy-docs.yml', event: 'push', status: 'completed', conclusion: 'success' }], spec, { ownRepoSlug: 'example-org/crossmodel' }).met).toBe(false);
   });
 
   it('deploy (review fix): a CANCELLED (superseded) deploy is named as NOT a deploy of the sha, never "concluded"; two deploy workflows ⇒ the worst one', () => {
@@ -144,9 +144,9 @@ describe('parse + evaluate (pure)', () => {
   it('deploy probe: the instance’s own repo reads deploy.yml’s own runs; another repo the repo-wide listing', async () => {
     const urls: string[] = [];
     const ghGet = async (_t: string, url: string) => { urls.push(url); return { workflow_runs: [] }; };
-    await probeCondition({ kind: 'deploy', owner: 'canada-quant', repo: 'digby', sha: SHA }, 'tok', 0, { ghGet, ownRepoSlug: () => 'canada-quant/digby' });
-    await probeCondition({ kind: 'deploy', owner: 'o', repo: 'r', sha: SHA }, 'tok', 0, { ghGet, ownRepoSlug: () => 'canada-quant/digby' });
-    expect(urls[0]).toBe(`https://api.github.com/repos/canada-quant/digby/actions/workflows/deploy.yml/runs?head_sha=${SHA}&per_page=30`);
+    await probeCondition({ kind: 'deploy', owner: 'example-org', repo: 'crossmodel', sha: SHA }, 'tok', 0, { ghGet, ownRepoSlug: () => 'example-org/crossmodel' });
+    await probeCondition({ kind: 'deploy', owner: 'o', repo: 'r', sha: SHA }, 'tok', 0, { ghGet, ownRepoSlug: () => 'example-org/crossmodel' });
+    expect(urls[0]).toBe(`https://api.github.com/repos/example-org/crossmodel/actions/workflows/deploy.yml/runs?head_sha=${SHA}&per_page=30`);
     expect(urls[1]).toBe(`https://api.github.com/repos/o/r/actions/runs?head_sha=${SHA}&per_page=100`);
   });
 
@@ -200,12 +200,12 @@ describe('parse + evaluate (pure)', () => {
       if (url.endsWith('/commits/adb0875d')) return { sha: 'adb0875d637ab119a625f02421e287ab10bdf172' };
       return { workflow_runs: [{ id: 39530651845, name: 'Deploy to AWS EC2', path: '.github/workflows/deploy.yml', event: 'push', status: 'completed', conclusion: 'success', created_at: '2026-10-21T02:01:19Z' }] };
     };
-    const p = await probeCondition({ kind: 'deploy', owner: 'canada-quant', repo: 'digby', sha: 'adb0875d' }, 'tok', 0, { ghGet, ownRepoSlug: () => 'canada-quant/digby' });
+    const p = await probeCondition({ kind: 'deploy', owner: 'example-org', repo: 'crossmodel', sha: 'adb0875d' }, 'tok', 0, { ghGet, ownRepoSlug: () => 'example-org/crossmodel' });
     expect(p.met).toBe(true);
     expect(p.summary).toContain('CONCLUDED SUCCESS (run 39530651845)');
     // resolution GET first, then the deploy.yml listing with the FULL sha
-    expect(urls[0]).toBe('https://api.github.com/repos/canada-quant/digby/commits/adb0875d');
-    expect(urls[1]).toBe('https://api.github.com/repos/canada-quant/digby/actions/workflows/deploy.yml/runs?head_sha=adb0875d637ab119a625f02421e287ab10bdf172&per_page=30');
+    expect(urls[0]).toBe('https://api.github.com/repos/example-org/crossmodel/commits/adb0875d');
+    expect(urls[1]).toBe('https://api.github.com/repos/example-org/crossmodel/actions/workflows/deploy.yml/runs?head_sha=adb0875d637ab119a625f02421e287ab10bdf172&per_page=30');
     // a short sha that resolves to NOTHING is an honest not_found, never an empty-run not-met
     const gone = await probeCondition({ kind: 'deploy', owner: 'o', repo: 'r', sha: 'deadbeef' }, 'tok', 0, {
       ghGet: async (_t, url) => { if (url.includes('/commits/')) { throw Object.assign(new Error('404'), { response: { status: 404 } }); } return { workflow_runs: [] }; },
@@ -314,7 +314,7 @@ describe('runConditionWakesPass — the cron half', () => {
   // ── ticket 0bc39100: the deployed miss, replayed end-to-end (lane 46ecec8d parked on deploy@adb0875d — a 12-hex sha — and probed not-met 87 times until the 3h backstop) ──
   it('0bc39100 replay: a registered deploy wait on a SHORT sha MEETS once the deploy run concluded — ONE wake, backstop suppressed, row gone; a resolution failure keeps the row (errors+1), never drops it', async () => {
     const store = memStore();
-    const spec = { kind: 'deploy' as const, owner: 'canada-quant', repo: 'digby', sha: 'adb0875d' };
+    const spec = { kind: 'deploy' as const, owner: 'example-org', repo: 'crossmodel', sha: 'adb0875d' };
     const rec: ConditionWakeRecord = {
       v: 1, key: conditionWakeKey('lane-1', spec), chatId: 'lane-1', userId: 'u1', runId: 'run-1', spec,
       createdAt: T0.toISOString(), horizonAt: new Date(T0.getTime() + CONDITION_WAKE_HORIZON_MS.deploy).toISOString(),
@@ -327,10 +327,10 @@ describe('runConditionWakesPass — the cron half', () => {
       if (url.endsWith('/commits/adb0875d')) return { sha: 'adb0875d637ab119a625f02421e287ab10bdf172' };
       return { workflow_runs: [{ id: 39530651845, workflow_id: 7, name: 'Deploy to AWS EC2', path: '.github/workflows/deploy.yml', event: 'push', status: 'completed', conclusion: 'success', created_at: '2026-10-21T02:01:19Z' }] };
     };
-    const c = await runConditionWakesPass({ now: NOW, store, wake, suppress, loadLane: async () => lane(), getToken: async () => 'tok', ghGet, ownRepoSlug: () => 'canada-quant/digby' });
+    const c = await runConditionWakesPass({ now: NOW, store, wake, suppress, loadLane: async () => lane(), getToken: async () => 'tok', ghGet, ownRepoSlug: () => 'example-org/crossmodel' });
     expect(c).toMatchObject({ open: 1, checked: 1, met: 1, dropped: 0, errors: 0 });
     expect(wake).toHaveBeenCalledTimes(1);
-    expect((wake.mock.calls[0] as any[])[0].prompt).toMatch(/^\[CONDITION MET — deploy of canada-quant\/digby@adb0875d concluded\] Deploy for adb0875d CONCLUDED SUCCESS \(run 39530651845/);
+    expect((wake.mock.calls[0] as any[])[0].prompt).toMatch(/^\[CONDITION MET — deploy of example-org\/crossmodel@adb0875d concluded\] Deploy for adb0875d CONCLUDED SUCCESS \(run 39530651845/);
     expect(suppress).toHaveBeenCalledWith('backstop-1', 'condition_met');
     expect(store.rows.size).toBe(0);
 
@@ -342,7 +342,7 @@ describe('runConditionWakesPass — the cron half', () => {
     const store2 = memStore();
     store2.rows.set(rec2.key, rec2);
     const failing = async () => { throw Object.assign(new Error('socket hang up'), { response: { status: 502 } }); };
-    const c2 = await runConditionWakesPass({ now: NOW, store: store2, wake, suppress, loadLane: async () => lane(), getToken: async () => 'tok', ghGet: failing, ownRepoSlug: () => 'canada-quant/digby' });
+    const c2 = await runConditionWakesPass({ now: NOW, store: store2, wake, suppress, loadLane: async () => lane(), getToken: async () => 'tok', ghGet: failing, ownRepoSlug: () => 'example-org/crossmodel' });
     expect(c2).toMatchObject({ open: 1, checked: 1, met: 0, errors: 1 });
     expect(store2.rows.size).toBe(1);
     expect(store2.rows.values().next().value!.errors).toBe(1);

@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-27T19:40:38.858Z",
+  "generatedAt": "2026-11-05T22:43:33.809Z",
   "docs": [
     {
       "slug": "self-host",
@@ -23,6 +23,36 @@
           "depth": 2,
           "text": "What you get",
           "id": "what-you-get"
+        },
+        {
+          "depth": 2,
+          "text": "Branding (rebrand this instance — no source edits)",
+          "id": "branding-rebrand-this-instance--no-source-edits"
+        },
+        {
+          "depth": 3,
+          "text": "The asset directory",
+          "id": "the-asset-directory"
+        },
+        {
+          "depth": 3,
+          "text": "Every knob",
+          "id": "every-knob"
+        },
+        {
+          "depth": 3,
+          "text": "Reduced motion, and what happens when a file is missing",
+          "id": "reduced-motion-and-what-happens-when-a-file-is-missing"
+        },
+        {
+          "depth": 3,
+          "text": "What the name rewrites, and what it does not",
+          "id": "what-the-name-rewrites-and-what-it-does-not"
+        },
+        {
+          "depth": 3,
+          "text": "Surfaces that carry the branding",
+          "id": "surfaces-that-carry-the-branding"
         },
         {
           "depth": 2,
@@ -53,6 +83,11 @@
           "depth": 2,
           "text": "Web search (optional)",
           "id": "web-search-optional"
+        },
+        {
+          "depth": 3,
+          "text": "How search, reading, RAG, embeddings and reranking fit together",
+          "id": "how-search-reading-rag-embeddings-and-reranking-fit-together"
         },
         {
           "depth": 2,
@@ -314,7 +349,7 @@
     {
       "slug": "macos-app",
       "title": "Digby — macOS desktop app",
-      "description": "The native Digby macOS desktop app — a signed WKWebView wrapper around digby.example.com.",
+      "description": "The native Digby macOS desktop app — a signed WKWebView wrapper around digby.ai.",
       "category": "iMessage & macOS",
       "source": "macos-app/README.md",
       "filename": "macos-app.md",
@@ -331,7 +366,7 @@
         },
         {
           "depth": 2,
-          "text": "Publish (serve from digby.example.com)",
+          "text": "Publish (serve from digby.ai)",
           "id": "publish-serve-from-digbyai"
         },
         {
@@ -593,6 +628,11 @@
           "depth": 2,
           "text": "Dig deeper",
           "id": "dig-deeper"
+        },
+        {
+          "depth": 3,
+          "text": "Dig deeper in a ghost conversation",
+          "id": "dig-deeper-in-a-ghost-conversation"
         },
         {
           "depth": 2,

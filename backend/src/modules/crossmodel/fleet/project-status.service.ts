@@ -811,7 +811,7 @@ export async function computeProjectTiming(projectId: string, now: Date = new Da
     const scheduleIds = supervisor ? [...laneIds, supervisor.id] : laneIds;
     const [runningRuns, schedules, goals, todos, prevRow, prRows] = await Promise.all([
       laneIds.length ? prisma.agentRun.findMany({ where: { sessionId: { in: laneIds }, status: 'running' }, select: { sessionId: true, startedAt: true, heartbeatAt: true, createdAt: true, updatedAt: true } }) : [],
-      scheduleIds.length ? prisma.codingSchedule.findMany({ where: { sessionId: { in: scheduleIds }, enabled: true }, select: { sessionId: true, nextRunAt: true } }) : [],
+      scheduleIds.length ? prisma.chatSchedule.findMany({ where: { sessionId: { in: scheduleIds }, enabled: true }, select: { sessionId: true, nextRunAt: true } }) : [],
       // Goals WITH their premises (the premise-delta bit); a pre-migration
       // schema without the column falls back to the plain select (the
       // board-digest pattern). Wrapped so a sync-throwing mock still falls back.
@@ -1126,7 +1126,7 @@ export async function renderProjectStatus(
         ? prisma.agentRun.findMany({ where: { sessionId: { in: laneChatIds }, status: 'running' }, select: { sessionId: true, startedAt: true, heartbeatAt: true, createdAt: true, updatedAt: true } })
         : Promise.resolve([]),
       scheduleIds.length
-        ? prisma.codingSchedule.findMany({ where: { sessionId: { in: scheduleIds }, enabled: true }, select: { sessionId: true, nextRunAt: true } })
+        ? prisma.chatSchedule.findMany({ where: { sessionId: { in: scheduleIds }, enabled: true }, select: { sessionId: true, nextRunAt: true } })
         : Promise.resolve([]),
     ]);
     runningRuns = running as any;

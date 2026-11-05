@@ -13,7 +13,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) }, // coding_sessions (ticket f1cb73ff lane)
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null) }, // user_feature_requests (ticket 0beea9f1 args-citation lane)
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -260,11 +260,11 @@ describe('findPhantomClaims', () => {
   it('review M2: a day-old schedule restatement is exonerated by liveness signals (lastFiredAt / future nextRunAt), not creation recency', async () => {
     const dayAgo = new Date(Date.now() - 26 * 3600 * 1000);
     const soon = new Date(Date.now() + 3600 * 1000);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValueOnce({ createdAt: dayAgo, lastFiredAt: new Date(), nextRunAt: soon, enabled: true });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValueOnce({ createdAt: dayAgo, lastFiredAt: new Date(), nextRunAt: soon, enabled: true });
     const claims: ExtractedClaim[] = [{ kind: 'schedule', detail: 'updated the nightly schedule', id: 'c0ffee12' }];
     expect(await findPhantomClaims(claims, [], undefined)).toEqual([]);
     // A stale, disabled, never-fired schedule is NOT exonerating.
-    mockPrisma.codingSchedule.findFirst.mockResolvedValueOnce({ createdAt: dayAgo, lastFiredAt: dayAgo, nextRunAt: dayAgo, enabled: false });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValueOnce({ createdAt: dayAgo, lastFiredAt: dayAgo, nextRunAt: dayAgo, enabled: false });
     expect(await findPhantomClaims(claims, [], undefined)).toEqual(claims);
   });
 
@@ -1012,7 +1012,7 @@ describe('mineReceiptIdiomClaims — the deterministic LLM-miss fallback (ticket
   it('mines the exact 2026-08-29 incident idiom and prefers the receipt id over the target chat id', () => {
     const note = [
       '**Supervisor wake — 10:47 PM PDT (05:47Z): Burn-down lane reports 5 tickets closed — spot-check reveals 1 FALSE claim, 4 confirmed**',
-      '`4550ee11` (QB2 route removed) ❌ FALSE — status still in_progress despite the lane claiming closure.',
+      '`4550ee11` (node-a route removed) ❌ FALSE — status still in_progress despite the lane claiming closure.',
       '**Action:** I sent a steer to `3bd727f6` (receipt `6fbb2f9d`) directing it to close `4550ee11` with the actual PR/commit evidence — since the lane explicitly claimed to have merged and deployed the removal, it should have the artifacts on hand.',
     ].join('\n');
     const claims = mineReceiptIdiomClaims(note);
@@ -2984,25 +2984,25 @@ describe('schedule-citation lane — fabricated schedule-row citations in observ
 
   describe('citedScheduleRowExists — the prisma boundary (mocked)', () => {
     it('prefix-matches short citations and exonerates an existing row', async () => {
-      mockPrisma.codingSchedule.findFirst.mockResolvedValueOnce({ id: '1fd6a55f-1234-5678-9abc-def012345678' });
+      mockPrisma.chatSchedule.findFirst.mockResolvedValueOnce({ id: '1fd6a55f-1234-5678-9abc-def012345678' });
       await expect(citedScheduleRowExists('1fd6a55f')).resolves.toBe(true);
-      expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalledWith({ where: { id: { startsWith: '1fd6a55f' } }, select: { id: true } });
+      expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalledWith({ where: { id: { startsWith: '1fd6a55f' } }, select: { id: true } });
     });
 
     it('exact-matches full uuids', async () => {
       const full = '1fd6a55f-1234-5678-9abc-def012345678';
-      mockPrisma.codingSchedule.findFirst.mockResolvedValueOnce({ id: full });
+      mockPrisma.chatSchedule.findFirst.mockResolvedValueOnce({ id: full });
       await expect(citedScheduleRowExists(full)).resolves.toBe(true);
-      expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalledWith({ where: { id: full }, select: { id: true } });
+      expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalledWith({ where: { id: full }, select: { id: true } });
     });
 
     it('a missing row convicts (returns false)', async () => {
-      mockPrisma.codingSchedule.findFirst.mockResolvedValueOnce(null);
+      mockPrisma.chatSchedule.findFirst.mockResolvedValueOnce(null);
       await expect(citedScheduleRowExists('1fd6a55f')).resolves.toBe(false);
     });
 
     it('fails toward MISS on DB error — an unverifiable citation is never a conviction', async () => {
-      mockPrisma.codingSchedule.findFirst.mockRejectedValueOnce(new Error('db down'));
+      mockPrisma.chatSchedule.findFirst.mockRejectedValueOnce(new Error('db down'));
       await expect(citedScheduleRowExists('1fd6a55f')).resolves.toBe(true);
     });
   });
@@ -3015,7 +3015,7 @@ describe('schedule-citation lane — fabricated schedule-row citations in observ
     });
 
     it('convicts the incident note\'s invented schedule id in a note with ZERO action claims', async () => {
-      mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+      mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
       const comp = await computePhantomClaims({
         chatId: CHAT, userId: 'u-1', finalText: SCHED_INCIDENT, parts: [],
         now: new Date('2026-08-30T18:35:00Z'),
@@ -3027,7 +3027,7 @@ describe('schedule-citation lane — fabricated schedule-row citations in observ
     });
 
     it('audits a SUB-FLOOR note too: <MIN_NOTE_CHARS still convicts a fabricated schedule citation, zero LLM calls', async () => {
-      mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+      mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
       const comp = await computePhantomClaims({
         chatId: CHAT, userId: 'u-1', finalText: 'Per schedule 1fd6a55f.', parts: [],
         now: new Date('2026-08-30T18:35:00Z'),
@@ -3039,7 +3039,7 @@ describe('schedule-citation lane — fabricated schedule-row citations in observ
     });
 
     it('exonerates a citation whose schedule row exists — honest observation notes stay delivered', async () => {
-      mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: '08ae015c-be88-432e-8816-9ce6a7ec803e' });
+      mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: '08ae015c-be88-432e-8816-9ce6a7ec803e' });
       const comp = await computePhantomClaims({
         chatId: CHAT, userId: 'u-1',
         finalText: 'Mac-installer monitor firing #2, still <0.3.0, correctly no-op [sched:08ae015c].',
@@ -3052,7 +3052,7 @@ describe('schedule-citation lane — fabricated schedule-row citations in observ
       // The exact 18:34Z incident pairing, with the schedule id corrected to
       // the real row: msg probe misses (phantom), schedule probe hits.
       mockPrisma.crossModelMessage.findFirst.mockResolvedValue(null);
-      mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: '08ae015c-be88-432e-8816-9ce6a7ec803e' });
+      mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: '08ae015c-be88-432e-8816-9ce6a7ec803e' });
       const note = 'Mac-installer monitor firing #2, still <0.3.0, correctly no-op [msg:fa6942ce] — monitor schedule 08ae015c healthy per list_schedules runs 2/32.';
       const comp = await computePhantomClaims({
         chatId: CHAT, userId: 'u-1', finalText: note, parts: [],
@@ -3063,7 +3063,7 @@ describe('schedule-citation lane — fabricated schedule-row citations in observ
     });
 
     it('the PRE-DELIVERY guard strikes the incident note before it persists, rendering the [schedule] claim', async () => {
-      mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+      mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
       const res = await guardMachineWakeFinalAnswer({
         chatId: CHAT, userId: 'u-1', finalText: SCHED_INCIDENT, parts: [], receipts: [],
         machineTriggered: true, supervisor: true, runStartedAt: new Date('2026-08-30T18:34:00Z'),
@@ -3085,7 +3085,7 @@ describe('schedule-citation lane — fabricated schedule-row citations in observ
       // keyword, so the invented id escaped every audit and the note delivered.
       // The fixture is keyword-free by construction (checked against
       // ACTION_CLAIM_KEYWORD_RE) — only the new disjunct lets it through.
-      mockPrisma.codingSchedule.findFirst.mockResolvedValue(null); // invented id — no row
+      mockPrisma.chatSchedule.findFirst.mockResolvedValue(null); // invented id — no row
       const res = await guardMachineWakeFinalAnswer({
         chatId: CHAT, userId: 'u-1',
         finalText: '- [sched:1fd6a55f] — lane audit: the 15:03:42Z probe showed all green, tally 5/5.',
@@ -3100,7 +3100,7 @@ describe('schedule-citation lane — fabricated schedule-row citations in observ
     });
 
     it('review B1 counterpart: the same ledger line citing a REAL schedule row passes unstruck — honest fire-time notes stay delivered', async () => {
-      mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: '08ae015c-be88-432e-8816-9ce6a7ec803e' });
+      mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: '08ae015c-be88-432e-8816-9ce6a7ec803e' });
       const finalText = '- [sched:08ae015c] — lane audit: the 15:03:42Z probe showed all green, tally 5/5.';
       const res = await guardMachineWakeFinalAnswer({
         chatId: CHAT, userId: 'u-1', finalText,
@@ -3450,11 +3450,11 @@ describe('tool-output haystack exoneration — CV0904 citation-strike root cause
     // suites leave row-returning mocks behind. Every existence check here must
     // find NO row (the prod probe's ground truth: the ids exist in no table).
     mockPrisma.crossModelMessage.findFirst.mockResolvedValue(null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
     mockPrisma.crossModelChat.findFirst.mockResolvedValue(null);
     mockPrisma.chatCodingState.findFirst.mockResolvedValue(null);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelChat.findMany.mockResolvedValue([]);
   });
 
@@ -3562,13 +3562,13 @@ describe('samePrefixRealIds — the near-miss hint (ticket ef347cd0)', () => {
   });
 
   it('schedule kind names the owning session; chat kind names the title', async () => {
-    mockPrisma.codingSchedule.findMany.mockResolvedValueOnce([
+    mockPrisma.chatSchedule.findMany.mockResolvedValueOnce([
       { id: '1fbe4800-3f1b-4000-8000-000000000001', sessionId: 'b92ef13f-c3f8-487e-8267-767e56543150', createdAt: new Date('2026-08-30T12:00:00Z') },
     ]);
     expect(await samePrefixRealIds('schedule', '1fbe4800-6927-4000-8000-000000000002')).toEqual([
       '1fbe4800-3f1b-4000-8000-000000000001 (chat b92ef13f, 2026-08-30T12:00:00.000Z)',
     ]);
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith({
       where: { id: { startsWith: '1fbe4800' } },
       select: { id: true, sessionId: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
@@ -3679,7 +3679,7 @@ describe('same-tenant near-miss scoping + refutation education (ticket e3246ad5)
       take: 3,
     });
     await samePrefixRealIds('schedule', '1fbe4800-6927-4000-8000-000000000000', UID);
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith({
       where: { id: { startsWith: '1fbe4800' }, userId: UID },
       select: { id: true, sessionId: true, createdAt: true },
       orderBy: { createdAt: 'desc' },

@@ -28,7 +28,7 @@ const mockPrisma: any = {
   },
   crossModelChat: { findUnique: jest.fn(async () => ({ project: { name: 'CanLaw' } })), findFirst: jest.fn(async () => null), findMany: (...a: any[]) => mockChatFindMany(...a) },
   crossModelMessage: { findUnique: (...a: any[]) => mockMsgFindUnique(...a), findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: (...a: any[]) => mockSchedFindMany(...a), groupBy: (...a: any[]) => mockSchedGroupBy(...a) },
+  chatSchedule: { findMany: (...a: any[]) => mockSchedFindMany(...a), groupBy: (...a: any[]) => mockSchedGroupBy(...a) },
   agentRun: { groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));

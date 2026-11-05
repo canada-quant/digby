@@ -48,8 +48,8 @@ function mockRes() {
 const ENV = {
   SLACK_CLIENT_ID: 'cid-123',
   SLACK_CLIENT_SECRET: 'test-secret',
-  SLACK_OAUTH_REDIRECT_URI: 'https://digby.example.com/api/crossmodel/slack/callback',
-  FRONTEND_URL: 'https://digby.example.com',
+  SLACK_OAUTH_REDIRECT_URI: 'https://digby.ai/api/crossmodel/slack/callback',
+  FRONTEND_URL: 'https://digby.ai',
 };
 
 describe('SlackOAuthController.startAuth (ticket 8cb3aa34)', () => {
@@ -69,7 +69,7 @@ describe('SlackOAuthController.startAuth (ticket 8cb3aa34)', () => {
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
     expect(res.redirect).toHaveBeenCalledWith(
-      'https://digby.example.com/account?tab=integrations&slack=auth_required',
+      'https://digby.ai/account?tab=integrations&slack=auth_required',
     );
   });
 
@@ -80,7 +80,7 @@ describe('SlackOAuthController.startAuth (ticket 8cb3aa34)', () => {
     const next = jest.fn();
     await controller.startAuth({ user: { id: 'u1' }, query: {} } as any, res, next);
     expect(res.redirect).toHaveBeenCalledWith(
-      'https://digby.example.com/account?tab=integrations&slack=not_configured',
+      'https://digby.ai/account?tab=integrations&slack=not_configured',
     );
   });
 
@@ -109,7 +109,7 @@ describe('SlackOAuthController.startAuth (ticket 8cb3aa34)', () => {
     expect(html).toContain('href="https://slack.com/oauth/v2/authorize?client_id=cid-123&amp;');
     expect(html).toContain('Continue in your browser');
     // The way back stays on the whitelisted app host.
-    expect(html).toContain('href="https://digby.example.com/account?tab=integrations"');
+    expect(html).toContain('href="https://digby.ai/account?tab=integrations"');
     // State is still stored server-side so the callback exchange works from the system browser.
     expect(redisClient.setEx).toHaveBeenCalledWith(expect.stringMatching(/^slack_oauth_state:/), 300, 'u1');
   });
@@ -124,7 +124,7 @@ describe('SlackOAuthController.startAuth (ticket 8cb3aa34)', () => {
     const unescaped = m![1].replace(/&amp;/g, '&');
     const parsed = new URL(unescaped);
     expect(parsed.searchParams.get('client_id')).toBe('cid-123');
-    expect(parsed.searchParams.get('redirect_uri')).toBe('https://digby.example.com/api/crossmodel/slack/callback');
+    expect(parsed.searchParams.get('redirect_uri')).toBe('https://digby.ai/api/crossmodel/slack/callback');
     expect(parsed.searchParams.get('state')).toMatch(/^[0-9a-f]{64}$/);
     expect(parsed.searchParams.get('user_scope')).toContain('search:read');
   });
@@ -230,7 +230,7 @@ describe('SlackOAuthController — DM history scopes (ticket 24541fb3)', () => {
     expect(warned).toContain('im:history');
     expect(warned).toContain('mpim:history');
     expect(res.redirect).toHaveBeenCalledWith(
-      'https://digby.example.com/account?tab=integrations&slack=connected',
+      'https://digby.ai/account?tab=integrations&slack=connected',
     );
   });
 
@@ -263,7 +263,7 @@ describe('SlackOAuthController — DM history scopes (ticket 24541fb3)', () => {
     const warned = (logger.warn as jest.Mock).mock.calls.map((c: unknown[]) => c.join(' ')).join('\n');
     expect(warned).not.toContain('im:history');
     expect(res.redirect).toHaveBeenCalledWith(
-      'https://digby.example.com/account?tab=integrations&slack=connected',
+      'https://digby.ai/account?tab=integrations&slack=connected',
     );
   });
 
@@ -275,7 +275,7 @@ describe('SlackOAuthController — DM history scopes (ticket 24541fb3)', () => {
       jest.fn(),
     );
     expect(res.redirect).toHaveBeenCalledWith(
-      'https://digby.example.com/account?tab=integrations&slack=error&reason=invalid_scope',
+      'https://digby.ai/account?tab=integrations&slack=error&reason=invalid_scope',
     );
   });
 

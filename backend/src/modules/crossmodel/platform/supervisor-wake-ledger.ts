@@ -380,14 +380,14 @@ export async function computeWakeLedgerDiff(chatId: string, since: Date, now: Da
       take: 20,
     }).catch(empty),
     ids.length
-      ? prisma.codingSchedule.findMany({
+      ? prisma.chatSchedule.findMany({
           where: { sessionId: { in: ids }, disabledAt: { gte: since } },
           select: { id: true, sessionId: true, kind: true, lastStatus: true, disabledAt: true },
           take: 30,
         }).catch(empty)
       : Promise.resolve(empty<any>()),
     progressIds.length
-      ? prisma.codingSchedule.count({ where: { sessionId: { in: progressIds }, lastFiredAt: { gte: since } } }).catch(() => 0)
+      ? prisma.chatSchedule.count({ where: { sessionId: { in: progressIds }, lastFiredAt: { gte: since } } }).catch(() => 0)
       : Promise.resolve(0),
     import('./supervisor-state.service').then((m) => m.getSupervisorState(chatId)).catch(() => null),
     prisma.eventHook.findMany({ where: { targetChatId: chatId }, select: { id: true } }).catch(empty),
@@ -595,7 +595,7 @@ export async function computeWakeLedgerDiff(chatId: string, since: Date, now: Da
           `SELECT "sessionId", MAX("finishedAt") AS "lastFinished", BOOL_OR(status IN ('running','queued')) AS live FROM agent_runs WHERE "sessionId" = ANY($1::text[]) GROUP BY "sessionId"`,
           laneIds,
         ).catch(empty),
-        prisma.codingSchedule.findMany({
+        prisma.chatSchedule.findMany({
           where: { sessionId: { in: laneIds }, enabled: true },
           select: { sessionId: true, ...(laneIdleWiden ? { nextRunAt: true, kind: true, intervalSec: true } : {}) },
           ...(laneIdleWiden ? { take: MAX_ARMED_SCHEDULES } : {}),

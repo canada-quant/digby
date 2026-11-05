@@ -2,7 +2,7 @@
 #
 # This is the ENTIRE product on one machine: own Postgres, Redis, STT, backend,
 # coding worker, frontend, and (optionally) the MCP integration servers. Nothing
-# here talks to digby.example.com unless you configure it to.
+# here talks to digby.ai unless you configure it to.
 #
 # Quick start (full guide: docs/SELF_HOST.md):
 #   cp selfhost.env.example .env   # then edit — set at least ONE model API key
@@ -28,13 +28,13 @@ services:
     environment:
       - POSTGRES_USER=admin
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-digby-local-password-change-me}
-      - POSTGRES_DB=digby_db
+      - POSTGRES_DB=admin_db
     volumes:
       - digby_postgres_data:/var/lib/postgresql/data
     networks:
       - digby-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d digby_db"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d admin_db"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -109,7 +109,7 @@ services:
     container_name: digby-migrate
     command: ["npx", "prisma", "migrate", "deploy"]
     environment:
-      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/digby_db?sslmode=disable
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/admin_db?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,7 +135,7 @@ services:
       # (merge → deploy → verify → auto-fix) targets ITS OWN repo/DB/deploy
       # surfaces, never production Digby. DIGBY_INSTANCE=selfhost arms the
       # backend guards: any attempt to resolve the production repo
-      # (the production Digby repository) hard-fails with a clear error, and the
+      # (example-org/crossmodel) hard-fails with a clear error, and the
       # historical prod-defaulted resolvers (SELF_REPO / GITHUB_REPO_SLUG /
       # INFRA_WATCH_REPO) read this instance's env ONLY.
       # Point the loop at YOUR fork to let this instance self-improve:
@@ -144,7 +144,7 @@ services:
       - GITHUB_REPO_SLUG=${GITHUB_REPO_SLUG:-}
       - SELF_REPO=${SELF_REPO:-}
       - INFRA_WATCH_REPO=${INFRA_WATCH_REPO:-}
-      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/digby_db?sslmode=disable
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/admin_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env — openssl rand -hex 32}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env — openssl rand -hex 32}
@@ -282,7 +282,7 @@ services:
       - DIGBY_SMTP_PORT=${DIGBY_SMTP_PORT:-587}
       - DIGBY_SMTP_USER=${DIGBY_SMTP_USER:-}
       - DIGBY_SMTP_PASS=${DIGBY_SMTP_PASS:-}
-      # From: defaults to the SMTP user — never a digby.example.com address on your instance.
+      # From: defaults to the SMTP user — never a digby.ai address on your instance.
       - DIGBY_SMTP_FROM=${DIGBY_SMTP_FROM:-${DIGBY_SMTP_USER:-}}
       - NODE_OPTIONS=--max-old-space-size=2560
       # Digby Code — workspaces/env/feedback volumes (named explicitly below so
@@ -332,7 +332,7 @@ services:
     environment:
       - NODE_ENV=production
       - RELAY_PORT=4100
-      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/digby_db?sslmode=disable
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/admin_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env — openssl rand -hex 32}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env — openssl rand -hex 32}
@@ -376,7 +376,7 @@ services:
       # Deploy-health probe target — same container-internal Caddy rationale
       # as the backend service above (c75b5f34 follow-up, review finding 2).
       - DEPLOY_HEALTH_PROBE_BASE_URL=${DEPLOY_HEALTH_PROBE_BASE_URL:-http://digby-caddy:8080}
-      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/digby_db?sslmode=disable
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/admin_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env — openssl rand -hex 32}
       - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env — openssl rand -hex 32}
@@ -483,7 +483,7 @@ services:
       - DIGBY_SMTP_PORT=${DIGBY_SMTP_PORT:-587}
       - DIGBY_SMTP_USER=${DIGBY_SMTP_USER:-}
       - DIGBY_SMTP_PASS=${DIGBY_SMTP_PASS:-}
-      # From: defaults to the SMTP user — never a digby.example.com address on your instance.
+      # From: defaults to the SMTP user — never a digby.ai address on your instance.
       - DIGBY_SMTP_FROM=${DIGBY_SMTP_FROM:-${DIGBY_SMTP_USER:-}}
       - NODE_OPTIONS=--max-old-space-size=2560
       # 4 concurrent coding runs is a sane default for a home box; tune up/down.
@@ -532,9 +532,40 @@ services:
         - NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED=${NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED:-1}
         - NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED=${NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED:-1}
         - NEXT_PUBLIC_META_PIXEL_DISABLED=${NEXT_PUBLIC_META_PIXEL_DISABLED:-1}
-        # The public site is pre-rendered at build time: this hides the digby.example.com
+        # The public site is pre-rendered at build time: this hides the digby.ai
         # desktop installers (they sign into production, not this instance).
         - DIGBY_INSTANCE=selfhost
+        # ── Branding (Phase 1 self-host, todo d2d32b57; docs/SELF_HOST.md § Branding) ──
+        # These are read at BUILD time by the static routes (page metadata, PWA
+        # manifest, login/site chrome, social cards), so changing one needs
+        # `docker compose -f docker-compose.selfhost.yml up -d --build frontend`.
+        # Unset = the shipped Digby identity, byte-for-byte. Asset FILES in the
+        # mounted branding/ directory are served live at /branding/asset/* and can
+        # be swapped WITHOUT a rebuild. See selfhost.env.example for every knob.
+        - DIGBY_BRAND_NAME=${DIGBY_BRAND_NAME:-}
+        - DIGBY_BRAND_NAME_SHORT=${DIGBY_BRAND_NAME_SHORT:-}
+        - DIGBY_BRAND_TAGLINE=${DIGBY_BRAND_TAGLINE:-}
+        - DIGBY_BRAND_DESCRIPTION=${DIGBY_BRAND_DESCRIPTION:-}
+        - DIGBY_BRAND_TITLE=${DIGBY_BRAND_TITLE:-}
+        - DIGBY_BRAND_TITLE_SUFFIX=${DIGBY_BRAND_TITLE_SUFFIX:-}
+        - DIGBY_BRAND_LOGO_ALT=${DIGBY_BRAND_LOGO_ALT:-}
+        - DIGBY_BRAND_LOGO=${DIGBY_BRAND_LOGO:-}
+        - DIGBY_BRAND_LOGO_COMPACT=${DIGBY_BRAND_LOGO_COMPACT:-}
+        - DIGBY_BRAND_LOGO_LIGHT=${DIGBY_BRAND_LOGO_LIGHT:-}
+        - DIGBY_BRAND_LOGO_DARK=${DIGBY_BRAND_LOGO_DARK:-}
+        - DIGBY_BRAND_SPINNER=${DIGBY_BRAND_SPINNER:-}
+        - DIGBY_BRAND_SPINNER_STATIC=${DIGBY_BRAND_SPINNER_STATIC:-}
+        - DIGBY_BRAND_FAVICON_16=${DIGBY_BRAND_FAVICON_16:-}
+        - DIGBY_BRAND_FAVICON_32=${DIGBY_BRAND_FAVICON_32:-}
+        - DIGBY_BRAND_ICON_192=${DIGBY_BRAND_ICON_192:-}
+        - DIGBY_BRAND_ICON_512=${DIGBY_BRAND_ICON_512:-}
+        - DIGBY_BRAND_APPLE_TOUCH_ICON=${DIGBY_BRAND_APPLE_TOUCH_ICON:-}
+        - DIGBY_BRAND_THEME_COLOR=${DIGBY_BRAND_THEME_COLOR:-}
+        - DIGBY_BRAND_THEME_COLOR_DARK=${DIGBY_BRAND_THEME_COLOR_DARK:-}
+        - DIGBY_BRAND_BACKGROUND_COLOR=${DIGBY_BRAND_BACKGROUND_COLOR:-}
+        - DIGBY_BRAND_BACKGROUND_COLOR_DARK=${DIGBY_BRAND_BACKGROUND_COLOR_DARK:-}
+        # Mounted operator asset directory, seen by /branding/asset/* at runtime.
+        - DIGBY_BRANDING_DIR=/branding
     container_name: digby-frontend
     environment:
       - NODE_ENV=production
@@ -544,6 +575,17 @@ services:
       # Server-side /api/[...path] catch-all proxy target (internal).
       - BACKEND_URL=http://backend:4000
       - NODE_OPTIONS=--max-old-space-size=640
+      # ── Branding, runtime half (docs/SELF_HOST.md § Branding) ──
+      # ONLY the asset directory is read at request time: files dropped in it
+      # are served live at /branding/asset/* and can be swapped WITHOUT a
+      # rebuild. Every DIGBY_BRAND_* VALUE is baked at build time (it feeds page
+      # metadata, the PWA manifest and the social cards), so changing one means
+      # `docker compose -f docker-compose.selfhost.yml up -d --build frontend`.
+      - DIGBY_BRANDING_DIR=/branding
+    # The operator's branding assets, read-only. Create ./branding/ next to
+    # this compose file and point DIGBY_BRAND_* at /branding/asset/<file>.
+    volumes:
+      - ./branding:/branding:ro
     depends_on:
       - backend
     networks:
@@ -695,7 +737,7 @@ services:
     restart: unless-stopped
 
   # Digby platform API as MCP tools — per-user pass-through auth, pointed at
-  # THIS instance's backend (not digby.example.com).
+  # THIS instance's backend (not digby.ai).
   digby-mcp:
     profiles: ["mcp"]
     build:
@@ -714,7 +756,7 @@ services:
   # BrightData MCP gateway (web search/scrape). When running this, set
   # MCP_DIGBY_URL=http://brightdata-mcp:8000/mcp + MCP_DIGBY_TOKEN in .env so
   # the backend uses the LOCAL gateway (a self-host never defaults to
-  # mcp.digby.example.com). It still needs YOUR BRIGHTDATA_API_TOKEN — without one the
+  # mcp.digby.ai). It still needs YOUR BRIGHTDATA_API_TOKEN — without one the
   # gateway runs but every search comes back empty; the simpler route is to set
   # BRIGHTDATA_API_TOKEN alone (direct API, no gateway).
   brightdata-mcp:

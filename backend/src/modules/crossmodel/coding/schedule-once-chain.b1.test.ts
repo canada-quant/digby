@@ -45,7 +45,7 @@ const mockChatUpdate = jest.fn(async (..._a: any[]) => ({}));
 const mockMsgCreate = jest.fn(async (..._a: any[]) => ({}));
 
 jest.mock('../../../config/database', () => {
-  const codingSchedule = {
+  const chatSchedule = {
     findUnique: (...a: any[]) => mockScheduleFindUnique(...a),
     findFirst: (...a: any[]) => mockScheduleFindFirst(...a),
     findMany: (...a: any[]) => mockScheduleFindMany(...a),
@@ -58,8 +58,8 @@ jest.mock('../../../config/database', () => {
   return {
     __esModule: true,
     default: {
-      codingSchedule,
-      $transaction: async (fn: any) => fn({ codingSchedule }),
+      chatSchedule,
+      $transaction: async (fn: any) => fn({ chatSchedule }),
       agentRun: {
         findFirst: (...a: any[]) => mockRunFindFirst(...a),
         create: (...a: any[]) => mockRunCreate(...a),

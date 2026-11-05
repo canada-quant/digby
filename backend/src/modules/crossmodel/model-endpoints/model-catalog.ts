@@ -73,7 +73,7 @@ const FAMILY_RULES: ReadonlyArray<[RegExp, string]> = [
   [/deepseek/i, 'deepseek'],
   [/qwen|qwq|dashscope|alibaba/i, 'qwen'],
   [/mimo|xiaomi/i, 'mimo'],
-  // MiniMax (gateway swap 2026-10-24, live-probed on llm.example.com): served as
+  // MiniMax (gateway swap 2026-10-24, live-probed on llm.cql.ca): served as
   // `minimax-m3.1-flash` plus the bare alias `m3.1-flash` (both e2e 200, ctx
   // 262144 via /model/info) on the spark boxes, replacing the deepseek-v4.1-flash
   // routes that now dead-name 404. The bare alias carries no vendor stem, so the

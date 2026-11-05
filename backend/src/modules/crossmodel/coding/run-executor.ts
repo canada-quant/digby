@@ -80,12 +80,13 @@ import {
   isSessionArchived, isContinuationInput,
   MUTATING_FILE_TOOLS, parseZeroEditStreak, nextZeroEditStreak, zeroMutationSuppressReason, zeroMutationSuppressNote,
 } from './continuation-guard';
+import { classifyZeroHeartbeat, zombieConfirmMisses, zombieStopReason } from './run-row-liveness';
 import { frontLoadRunOutcome } from '../platform/run-outcome-line';
 import {
   getSessionForUser, updateSessionState, touchChat,
   appendCodingMessage, updateCodingMessage, listRecentCodingTranscript, countCodingTranscriptMessages,
   getCodingSessionTitle, getFirstUserCodingMessage, getCodingSessionTitleSource,
-  stripSupervisorCodingSatelliteAtFinalize, transcriptDualWriteEnabled, pickTranscriptSource,
+  stripSupervisorCodingSatelliteAtFinalize,
 } from './coding-data.service';
 import type { CodingSessionShape } from './coding-data.service';
 import {
@@ -235,7 +236,7 @@ export async function buildProjectMemoryInjection(args: {
 }
 
 /** The controller's exact resume notice — a prompt contract with the model. */
-const HARNESS_NOTICE = '[HARNESS NOTICE — not typed by the user] This run was interrupted by a server restart (deploy) and is resuming from its saved checkpoint — completed steps are already done, do not redo them. TRANSCRIPT BOUNDARY: every tool result ABOVE this notice is a replayed snapshot from BEFORE the interruption — ids may have been cancelled or disabled, hooks and schedules enabled or paused, PRs merged, deploys finished, and files changed since they were read. Never act on state read from above this notice without re-pulling it with a fresh tool call; only tool results obtained AFTER this notice are current (nightly-lane postmortem 2026-08-27: a 4×-restarted lane re-acted on STALE disabled-hook ids replayed from prior attempts). INTERRUPTED TURN: the tool-call turn in flight at the interruption was DISCARDED — its calls may or may not have executed (at-least-once); re-check state (git log, PR status, receipts) before re-issuing or claiming them (2026-08-30 harness audit: resumed runs inferred "I must have done it" from side effects with no tool-result provenance). Container scratch state (including the shell\'s /tmp) SURVIVES a deploy and may predate this run: treat any scratch file you did not write THIS run as potentially STALE — re-write scratch files before use (ticket c7591297: a resumed run base64-encoded a pre-restart /tmp script and sent it remotely).';
+const HARNESS_NOTICE = '[HARNESS NOTICE — not typed by the user] This run was interrupted by a server restart (deploy) and is resuming from its saved checkpoint — completed steps are already done, do not redo them. TRANSCRIPT BOUNDARY: every tool result ABOVE this notice is a replayed snapshot from BEFORE the interruption — ids may have been cancelled or disabled, hooks and schedules enabled or paused, PRs merged, deploys finished, and files changed since they were read. Never act on state read from above this notice without re-pulling it with a fresh tool call; only tool results obtained AFTER this notice are current (nightly-lane postmortem 2026-08-27: a 4×-restarted lane re-acted on STALE disabled-hook ids replayed from prior attempts). INTERRUPTED TURN: the tool-call turn in flight at the interruption was DISCARDED — its calls may or may not have executed (at-least-once); re-check state (git log, PR status, receipts) before re-issuing or claiming them (2026-08-30 harness audit: resumed runs inferred "I must have done it" from side effects with no tool-result provenance). Container scratch state (including the shell\'s /tmp) SURVIVES a deploy and may predate this run: treat any scratch file you did not write THIS run as potentially STALE — re-write scratch files before use (ticket c7591297: a resumed run base64-encoded a pre-restart /tmp script and sent it remotely). CONTAINER SWAP: this session\'s execution container may have been REPLACED under the run rather than resumed (ticket e2f40d10). Before concluding an environmental block, re-check capabilities with fresh commands instead of trusting recon from above this notice: `ps -p 1 -o lstart=` (was PID 1 restarted?), `command -v tailscale`, `getent passwd 1001`, `echo $LD_PRELOAD` — and if $DIGBY_ENV exports an LD_PRELOAD whose .so no longer exists, drop that line rather than treating every command\'s ld.so warning as the cause.';
 
 /**
  * Derive the TITLE SEED from a first message — the TASK, never the plumbing
@@ -441,7 +442,7 @@ async function ensureRunnable(session: CodingSessionShape, userId: string, resto
     const { reattachWorktree } = await import('./workspace.service');
     const { getValidToken } = await import('../github/token-manager');
     // Local-provider self-heal (hardening loop iteration 10, 2026-09-24; prod
-    // project 922fd3ad cql-agx-orin64): a 'local' project's mirror is a
+    // project 922fd3ad cql-accelerator): a 'local' project's mirror is a
     // Digby-owned bare repo with NO remote (repoUrl ''), so when the volume
     // lost it nothing could clone it back and every session start died at
     // ensureRepoMirror's fail-fast (FO firing 19). Re-create it the way it was
@@ -587,7 +588,7 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
   let wrapupNoteDelivered = false;
   const wrapupClockStartMs = claimed.startedAt ? new Date(claimed.startedAt).getTime() : Date.now();
   if (firedByScheduleId) {
-    const sched = await prisma.codingSchedule.findUnique({ where: { id: firedByScheduleId }, select: { enabled: true, lastStatus: true, kind: true, intervalSec: true } }).catch(() => undefined);
+    const sched = await prisma.chatSchedule.findUnique({ where: { id: firedByScheduleId }, select: { enabled: true, lastStatus: true, kind: true, intervalSec: true } }).catch(() => undefined);
     if (sched && sched.kind === 'recurring' && typeof sched.intervalSec === 'number') firedScheduleIntervalSec = sched.intervalSec;
     // 'parked:dormant' (ticket b1d435fd goal-gate) is cancel-class here: a run
     // queued before the auto-park must not execute — the park IS the durable
@@ -833,13 +834,10 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
     const adoptIds = (claimed.input.existingUserMessageIds ?? []).filter((s): s is string => typeof s === 'string' && !!s);
     let adoptExisting = false;
     if (adoptIds.length) {
-      // MERGE-1 slice 1: the idempotency guard must see the same table the transcript
-      // reads see — a mirror-only chat's adopted rows live in crossmodel_messages, so a
-      // coding_messages-only probe would report 0 and re-insert a duplicate user row.
-      const adoptSource = await pickTranscriptSource(id);
-      const found = adoptSource === 'legacy'
-        ? await prisma.codingMessage.count({ where: { id: { in: adoptIds }, chatId: id, role: 'user' } }).catch(() => 0)
-        : await prisma.crossModelMessage.count({ where: { id: { in: adoptIds }, chatId: id, role: 'user' } }).catch(() => 0);
+      // The idempotency guard probes the SAME table the transcript reads come from
+      // (`crossmodel_messages`). A coding_messages-only probe would report 0 and
+      // re-insert a duplicate user row.
+      const found = await prisma.crossModelMessage.count({ where: { id: { in: adoptIds }, chatId: id, role: 'user' } }).catch(() => 0);
       adoptExisting = found === adoptIds.length;
     }
     if (!adoptExisting) await appendCodingMessage({
@@ -1276,28 +1274,93 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
   // P3 pin 14c: heartbeat failures were SWALLOWED — a run whose lease silently
   // lapsed was re-claimable by another worker (double execution) with zero
   // signal. Log + metric on every failure; the run itself keeps going.
+  // Ticket 65af5656 (2026-11-03): consecutive zero-touch heartbeats. The guard
+  // below only cancels on a CONFIRMED absence — see run-row-liveness.ts.
+  let zeroHeartbeatMisses = 0;
+  // The interval never awaits its callback, so a findUnique slower than the
+  // 2.5-min tick could leave two reads in flight and let two of them increment
+  // the confirmation floor for ONE elapsed interval. One flag keeps the floor
+  // honest (review finding, 65af5656).
+  let zeroBeatInFlight = false;
   const lockRefresh = setInterval(() => {
     void refreshSessionRunLock(id, lockToken).catch((err: any) => {
       logger.warn(`run-executor: session run-lock refresh failed for ${id} (run ${claimed.id}): ${err?.message ?? err}`);
     });
-    void heartbeatAgentRun(claimed.id).then((rows: number) => {
+    if (zeroBeatInFlight) return;
+    void heartbeatAgentRun(claimed.id).then(async (rows: number) => {
+      if (rows > 0) { zeroHeartbeatMisses = 0; return; }
+      zeroBeatInFlight = true;
+      try {
       // FO firing 46 (chat 5a87b912, 2026-09-29): a chat deleted mid-run
       // cascades agent_runs away, and the executor kept executing for ~90 min
       // (03:52–05:19Z) — 97 receipt/journal writes failed the chat FK while
       // the zombie did real GitHub actions (open/merge_pull_request) for a
-      // chat that no longer existed. heartbeat count 0 = no durable running
-      // row: stop the execution through the SAME release path as a Stop
-      // request (cancel + deny/resolve parked waits); the loop finalizes
-      // 'cancelled' at the next step boundary.
-      if (rows === 0) {
-        logger.warn(`run-executor: run ${claimed.id} (session ${id}) has no durable agent_runs row (chat deleted mid-run?) — cancelling the zombie execution at the next step boundary`);
-        recordLoopMetric({ kind: LOOP_METRIC_KINDS.ZOMBIE_RUN_STOPPED, sessionId: id, runId: claimed.id, meta: { reason: 'run_row_gone' } });
+      // chat that no longer existed. So a 0 count must still stop that zombie.
+      //
+      // Ticket 65af5656 (2026-11-03): but `heartbeatAgentRun` is an
+      // updateMany({status:'running'}) — its count is the number of rows
+      // RUNNING NOW, not the number of rows that exist. Reading 0 as "the chat
+      // was deleted" therefore convicts every run whose row some other actor
+      // moved OFF 'running': at 09:15:44.96–45.03Z sixty-four
+      // zombie_run_stopped rows landed across eight lanes in ~50 ms and two
+      // Schooltime lanes finalized "(Stopped.)" 250 ms apart, with
+      // continuation_suppressed{reason:'stopped'}. Which actor moved those rows
+      // is NOT established (a live lane's 6-min lease renewed every 2.5 min
+      // cannot be flipped by reconcileOrphanedRuns, so that candidate is ruled
+      // out) — and the defect does not depend on naming it: a status mismatch
+      // is simply not evidence of absence. Classify from the ROW before
+      // releasing anything (run-row-liveness.ts), and confirm real absence
+      // across zombieConfirmMisses() consecutive beats.
+      const read = await prisma.agentRun.findUnique({ where: { id: claimed.id }, select: { status: true } })
+        .then((r: { status: string } | null) => ({ row: r, failed: false }))
+        .catch(() => ({ row: null, failed: true }));
+      const verdict = classifyZeroHeartbeat(read.failed ? null : read.row, read.failed);
+      const reason = zombieStopReason(verdict);
+      if (verdict === 'unknown') {
+        // Fail-open: a failed read is never evidence of absence. Re-check next beat.
+        logger.warn(`run-executor: run ${claimed.id} (session ${id}) heartbeat touched 0 rows and the row could not be read back — standing down this beat (ticket 65af5656)`);
+        return;
+      }
+      if (verdict === 'not_running') {
+        // The row exists under another status (a racing finalize, a backoff
+        // re-queue, a cancel already in flight). NOT a deleted chat — never
+        // cancel a run from the heartbeat on a status mismatch.
+        logger.info(`run-executor: run ${claimed.id} (session ${id}) is '${String(read.row?.status)}' not 'running' — the heartbeat's 0 is a status change, not a missing row; not cancelling (ticket 65af5656)`);
+        recordLoopMetric({ kind: LOOP_METRIC_KINDS.ZOMBIE_RUN_STOPPED, sessionId: id, runId: claimed.id, meta: { reason, action: 'stand_down' } });
+        return;
+      }
+      if (verdict === 'resumable') {
+        // A deploy drain / reconcile already marked this run 'interrupted' for
+        // resume. Take the SHUTDOWN-interrupt release path, not a Stop: the
+        // finalizer keeps the checkpoint, stays attempt-neutral and leaves the
+        // row re-claimable, so the wave hands the lane off instead of ending it.
+        logger.warn(`run-executor: run ${claimed.id} (session ${id}) was marked 'interrupted' under this run (deploy/drain churn) — handing off as a resumable shutdown interrupt instead of cancelling (ticket 65af5656)`);
+        recordLoopMetric({ kind: LOOP_METRIC_KINDS.ZOMBIE_RUN_STOPPED, sessionId: id, runId: claimed.id, meta: { reason, action: 'handoff' } });
+        markRunShutdownInterrupted(id);
         cancelRun(id);
-        denyPendingForSession(id);   // parked approval waits → 'deny' now
-        resolvePendingForSession(id); // parked ask_user waits → null now
+        denyPendingForSession(id);
+        resolvePendingForSession(id);
         emit('stopped', {});
+        return;
+      }
+      // verdict === 'row_gone' — the one case the guard was written for.
+      zeroHeartbeatMisses++;
+      const needed = zombieConfirmMisses();
+      if (zeroHeartbeatMisses < needed) {
+        logger.warn(`run-executor: run ${claimed.id} (session ${id}) has no durable agent_runs row at all (miss ${zeroHeartbeatMisses}/${needed}) — re-checking before cancelling the zombie execution (ticket 65af5656)`);
+        return;
+      }
+      logger.warn(`run-executor: run ${claimed.id} (session ${id}) has no durable agent_runs row (chat deleted mid-run?) — cancelling the zombie execution at the next step boundary`);
+      recordLoopMetric({ kind: LOOP_METRIC_KINDS.ZOMBIE_RUN_STOPPED, sessionId: id, runId: claimed.id, meta: { reason, action: 'cancel', misses: zeroHeartbeatMisses } });
+      cancelRun(id);
+      denyPendingForSession(id);   // parked approval waits → 'deny' now
+      resolvePendingForSession(id); // parked ask_user waits → null now
+      emit('stopped', {});
+      } finally {
+        zeroBeatInFlight = false;
       }
     }).catch((err: any) => {
+      zeroBeatInFlight = false;
       logger.warn(`run-executor: lease heartbeat failed for run ${claimed.id} (a lapsed lease makes the row re-claimable): ${err?.message ?? err}`);
       recordLoopMetric({ kind: LOOP_METRIC_KINDS.LEASE_HEARTBEAT_FAILED, sessionId: id, runId: claimed.id, meta: { error: String(err?.message ?? err).slice(0, 120) } });
     });
@@ -1529,7 +1592,7 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
       }
     };
     // GUARD 8 existence resolver (ticket cae70bfa): cited schedule ids/prefixes
-    // → prisma codingSchedule rows. GLOBAL (any session/user — fleet lanes cite
+    // → prisma chatSchedule rows. GLOBAL (any session/user — fleet lanes cite
     // peer chats' schedules constantly) and state-agnostic (a disabled/cancelled
     // row is still a real citation — cancellation never deletes the row). Same
     // prefix-aware, never-convict-on-a-DB-hiccup discipline as the GUARD 6/7
@@ -1538,7 +1601,7 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
       const unique = Array.from(new Set(ids.map((s) => s.toLowerCase()))).slice(0, 10);
       try {
         if (!unique.length) return new Set<string>();
-        const rows = await prisma.codingSchedule.findMany({
+        const rows = await prisma.chatSchedule.findMany({
           where: { OR: unique.map((p) => ({ id: { startsWith: p } })) },
           select: { id: true },
         });
@@ -1563,7 +1626,7 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
     // guard; skipped here for symmetry).
     const guardScheduleFiringTimes = await (async (): Promise<number[]> => {
       try {
-        const rows = await prisma.codingSchedule.findMany({
+        const rows = await prisma.chatSchedule.findMany({
           where: { enabled: true, nextRunAt: { gte: new Date(Date.now() - 10 * 60_000), lte: new Date(Date.now() + 24 * 60 * 60_000) } },
           select: { nextRunAt: true },
           take: 500,
@@ -2592,7 +2655,7 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
           // Dedupe stall guard (unchanged contract, widened to BOTH lanes): a
           // pending legacy once-schedule OR an already-queued fast-lane row
           // means a continuation is on its way — never stack a second one.
-          const pendingCont = await prisma.codingSchedule.count({
+          const pendingCont = await prisma.chatSchedule.count({
             where: { sessionId: id, enabled: true, kind: 'once', prompt: { startsWith: '[HARNESS CONTINUATION' } },
           }).catch(() => 0);
           const pendingFastLane = pendingCont > 0 ? false : await hasQueuedContinuationRun(id).catch(() => false);
@@ -2795,7 +2858,7 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
         const unfinished = plan?.steps?.filter((s: any) => s.status === 'pending' || s.status === 'in_progress') ?? [];
         if (unfinished.length) {
           const list = unfinished.slice(0, 6).map((s: any) => `- [${s.status}] #${s.id} ${String(s.text).slice(0, 120)}`).join('\n');
-          const enabledCount = await prisma.codingSchedule.count({
+          const enabledCount = await prisma.chatSchedule.count({
             where: { sessionId: id, enabled: true },
           }).catch(() => 0);
           const wakeLine = enabledCount > 0
@@ -2910,13 +2973,15 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
       if (assistantMsgId) await updateCodingMessage(assistantMsgId, finalData);
       else finalMessageId = (await appendCodingMessage({ chatId: id, role: 'assistant', ...finalData }))?.id ?? null;
       finalPersisted = true;
-      // 954b7910 (reviewer obs. 1): the digest's ANSWER_MSG_ID is only lawful
-      // when the row is probeable by citedMessageRowExists — i.e. mirrored
-      // into crossModelMessage. TRANSCRIPT_DUAL_WRITE=off (migration rollback
-      // mode) leaves the row codingMessage-only, so an id handed to a
-      // supervisor there would be a TRUE citation convicted as phantom (the
-      // exact inverse of this ticket's incident). Suppress instead.
-      if (transcriptDualWriteEnabled()) persistedFinalMsgId = finalMessageId;
+      // 954b7910 (reviewer obs. 1), premise RETIRED 2026-11-04: the digest's
+      // ANSWER_MSG_ID is only lawful when the row is probeable by
+      // citedMessageRowExists — i.e. it is a crossModelMessage row. That was
+      // once conditional (TRANSCRIPT_DUAL_WRITE=off left the row
+      // codingMessage-only, so an id handed to a supervisor there would be a
+      // TRUE citation convicted as phantom). The transcript now lives solely in
+      // crossmodel_messages, so the row just persisted is ALWAYS probeable and
+      // the id can be handed over unconditionally.
+      persistedFinalMsgId = finalMessageId;
     } catch (finalErr: any) {
       logger.warn(`run-executor: final transcript persist failed for session ${id}; run outcome unaffected: ${finalErr.message}`);
     }
@@ -3135,7 +3200,7 @@ export async function executeClaimedRun(claimed: ClaimedRun): Promise<void> {
       if (firedScheduleId && finalStatus === 'completed' && triggerKind !== 'user') {
         try {
           const sched = await import('./schedule.service');
-          const schedRow = await prisma.codingSchedule.findUnique({
+          const schedRow = await prisma.chatSchedule.findUnique({
             where: { id: firedScheduleId },
             select: { requiredProbes: true },
           }).catch(() => null);

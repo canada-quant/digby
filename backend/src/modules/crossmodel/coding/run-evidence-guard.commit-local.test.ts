@@ -19,8 +19,8 @@
  *   4. a relayed "banked <sha>" gets NO relay exemption (the spark case);
  *   5. git_commit receipt shas no longer enter the origin re-query as
  *      "harness receipt confirmed";
- *   6. the kill switch COMMIT_LOCAL_CLAIM_GUARD_DISABLED=1 restores every
- *      pre-split behaviour.
+ *   6. the kill switch is GONE (RSW-1 delete-with-ledger 2026-11-03): the
+ *      split is unconditional, so nothing restores the pre-split behaviour.
  *
  * Boundary-mocked like run-evidence-guard.test.ts: logger + GitHub token
  * manager are stubs, global.fetch is a mock; the real modules execute.
@@ -44,7 +44,7 @@ import {
   observedRunReceiptEvidence, MAX_VERIFY_SHAS, type CompletionClaim, type GuardVerdict,
 } from './run-evidence-guard';
 import {
-  receiptMatchesClaim, LOCAL_RECEIPT_TOOLS, isLocalReceiptTool, commitLocalClaimGuardDisabled, type ToolReceipt,
+  receiptMatchesClaim, LOCAL_RECEIPT_TOOLS, isLocalReceiptTool, type ToolReceipt,
 } from './run-receipts';
 import type { MessagePart } from './agent';
 
@@ -63,29 +63,24 @@ const rc = (tool: string, ids: Record<string, unknown> = {}, ok = true, id = `r-
 const call = (name: string): MessagePart => ({ type: 'tool_call', name, args: {} } as any);
 const result = (name: string, text: string): MessagePart => ({ type: 'tool_result', name, result: text } as any);
 
-const KS = 'COMMIT_LOCAL_CLAIM_GUARD_DISABLED';
-
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetValidToken.mockResolvedValue('tok');
   mockFetch.mockReset();
   global.fetch = mockFetch as any;
-  delete process.env[KS];
 });
 afterEach(() => {
   global.fetch = realFetch;
-  delete process.env[KS];
 });
 
 describe('receipt classes — git_commit is LOCAL (run-receipts)', () => {
   const pushed: CompletionClaim = { kind: 'commit_pushed', sha: SHA, text: `pushed ${SHA} to origin` };
   const local: CompletionClaim = { kind: 'commit_local', sha: SHA, text: `fully banked ${SHA}` };
 
-  it('names the local class and the kill switch default', () => {
+  it('names the local class', () => {
     expect([...LOCAL_RECEIPT_TOOLS]).toEqual(['git_commit']);
     expect(isLocalReceiptTool('git_commit')).toBe(true);
     expect(isLocalReceiptTool('git_push')).toBe(false);
-    expect(commitLocalClaimGuardDisabled()).toBe(false);
   });
 
   it('THE A1 HOLE: an ok git_commit receipt carrying the claimed sha no longer exonerates a commit_pushed claim', () => {
@@ -114,12 +109,6 @@ describe('receipt classes — git_commit is LOCAL (run-receipts)', () => {
     expect(receiptMatchesClaim(pr, [rc('git_commit', { sha: SHA })])).toBe(true);
   });
 
-  it('kill switch restores the old any-ids.sha match and the git_commit coarse vouch', () => {
-    process.env[KS] = '1';
-    expect(commitLocalClaimGuardDisabled()).toBe(true);
-    expect(receiptMatchesClaim(pushed, [rc('git_commit', { sha: SHA })])).toBe(true);
-    expect(receiptMatchesClaim({ kind: 'commit_pushed', sha: SHA2, text: 'x' }, [rc('git_commit', { sha: SHA })])).toBe(true);
-  });
 });
 
 describe('commit_local claim extraction', () => {
@@ -154,9 +143,6 @@ describe('commit_local claim extraction', () => {
     expect(extractCompletionClaims(`pushed ${SHA} (receipt id: 9c8b7a6d).`).map((c) => c.sha)).toEqual([SHA]);
     // A bare uuid with a push verb and no sha claims nothing at all.
     expect(extractCompletionClaims(`pushed the branch (receipt ${uuid}).`)).toEqual([]);
-    // Unconditional — the kill switch does not restore the phantom.
-    process.env[KS] = '1';
-    expect(extractCompletionClaims(`pushed ${SHA} (receipt ${uuid}).`).map((c) => c.sha)).toEqual([SHA]);
   });
 
   it('a clause that also carries a push verb is ONE commit_pushed claim (push wins)', () => {
@@ -176,11 +162,6 @@ describe('commit_local claim extraction', () => {
     expect(extractCompletionClaims(`Could not commit; nothing committed for ${SHA}.`)).toEqual([]);
   });
 
-  it('kill switch: no commit_local extraction (commit_pushed unchanged)', () => {
-    process.env[KS] = '1';
-    expect(extractCompletionClaims(`fully banked ${SHA}`)).toEqual([]);
-    expect(extractCompletionClaims(`pushed ${SHA}`).map((c) => c.kind)).toEqual(['commit_pushed']);
-  });
 });
 
 describe('evidence tiers for the origin-bearing sha kinds', () => {
@@ -193,8 +174,6 @@ describe('evidence tiers for the origin-bearing sha kinds', () => {
     expect(claimHasEvidence(local, [call('git_push')])).toBe(true);
     expect(claimHasEvidence(local, [call('run_command')])).toBe(true);
     expect(claimHasEvidence(local, [call('github_get_commit')])).toBe(true);
-    process.env[KS] = '1';
-    expect(claimHasEvidence(pushed, [call('git_commit')])).toBe(true);
   });
 
   it('citation lane: a cited git_commit receipt with the sha cannot prove a push/banked line', () => {
@@ -203,8 +182,6 @@ describe('evidence tiers for the origin-bearing sha kinds', () => {
     expect(citedReceiptProvesClaim(pushed, [commit], [])).toBe(false);
     expect(citedReceiptProvesClaim(local, [commit], [])).toBe(false);
     expect(citedReceiptProvesClaim(local, [push], [])).toBe(true);
-    process.env[KS] = '1';
-    expect(citedReceiptProvesClaim(pushed, [commit], [])).toBe(true);
   });
 
   it('relay content binding covers commit_local like commit_pushed (the sha must be in the observed output)', () => {
@@ -333,15 +310,6 @@ describe('applyCompletionClaimGuard end-to-end (machine trigger, receipts provid
     });
     expect(mockFetch).toHaveBeenCalledTimes(2); // SHA (claim) + SHA2 (git_push receipt)
     expect(withPush.finalText).toContain('harness receipt confirmed');
-    // Kill switch: git_commit shas ride as receipts again.
-    process.env[KS] = '1';
-    mockFetch.mockClear();
-    await applyCompletionClaimGuard({
-      finalText: `pushed ${SHA} to origin/main.`,
-      parts: [call('git_commit'), call('git_push')], triggerKind: 'schedule', resumed: false, now: NOW, ...OPTS,
-      receipts: [rc('git_push', { branch: 'b', sha: SHA }), rc('git_commit', { sha: SHA2 })],
-    });
-    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
   it('infra silence: origin unavailable (no token) → no localOnlyShas, only the guard-1 note', async () => {
@@ -367,20 +335,6 @@ describe('applyCompletionClaimGuard end-to-end (machine trigger, receipts provid
     expect(out.verdict.localOnlyShas).toEqual([SHA]);
   });
 
-  it('kill switch: the pre-split behaviour — git_commit exonerates "pushed <sha>", "banked" is not a claim, git_commit shas ride the re-query as receipts', async () => {
-    process.env[KS] = '1';
-    mockFetch.mockResolvedValue(ghResponse(404));
-    const out = await applyCompletionClaimGuard({
-      finalText: `fully banked ${SHA2}; pushed ${SHA} to origin.`,
-      parts: [call('git_commit')], triggerKind: 'schedule', resumed: false, now: NOW, ...OPTS,
-      receipts: [rc('git_commit', { sha: SHA })],
-    });
-    expect(out.verdict.unprovenKinds).toEqual([]);
-    expect(out.verdict.localOnlyShas).toBeUndefined();
-    // SHA is claim-sourced (404 → fabricatedShas, the legacy conviction); SHA2 never became a claim.
-    expect(out.verdict.fabricatedShas).toEqual([SHA]);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-  });
 });
 
 // ── Review fixes (2026-09-27, same branch) ──────────────────────────────────
@@ -564,19 +518,6 @@ describe('review fixes — F2 origin reconcile + cross-chat git_push receipts', 
     expect(forged.verdict.forgedFooter).toBe(true);
   });
 
-  it('kill switch: the cross-chat lane is off (a lane git_push row proves nothing, the uuid is forged again) and no deferral happens', async () => {
-    process.env[KS] = '1';
-    mockFetch.mockResolvedValue(ghResponse(404));
-    const payload = receiptsPayload([{ id: LANE_RECEIPT_ID, tool: 'git_push', ok: true, ids: { branch: 'b', sha: SHA }, at: NOW }]);
-    const out = await applyCompletionClaimGuard({
-      finalText: `Lane pushed ${SHA} (receipt ${LANE_RECEIPT_ID}).`,
-      parts: [call('get_run_receipts'), result('get_run_receipts', payload)],
-      triggerKind: 'schedule', resumed: false, now: NOW, ...OPTS, receipts: [],
-    });
-    expect(out.verdict.forgedFooter).toBe(true);
-    expect(out.verdict.unprovenKinds).toEqual(['commit_pushed']);
-    expect(out.verdict.fabricatedShas).toEqual([SHA]);
-  });
 });
 
 describe('review fixes — F4 GUARD 2b verifies push claims before local shas', () => {

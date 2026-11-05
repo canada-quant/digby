@@ -57,9 +57,12 @@
  * brief and the lead's ORIGINAL REQUEST self-audit block. The deterministic,
  * opt-in backstop is answer-key-guard.ts (ANSWER_KEY_GUARD=1).
  *
- * Pure leaf (no imports). Kill switch: INDEPENDENT_REVIEW_DISABLED=1 (no
- * reviewer).
+ * Leaf (one import: the PURE leaf report-clip.ts, for the injection clip —
+ * ticket d7e82531; it does no I/O). Kill switch: INDEPENDENT_REVIEW_DISABLED=1
+ * (no reviewer).
  */
+
+import { clipAtBoundary, workerReportCapChars } from './report-clip';
 
 function envOn(name: string): boolean {
   const v = String(process.env[name] ?? '').trim().toLowerCase();
@@ -340,17 +343,137 @@ export function keptAnswerWithReviewLine(answer: string, reviewRoundFinal: strin
   return `${answer.trimEnd()}\n\n_Independent review (a second model checked this against your original request): ${outcome}${said ? ` — ${said}` : ''}_`;
 }
 
+// ── Injection clip (ticket d7e82531): never sever the review mid-payload ─────
+//
+// Evidence (prod 2026-11-05, coding lane 98f43520): the harness injected its
+// independent review into the pre-finish audit message and the lane received
+// only the first FOUR of the reviewer's defects — the payload ended mid-defect-4
+// with a bare "[… review report clipped …]". The lane disclosed it honestly
+// ("any findings beyond the four I saw never reached me") and shipped only what
+// it could see; the findings past the cut were silently LOST to the lane that
+// was supposed to act on them. A lane less careful would have treated the four
+// it saw as the whole review.
+//
+// Two defects compounded:
+//  1. the cap here (6,000) was TIGHTER than the worker-report carrier cap
+//     (12,000, report-clip.ts). The carrier had already clipped the verdict at
+//     a boundary and appended its "(… N more chars — the FULL report is in
+//     <path> — read_file it for the rest)" tail, which is the ONLY route to the
+//     whole review. Slicing the carrier's head again DELETED that pointer, so
+//     the lane could not have fetched the rest even if it had wanted to.
+//  2. the cut was a raw `slice()` — mid-word, mid-finding — and its marker
+//     stated neither how much was missing nor where to get it.
+//
+// Now: a report within WORKER_REPORT_CAP_CHARS is delivered WHOLE (no second
+// clip at all); past that, the block keeps a HEAD and a TAIL (a reviewer puts
+// its severity/verdict line last — a head-only cut loses exactly the sentence
+// that says "defect 4 is blocking"), cut at a boundary, with a carried-forward
+// recovery pointer and an explicit PARTIAL instruction. Pure — this module
+// imports only the pure leaf report-clip.ts (no I/O).
+
+/**
+ * Default inline cap for the review block: NEVER tighter than the worker-report
+ * carrier cap (report-clip.ts), read per call. A fixed number here would
+ * re-create ticket d7e82531 the moment an operator raises
+ * WORKER_REPORT_CAP_CHARS — the injection would clip a verdict the carrier had
+ * already delivered whole. Pure.
+ */
+export function reviewFindingsCapChars(env: Record<string, string | undefined> = process.env): number {
+  return Math.max(REVIEW_FINDINGS_MAX_CHARS, workerReportCapChars(env));
+}
+
+/** Documented floor of the injection cap (the carrier cap's own default). */
+export const REVIEW_FINDINGS_MAX_CHARS = 12_000;
+
+/** Marker prefix for a clipped review block (telemetry + honesty checks). */
+export const REVIEW_PARTIAL_MARKER = 'independent review report clipped';
+
+/**
+ * The `(… N more chars — <how to read the rest>)` tail report-clip.ts appends.
+ * It is the ONLY pointer to the durable full report, so it is carried forward
+ * verbatim instead of being re-clipped away. END-ANCHORED: only a tail that
+ * actually terminates the text is ours to peel (review finding B4).
+ */
+const CARRIED_CLIP_TAIL_RE = /\n\n\(… (\d+) more chars — ([^)]*)\)\s*$/;
+
+/** A worktree path inside a carried tail — the lane can `read_file` it. */
+const RECOVERY_PATH_RE = /((?:\.digby\/session\/)[^\s,;)]+)/;
+
+export interface ReviewFindingsOpts {
+  maxChars?: number;
+  /** Worktree-relative path of the durable full report, when the caller knows it. */
+  reportPath?: string;
+  /**
+   * Chars the CARRIER already dropped before this text reached us (the delegate
+   * seam hands back `buildWorkerSummary`'s clipped text; the seam knows
+   * `fullText.length - summary.length`). Non-zero forces PARTIAL even when this
+   * function itself keeps everything it was given — otherwise the block would
+   * present a carrier-clipped verdict as complete (review finding B2).
+   */
+  omittedBefore?: number;
+}
+
 /** The reviewer's findings, framed for the lead (evidence to weigh, not orders). */
-export function reviewFindingsBlock(report: string, maxChars = 6000): string {
-  const body = report.length > maxChars ? `${report.slice(0, maxChars)}\n[… review report clipped …]` : report;
+export function reviewFindingsBlock(report: string, maxCharsOrOpts: number | ReviewFindingsOpts = reviewFindingsCapChars()): string {
+  const opts: ReviewFindingsOpts = typeof maxCharsOrOpts === 'number' ? { maxChars: maxCharsOrOpts } : maxCharsOrOpts;
+  const maxChars = Math.max(200, Math.floor(opts.maxChars ?? reviewFindingsCapChars()));
+  const raw = String(report ?? '');
+
+  // Defect 1 (above): a FIRST clip may already have run on this text. Peel its
+  // tail off the body and rebuild it below — re-clipping the head alone is what
+  // destroyed the recovery pointer. The tail is ANCHORED to the end of the
+  // string: a reviewer that merely QUOTES an earlier worker's clip tail must not
+  // have that quotation deleted, and its stale path must not be offered as this
+  // review's recovery route (review finding B4).
+  let body = raw;
+  let carriedOmitted = Math.max(0, Math.floor(Number(opts.omittedBefore) || 0));
+  let carriedHow = '';
+  const carried = CARRIED_CLIP_TAIL_RE.exec(raw);
+  if (carried) {
+    carriedOmitted += Number(carried[1]) || 0;
+    carriedHow = String(carried[2] || '').trim();
+    body = raw.slice(0, carried.index);
+  }
+
+  let delivered = body;
+  let omitted = carriedOmitted;
+  if (body.length > maxChars) {
+    // Defect 2 (above): boundary-aware HEAD + TAIL, never a mid-word slice, and
+    // never a head-only cut that drops the closing verdict line.
+    const headCap = Math.floor(maxChars * 0.7);
+    const tailCap = maxChars - headCap;
+    const head = clipAtBoundary(body, headCap);
+    let tailText = body.slice(body.length - tailCap);
+    // Prefer starting the tail on its own line so it reads as a finding, not a fragment.
+    const nl = tailText.indexOf('\n');
+    if (nl >= 0 && nl <= 200) tailText = tailText.slice(nl + 1);
+    tailText = tailText.replace(/^\s+/, '');
+    omitted = carriedOmitted + Math.max(0, body.length - head.text.length - tailText.length);
+    delivered = `${head.text}\n\n[… ${omitted} chars NOT delivered here — the review resumes below …]\n\n${tailText}`;
+  }
+
+  let out = delivered.trim();
+  if (omitted > 0) {
+    const path = opts.reportPath || (RECOVERY_PATH_RE.exec(carriedHow)?.[1] ?? '');
+    const recovery = path
+      ? `the FULL report is in ${path} — read_file it for the rest`
+      : 'no durable copy of the full report exists — re-check the artifact areas the findings below name, and say in your final that the review was PARTIAL';
+    out += `\n\n[… ${REVIEW_PARTIAL_MARKER} — treat the findings above and below as PARTIAL, not complete: ${omitted} chars of this review were not delivered to you. ${recovery}]`;
+  }
+
   return [
     '',
     'INDEPENDENT REVIEW (a different model checked your artifacts against the original request, without seeing your plan):',
     '<<<',
-    body.trim(),
+    out,
     '>>>',
     'Weigh each FAIL: if it is real, fix it now (reopen the step via update_plan); if you can refute it, run the one check that refutes it and say so in one line. UNVERIFIED items are not defects. Do not undo a correct solution to satisfy a wrong finding.',
   ].join('\n');
+}
+
+/** True when the rendered block was clipped (the lane must treat it as PARTIAL). */
+export function reviewFindingsBlockIsPartial(block: string): boolean {
+  return String(block ?? '').includes(REVIEW_PARTIAL_MARKER);
 }
 
 // ── audit 2026-10-08 W2-13 (sota.md #6): skip the SAME-MODEL self-audit when the

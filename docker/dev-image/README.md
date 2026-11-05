@@ -23,9 +23,9 @@ docker build -t digby-dev:latest docker/dev-image
 **Option A — GHCR:**
 
 ```bash
-docker tag digby-dev:latest ghcr.io/canada-quant/digby-dev:latest
-docker push ghcr.io/canada-quant/digby-dev:latest
-# CODING_DEV_IMAGE=ghcr.io/canada-quant/digby-dev:latest
+docker tag digby-dev:latest ghcr.io/example-org/digby-dev:latest
+docker push ghcr.io/example-org/digby-dev:latest
+# CODING_DEV_IMAGE=ghcr.io/example-org/digby-dev:latest
 ```
 
 **Option B — EC2-local tag (no registry):** build directly on box A of the

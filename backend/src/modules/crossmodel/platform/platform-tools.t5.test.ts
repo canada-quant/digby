@@ -90,7 +90,7 @@ const dbMock = {
   pendingConfirmation: mockConfirmations.api,
   crossModelChat: { findUnique: jest.fn(async ({ where }: any) => chats[where.id] ?? null) },
   crossModelMessage: { create: jest.fn(async () => ({})) },
-  codingSchedule: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'sch-1' ? { id: 'sch-1', sessionId: 'c-own', userId: 'u1' } : null)) },
+  chatSchedule: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'sch-1' ? { id: 'sch-1', sessionId: 'c-own', userId: 'u1' } : null)) },
   agentRun: {
     findUnique: jest.fn(async ({ where }: any) => (where.id === 'run-1' ? { id: 'run-1', sessionId: 'c-own' } : null)),
     findMany: jest.fn(async ({ where }: any) => (where.sessionId === 'c-own' ? [{ id: 'run-1', status: 'completed', attempts: 1, currentStep: 12, error: null, createdAt: new Date(), startedAt: new Date(), finishedAt: new Date() }] : [])),
@@ -268,8 +268,8 @@ const projRows: Record<string, any> = { 'proj-1': { id: 'proj-1', name: 'P' } };
 (dbMock as any).activity = { create: jest.fn(async () => ({})) };
 (dbMock as any).crossModelChat.findFirst = jest.fn(async ({ where }: any) => (chats[where.id] && chats[where.id].userId === where.userId ? chats[where.id] : null));
 (dbMock as any).crossModelChat.findMany = jest.fn(async ({ where }: any) => Object.values(chats).filter((c: any) => c.userId === where.userId && c.id.startsWith(where.id.startsWith)).map((c: any) => ({ id: c.id, title: c.title ?? null })));
-(dbMock as any).codingSchedule.findFirst = jest.fn(async () => null);
-(dbMock as any).codingSchedule.findMany = jest.fn(async () => []);
+(dbMock as any).chatSchedule.findFirst = jest.fn(async () => null);
+(dbMock as any).chatSchedule.findMany = jest.fn(async () => []);
 (dbMock as any).projectGoal = { findMany: jest.fn(async () => []) };
 (dbMock as any).projectTodo = { findMany: jest.fn(async () => []) };
 (dbMock as any).eventHook = { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) };
@@ -409,8 +409,8 @@ describe('tickets + deploy view', () => {
     expect(await run('resolve_feedback', { id: 't-1' })).toMatchObject({ ok: true, status: 'done' });
     expect(await run('resolve_feedback', { id: 't-9' })).toMatchObject({ ok: false, reason: 'not_found' });
     expect(await runRaw('get_fleet_telemetry', { view: 'deploy' })).toMatch(/restricted to admin users/);
-    expect(await run('get_fleet_telemetry', { view: 'deploy', repo: 'canada-quant/example-repo' })).toMatchObject({ ok: true, view: 'deploy', repo: 'canada-quant/example-repo' });
-    expect(telemetry.fleetTelemetry).toHaveBeenCalledWith(expect.objectContaining({ repo: 'canada-quant/example-repo' }), expect.objectContaining({ userId: 'u1', role: 'USER' }));
-    expect(await runRaw('get_fleet_telemetry', { view: 'boxes', repo: 'canada-quant/example-repo' })).toMatch(/restricted to admin users/);
+    expect(await run('get_fleet_telemetry', { view: 'deploy', repo: 'example-org/optcg' })).toMatchObject({ ok: true, view: 'deploy', repo: 'example-org/optcg' });
+    expect(telemetry.fleetTelemetry).toHaveBeenCalledWith(expect.objectContaining({ repo: 'example-org/optcg' }), expect.objectContaining({ userId: 'u1', role: 'USER' }));
+    expect(await runRaw('get_fleet_telemetry', { view: 'boxes', repo: 'example-org/optcg' })).toMatch(/restricted to admin users/);
   });
 });

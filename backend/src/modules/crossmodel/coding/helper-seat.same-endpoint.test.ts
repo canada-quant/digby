@@ -22,7 +22,7 @@ jest.mock('../model-endpoints/model-roles.service', () => ({
   resolveRoleFallback: (...a: any[]) => mockResolveRoleFallback(...(a as [string])),
 }));
 
-const GW = { url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk', label: 'cql-litellm', supportsVision: false, coding: true, chatCapable: true, thinkingOff: false };
+const GW = { url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk', label: 'cql-litellm', supportsVision: false, coding: true, chatCapable: true, thinkingOff: false };
 const REGISTRY: Record<string, any> = {
   'cql-litellm:api-optimize-zai-glm-5.3': { ...GW, model: 'api-optimize-zai-glm-5.3' },
   'cql-litellm:api-optimize-moonshot-kimi-k3': { ...GW, model: 'api-optimize-moonshot-kimi-k3' },

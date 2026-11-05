@@ -150,6 +150,10 @@ function makeCtx(overrides: Partial<ToolContext> = {}) {
     worktree: '/wt', sessionId: 'sess-1', userId: 'u1', permissionMode: 'auto',
     emit: () => {}, alwaysAllow: new Set<string>(),
     userTurnAt: new Date(),
+    // Stage legs model a Dig-deeper rung (a human turn that re-runs an EARLIER
+    // ask and therefore cards) — the same gate WORK_TOOLS_NO_CARD_DISABLED held
+    // open until RSW-1 retired it.
+    escalation: true,
     requestApproval: async () => 'allow',
     execShell: async () => ({ stdout: '', stderr: '' }),
     ...overrides,
@@ -177,10 +181,11 @@ beforeEach(() => jest.clearAllMocks());
 // requested-work tools (start_coding_session, create_feed, own-chat schedule
 // tools, …) now execute WITHOUT a card. This suite pins the STAGING contract
 // itself (staging-time validation, WYSIWYG confirm, the card envelope), which
-// still governs machine turns and the kill switch — so it runs with the switch
-// set; the direct path is pinned by work-tools.test.ts.
-beforeAll(() => { process.env.WORK_TOOLS_NO_CARD_DISABLED = '1'; });
-afterAll(() => { delete process.env.WORK_TOOLS_NO_CARD_DISABLED; });
+// still governs machine turns and a Dig-deeper rung (ctx.escalation re-runs an
+// EARLIER ask, so it cards rather than re-running the work) — so its stage legs
+// pass escalation; the direct path is pinned by work-tools.test.ts.
+// (Until RSW-1 this suite reached the card by setting WORK_TOOLS_NO_CARD_DISABLED;
+// that kill switch is gone and escalation is the behaviour that actually stays.)
 
 describe('start_coding_session model param (ticket b6acc1e3)', () => {
   it('the schema exposes an OPTIONAL model string param — projectId is optional too since misfiled-spawns-1 (SPAWN_PROJECT_REQUIRED=1 restores it)', () => {

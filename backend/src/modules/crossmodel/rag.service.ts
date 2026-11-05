@@ -27,7 +27,7 @@ import { utilityChat } from '../../utils/utility-llm';
 import { stripNulBytes } from './memory/text-utils';
 import { truncateMatryoshka } from './model-endpoints/matryoshka';
 import { processTag } from './platform/process-tag';
-import { type EmbedBucket, legFromAttributionHeaders } from './memory/embed-failure';
+import { type EmbedBucket, EMBED_GWLESS_DIRECT, legFromAttributionHeaders, markEmbedLane } from './memory/embed-failure';
 
 // Alibaba DashScope — RAG embeddings (text-embedding-v4) + rerank (gte-rerank), open-source only
 const DASHSCOPE_API_KEY = process.env.DASHSCOPE_API_KEY;
@@ -288,7 +288,7 @@ export async function embedTexts(
   const onAttempt = (a: EmbedAttemptNote) => {
     dsAttempts.push({ spec, ok: a.ok, ms: a.ms, errorKind: a.errorKind, status: a.status, leg: a.leg, callId: a.callId, callIdEcho: a.callIdEcho, abort: a.abort, bucket });
     recordRagTransport('rag_embed_call', { spec, ok: a.ok, ms: a.ms, errorKind: a.errorKind, status: a.status, leg: a.leg, callId: a.callId, callIdEcho: a.callIdEcho, abort: a.abort },
-      { op: 'embedTexts', lane: 'dashscope', batch: a.batch, unit: 'attempt', ...(a.chars !== undefined ? { chars: a.chars } : {}), ...(a.retried ? { retried: true } : {}), bucket });
+      { op: 'embedTexts', lane: 'dashscope', batch: a.batch, unit: 'attempt', ...(a.chars !== undefined ? { chars: a.chars } : {}), ...(a.retried ? { retried: true } : {}), bucket, ...(a.gwless !== undefined ? { gwless: a.gwless } : {}) });
   };
   const dsRoll = { batchChars: totalChars(texts), batchCount: Math.ceil(texts.length / EMBED_BATCH_SIZE) };
   try {
@@ -318,6 +318,10 @@ export interface EmbedAttemptNote extends RagAttemptLeg {
   status?: number;
   /** Typed end reason (ticket b5f4d5e2) — who aborted, not just that it failed. */
   abort?: RagAbortReason;
+  /** The transport's own assertion that NO gateway sat in front (goal 4e432dff,
+   *  supervisor ruling 2026-11-04). Set ONLY by the function that owns the URL
+   *  literal — a per-row fact, never inferred from a missing leg. */
+  gwless?: typeof EMBED_GWLESS_DIRECT;
   /** True when a bounded retry produced this attempt. */
   retried?: boolean;
 }
@@ -594,9 +598,9 @@ async function embedTextsCustom(
         // callers, classifyRagError and the log sweep match on.
         const e: any = new Error(`embed attempt timeout after ${EMBED_ATTEMPT_TIMEOUT_MS}ms (batch ${b + 1}/${batches}, ${retriesMax + 1} attempt(s))`);
         e.code = 'ECONNABORTED';
-        throw e;
+        throw markEmbedLane(e, 'custom');
       }
-      throw attemptErr ?? new Error(`embed attempt failed for batch ${b + 1}/${batches}`);
+      throw markEmbedLane(attemptErr ?? new Error(`embed attempt failed for batch ${b + 1}/${batches}`), 'custom');
     }
     const embeddings = (response.data?.data ?? [])
       .sort((a: any, b: any) => a.index - b.index)
@@ -674,7 +678,11 @@ async function embedTextsDashscope(
             timeout: Math.max(1, Math.min(EMBED_ATTEMPT_TIMEOUT_MS, left)),
           }
         );
-        onAttempt?.({ ok: true, ms: Date.now() - a0, batch: b, chars, retried: attempt > 0, ...attemptLeg(response?.headers, callId) });
+        // THE GATEWAYLESS ASSERTION — this function posts to the literal
+        // DASHSCOPE_EMBEDDING_URL, so no LiteLLM hop can exist in front and no
+        // `x-litellm-*` header can ever arrive. Written on the SUCCESS row too,
+        // so the key's absence on a failure is itself meaningful.
+        onAttempt?.({ ok: true, ms: Date.now() - a0, batch: b, chars, retried: attempt > 0, ...attemptLeg(response?.headers, callId), gwless: EMBED_GWLESS_DIRECT });
         attemptErr = null;
         break;
       } catch (err: any) {
@@ -682,7 +690,7 @@ async function embedTextsDashscope(
         // A gateway-answered error still names its leg in `err.response.headers`;
         // a caller abort has no response, so the leg is absent and `callId` is
         // the only correlator. Both facts are recorded, never inferred later.
-        onAttempt?.({ ok: false, ms: Date.now() - a0, batch: b, chars, ...kind, ...attemptLeg(err?.response?.headers, callId), abort: classifyAbortReason(err) });
+        onAttempt?.({ ok: false, ms: Date.now() - a0, batch: b, chars, ...kind, ...attemptLeg(err?.response?.headers, callId), abort: classifyAbortReason(err), gwless: EMBED_GWLESS_DIRECT });
         attemptErr = err;
         timedOut = kind.errorKind === 'timeout';
         if (!timedOut) break;
@@ -695,9 +703,15 @@ async function embedTextsDashscope(
         // and the log sweep all match on.
         const e: any = new Error(`dashscope embed attempt timeout after ${EMBED_ATTEMPT_TIMEOUT_MS}ms (batch ${b + 1}/${batches}, ${retriesMax + 1} attempt(s))`);
         e.code = 'ECONNABORTED';
-        throw e;
+        // THE GATEWAYLESS ASSERTION (supervisor ruling 2026-11-04): this
+        // function posts to the LITERAL DASHSCOPE_EMBEDDING_URL constant, so no
+        // LiteLLM hop exists and no `x-litellm-*` header can ever arrive on a
+        // failure. Stamping the lane HERE — where the URL is chosen — is what
+        // lets the attribution rule distinguish this from a gatewayed lane
+        // whose gateway omitted its headers.
+        throw markEmbedLane(e, 'dashscope');
       }
-      throw attemptErr ?? new Error(`dashscope embed attempt failed for batch ${b + 1}/${batches}`);
+      throw markEmbedLane(attemptErr ?? new Error(`dashscope embed attempt failed for batch ${b + 1}/${batches}`), 'dashscope');
     }
 
     const embeddings = response.data.data
@@ -1555,7 +1569,7 @@ export function classifyRagError(err: any): Pick<RagAttempt, 'errorKind' | 'stat
  */
 function recordRagTransport(kind: 'rag_rerank_call' | 'rag_embed_call', attempt: RagAttempt, extra?: Record<string, unknown>): void {
   // Pull the size keys out of `extra` so they can be placed high in the object.
-  const { chars, batchChars, batchCount, ...rest } = (extra ?? {}) as Record<string, unknown>;
+  const { chars, batchChars, batchCount, gwless, ...rest } = (extra ?? {}) as Record<string, unknown>;
   // Everything the ordered block below already emits. Whatever remains is a
   // caller-specific field (batchAttempts/batchFailures on the call roll-up, …)
   // and it MUST still reach the row — an explicit allow-list here silently
@@ -1589,6 +1603,12 @@ function recordRagTransport(kind: 'rag_rerank_call' | 'rag_embed_call', attempt:
         // are short (a closed enum, a bool) and both must survive the 240-char
         // meta truncation on exactly the long failure rows, hence this high.
         ...(rest.bucket !== undefined ? { bucket: rest.bucket } : {}),
+        // THE POSITIVE GATEWAY FACT (goal 4e432dff, supervisor ruling
+        // 2026-11-04) — `direct` only from the transport that owns the
+        // DashScope URL literal. Two chars of key, placed HIGH because the
+        // attribution rule reads it on precisely the long failure rows that
+        // lose their tail to the 240-char truncation.
+        ...(gwless !== undefined ? { gwless } : {}),
         ...(rest.unit !== undefined ? { unit: rest.unit } : {}),
         ...(attempt.leg !== undefined ? { leg: attempt.leg } : {}),
         ...(attempt.abort !== undefined ? { abort: attempt.abort } : {}),

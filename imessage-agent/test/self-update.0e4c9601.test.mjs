@@ -280,8 +280,8 @@ test('8bcd1c4a: a current tree whose addon does NOT load is never the carry sour
 });
 
 test('8bcd1c4a/51d8dbe0 pin: this tree IS the current version', () => {
-  assert.match(configSrc, /AGENT_VERSION = '0\.9\.19'/, 'config.ts AGENT_VERSION must be 0.9.19');
-  assert.equal(pkgJson.version, '0.9.19', 'package.json version must match AGENT_VERSION');
+  assert.match(configSrc, /AGENT_VERSION = '0\.9\.23'/, 'config.ts AGENT_VERSION must be 0.9.23');
+  assert.equal(pkgJson.version, '0.9.23', 'package.json version must match AGENT_VERSION');
 });
 
 test('0e4c9601 pin: the smoke child runs with the STAGED tree as its tree (dist/ resolves node_modules from the staged root)', () => {

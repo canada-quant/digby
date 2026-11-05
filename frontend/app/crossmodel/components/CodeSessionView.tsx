@@ -22,15 +22,19 @@ import { pendingQuestionFromEvent, composeMultiSelectAnswer, type PendingQuestio
 import { isPlaceholderChatTitle } from '@/lib/chat-title';
 import { modelEndpointsApi, isChatCapableModel } from '@/lib/api/model-endpoints';
 import { DigbyLoader } from '@/components/ui/custom/DigbyLoader';
+import { useBranding } from '@/app/branding/BrandingProvider';
 import { ensureFreshAuthCookie } from '@/lib/api-client';
 import { formatMessageTime } from '@/lib/format-message-time';
 import { decideTranscriptPin, followTarget, NEAR_BOTTOM_PX, turnAnchorIndex } from '@/lib/transcript-pin';
 import { LoadErrorState } from '@/components/ui/load-error-state';
 import { routeSend, classifySteerFailure } from '@/lib/composer-guard';
 import { drainAction, isProvisionQueueId, loadProvisionQueue, makeQueued, mergeIntoInitial, mergeQueued, saveProvisionQueue, PROVISION_QUEUE_CAPTION, type ProvisionQueued } from '@/lib/provision-queue';
-import { partitionQueuedEchoes, reconcileQueuedEchoes } from '@/lib/queued-echoes';
+import { partitionQueuedEchoes, reconcileQueuedEchoes, reconcilePendingEchoes, isPlainQueueEchoId } from '@/lib/queued-echoes';
+import { createSnapshotStore } from '@/lib/plain-transcript-snapshot';
 import { GUEST_QUEUE_CAPTION, guestDrainAction, isGuestQueueId, makeGuestQueued, mergeGuestQueued, stageChatlessBehindLive, type GuestQueuedSend } from '@/lib/guest-send-queue';
 import { interleaveSteers } from '@/lib/steer-interleave';
+import { moveItem, queueFromError, queueRefusalMessage, refusalCodeFromError, withPositions, type QueuedItem } from '@/lib/queue-controls';
+import QueuedMessagesPanel from './QueuedMessagesPanel';
 import { dedupById } from '@/lib/transcript-dedup';
 import { errorToastSignature, shouldToastError } from '@/lib/error-toast-dedup';
 import { displayModelId } from '@/lib/model-alias';
@@ -252,6 +256,53 @@ function writeSessionSnapshot(chatId: string, snap: Omit<SessionViewSnapshot, 'a
  *  delete/archive/SSE-notice, so it is exported (default-importable). */
 export function purgeSessionSnapshot(chatId: string): void {
   sessionSnapshots.delete(chatId);
+  // Ticket ce78ab80: the PLAIN transcript cache shares this purge — every
+  // delete/archive/terminal-404 path that drops a coding snapshot must drop a
+  // plain one, or a deleted plain chat re-opens from its cached transcript.
+  plainTranscriptSnapshots.drop(chatId);
+}
+
+// Ticket ce78ab80 (owner report 2026-11-04: "everytime i navigate away from
+// chats and then back i have to wait so long for chats to load? arent they in
+// cache or anything ?"): the PLAIN half of the snapshot above. Plain chats had
+// NO cache — the load effect zeroed the transcript and then waited on a
+// blocking getChat(50), so every re-open was an empty screen plus a full round
+// trip, while coding sessions painted instantly. Same lifetime rules as the
+// coding snapshot (MEMORY-ONLY, TTL'd, bounded) and the same revalidate-behind
+// discipline; the store itself is lib/plain-transcript-snapshot.ts so its TTL
+// and eviction are unit-tested instead of pinned as source text.
+const plainTranscriptSnapshots = createSnapshotStore<CodingMessage>();
+
+/** Write a plain chat's snapshot from a transcript the SERVER just confirmed.
+ *  Every call site passes the rows it is committing right now — never a prior
+ *  snapshot — so the cache can only ever hold content the server has served. */
+function rememberPlainTranscript(
+  chatId: string,
+  messages: CodingMessage[],
+  paging: { hasMore: boolean; cursor: string | null },
+  pendingIds: Iterable<string>,
+  supervisorChat: boolean,
+): void {
+  plainTranscriptSnapshots.write(chatId, {
+    messages,
+    paging,
+    pendingIds: Array.from(pendingIds),
+    supervisorChat,
+  });
+}
+
+/** Refresh the ROWS of an existing plain snapshot after a server-confirmed
+ *  transcript change (review MAJOR-2 on ticket ce78ab80): a completed turn is
+ *  appended to the live view and persisted by the server, so a re-open inside
+ *  the TTL would otherwise paint the transcript WITHOUT the answer that just
+ *  arrived — "my reply is missing" for a moment, the mirror of the bug the
+ *  snapshot exists to fix. Paging/queue/supervisor fields are preserved (they
+ *  did not change); a chat with no snapshot stays uncached (nothing to keep
+ *  fresh, and the next open is an honest cold load). */
+function refreshPlainSnapshotMessages(chatId: string, messages: CodingMessage[]): void {
+  const snap = plainTranscriptSnapshots.read(chatId);
+  if (!snap) return;
+  rememberPlainTranscript(chatId, messages, snap.paging, snap.pendingIds, snap.supervisorChat);
 }
 
 // Local-only echo rows (optimistic sends/steers, the just-completed assistant
@@ -984,6 +1035,8 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       transcript, so an open side panel keeps its own header. */
   header?: ReactNode;
 }) {
+  // Shared branding core (todo d2d32b57) — Digby unless the operator rebranded.
+  const branding = useBranding();
   const [activeSession, setActiveSession] = useState<(CodingSession & { project?: CodingProject }) | null>(null);
   const [project, setProject] = useState<CodingProject | null>(null);
   const [messages, setMessages] = useState<CodingMessage[]>([]);
@@ -1339,7 +1392,20 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
   // CURRENT pending set to reconcile echoes with their server twins).
   const pendingSteerIdsRef = useRef<Set<string>>(pendingSteerIds);
   pendingSteerIdsRef.current = pendingSteerIds;
+  // Ticket 81b229e1: the EXACT `tmp-*` echo → server queue-row pairing, recorded
+  // when the enqueue ack lands. reloadPlain uses it to drop the optimistic echo
+  // in favour of the row it became, instead of guessing by text + clock (the
+  // promote path re-stamps that row's createdAt, so a clock test is unreliable).
+  const plainEchoToPendingRef = useRef<Map<string, string>>(new Map());
   const [steering, setSteering] = useState(false);
+  // ── Queued-message controls (ticket ea04454c) ─────────────────────────────
+  // The owner's ask: "we need to add interrupt/steer options in ui as well not
+  // just queued messages." `queueItems` is the caller's own pending-message list
+  // straight from the server (drain order), rendered with position +
+  // cancel/promote/reorder. Interrupting is a separate small composer button
+  // (ticket b54efe5d) — NOT a sticky mode, so there is no send-mode state here.
+  const [queueItems, setQueueItems] = useState<QueuedItem[]>([]);
+  const [queueBusy, setQueueBusy] = useState(false);
   const [questionDraft, setQuestionDraft] = useState('');
   // Multi-select ask_user cards: the options the user has toggled on (cleared per question).
   const [questionPicks, setQuestionPicks] = useState<Set<string>>(() => new Set());
@@ -1715,12 +1781,32 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       // server still lists stays pending; ids whose drain landed get
       // released below by the idMap (echo-twin reconciliation).
       const restoredPending = mapPlainPendingMessages(full);
-      if (restoredPending.length) {
-        setMessages(prev => {
-          const seen = new Set(prev.map(m => m.id));
-          return [...prev, ...restoredPending.filter(m => !seen.has(m.id))];
-        });
-      }
+      // Ticket 81b229e1 ("Send now" showed the message TWICE): the Send-now
+      // path promotes the queued row then STOPS the run, and the stop calls
+      // this reload while that row is still pending — so the optimistic
+      // `tmp-*` echo and the server's `pending-<rowId>` row are the SAME
+      // message. reconcileQueuedEchoes cannot merge them (its twin search
+      // only sees PERSISTED rows; a queue entry is not persisted until it
+      // drains), and the append below deduped by id only, so both survived
+      // and the queued partition rendered two identical bubbles.
+      // The server row is the record — drop the echo and re-key any pending
+      // tracking onto the row id.
+      const echoReconcile = reconcilePendingEchoes(
+        messagesRef.current,
+        restoredPending,
+        { isQueueEcho: isPlainQueueEchoId, echoToPending: plainEchoToPendingRef.current },
+      );
+      const replacedEchoIds = new Set(echoReconcile.idMap.keys());
+      // The pairing has been applied (or the row is gone) — forget it so the map
+      // cannot grow for the life of the session.
+      for (const id of replacedEchoIds) plainEchoToPendingRef.current.delete(id);
+      // One atomic commit: drop the superseded echoes, then append the
+      // server-listed queue rows that are not already present.
+      const mergedBase = r.messages.filter(m => !replacedEchoIds.has(m.id));
+      const baseIds = new Set(mergedBase.map(m => m.id));
+      const appendedPending = restoredPending.filter(m => !baseIds.has(m.id));
+      const finalMessages = appendedPending.length ? [...mergedBase, ...appendedPending] : mergedBase;
+      setMessages(finalMessages);
       const listedPendingIds = new Set(restoredPending.map(m => m.id));
       // Union, not replace: keep every prev id that is still present in the
       // merged transcript and not yet twin-reconciled (local tmp-*/steer-*
@@ -1728,10 +1814,15 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       // un-queue a just-sent bubble on mid-run reload, the exact defect this
       // ticket fixes), then add the server-listed queued rows. A drained
       // pending-<rowId> is absent from r.messages → released. (reviewer MAJOR)
-      const mergedIds = new Set(r.messages.map(m => m.id));
+      const mergedIds = new Set(finalMessages.map(m => m.id));
       setPendingSteerIds(prev => {
         const next = new Set<string>();
-        for (const id of prev) if (mergedIds.has(id) && !r.idMap.has(id)) next.add(id);
+        // A superseded echo is gone from the transcript — release it so the
+        // queued partition cannot keep rendering a bubble nothing maps to.
+        for (const id of prev) {
+          if (replacedEchoIds.has(id)) continue;
+          if (mergedIds.has(id) && !r.idMap.has(id)) next.add(id);
+        }
         for (const id of listedPendingIds) next.add(id);
         return next;
       });
@@ -1739,6 +1830,12 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       // Reload replaces the transcript with the newest page — re-seed the
       // paging envelope so "Load earlier" pages from the fresh cursor (H2).
       setPlainPaging({ hasMore: !!full.hasMoreMessages, cursor: full.nextMessagesBefore ?? null });
+      // Ticket ce78ab80 (review MAJOR-2): this is server-confirmed history too,
+      // so refresh the re-open snapshot — otherwise a remount right after a
+      // focus-resync/stop paints the transcript as it was before this reload.
+      // Ticket 81b229e1: it must carry the SAME deduped array committed above,
+      // or a remount would paint the duplicate bubble straight back.
+      refreshPlainSnapshotMessages(sid, finalMessages);
     } catch { /* leave current state */ }
   }, [startPendingRowPoll]);
 
@@ -2537,6 +2634,7 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
   // Load the session when the chat changes.
   useEffect(() => {
     activeIdRef.current = chatId;
+    setQueueItems([]); // ticket ea04454c: the queue panel is per-chat
     setActiveSession(null); setProject(null); setMessages([]); setPlan(null); setLoadFailed(false);
     setLive({ parts: [], pendingApproval: null, running: false });
     resetBrowserActivity(); // browser panel/sheet are chat-scoped (Phase 6a)
@@ -2583,6 +2681,21 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       }
       void (async () => {
         try {
+          // Ticket ce78ab80 — snapshot-first, the plain twin of the coding
+          // snapshot above. A re-open of a chat visited minutes ago paints its
+          // transcript + queued partition INSTANTLY and revalidates below,
+          // instead of showing an empty screen behind this blocking GET. The
+          // snapshot is a hint only: the fetch below stays authoritative and
+          // replaces the painted rows when it lands. Live/stream state is left
+          // to the fetch (this effect already reset it to not-running), so a
+          // stale snapshot can never paint streaming chrome.
+          const snap = plainTranscriptSnapshots.read(chatId);
+          if (snap) {
+            setSupervisorChat(snap.supervisorChat);
+            setMessages(snap.messages);
+            setPendingSteerIds(new Set(snap.pendingIds));
+            setPlainPaging(snap.paging);
+          }
           const full = await crossModelApi.getChat(chatId, { messageLimit: 50 });
           if (activeIdRef.current !== chatId) return;
           setSupervisorChat(!!(full.isSupervisor || full.isProjectSupervisor));
@@ -2600,7 +2713,35 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
           const restoredPending = mapPlainPendingMessages(full);
           setMessages(restoredPending.length ? [...restored, ...restoredPending] : restored);
           setPendingSteerIds(prev => { const next = new Set(prev); for (const m of restoredPending) next.add(m.id); return next; });
+          // Ticket ce78ab80 (review MINOR-1): the union above is the c0b2b0c8
+          // rule and must stay — it preserves a locally-sent `tmp-*` echo whose
+          // drain has not landed yet. But the snapshot paint may ALSO have
+          // re-seeded `pending-*` ids that the server drained while this view
+          // was unmounted, and those must be RELEASED, or a drained turn
+          // renders in the queued slot until the next reload. Prune exactly
+          // the snapshot-seeded ids the server no longer lists (never the
+          // local echoes, which are not in `snap.pendingIds`).
+          if (snap) {
+            const listedNow = new Set(restoredPending.map(m => m.id));
+            const seeded = new Set(snap.pendingIds);
+            setPendingSteerIds(prev => {
+              const next = new Set<string>();
+              for (const id of prev) if (!(seeded.has(id) && !listedNow.has(id))) next.add(id);
+              return next;
+            });
+          }
           setPlainPaging({ hasMore: !!full.hasMoreMessages, cursor: full.nextMessagesBefore ?? null });
+          // Ticket ce78ab80: store the FETCHED page (never the pre-fetch
+          // snapshot above) so the next remount paints what the server just
+          // confirmed. Written from the same values the view is committing,
+          // so cache and screen cannot disagree.
+          rememberPlainTranscript(
+            chatId,
+            restoredPending.length ? [...restored, ...restoredPending] : restored,
+            { hasMore: !!full.hasMoreMessages, cursor: full.nextMessagesBefore ?? null },
+            restoredPending.map(m => m.id),
+            !!(full.isSupervisor || full.isProjectSupervisor),
+          );
           startPendingRowPoll(restored, chatId);
           const attach = !!plainRef.current?.attachOnLoad;
           setLive({ parts: [], pendingApproval: null, running: attach });
@@ -3253,7 +3394,7 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
   // stream, so the queue request rides a THROWAWAY EventSource that only
   // listens for the server's `queued` ack (it persists the message, drains it
   // automatically when the turn finishes, and ends this connection).
-  const queuePlainBehindLive = async (sid: string, message: string, plainCfg: PlainSessionProps, uploadIds: string[]) => {
+  const queuePlainBehindLive = async (sid: string, message: string, plainCfg: PlainSessionProps, uploadIds: string[], opts?: { onQueued?: (info: { pendingId: string | null; position: number | null }) => void }) => {
     let url: string;
     try {
       url = await buildPlainStreamUrl({ chatId: sid, message, mode: plainCfg.mode, modeSource: plainCfg.modeSource, webSearch: plainCfg.webSearch, uploadIds });
@@ -3270,11 +3411,16 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       let msg: any; try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === 'queued') {
         const pos = typeof msg.data?.position === 'number' ? msg.data.position : null;
+        // Ticket ea04454c: carry the ROW id back to the caller so "Send now"
+        // can promote exactly this message, and refresh the visible queue so the
+        // panel shows the true position immediately.
+        const pendingId = typeof msg.data?.id === 'string' ? msg.data.id : null;
         toast.message('Message queued', {
           description: pos
             ? `This chat is busy — your message is saved and runs automatically (queue position ${pos}).`
             : 'This chat is busy — your message is saved and runs automatically when the current turn finishes.',
         });
+        opts?.onQueued?.({ pendingId, position: pos });
         done();
       } else if (msg.type === 'error') {
         toast.error(`Could not queue the message: ${msg.data?.message || 'unknown error'}`);
@@ -3291,7 +3437,7 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
     qes.onerror = done;
   };
 
-  const send = async (overrideMessage?: string, overrideImages?: ChatImage[], opts?: { bypassRunningGuard?: boolean; displayContent?: string; escalationOf?: string; overrideUploads?: AttachmentInfo[] }) => {
+  const send = async (overrideMessage?: string, overrideImages?: ChatImage[], opts?: { bypassRunningGuard?: boolean; displayContent?: string; escalationOf?: string; overrideUploads?: AttachmentInfo[]; interrupt?: boolean }) => {
     const message = (overrideMessage ?? composerRef.current?.getValue() ?? '').trim();
     const plainCfg = plainRef.current;
     if (plainCfg) {
@@ -3379,7 +3525,26 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       if (live.running) {
         if (!sid) return; // unreachable (chatless guard above) — narrows sid for the queue call
         setPendingSteerIds(prev => new Set(prev).add(echoId));
-        void queuePlainBehindLive(sid, effectiveMessage, plainCfg, uploadIds);
+        // Ticket b54efe5d: the composer's send circle now has ONE meaning —
+        // queue behind the live answer. Interrupting is its own small button
+        // (ChatComposer's onInterrupt), which reaches here with opts.interrupt:
+        // the message is still enqueued (nothing is lost either way), and the
+        // row is promoted + the live run stopped so the drain delivers it next.
+        void queuePlainBehindLive(sid, effectiveMessage, plainCfg, uploadIds, {
+          onQueued: ({ pendingId, position }) => {
+            if (position === null) return;
+            // Ticket 81b229e1: record the EXACT pairing so reloadPlain drops
+            // this echo in favour of the row it became (identity, not a clock
+            // guess — promote re-stamps the row's createdAt).
+            if (pendingId) plainEchoToPendingRef.current.set(echoId, pendingId);
+            // Reflect the true position in the caption immediately, then let the
+            // server listing own the order.
+            if (opts?.interrupt && pendingId && !plainCfg.guest) {
+              void promoteThenStop(sid, pendingId);
+            }
+            void refreshQueue(sid);
+          },
+        });
         return;
       }
       setLive({ parts: [], pendingApproval: null, running: true });
@@ -3631,11 +3796,160 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
     }
   };
 
+  /**
+   * "Send now" for a plain chat (ticket ea04454c): PROMOTE the just-queued row
+   * to the head, then STOP the live run so the finishing run's drain delivers it
+   * immediately. Promoted first, stopped second — reversing the order would let
+   * the drain pick a DIFFERENT row in the gap between the two calls.
+   *
+   * Fail-open by design: if the promote fails the message is still queued (it
+   * will run when this turn finishes — exactly today's behaviour), so the
+   * person never loses the text; they just keep waiting.
+   */
+  const promoteThenStop = async (sid: string, pendingId: string) => {
+    try {
+      const promoted = await crossModelApi.promoteChatQueueItem(sid, pendingId);
+      if (activeIdRef.current !== sid) return;
+      setQueueItems(withPositions(promoted));
+    } catch {
+      toast.error('Could not move that message to the front — it stays queued.');
+      return;
+    }
+    toast.message('Sending now', { description: 'Stopping the current answer so your new message runs next.' });
+    await stopRun();
+  };
+
+  /**
+   * "Send now" on a CODING run (ticket ea04454c): stop the live run, wait for it
+   * to actually settle, then start the typed message as its own turn.
+   *
+   * ORDER AND THE SETTLE WAIT BOTH MATTER (adversarial review, blocking #1):
+   *  - sending first would simply STEER the run we are about to cancel, and the
+   *    text dies with it;
+   *  - sending immediately after the stop is refused too: stopRun only sets a
+   *    cooperative cancel flag, so the session row is still `running` and
+   *    queueAgentRun's ready→running gate answers 409 "A run is already in
+   *    progress" — the run dies AND the message is never sent (the worst of
+   *    both). So poll the session until it reports ready, bounded.
+   *
+   * Fail-safe: the draft is only cleared by send() when it SUCCEEDS, so if the
+   * wait times out the person's text is still in the composer, with an honest
+   * note that it was not sent.
+   */
+  const interruptWithMessage = async () => {
+    const message = (composerRef.current?.getValue() ?? '').trim();
+    const images = pendingImages.slice();
+    const uploads = pendingUploads.slice();
+    if (!message && !images.length && !uploads.length) return;
+    const sid = activeSession?.id;
+    if (!sid) return;
+    await stopRun().catch(() => {});
+    // Bounded settle wait (~24 s): the worker polls its cancel flag every 2 s.
+    let settled = false;
+    for (let i = 0; i < 12 && !settled; i += 1) {
+      await new Promise((r) => setTimeout(r, 2000));
+      if (activeIdRef.current !== sid) return; // chat switched mid-wait
+      const s = await codingApi.getSession(sid, { messageLimit: 1 }).catch(() => null);
+      settled = !!s && (s as any).status === 'ready';
+    }
+    if (!settled) {
+      toast.error('Could not stop the run in time — your message was kept in the composer, not sent.', {
+        description: 'Send it again once the run has stopped.',
+      });
+      return;
+    }
+    await send(message, images.length ? images : undefined, { bypassRunningGuard: true, overrideUploads: uploads.length ? uploads : undefined });
+  };
+
   const respondApproval = async (decision: 'allow' | 'always' | 'deny') => {
     if (!live.pendingApproval) return;
     await codingApi.approve(live.pendingApproval.approvalId, decision).catch(() => {});
     setLive(l => ({ ...l, pendingApproval: null }));
   };
+
+  // ── Queued-message controls (ticket ea04454c) ──────────────────────────────
+  // Refresh the caller's own queue from the server (drain order is server truth;
+  // the panel never invents an order). Cheap: one indexed read, only called
+  // while a run is live or right after a control action.
+  const refreshQueue = useCallback(async (sid: string | null) => {
+    if (!sid) { setQueueItems([]); return; }
+    try {
+      const items = await crossModelApi.listChatQueue(sid);
+      if (activeIdRef.current !== sid) return;
+      setQueueItems(items);
+    } catch { /* the panel keeps its last known order; controls still work */ }
+  }, []);
+
+  /** Shared wrapper: run a control call, adopt whatever queue it returns, and
+   *  name a refusal honestly instead of failing silently. */
+  const runQueueControl = async (fn: () => Promise<QueuedItem[]>) => {
+    setQueueBusy(true);
+    try {
+      setQueueItems(withPositions(await fn()));
+    } catch (err: any) {
+      // Every control endpoint returns the FRESH queue even on a refusal, so a
+      // stale click recovers in ONE hop instead of needing a separate GET.
+      const fresh = queueFromError(err);
+      if (fresh) setQueueItems(withPositions(fresh));
+      toast.error(queueRefusalMessage(refusalCodeFromError(err)));
+      if (!fresh && chatId) void refreshQueue(chatId);
+    } finally {
+      setQueueBusy(false);
+    }
+  };
+
+  const cancelQueued = (pendingId: string) => {
+    if (!chatId) return;
+    void runQueueControl(() => crossModelApi.cancelChatQueueItem(chatId, pendingId));
+  };
+
+  const moveQueued = (pendingId: string, direction: 'up' | 'down') => {
+    if (!chatId) return;
+    // Optimistic first (the click feels instant), then adopt server truth.
+    setQueueItems(prev => withPositions(moveItem(prev, pendingId, direction)));
+    void runQueueControl(() => crossModelApi.moveChatQueueItem(chatId, pendingId, direction));
+  };
+
+  /**
+   * "Run now" on a queued message: PROMOTE it to the head and STOP the live run
+   * so the drain picks it up immediately. Two ordered steps, because the drain
+   * only reads the queue when the current run's finally fires — promoting alone
+   * would just make it next whenever the person's current answer ends.
+   */
+  const runQueuedNow = async (pendingId: string) => {
+    if (!chatId) return;
+    setQueueBusy(true);
+    try {
+      const promoted = await crossModelApi.promoteChatQueueItem(chatId, pendingId);
+      setQueueItems(withPositions(promoted));
+    } catch (err: any) {
+      const fresh = queueFromError(err);
+      if (fresh) setQueueItems(withPositions(fresh));
+      toast.error(queueRefusalMessage(refusalCodeFromError(err)));
+      setQueueBusy(false);
+      return;
+    }
+    setQueueBusy(false);
+    // Now end the live run so the promoted row is delivered (the same cancel
+    // path the Stop button uses — never a second, parallel stop mechanism).
+    await stopRun();
+  };
+
+  /**
+   * Keep the queued-message panel truthful (ticket ea04454c): reload it when a
+   * run starts or ends and while anything is still queued. The server owns the
+   * order — the panel never guesses — so this one read is what makes a promote,
+   * cancel or reorder look right after a drain.
+   */
+  useEffect(() => {
+    if (!chatId) { setQueueItems([]); return; }
+    // Idle with nothing queued: nothing to show, no request.
+    if (!live.running && queueItems.length === 0) return;
+    void refreshQueue(chatId);
+    // queueItems is deliberately NOT a dependency (this effect feeds it); the
+    // run/idle transition is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chatId, live.running, refreshQueue]);
 
   // Live countdown for a pending question's soft deadline. expiresAt is an
   // ABSOLUTE epoch — a throttled background interval just recomputes the true
@@ -3823,8 +4137,8 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
                     <div className="dg-rise-hero flex flex-col items-center gap-3">
                       <div className="flex items-center justify-center gap-3">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <DigbyLoader size={40} label="Digby" />
-                        <p className="text-[26px] font-medium leading-[1.15] tracking-[-0.015em] text-ink">Ask Digby anything</p>
+                        <DigbyLoader size={40} label={branding.name} />
+                        <p className="text-[26px] font-medium leading-[1.15] tracking-[-0.015em] text-ink">Ask {branding.name} anything</p>
                       </div>
                       <p className="text-[13.5px] text-ink-3 max-w-sm">Answers stream live here — with the work trail shown as it happens.</p>
                     </div>
@@ -4612,6 +4926,19 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
         >
           {/* Same reading measure as the transcript above (P2 item 1). */}
           <div className="mx-auto w-full max-w-(--measure-chat)">
+          {/* Queued-message controls (ticket ea04454c): the owner's own waiting
+              messages, in drain order, each with position + reorder + run-now +
+              cancel. Renders nothing when the queue is empty. */}
+          {!!chatId && !memberViewOnly && (
+            <QueuedMessagesPanel
+              items={queueItems}
+              running={live.running}
+              busy={queueBusy}
+              onMove={moveQueued}
+              onRunNow={(id) => void runQueuedNow(id)}
+              onCancel={cancelQueued}
+            />
+          )}
           <ChatComposer
             variant="code"
             // Enter semantics: device-aware default for BOTH session kinds
@@ -4621,8 +4948,27 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
             composerRef={composerRef}
             onSubmit={() => {
               if (memberViewOnly) return; // 7acaa7ba: members watch; the owner runs
-              if (live.running) void steer(); else void send();
+              // Ticket b54efe5d: the send circle has ONE meaning — queue behind
+              // the live answer (plain; a guest holds it client-side) / steer
+              // the live run (coding). Interrupting is its own small button
+              // (onInterrupt below), so the circle never changes meaning
+              // between sends.
+              if (live.running) {
+                if (plain) void send();
+                else void steer();
+                return;
+              }
+              void send();
             }}
+            /* Ticket b54efe5d: interrupting is a SMALL gesture beside the send
+               circle, offered only where it can work (a signed-in chat queue on
+               the plain surface, a live session on the coding one). Plain chats
+               ride send()'s queue→promote→stop path; a coding run stops first,
+               waits for the session to settle, then sends the draft as its own
+               turn (see interruptWithMessage). */
+            {...(!memberViewOnly && (plain ? !!chatId : !!activeSession)
+              ? { onInterrupt: () => { if (plain) void send(undefined, undefined, { interrupt: true }); else void interruptWithMessage(); } }
+              : {})}
             onEmptyChange={(empty) => setHasText(!empty)}
             onPaste={(e) => {
               if (plainRef.current) {
@@ -4671,7 +5017,11 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
             </>)}
             // Plain send never steers — while streaming it QUEUES (busy-queue
             // passthrough), so don't show the coding variant's steer tooltip.
-            submitTitle={plain ? (live.running ? (chatId ? 'Queue message' : (plain.guest ? 'Queue message' : 'Wait for this answer…')) : 'Send message') : undefined}
+            // Ticket b54efe5d: "send now" is no longer a mode on this circle —
+            // interrupting has its own small button (onInterrupt above).
+            submitTitle={plain ? (live.running
+              ? (chatId ? 'Queue message' : (plain.guest ? 'Queue message' : 'Wait for this answer…'))
+              : 'Send message') : undefined}
             submitPending={steering}
             isStreaming={composerRun.streaming}
             onStop={composerRun.streaming ? () => void stopRun() : undefined}

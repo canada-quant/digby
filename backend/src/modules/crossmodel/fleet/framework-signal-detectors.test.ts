@@ -111,14 +111,39 @@ describe('surviving markers', () => {
     expect(row).toMatchObject({ marker: 'SEND_EMAIL', reason: 'unclosed', high: true });
   });
 
+  // 7af42393 — INVERTED PIN. This used to assert that a stray `[/FOLLOWUPS]`
+  // FIRES. The assertion was the false positive: `reason:'no renderer'` is
+  // classify()'s hard return for every non-SEND_EMAIL marker, so it never
+  // proved a renders-somewhere claim — it just stated the marker's name.
+  // Specimen (chat 9430e12f, msg 6a8f46bc) showed the harm the pin was
+  // protecting: the model emitted a MISS SPELLED, SP ACED opener
+  // `[ FOLOWUPS ]` (ONE L) plus a correctly spelled `[/FOLLOWUPS]`. Every
+  // strip rule keys on the literal opener, so nothing matched and the orphan
+  // closer rendered verbatim in the answer. The fix is UPSTREAM (the renderer
+  // deletes the orphan token; this strip mirrors it) — NOT detector
+  // relaxation. A `[/FOLLOWUPS]` token is never prose a reader is meant to
+  // see, so deleting it loses no information and the detector must stop
+  // convicting text the reader can no longer see.
+  //
+  // CANVAS is deliberately NOT changed: `[/CANVAS]` is the last canvas shape
+  // that still reaches a reader (closed blocks, `[CANVAS:x]` and any
+  // `[CANVAS…]` tail are all erased already), so stripping it would retire
+  // canvas detection outright — its own decision, on its own specimen.
+  it('does not flag a stray [/FOLLOWUPS] close — the renderer deletes the orphan token (7af42393)', () => {
+    expect(hit('[/FOLLOWUPS]')).toEqual([]);
+  });
+
   it('still flags a stray [/CANVAS] close with no opener', () => {
     const [row] = hit('[/CANVAS]');
     expect(row).toMatchObject({ marker: 'CANVAS', reason: 'no renderer', high: false });
   });
 
-  it('still flags a stray [/FOLLOWUPS] close with no opener', () => {
-    const [row] = hit('[/FOLLOWUPS]');
-    expect(row).toMatchObject({ marker: 'FOLLOWUPS', reason: 'no renderer', high: false });
+  // The exact specimen text (chat 9430e12f, msg 6a8f46bc): the botched opener
+  // stays as ordinary prose — `FOLOWUPS` is not a name in RENDERER_MARKER_NAMES
+  // (one L), so it is the same class as `[IMPORTANT]`/`[WIDGET]` and files no
+  // ticket — while the orphan closer is gone.
+  it('clears the 7af42393 specimen: spaced misspelled opener + orphan closer', () => {
+    expect(hit('[ FOLOWUPS ]\n\n- Go — copy my file into the lane\n[/FOLLOWUPS]')).toEqual([]);
   });
 
   it('an unterminated SEND_EMAIL opener with no closing bracket of its own stays out of scope when the WIDGET bracket closes it (d6fdc1df)', () => {
@@ -174,6 +199,9 @@ describe('surviving markers', () => {
       .replace(/\[CANVAS[^\]]*\][\s\S]*/gi, '')
       .replace(/\[FOLLOWUPS\][\s\S]*?\[\/FOLLOWUPS\]/gi, '')
       .replace(/\[FOLLOWUPS\][\s\S]*$/gi, '')
+      // 7af42393: orphan FOLLOWUPS closer — the renderer deletes the bare token.
+      // CANVAS deliberately keeps no orphan rule (see the detector's comment).
+      .replace(/\[\/FOLLOWUPS\]/gi, '')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 
@@ -185,10 +213,19 @@ describe('surviving markers', () => {
       ['[SEND_EMAIL subject="hi"]body[/SEND_EMAIL]', 'SEND_EMAIL'],
       ['[SEND_EMAIL to=""]body[/SEND_EMAIL]', 'SEND_EMAIL'],
       ['[SEND_EMAIL to = "a@b.c"]body[/SEND_EMAIL]', 'SEND_EMAIL'],
-      // a stray closer with no opener survives on screen, so it still fires
+      // A stray CANVAS closer survives on screen (canvas has no orphan-closer
+      // rule), so it still fires. The FOLLOWUPS orphan closer moved OUT of
+      // this list under 7af42393: the renderer now deletes the bare token, so
+      // no reader sees it — see the complement loop below, which asserts
+      // exactly that.
       ['[/CANVAS]', 'CANVAS'],
-      ['[/FOLLOWUPS]', 'FOLLOWUPS'],
       ['[/SEND_EMAIL]', 'SEND_EMAIL'],
+      // 7af42393: FOLLOWUPS must keep a true positive in this replay, or a
+      // future over-stripping rule could erase real chip blocks with nothing
+      // to notice. An opener WITH ATTRIBUTES (`[FOLLOWUPS attr]`) is the shape
+      // every rule misses — both strip rules require `]` immediately after the
+      // token — so the reader sees it and the detector must fire.
+      ['[FOLLOWUPS attr]\n- a\n- b', 'FOLLOWUPS'],
       // a malformed email marker buried in prose
       ['mail me at x@y.z [SEND_EMAIL subject="x"]b[/SEND_EMAIL]', 'SEND_EMAIL'],
     ];
@@ -199,8 +236,17 @@ describe('surviving markers', () => {
       expect({ text, markers: hit(text).map((r) => r.marker) }).toEqual({ text, markers: [marker] });
     }
     // And the complement: text the renderer erases must stay out of scope, so
-    // the sweep cannot refill the queue with markers no user ever saw.
-    for (const text of ['[CANVAS]hidden[/CANVAS]', '[FOLLOWUPS]ask[/FOLLOWUPS]', 'the draft contains no [CANVAS] or']) {
+    // the sweep cannot refill the queue with markers no user ever saw. The
+    // FOLLOWUPS orphan closer joined this list under 7af42393 — the specimen
+    // shape, where a botched opener (`[ FOLOWUPS ]`) leaves a correctly
+    // spelled closer with nothing to pair with. `[/CANVAS]` is NOT here: it
+    // survives on screen, so it belongs in mustFire above.
+    for (const text of [
+      '[CANVAS]hidden[/CANVAS]',
+      '[FOLLOWUPS]ask[/FOLLOWUPS]',
+      'the draft contains no [CANVAS] or',
+      '[/FOLLOWUPS]',
+    ]) {
       expect({ text, shown: rendererShows(text) }).toEqual({ text, shown: expect.not.stringMatching(/\[(\/?)(CANVAS|FOLLOWUPS)/i) });
       expect({ text, markers: hit(text).map((r) => r.marker) }).toEqual({ text, markers: [] });
     }
@@ -397,7 +443,7 @@ describe('incomplete owner cards', () => {
   // cards — this one; zero true positives in the family's wild history.
   it('skips an explicitly-optional inline ask — the decline path completes the options axis (cea10fa4)', () => {
     const ask = [
-      '[ctrl.example.com] Lab gateway is LIVE and public — 5 provider keys are missing on amd-1, so their routes return 401 until you paste them',
+      '[ctrl.cql.ca] Lab gateway is LIVE and public — 5 provider keys are missing on amd-1, so their routes return 401 until you paste them',
       '',
       "The r-2 replacement is live: the LiteLLM gateway now runs on amd-server-1 in the StAnnes lab behind Cloudflare tunnel stanne-lab-amd1, in the CQL Cloudflare account. Public health checks pass from off-box, and the flagship routes answer end-to-end through the public edge.",
       '',
@@ -542,7 +588,7 @@ describe('incomplete owner cards', () => {
 
   // ── Ticket a3a7dd88: STRUCTURE completes the BACKGROUND axis. Specimen
   // oq_892c91ae (live row, prod probe 2026-10-20, current-main verdict
-  // gaps ["background"]): a 1163-char self-contained [ctrl.example.com] choice
+  // gaps ["background"]): a 1163-char self-contained [ctrl.cql.ca] choice
   // card — CanLaw live on r-0, Hyperstack floating IP, S3/mail keys — with
   // 4 typed options carrying consequences, expectedAnswerType 'choice',
   // context empty because the whole card rides inline. The owner DISMISSED
@@ -553,12 +599,12 @@ describe('incomplete owner cards', () => {
   // (84b11946 → 65cfec1b → cea10fa4 → 90a5b127 → here), every one a
   // vocabulary-chase class; 7-day census at fix time: 87 cards, 2 flagged
   // by the deployed detector — both in this fix's delta class, the two
-  // ctrl.example.com typed-options choice asks (this specimen + its post-ruling
+  // ctrl.cql.ca typed-options choice asks (this specimen + its post-ruling
   // successor oq_fe4b8b94); zero true positives lost.
   it('skips a typed-options choice card whose background is domain vocabulary (a3a7dd88)', () => {
     const ask = [
-      "[ctrl.example.com] CanLaw is LIVE on r-0, tailnet-only — verified 23:31Z from amd-2 (V2_LOCAL_VERIFIED: site, v2 board, bench UI all green) and all 5 provider keys placed (zai legs 200 exact-echo). Four finishing items, one card:",
-      '1. NEW floating IP for r-0 — Hyperstack console → rutherford-0 → attach/buy a floating IP (the account hit $0 and released ALL public IPs; the old ones incl. 203.0.113.12 now belong to strangers, so nothing old can be reused). Without one, canlegalbench.com cannot come back publicly. Once it exists I do DNS (the CQL Cloudflare token holds the zone), SSL Full(strict) and the /api/notify* rate-limit rule myself.',
+      "[ctrl.cql.ca] CanLaw is LIVE on r-0, tailnet-only — verified 23:31Z from amd-2 (V2_LOCAL_VERIFIED: site, v2 board, bench UI all green) and all 5 provider keys placed (zai legs 200 exact-echo). Four finishing items, one card:",
+      '1. NEW floating IP for r-0 — Hyperstack console → rutherford-0 → attach/buy a floating IP (the account hit $0 and released ALL public IPs; the old ones incl. 69.19.140.59 now belong to strangers, so nothing old can be reused). Without one, canlegalbench.com cannot come back publicly. Once it exists I do DNS (the CQL Cloudflare token holds the zone), SSL Full(strict) and the /api/notify* rate-limit rule myself.',
       '2. Read-only S3 key for the CanLaw bucket (~0.48TB checkpoints/packs) — unfreezes corpus recovery. Paste it here; it vaults automatically.',
       '3. Backup target: the handoff recommends the amd-1 backup disk — OK?',
       '4. Mail values for /etc/canlegalbench/web.env (MAIL_* + NOTIFY_ENC_KEY — also copy NOTIFY_ENC_KEY into your password manager). The site serves, but sign-ups 503 until then. Paste them here; they vault.',
@@ -614,7 +660,7 @@ describe('incomplete owner cards', () => {
   // ── Ticket 8f5989c7: the card's own SCOPE statement completes the
   // options axis. Specimen oq_81ce2c39 (live row, prod probe 2026-10-23,
   // deployed admission verdict ["options"], probe on box A): a 792-char
-  // self-contained [cql-agx-orin64] credential ask quoted VERBATIM below —
+  // self-contained [cql-accelerator] credential ask quoted VERBATIM below —
   // background (Hue power cycle worked, box rebooted 03:58Z, memory leak
   // uncontained, froze twice), the measured blocker ("sudo: a password is
   // required" 01:00Z and 04:03Z), the exact move (paste into the card's
@@ -631,7 +677,7 @@ describe('incomplete owner cards', () => {
   // wild history.
   it('skips an enumerated single-action ask — the scope statement completes the options axis (8f5989c7)', () => {
     const ask = [
-      '[cql-agx-orin64] One thing only you can supply: the pcozz sudo password on the AGX. Your Hue power cycle worked — the box rebooted 03:58Z and is healthy (23.6 GiB RAM free, embed + rerank serving) — but the memory leak is uncontained and will re-wedge the box within hours (it froze twice tonight). The lane tried to apply the fix itself per your "you have shell access" reply, but sudo on the AGX requires a password — measured twice tonight: "sudo: a password is required" (01:00Z and 04:03Z). Paste the pcozz password into this card\u2019s credential field; it goes straight to the encrypted vault (never into any chat) and the lane applies the containment cap (44G/48G + auto-restart) over SSH within minutes, verifies, and rolls back safely if anything fails. Nothing else is needed from you.',
+      '[cql-accelerator] One thing only you can supply: the pcozz sudo password on the AGX. Your Hue power cycle worked — the box rebooted 03:58Z and is healthy (23.6 GiB RAM free, embed + rerank serving) — but the memory leak is uncontained and will re-wedge the box within hours (it froze twice tonight). The lane tried to apply the fix itself per your "you have shell access" reply, but sudo on the AGX requires a password — measured twice tonight: "sudo: a password is required" (01:00Z and 04:03Z). Paste the pcozz password into this card\u2019s credential field; it goes straight to the encrypted vault (never into any chat) and the lane applies the containment cap (44G/48G + auto-restart) over SSH within minutes, verifies, and rolls back safely if anything fails. Nothing else is needed from you.',
     ].join('\n');
     expect(findIncompleteCards([{ id: 'oq_81ce2c39', question: ask, context: null }])).toEqual([]);
   });

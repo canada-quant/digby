@@ -267,8 +267,8 @@ describe('the forwarder\'s routing (pure)', () => {
   })();
   const CAP = 'dcp1.eyJzIjoiczEifQ.c2ln';
   it('api.github.com + capability → the proxy with X-Digby-Cap; Authorization dropped', () => {
-    const r = fw.route('https://digby.example.com/api/crossmodel/coding/cred-proxy/', 'api.github.com', '/graphql', { authorization: `token ${CAP}`, 'content-type': 'application/json', connection: 'close', host: 'api.github.com' });
-    expect(r).toEqual({ kind: 'proxy', url: 'https://digby.example.com/api/crossmodel/coding/cred-proxy/api/github/graphql', headers: { 'content-type': 'application/json', 'x-digby-cap': CAP, 'x-digby-client': 'gh' } });
+    const r = fw.route('https://digby.ai/api/crossmodel/coding/cred-proxy/', 'api.github.com', '/graphql', { authorization: `token ${CAP}`, 'content-type': 'application/json', connection: 'close', host: 'api.github.com' });
+    expect(r).toEqual({ kind: 'proxy', url: 'https://digby.ai/api/crossmodel/coding/cred-proxy/api/github/graphql', headers: { 'content-type': 'application/json', 'x-digby-cap': CAP, 'x-digby-client': 'gh' } });
   });
   it('any other host: direct, and a capability-shaped Authorization never travels there', () => {
     expect(fw.route('https://d/x', 'productionresultssa0.blob.core.windows.net', '/logs?sig=1', { authorization: `token ${CAP}` })).toEqual({ kind: 'direct', url: 'https://productionresultssa0.blob.core.windows.net/logs?sig=1', headers: {} });

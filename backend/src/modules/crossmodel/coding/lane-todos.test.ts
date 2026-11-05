@@ -11,7 +11,7 @@ const mockPrisma: any = {
   projectTodo: { findMany: jest.fn() },
   todoDependency: { findMany: jest.fn() },
   crossModelChat: { findUnique: jest.fn() },
-  codingSchedule: { count: jest.fn() },
+  chatSchedule: { count: jest.fn() },
   agentRun: { count: jest.fn() },
   projectGoal: { findUnique: jest.fn() },
 };
@@ -55,7 +55,7 @@ beforeEach(() => {
   mockPrisma.projectTodo.findMany.mockImplementation(async (q: any) => (q?.where?.assigneeChatId ? [T1, T2] : []));
   mockPrisma.todoDependency.findMany.mockResolvedValue([]);
   mockPrisma.crossModelChat.findUnique.mockResolvedValue({ charterTodoId: null, isSupervisor: false, isProjectSupervisor: false, archivedAt: null });
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.agentRun.count.mockResolvedValue(0);
   mockPrisma.projectGoal.findUnique.mockResolvedValue({ title: 'StAnne control plane' });
 });
@@ -137,7 +137,7 @@ describe('T7-10 — an idle lane with assigned todos starts the next one', () =>
   });
 
   it('an enabled schedule, a queued run, a supervisor / archived chat or no pending todo ⇒ nothing', async () => {
-    mockPrisma.codingSchedule.count.mockResolvedValueOnce(1);
+    mockPrisma.chatSchedule.count.mockResolvedValueOnce(1);
     expect(await maybeStartNextLaneTodo({ chatId: 'lane1', userId: 'u1', runId: 'r1' })).toBe('scheduled');
     mockPrisma.agentRun.count.mockResolvedValueOnce(1);
     expect(await maybeStartNextLaneTodo({ chatId: 'lane1', userId: 'u1', runId: 'r1' })).toBe('queued');
@@ -183,14 +183,14 @@ describe('maybeStartNextLaneTodo — LANE-IDLE-WAKE schedule horizon', () => {
   it('counts only enabled schedules due within 30 min (a check armed for tomorrow no longer leaves the next todo idle)', async () => {
     const now = new Date('2026-10-20T12:00:00Z');
     expect(await maybeStartNextLaneTodo({ chatId: 'lane1', userId: 'u1', runId: 'r1', now })).toBe('started');
-    expect(mockPrisma.codingSchedule.count).toHaveBeenCalledWith({ where: { sessionId: 'lane1', enabled: true, nextRunAt: { lte: new Date('2026-10-20T12:30:00Z') } } });
+    expect(mockPrisma.chatSchedule.count).toHaveBeenCalledWith({ where: { sessionId: 'lane1', enabled: true, nextRunAt: { lte: new Date('2026-10-20T12:30:00Z') } } });
   });
 
   it('LANE_IDLE_WAKE_DISABLED=1 restores "any enabled schedule"', async () => {
     process.env.LANE_IDLE_WAKE_DISABLED = '1';
-    mockPrisma.codingSchedule.count.mockResolvedValueOnce(1);
+    mockPrisma.chatSchedule.count.mockResolvedValueOnce(1);
     expect(await maybeStartNextLaneTodo({ chatId: 'lane1', userId: 'u1', runId: 'r1' })).toBe('scheduled');
-    expect(mockPrisma.codingSchedule.count).toHaveBeenCalledWith({ where: { sessionId: 'lane1', enabled: true } });
+    expect(mockPrisma.chatSchedule.count).toHaveBeenCalledWith({ where: { sessionId: 'lane1', enabled: true } });
   });
 });
 

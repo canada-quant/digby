@@ -7,7 +7,7 @@
  * PUBLISH CHOKE POINTS in coding/tools.ts — the call sites a non-prod
  * instance (DIGBY_INSTANCE != prod) must never publish to / read from the
  * production repo through, EVEN in spellings parseOwnerRepo cannot parse
- * (review F1: `https://github.com/canada-quant/digby/` parsed to null and
+ * (review F1: `https://github.com/example-org/crossmodel/` parsed to null and
  * the push guard was skipped entirely — the guard now keys on the NORMALIZED
  * target, never on the parse):
  *
@@ -86,7 +86,6 @@ jest.mock('./self-merge.service', () => ({
   nothingChanged: () => false,
   selfMergeMaxCycles: () => 3,
   defaultGithubApi: () => ({ put: jest.fn(), get: jest.fn(), delete: jest.fn() }),
-  selfMergeWaitOnceDisabled: () => false,
   classifyMergeWait: () => null,
   mergeWaitOnceMs: () => 3,
   repoCiP50Ms: jest.fn(async () => null),
@@ -160,7 +159,7 @@ function isoCtx(repoUrl: string): ToolContext {
   } as unknown as ToolContext;
 }
 
-const PROD_SLASH = 'https://github.com/canada-quant/digby/'; // review F1's exact spelling: parseOwnerRepo → null
+const PROD_SLASH = 'https://github.com/example-org/crossmodel/'; // review F1's exact spelling: parseOwnerRepo → null
 const OWN_FORK = 'https://github.com/acme/edge-digby';
 
 describe('c75b5f34 F1/F3 — pushSessionBranch: the ONE push seam refuses every prod spelling on non-prod', () => {
@@ -168,13 +167,13 @@ describe('c75b5f34 F1/F3 — pushSessionBranch: the ONE push seam refuses every 
     process.env[ENV_KEY] = 'selfhost';
     const out = await pushSessionBranch(isoCtx(PROD_SLASH));
     expect(out).toMatch(/ISOLATION BOUNDARY/);
-    expect(out).toMatch(/canada-quant\/digby/);
+    expect(out).toMatch(/example-org\/crossmodel/);
     expect(out).toMatch(/must never push to/);
   });
 
   it('the .git and bare-URL prod spellings refuse too (parseable — always did)', async () => {
     process.env[ENV_KEY] = 'edge';
-    for (const url of ['https://github.com/canada-quant/digby.git', 'https://github.com/Canada-Quant/DIGBY']) {
+    for (const url of ['https://github.com/example-org/crossmodel.git', 'https://github.com/example-org/crossmodel']) {
       const out = await pushSessionBranch(isoCtx(url));
       expect(out).toMatch(/ISOLATION BOUNDARY/);
     }
@@ -188,7 +187,7 @@ describe('c75b5f34 F1/F3 — pushSessionBranch: the ONE push seam refuses every 
 
   it('PROD instance (DIGBY_INSTANCE unset) + the production repo: no boundary — push behavior unchanged', async () => {
     delete process.env[ENV_KEY];
-    const out = await pushSessionBranch(isoCtx('https://github.com/canada-quant/digby'));
+    const out = await pushSessionBranch(isoCtx('https://github.com/example-org/crossmodel'));
     expect(out).not.toMatch(/ISOLATION BOUNDARY/);
   });
 });
@@ -202,16 +201,16 @@ describe('c75b5f34 F3 — check_ci (read-side twin)', () => {
 
   it('PROD + the production repo ⇒ no boundary (proceeds to the token check)', async () => {
     delete process.env[ENV_KEY];
-    const out = await executeCodingTool(isoCtx('https://github.com/canada-quant/digby'), 'check_ci', {});
+    const out = await executeCodingTool(isoCtx('https://github.com/example-org/crossmodel'), 'check_ci', {});
     expect(out).not.toMatch(/ISOLATION BOUNDARY/);
     expect(out).toMatch(/No connected GitHub account\/token/);
   });
 });
 
 describe('c75b5f34 F3 — merge_pull_request (write-side, both routes)', () => {
-  it('non-prod + explicit repo:"canada-quant/digby" ⇒ boundary refusal', async () => {
+  it('non-prod + explicit repo:"example-org/crossmodel" ⇒ boundary refusal', async () => {
     process.env[ENV_KEY] = 'selfhost';
-    const out = await executeCodingTool(isoCtx(OWN_FORK), 'merge_pull_request', { pullNumber: 1, repo: 'canada-quant/digby' });
+    const out = await executeCodingTool(isoCtx(OWN_FORK), 'merge_pull_request', { pullNumber: 1, repo: 'example-org/crossmodel' });
     expect(out).toMatch(/ISOLATION BOUNDARY/);
   });
 
@@ -223,14 +222,14 @@ describe('c75b5f34 F3 — merge_pull_request (write-side, both routes)', () => {
 
   it('PROD + explicit prod repo ⇒ no boundary (proceeds to the token check)', async () => {
     delete process.env[ENV_KEY];
-    const out = await executeCodingTool(isoCtx(OWN_FORK), 'merge_pull_request', { pullNumber: 1, repo: 'canada-quant/digby' });
+    const out = await executeCodingTool(isoCtx(OWN_FORK), 'merge_pull_request', { pullNumber: 1, repo: 'example-org/crossmodel' });
     expect(out).not.toMatch(/ISOLATION BOUNDARY/);
     expect(out).toMatch(/No connected GitHub account\/token/);
   });
 
-  it('review §7 pin: non-prod + case-variant prod slug (Canada-Quant/DIGBY — GitHub resolves casing) ⇒ STILL refused (the leaf normalizes case)', async () => {
+  it('review §7 pin: non-prod + case-variant prod slug (example-org/crossmodel — GitHub resolves casing) ⇒ STILL refused (the leaf normalizes case)', async () => {
     process.env[ENV_KEY] = 'selfhost';
-    const out = await executeCodingTool(isoCtx(OWN_FORK), 'merge_pull_request', { pullNumber: 1, repo: 'Canada-Quant/DIGBY' });
+    const out = await executeCodingTool(isoCtx(OWN_FORK), 'merge_pull_request', { pullNumber: 1, repo: 'example-org/crossmodel' });
     expect(out).toMatch(/ISOLATION BOUNDARY/);
   });
 });
@@ -244,7 +243,7 @@ describe('c75b5f34 F3 — open_pull_request (covers the explicit-headBranch rout
 
   it('PROD + the production repo ⇒ no boundary (proceeds to headBranch validation)', async () => {
     delete process.env[ENV_KEY];
-    const out = await executeCodingTool(isoCtx('https://github.com/canada-quant/digby'), 'open_pull_request', { title: 't', headBranch: 'feature x' });
+    const out = await executeCodingTool(isoCtx('https://github.com/example-org/crossmodel'), 'open_pull_request', { title: 't', headBranch: 'feature x' });
     expect(out).not.toMatch(/ISOLATION BOUNDARY/);
   });
 });
@@ -259,11 +258,16 @@ describe('c75b5f34 F2/F4/F6/F12 — removal-guard pins for the follow-up fixes',
     expect(src).toContain("if (err?.name === 'IsolationBoundaryError') throw err;");
   });
 
-  it('F2: session-history-sync guards pushRemoteFor and routes the boundary refusal to the TERMINAL (quarantine) path in both catches', () => {
+  it('F2: session-history-sync guards pushRemoteFor and routes the boundary refusal to the TERMINAL (quarantine) path', () => {
     const src = read('modules/crossmodel/coding/session-history-sync.service.ts');
     expect(src).toContain('assertRepoTargetAllowed(String(project?.repoUrl ?? \'\') || \'origin\')');
     const terminal = src.match(/err instanceof IsolationBoundaryError/g) ?? [];
-    expect(terminal.length).toBeGreaterThanOrEqual(2); // consolidated + legacy catches
+    // ONE catch: the legacy per-session path (and its second catch) was deleted
+    // with SESSION_HISTORY_SINGLE_BRANCH_DISABLED in RSW-1 cluster 42, so the
+    // consolidated catch below is now the ONLY place the boundary refusal routes
+    // to the quarantine path. Pinned exactly so a future refactor cannot drop it
+    // silently while still satisfying a >=1 count by accident elsewhere.
+    expect(terminal.length).toBe(1); // the consolidated catch
   });
 
   it('F2: the branch janitor refuses to enumerate the production repo on a non-prod instance', () => {
@@ -286,6 +290,13 @@ describe('c75b5f34 F2/F4/F6/F12 — removal-guard pins for the follow-up fixes',
     expect(src.indexOf('const isoRefusal = replayIsolationRefusal();')).toBeLessThan(src.indexOf('const ctrl = new AbortController();'));
   });
 
+  it('F6: the backup script has the selfhost dump legs (digby-postgres container + digby-backend env)', () => {
+    const sh = fs.readFileSync(path.join(REPO_ROOT, 'scripts/backup/digby-backup.sh'), 'utf8');
+    expect(sh).toContain('docker exec digby-postgres pg_dump -U admin -d admin_db -Fc');
+    expect(sh).toContain('for c in admin-backend-blue admin-backend-green digby-backend; do');
+    // and the selfhost leg is bounded to NON-prod instances only
+    expect(sh).toMatch(/\[ "\$\{DIGBY_INSTANCE:-prod\}" != "prod" \] && docker ps/);
+  });
 
   it('review §11 pin: infra-watch fetchCompareFiles short-circuits on the unconfigured non-prod repo (the commit-2 follow-up, now tested)', () => {
     const src = read('modules/crossmodel/fleet/infra-watch.service.ts');

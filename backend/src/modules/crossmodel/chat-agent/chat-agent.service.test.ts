@@ -28,11 +28,36 @@ const mockPrisma: any = {
   // Busy-chat queue: the run's finally drains pending_chat_messages — empty here.
   pendingChatMessage: {
     findFirst: jest.fn(async () => null), delete: jest.fn(async () => ({})),
+    // MERGE-1 kill-window fix (2026-11-05): consume-at-persist needs
+    // deleteMany({ id: { in } }). This fixture was left on the pre-fix API
+    // (no deleteMany, no $transaction below), so createMessagesConsumingPending
+    // THREW, the transcript user row was never persisted, and the drain tests
+    // timed out waiting for run events.
+    deleteMany: jest.fn(async ({ where }: any) => {
+      const ids: string[] = where?.id?.in ?? (where?.id ? [where.id] : []);
+      // The row is GONE after a consume — mirror that on the peek, or a test
+      // that armed a PERSISTENT findFirst mock keeps serving the row, the
+      // consume keeps succeeding, clearDrainAttempts keeps resetting the bound
+      // and the drain loop never ends (heap OOM, 2026-11-05).
+      if (ids.length) mockPrisma.pendingChatMessage.findFirst.mockResolvedValue(null);
+      return { count: ids.length };
+    }),
     // shutdown re-queue (2026-09-11) — enqueueChatMessage counts then creates.
     count: jest.fn(async () => 0), create: jest.fn(async (a: any) => ({ id: 'pend-1', ...a.data })),
   },
   // chat-busy's durable layer (worker-tier coding runs) — none in these tests.
   agentRun: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  // MERGE-1 kill-window fix (2026-11-05): the transcript write and the queue-row
+  // consume commit in ONE $transaction. Delegates to the SAME mocks the
+  // non-transactional path uses, so assertions on crossModelMessage.create keep
+  // meaning what they did before consume-at-persist.
+  $transaction: jest.fn(async (fn: any) => {
+    const tx = {
+      crossModelMessage: { create: jest.fn(async (a: any) => mockPrisma.crossModelMessage.create(a)) },
+      pendingChatMessage: { deleteMany: jest.fn(async (a: any) => mockPrisma.pendingChatMessage.deleteMany(a)) },
+    };
+    return fn(tx);
+  }),
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
 
@@ -363,6 +388,7 @@ jest.mock('./chat-context', () => ({
   persistAndEmitCanvases: jest.fn(async () => []),
 }));
 
+import { __resetDrainAttemptLedgerForTests } from './message-queue.service';
 import {
   startDetachedChatRun, chatAgentRunKey, slimChatModelCards, summarizeToolEvidence,
   toolResultPhrase, drainChatQueue, machineOriginRun,
@@ -387,6 +413,11 @@ async function waitFor(pred: () => boolean, ms = 3000): Promise<void> {
 }
 
 beforeEach(() => {
+  // MERGE-1 drain bound (2026-11-05): the attempt ledger is MODULE-level and this
+  // fixture mints a CONSTANT row id ('pend-1'), so declines from earlier tests
+  // would accumulate on it and trip the cooldown, making later drains return false
+  // ("timed out waiting for run events"). Production ids are cuids.
+  __resetDrainAttemptLedgerForTests();
   redisStore.clear(); // a leaked liveness key must not fail a later claim
   redisLists.clear();
   // HARNESS-RECEIPTS-AND-CLAIMS (2026-10-20): the suites below pin supervisor machine-wake notes
@@ -752,7 +783,7 @@ describe('action-verifier wiring (ticket ae085617 — verifier beyond supervisor
   it('(ticket 4deaf460) a HUMAN turn on a SUPERVISOR chat with an action claim now fires the GENERAL verifier (supervisor:true, machineTriggered:false)', async () => {
     mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'StAnne-CtrlPlaneUI Supervisor · report-up', isProjectSupervisor: true, userId: 'u1' }));
     (runCodingAgent as jest.Mock).mockResolvedValueOnce({
-      finalText: `**The tt-rd supervisor is asking the lane directly why 128K didn't land.** I've messaged chat d1d0b346 (the QB2 supervisor in the tt-rd project) with the exact live numbers. It runs autonomously, so the answer will come back to me — I'll relay it here as soon as it responds.`,
+      finalText: `**The tt-rd supervisor is asking the lane directly why 128K didn't land.** I've messaged chat d1d0b346 (the node-a supervisor in the tt-rd project) with the exact live numbers. It runs autonomously, so the answer will come back to me — I'll relay it here as soon as it responds.`,
       parts: [], receipts: [],
     });
     const key = await startDetachedChatRun({ ...BASE, userId: 'u1', chatId: 'chat-verif-sup-human', sessionId: null });
@@ -1548,7 +1579,7 @@ describe('pre-delivery action guard seam (ticket fcc4dbb4)', () => {
         { id: 'lane-deaf-0001', title: 'Deaf lane' },
         { id: 'lane-armed-001', title: 'Armed lane' },
       ]);
-      mockPrisma.codingSchedule = {
+      mockPrisma.chatSchedule = {
         findMany: jest.fn(async () => [
           { id: 'sch-live-1', sessionId: 'lane-armed-001', nextRunAt: new Date(Date.now() + 3_600_000) },
         ]),
@@ -1562,7 +1593,7 @@ describe('pre-delivery action guard seam (ticket fcc4dbb4)', () => {
     afterEach(() => {
       mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'A proper existing title' }));
       delete (mockPrisma.crossModelChat as any).findMany;
-      delete mockPrisma.codingSchedule;
+      delete mockPrisma.chatSchedule;
       if (mockPrisma.agentRun) delete (mockPrisma.agentRun as any).groupBy;
     });
 
@@ -2658,10 +2689,10 @@ describe('orchestrator empty-output handling (feedback 5f22a689: Kimi K3 returne
   // this; scrape_/search_engine already matched.
   it('(ticket 66007a6e) a web_pipe ok receipt does NOT count as acted — a probe-only empty wake still closes no-op', async () => {
     (runCodingAgent as jest.Mock).mockResolvedValue({ finalText: '', parts: [
-      { type: 'tool_call', name: 'web_pipe', args: { query: 'example.com status' } },
+      { type: 'tool_call', name: 'web_pipe', args: { query: 'cql.ca status' } },
       { type: 'tool_result', name: 'web_pipe', result: 'digest\n\nSOURCES:\n- x (https://x/)' },
     ], receipts: [
-      { id: 'r1', chatId: 'chat-mw-empty-b', runId: null, tool: 'web_pipe', ok: true, ids: { query: 'example.com status' }, inputHash: null, outputHash: null, createdAt: new Date() },
+      { id: 'r1', chatId: 'chat-mw-empty-b', runId: null, tool: 'web_pipe', ok: true, ids: { query: 'cql.ca status' }, inputHash: null, outputHash: null, createdAt: new Date() },
     ] });
     const key = await startDetachedChatRun({ ...MACHINE, chatId: 'chat-mw-empty-b' });
     await waitFor(() => !isRunActive(key!));
@@ -2888,7 +2919,7 @@ describe('orchestrator empty-output handling (feedback 5f22a689: Kimi K3 returne
   // Audit 2026-10-08 W1-2 (supervisors F1, chats F1): StAnne 8c581bc3 "I've messaged chat d1d0b346" with
   // ZERO tool calls — no "receipt" word, so the dispatch check never fired; CanLaw 74471a68's retry still
   // made no tool call and shipped the re-fabricated claim.
-  const STANNE = "**The tt-rd supervisor is asking the lane directly why 128K didn't land.** I've messaged chat d1d0b346 (the QB2 supervisor in the tt-rd project) with the exact live numbers. I'll relay it here as soon as it responds.";
+  const STANNE = "**The tt-rd supervisor is asking the lane directly why 128K didn't land.** I've messaged chat d1d0b346 (the node-a supervisor in the tt-rd project) with the exact live numbers. I'll relay it here as soon as it responds.";
   it('(unbacked action) "I\'ve messaged chat d1d0b346" with no tool call is re-run once; the retry that really sends is delivered', async () => {
     await withSupervisorChat(() => withReceipts([], async () => {
       (runCodingAgent as jest.Mock)
@@ -3180,6 +3211,74 @@ describe('orchestrator empty-output handling (feedback 5f22a689: Kimi K3 returne
       await waitFor(() => !isRunActive(key!));
       expect(persistedAssistant().content).not.toContain("I've paused the AGX schedule");
     })));
+  });
+
+  // ── HR-1 (todo 76fd0cce) ──
+  it('(HR-1 case 1) an earlier attempt\'s update_supervisor_state backs the retry\'s ledger claim — the turn-aware line ships, never "nothing was changed"', async () => {
+    await withSupervisorChat(() => withReceipts([], () => withTurnReceipts([], async () => {
+      const claim = "I've updated the supervisor ledger with the AGX rule.";
+      (runCodingAgent as jest.Mock)
+        .mockResolvedValueOnce({ finalText: '', parts: [
+          { type: 'tool_call', name: 'goal_list', args: {} }, { type: 'tool_result', name: 'goal_list', result: '{}' },
+          { type: 'tool_call', name: 'update_supervisor_state', args: { notes: 'agx rule' } }, { type: 'tool_result', name: 'update_supervisor_state', result: '{"ok":true}' },
+        ] })
+        .mockResolvedValueOnce({ finalText: claim, parts: [] });
+      const key = await startDetachedChatRun({ ...OWNER, chatId: 'chat-hr1-s1' });
+      await waitFor(() => !isRunActive(key!));
+      const content = persistedAssistant().content;
+      expect(content).toContain('the `update_supervisor_state` call is in the turn\'s tool log');
+      expect(content).not.toContain('nothing was changed in this answer');
+    })));
+  });
+
+  it('(HR-1 case 2) the unbacked retry really SENT but returned empty — the earlier attempt\'s claim is not rewritten to "nothing went out"', async () => {
+    await withSupervisorChat(() => withReceipts([], () => withTurnReceipts([], async () => {
+      const claim = "I've messaged chat d1d0b346 with the rule.";
+      (runCodingAgent as jest.Mock)
+        .mockResolvedValueOnce({ finalText: claim, parts: [] })
+        .mockResolvedValueOnce({ finalText: '', parts: [
+          { type: 'tool_call', name: 'send_chat_message', args: { chatId: 'd1d0b346', content: 'the rule' } },
+          { type: 'tool_result', name: 'send_chat_message', result: 'send receipt 403b3ad5' },
+        ] });
+      const key = await startDetachedChatRun({ ...OWNER, chatId: 'chat-hr1-s2' });
+      await waitFor(() => !isRunActive(key!));
+      const content = persistedAssistant().content;
+      // The send really ran (in the retry), so the claim is TRUE: the sentence ships as written.
+      expect(content).not.toContain('nothing went out in this answer');
+      expect(content).toContain("I've messaged chat d1d0b346 with the rule.");
+    })));
+  });
+
+  it('(HR-1 case 3) a TRUE ticket close backed by resolve_feedback in the delivered run is never rewritten', async () => {
+    await withSupervisorChat(() => withReceipts([], () => withTurnReceipts([], async () => {
+      const claim = "I've closed ticket 9c307167 via filer self-close.";
+      (runCodingAgent as jest.Mock).mockResolvedValueOnce({ finalText: claim, parts: [
+        { type: 'tool_call', name: 'resolve_feedback', args: { id: '9c307167' } },
+        { type: 'tool_result', name: 'resolve_feedback', result: '{"ok":true}' },
+      ] });
+      const key = await startDetachedChatRun({ ...OWNER, chatId: 'chat-hr1-s3' });
+      await waitFor(() => !isRunActive(key!));
+      expect(agentCalls()).toBe(1);
+      expect(persistedAssistant().content).toContain('closed ticket 9c307167');
+      expect(persistedAssistant().content).not.toContain('I have not made that change yet');
+    })));
+  });
+
+  it('(HR-1 kill switch) SUPERVISOR_UNBACKED_TURN_BACKING_DISABLED=1 restores the pre-HR-1 false line', async () => {
+    process.env.SUPERVISOR_UNBACKED_TURN_BACKING_DISABLED = '1';
+    try {
+      await withSupervisorChat(() => withReceipts([], () => withTurnReceipts([], async () => {
+        const claim = "I've updated the supervisor ledger with the AGX rule.";
+        (runCodingAgent as jest.Mock)
+          .mockResolvedValueOnce({ finalText: '', parts: [
+            { type: 'tool_call', name: 'update_supervisor_state', args: { notes: 'agx rule' } }, { type: 'tool_result', name: 'update_supervisor_state', result: '{"ok":true}' },
+          ] })
+          .mockResolvedValueOnce({ finalText: claim, parts: [] });
+        const key = await startDetachedChatRun({ ...OWNER, chatId: 'chat-hr1-s4' });
+        await waitFor(() => !isRunActive(key!));
+        expect(persistedAssistant().content).toContain('I have not made that change yet');
+      })));
+    } finally { delete process.env.SUPERVISOR_UNBACKED_TURN_BACKING_DISABLED; }
   });
 
   it('(no-action note) round 7: an answer that is ONLY a copy of the line is delivered as written, never emptied into the fallback', async () => {
@@ -4657,6 +4756,146 @@ describe('childResult metadata stamp (ticket 56d6b204 — sub-session result wak
   });
 });
 
+/**
+ * Ticket 327ff5e3 — the residual of 1757b07d: the childResult marker was only
+ * ever stamped for the auto-wired RESULT HOOK (origin 'hook'), and the read
+ * side only flattened it on the fleet/Management path. A sub-session REPORTING
+ * BACK through send_chat_message (origin 'agent' — the far more common shape)
+ * into a PLAIN chat therefore carried no marker at all, so the frontend
+ * grouping probe (`probe.childResult === true`) could never fire and the
+ * delivered result stayed folded inside the collapsed machine accordion.
+ *
+ * These pin the PERSIST seam: an agent send whose SENDER is this chat's child
+ * is stamped at write time, so every reader (plain chat, fleet thread, minimal
+ * view) sees the marker without re-deriving lineage.
+ */
+describe('ticket 327ff5e3 — child-session RELAY persist stamp (plain chats see delivered results)', () => {
+  /** Point the chat-row mock at per-id rows so target vs SENDER resolve independently. */
+  const chatRows = (rows: Record<string, any>) => {
+    mockPrisma.crossModelChat.findUnique.mockImplementation(async (a: any) => rows[a?.where?.id] ?? null);
+  };
+
+  it('(a) stamps metadata.childResult on an AGENT relay from a child chat into a PLAIN chat (the gap this ticket is about)', async () => {
+    chatRows({
+      'chat-relay-a': { title: 'Plain chat', isSupervisor: false, isProjectSupervisor: false, userId: 'u1' },
+      'child-lane-a': { parentChatId: 'chat-relay-a' },
+    });
+    const key = await startDetachedChatRun({
+      ...BASE, userId: 'u1', chatId: 'chat-relay-a', sessionId: null,
+      message: '[AGENT-SENT MESSAGE — from chat "DB audit" (child-la)]\nAll tables verified; done.',
+      messageOrigin: 'agent', originSourceChatId: 'child-lane-a',
+    });
+    const events: Array<{ type: string; data: any }> = [];
+    subscribeRun(key!, e => events.push(e));
+    await waitFor(() => events.some(e => e.type === 'complete'));
+
+    const creates = mockPrisma.crossModelMessage.create.mock.calls
+      .map((c: any[]) => c[0]?.data)
+      .filter((d: any) => d?.chatId === 'chat-relay-a');
+    const userWrite = creates.find((d: any) => d?.role === 'user');
+    expect(userWrite).toBeDefined();
+    // The row keeps its agent provenance (it is still machine traffic) AND
+    // carries the delivered-result marker the grouping probe reads.
+    expect(userWrite.metadata).toMatchObject({ origin: 'agent', childResult: true, sourceChatId: 'child-lane-a' });
+    await waitFor(() => !isRunActive('chat:chat-relay-a'));
+  });
+
+  it('(b) does NOT stamp a relay whose sender is NOT this chat\'s child (supervisor fan-out / sibling lane stays machine traffic)', async () => {
+    chatRows({
+      'chat-relay-b': { title: 'Plain chat', isSupervisor: false, isProjectSupervisor: false, userId: 'u1' },
+      'fleet-sup-b': { parentChatId: null },
+    });
+    const key = await startDetachedChatRun({
+      ...BASE, userId: 'u1', chatId: 'chat-relay-b', sessionId: null,
+      message: '[AGENT-SENT MESSAGE — from chat "Fleet Supervisor" (fleet-su)]\nhourly sweep',
+      messageOrigin: 'agent', originSourceChatId: 'fleet-sup-b',
+    });
+    const events: Array<{ type: string; data: any }> = [];
+    subscribeRun(key!, e => events.push(e));
+    await waitFor(() => events.some(e => e.type === 'complete'));
+
+    const creates = mockPrisma.crossModelMessage.create.mock.calls
+      .map((c: any[]) => c[0]?.data)
+      .filter((d: any) => d?.chatId === 'chat-relay-b');
+    const userWrite = creates.find((d: any) => d?.role === 'user');
+    expect(userWrite).toBeDefined();
+    expect(userWrite.metadata).toMatchObject({ origin: 'agent' });
+    expect(userWrite.metadata?.childResult).toBeUndefined();
+    await waitFor(() => !isRunActive('chat:chat-relay-b'));
+  });
+
+  it('(c) does NOT stamp a non-agent relay — a human/schedule send is never "delivered sub-session content"', async () => {
+    chatRows({
+      'chat-relay-c': { title: 'Plain chat', isSupervisor: false, isProjectSupervisor: false, userId: 'u1' },
+      'child-lane-c': { parentChatId: 'chat-relay-c' },
+    });
+    const key = await startDetachedChatRun({
+      ...BASE, userId: 'u1', chatId: 'chat-relay-c', sessionId: null,
+      message: 'a plain owner question', messageOrigin: 'schedule', originSourceChatId: 'child-lane-c',
+    });
+    const events: Array<{ type: string; data: any }> = [];
+    subscribeRun(key!, e => events.push(e));
+    await waitFor(() => events.some(e => e.type === 'complete'));
+
+    const creates = mockPrisma.crossModelMessage.create.mock.calls
+      .map((c: any[]) => c[0]?.data)
+      .filter((d: any) => d?.chatId === 'chat-relay-c');
+    const userWrite = creates.find((d: any) => d?.role === 'user');
+    expect(userWrite).toBeDefined();
+    expect(userWrite.metadata?.childResult).toBeUndefined();
+    await waitFor(() => !isRunActive('chat:chat-relay-c'));
+  });
+
+  it('(d) still honours the RESULT-HOOK stamp — the pre-existing hook path is unchanged', async () => {
+    chatRows({ 'chat-relay-d': { title: 'Plain chat', isSupervisor: false, isProjectSupervisor: false, userId: 'u1' } });
+    const key = await startDetachedChatRun({
+      ...BASE, userId: 'u1', chatId: 'chat-relay-d', sessionId: null,
+      message: 'Your sub-session "DB audit" (chat c-child) reported run_completed: all tables verified',
+      machineWake: true, messageOrigin: 'hook', childResult: true,
+    });
+    const events: Array<{ type: string; data: any }> = [];
+    subscribeRun(key!, e => events.push(e));
+    await waitFor(() => events.some(e => e.type === 'complete'));
+
+    const creates = mockPrisma.crossModelMessage.create.mock.calls
+      .map((c: any[]) => c[0]?.data)
+      .filter((d: any) => d?.chatId === 'chat-relay-d');
+    const userWrite = creates.find((d: any) => d?.role === 'user');
+    expect(userWrite.metadata).toMatchObject({ origin: 'hook', childResult: true });
+    await waitFor(() => !isRunActive('chat:chat-relay-d'));
+  });
+
+  it('(e) a lineage-lookup FAILURE never breaks the send and never invents the marker (fail closed)', async () => {
+    // The SENDER read is the one that throws; every other chat resolves to a
+    // row that WOULD satisfy lineage for this target, so the ONLY thing
+    // withholding the stamp is the failure itself. That keeps the negative
+    // control discriminating — it cannot pass merely because lineage is absent
+    // (review finding on the first cut of this case).
+    const wouldStamp = { title: 'Plain chat', isSupervisor: false, isProjectSupervisor: false, userId: 'u1', parentChatId: 'chat-relay-e' };
+    mockPrisma.crossModelChat.findUnique.mockImplementation(async (a: any) => {
+      if (a?.where?.id === 'child-lane-e') throw new Error('prisma unavailable');
+      return wouldStamp;
+    });
+    const key = await startDetachedChatRun({
+      ...BASE, userId: 'u1', chatId: 'chat-relay-e', sessionId: null,
+      message: '[AGENT-SENT MESSAGE — from chat "lane E" (child-la)]\nreport',
+      messageOrigin: 'agent', originSourceChatId: 'child-lane-e',
+    });
+    expect(key).toBe('chat:chat-relay-e'); // the run still started
+    const events: Array<{ type: string; data: any }> = [];
+    subscribeRun(key!, e => events.push(e));
+    await waitFor(() => events.some(e => e.type === 'complete'));
+
+    const creates = mockPrisma.crossModelMessage.create.mock.calls
+      .map((c: any[]) => c[0]?.data)
+      .filter((d: any) => d?.chatId === 'chat-relay-e');
+    const userWrite = creates.find((d: any) => d?.role === 'user');
+    expect(userWrite).toBeDefined(); // the user row was still persisted
+    expect(userWrite.metadata?.childResult).toBeUndefined(); // but no marker
+    await waitFor(() => !isRunActive('chat:chat-relay-e'));
+  });
+});
+
 // fixer 2026-09-27 (tt-rd audit, finding upward-chatter-1): the ask-close used
 // to run ONLY under !runIsMachineTriggered, so the [OWNER ASK UNANSWERED]
 // re-wake and the [FOLLOW-THROUGH] nudge — both hook wakes — could never close
@@ -4693,7 +4932,7 @@ describe('owner-ask machine-wake close (fixer 2026-09-27)', () => {
       upsert: jest.fn(async () => ({})),
     };
     mockPrisma.projectTodo = { findMany: jest.fn(async () => []) };
-    mockPrisma.codingSchedule = { findMany: jest.fn(async () => []) };
+    mockPrisma.chatSchedule = { findMany: jest.fn(async () => []) };
     mockPrisma.ownerQuestion = { findMany: jest.fn(async () => []) };
     mockRecordLoopMetric.mockClear();
   });
@@ -4703,7 +4942,7 @@ describe('owner-ask machine-wake close (fixer 2026-09-27)', () => {
     delete mockPrisma.crossModelMessage.findMany;
     delete mockPrisma.supervisorState;
     delete mockPrisma.projectTodo;
-    delete mockPrisma.codingSchedule;
+    delete mockPrisma.chatSchedule;
     delete mockPrisma.ownerQuestion;
   });
 
@@ -5214,7 +5453,7 @@ describe('spark G8 — deferred-action receipts (supervisor machine wakes) — o
   // sweep is armed, and the note quoting the line head instead of the deferral clause.
   describe('audit 2026-10-06 T8-9 — an enabled recurring schedule covers the deferral; the note quotes the clause', () => {
     const coveredMetrics = () => mockRecordLoopMetric.mock.calls.map((c: any[]) => c[0]).filter((m: any) => m?.kind === 'supervisor_deferral_covered');
-    afterEach(() => { delete mockPrisma.codingSchedule; delete process.env.DEFERRAL_NOTE_PRECISION_DISABLED; });
+    afterEach(() => { delete mockPrisma.chatSchedule; delete process.env.DEFERRAL_NOTE_PRECISION_DISABLED; });
     const runNote = async (chatId: string, finalText: string) => {
       (runCodingAgent as jest.Mock).mockResolvedValueOnce({ finalText, parts: [{ type: 'tool_call', name: 'get_chat_status', args: {} }], receipts: [] });
       const key = await startDetachedChatRun({ ...BASE, userId: 'u1', chatId, sessionId: null, machineWake: true, messageOrigin: 'schedule' });
@@ -5226,7 +5465,7 @@ describe('spark G8 — deferred-action receipts (supervisor machine wakes) — o
 
     it('a chat with an enabled recurring sweep: no note, no unarmed row — a supervisor_deferral_covered row', async () => {
       const count = jest.fn(async () => 1);
-      mockPrisma.codingSchedule = { count, findMany: jest.fn(async () => []) };
+      mockPrisma.chatSchedule = { count, findMany: jest.fn(async () => []) };
       await runNote('chat-t89-covered', 'Fresh probe at 22:56Z: shard 4 healthy. My next sweep re-checks the mirror.');
       expect(count).toHaveBeenCalledWith({ where: { sessionId: 'chat-t89-covered', enabled: true, kind: 'recurring' } });
       expect(deferralMetrics()).toHaveLength(0);
@@ -5236,7 +5475,7 @@ describe('spark G8 — deferred-action receipts (supervisor machine wakes) — o
     });
 
     it('no recurring schedule: the note fires and quotes the deferral CLAUSE, not the line head', async () => {
-      mockPrisma.codingSchedule = { count: jest.fn(async () => 0), findMany: jest.fn(async () => []) };
+      mockPrisma.chatSchedule = { count: jest.fn(async () => 0), findMany: jest.fn(async () => []) };
       await runNote('chat-t89-unarmed', 'Fresh probe at 22:56Z: shard 4 healthy. My next sweep re-checks the mirror.');
       expect(deferralMetrics()).toHaveLength(1);
       expect(deferralMetrics()[0].meta.line).toBe('My next sweep re-checks the mirror.');
@@ -5246,7 +5485,7 @@ describe('spark G8 — deferred-action receipts (supervisor machine wakes) — o
     it('DEFERRAL_NOTE_PRECISION_DISABLED=1: the note fires despite the recurring sweep and quotes the line head (previous behaviour)', async () => {
       process.env.DEFERRAL_NOTE_PRECISION_DISABLED = '1';
       const count = jest.fn(async () => 1);
-      mockPrisma.codingSchedule = { count, findMany: jest.fn(async () => []) };
+      mockPrisma.chatSchedule = { count, findMany: jest.fn(async () => []) };
       await runNote('chat-t89-ks', 'Fresh probe at 22:56Z: shard 4 healthy. My next sweep re-checks the mirror.');
       expect(count).not.toHaveBeenCalled();
       expect(coveredMetrics()).toHaveLength(0);
@@ -5262,7 +5501,7 @@ describe('spark G8 — deferred-action receipts (supervisor machine wakes) — o
       it('"**Next sweep:** 21:47Z (schedule 53f68b62)." records nothing — no unarmed row, no note, no DB read', async () => {
         const count = jest.fn(async () => 0);
         const findMany = jest.fn(async () => []);
-        mockPrisma.codingSchedule = { count, findMany };
+        mockPrisma.chatSchedule = { count, findMany };
         await runNote('chat-fc-cadence', 'Board unchanged.\n**Next sweep:** 21:47Z (schedule 53f68b62).');
         expect(deferralMetrics()).toHaveLength(0);
         expect(coveredMetrics()).toHaveLength(0);
@@ -5273,7 +5512,7 @@ describe('spark G8 — deferred-action receipts (supervisor machine wakes) — o
 
       it("a commitment citing another chat's schedule is accepted: covered {by:'cited_schedule', resolved:'unresolved'}", async () => {
         const findMany = jest.fn(async () => []);
-        mockPrisma.codingSchedule = { count: jest.fn(async () => 0), findMany };
+        mockPrisma.chatSchedule = { count: jest.fn(async () => 0), findMany };
         await runNote('chat-fc-foreign', 'Drive watch quiet. The lane re-checks the folder next wake (sched d72b394a).');
         expect(findMany).toHaveBeenCalledWith({
           where: { sessionId: 'chat-fc-foreign', OR: [{ id: { startsWith: 'd72b394a' } }] },
@@ -5287,14 +5526,14 @@ describe('spark G8 — deferred-action receipts (supervisor machine wakes) — o
       });
 
       it("a commitment citing this chat's own ENABLED schedule: covered, resolved 'own'", async () => {
-        mockPrisma.codingSchedule = { count: jest.fn(async () => 0), findMany: jest.fn(async () => [{ id: '1a2b3c4d-0000-4000-8000-000000000000', enabled: true }]) };
+        mockPrisma.chatSchedule = { count: jest.fn(async () => 0), findMany: jest.fn(async () => [{ id: '1a2b3c4d-0000-4000-8000-000000000000', enabled: true }]) };
         await runNote('chat-fc-own', 'The swap runs next wake (schedule 1a2b3c4d armed for it).');
         expect(deferralMetrics()).toHaveLength(0);
         expect(coveredMetrics()[0].meta).toMatchObject({ by: 'cited_schedule', resolved: 'own' });
       });
 
       it("a commitment citing this chat's own DISABLED schedule arms nothing — the unarmed row + note fire", async () => {
-        mockPrisma.codingSchedule = { count: jest.fn(async () => 0), findMany: jest.fn(async () => [{ id: '1a2b3c4d-0000-4000-8000-000000000000', enabled: false }]) };
+        mockPrisma.chatSchedule = { count: jest.fn(async () => 0), findMany: jest.fn(async () => [{ id: '1a2b3c4d-0000-4000-8000-000000000000', enabled: false }]) };
         await runNote('chat-fc-disabled', 'The swap runs next wake (schedule 1a2b3c4d, paused).');
         expect(coveredMetrics()).toHaveLength(0);
         expect(deferralMetrics()).toHaveLength(1);
@@ -5304,7 +5543,7 @@ describe('spark G8 — deferred-action receipts (supervisor machine wakes) — o
 
       it('DEFERRAL_CADENCE_EXEMPT_DISABLED=1: the cadence line trips as before (the unarmed row fires)', async () => {
         process.env.DEFERRAL_CADENCE_EXEMPT_DISABLED = '1';
-        mockPrisma.codingSchedule = { count: jest.fn(async () => 0), findMany: jest.fn(async () => []) };
+        mockPrisma.chatSchedule = { count: jest.fn(async () => 0), findMany: jest.fn(async () => []) };
         await runNote('chat-fc-ks', '**Next sweep:** 21:47Z (schedule 53f68b62).');
         expect(deferralMetrics()).toHaveLength(1);
         expect(deferralMetrics()[0].meta.line).toBe('**Next sweep:** 21:47Z (schedule 53f68b62).');
@@ -5335,14 +5574,14 @@ describe('spark B7 — supervisor state on owner-typed turns', () => {
     };
     // buildFleetAttentionBlock legs — quiet fleet.
     mockPrisma.projectTodo = { findMany: jest.fn(async () => []) };
-    mockPrisma.codingSchedule = { findMany: jest.fn(async () => []) };
+    mockPrisma.chatSchedule = { findMany: jest.fn(async () => []) };
     mockPrisma.ownerQuestion = { findMany: jest.fn(async () => []) };
   });
   afterEach(() => {
     mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'A proper existing title' }));
     delete mockPrisma.supervisorState;
     delete mockPrisma.projectTodo;
-    delete mockPrisma.codingSchedule;
+    delete mockPrisma.chatSchedule;
     delete mockPrisma.ownerQuestion;
   });
 
@@ -5370,7 +5609,23 @@ describe('spark B7 — supervisor state on owner-typed turns', () => {
 });
 
 describe('run-finalize fairness (owner 2026-09-14): a starving hook backlog is drained BEFORE the message queue', () => {
-  beforeEach(() => { mockOldestPendingHookAgeMs.mockReset().mockResolvedValue(0); mockDrainHookEventsForTarget.mockReset(); });
+  beforeEach(() => {
+    mockOldestPendingHookAgeMs.mockReset().mockResolvedValue(0);
+    mockDrainHookEventsForTarget.mockReset();
+    // TEARDOWN FIX (2026-11-05, bisect: loop #17). The first case below arms
+    // findFirst.mockResolvedValueOnce(...) and then asserts the queue was NOT
+    // drained — and the hooks-first path short-circuits BEFORE the queue peek,
+    // so that one-time impl is never consumed. Jest's *Once impls outrank any
+    // mockImplementation a LATER test installs, so loop #17's own
+    // `pcm.findFirst.mockImplementation(...)` could not win: its drain was
+    // served the PREVIOUS test's row ('queued while starving', chat chat-fair-a)
+    // instead of its own, and :5656 then waited 3 s for content that was never
+    // going to be persisted. Measured: loop #17 alone 1 passed / 673 ms, with
+    // the first case ahead of it 1 failed / 3117 ms.
+    // Reset (not just default) so a leftover one-time impl cannot cross cases;
+    // this describe's cases each arm their own inside the test body.
+    mockPrisma.pendingChatMessage.findFirst.mockReset().mockResolvedValue(null);
+  });
 
   it('oldest pending hook row older than HOOK_STARVATION_MS → hook drain kicked, the queued message waits for that wake\'s finalize', async () => {
     mockOldestPendingHookAgeMs.mockResolvedValue(6 * 60 * 1000);
@@ -6726,7 +6981,7 @@ describe('harness receipts seam (HARNESS-RECEIPTS-AND-CLAIMS, supervisor SOTA ro
 });
 
 // ── STRUCK-NOTE REPEAT (tickets 4c7aebf7 + 9a976d83, 2026-10-21 — chat e03452f4) ─────────────────────
-// The 'cql-agx-orin64 Supervisor' chat's 17:12:19Z machine note headlined a FUTURE clock (17:25Z) and
+// The 'cql-accelerator Supervisor' chat's 17:12:19Z machine note headlined a FUTURE clock (17:25Z) and
 // claimed a computer_task ACL edit; the guard struck the clock (observe-only annotation — 9a976d83, a true
 // positive). The Fleet Supervisor then ordered "STEP 1: camera-read the saved policy JSON first"; the
 // 17:20:32Z answer was a VERBATIM copy of the struck note with another wrong clock (17:14Z — in the past, so
@@ -6739,25 +6994,25 @@ describe('struck-note repeat (tickets 4c7aebf7 + 9a976d83)', () => {
   const REPEAT_NOTICE = '[HARNESS NOTICE — REPEATED NOTE — not typed by the user]';
   const PRIOR_BLOCK = '[PRIOR NOTE STRUCK — harness, not typed by the user]';
   const NOTE_1712 = [
-    '**cql-agx-orin64 — 17:25Z**',
+    '**cql-accelerator — 17:25Z**',
     '',
     "Drove the owner's Mac via computer_task: opened the Tailscale admin console → Access controls, applied the ACL edit (tag:agx → port 22 for the orin64 node) and clicked Save — the policy file saved without errors.",
     '',
-    'Verify probe: `tailscale ping cql-agx-orin64` from the gateway is still RED (timeout after 3 tries).',
+    'Verify probe: `tailscale ping cql-accelerator` from the gateway is still RED (timeout after 3 tries).',
     '',
     'Next: re-run the probe once the ACL propagates; if it stays red, check the node tags.',
   ].join('\n');
   const CLOCK_ANNOTATION = [
     ANNOTATION_HEADER,
     "This note was delivered as written. 1 clock reading(s) in it are written as observations but read LATER than this run's real clock (2026-10-21T17:12:19.000Z) — an observation cannot be in the future:",
-    '- "17:25Z" — 13 min ahead — in: "**cql-agx-orin64 — 17:25Z**"',
+    '- "17:25Z" — 13 min ahead — in: "**cql-accelerator — 17:25Z**"',
     'Treat those lines as unverified until a fresh tool result confirms them; nothing above was removed or changed.',
   ].join('\n');
   // engine 'agent' — the chat-agent finalize stamp every real note carries (round 2: the prior-note scan reads only the lane's own notes).
   const STRUCK_ROW = { id: 'msg-1712-aaaa-bbbb', content: `${NOTE_1712}\n\n${CLOCK_ANNOTATION}`, metadata: { origin: 'hook', engine: 'agent' }, createdAt: new Date('2026-10-21T17:12:19Z') };
   const NOTE_1720 = NOTE_1712.replace('17:25Z', '17:14Z');
   const NEW_NOTE = [
-    '**cql-agx-orin64 — step 1 (camera read)**',
+    '**cql-accelerator — step 1 (camera read)**',
     '',
     'Camera-read the Tailscale policy editor on the Mac (screenshot only, no input): the saved policy JSON shows NO acl entry for tag:agx — the earlier "edit applied + saved" did not happen.',
     'Not retrying the edit until the Fleet Supervisor confirms the target rule.',
@@ -6793,7 +7048,7 @@ describe('struck-note repeat (tickets 4c7aebf7 + 9a976d83)', () => {
     mockGuardMachineWakeFinalAnswer.mockClear();
     mockGenerateOwnerBriefing.mockClear();
     (runCodingAgent as jest.Mock).mockClear();
-    mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'cql-agx-orin64 Supervisor', isSupervisor: true, userId: 'u1' }));
+    mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'cql-accelerator Supervisor', isSupervisor: true, userId: 'u1' }));
     delete process.env.ACTION_VERIFIER_ENFORCE;
     delete process.env.STRUCK_NOTE_REPEAT_DISABLED;
     delete process.env.PRIOR_NOTE_STRUCK_BLOCK_DISABLED;
@@ -6986,7 +7241,7 @@ describe('struck-note repeat (tickets 4c7aebf7 + 9a976d83)', () => {
   /** A clock-only pass-1 verdict exactly as the guard returns it under the clock policy (observe-only annotation). */
   const clockStrike = (a: any) => ({
     finalText: `${a.finalText}\n\n${CLOCK_ANNOTATION}`, notice: CLOCK_ANNOTATION, struck: true, phantoms: [] as any[], audited: true,
-    delivery: 'annotated', futureClocks: [{ token: '17:25Z', minutesAhead: 13, line: '**cql-agx-orin64 — 17:25Z**' }], correction: 'clock correction',
+    delivery: 'annotated', futureClocks: [{ token: '17:25Z', minutesAhead: 13, line: '**cql-accelerator — 17:25Z**' }], correction: 'clock correction',
   });
 
   it('finding 2: same template, numbers moved ⇒ fresh data, not a repeat (one call, reason numbers_differ)', async () => {
@@ -7015,7 +7270,7 @@ describe('struck-note repeat (tickets 4c7aebf7 + 9a976d83)', () => {
     const repeatAnnotation = [
       ANNOTATION_HEADER,
       "This note was delivered as written. It is a near-verbatim copy (100% the same, timestamps aside) of this chat's previous note (posted 2026-10-21T17:12:19.000Z), which the integrity check had flagged; it was sent back once, and the retry came back as the same copy.",
-      '- "17:25Z" — 13 min ahead — in: "**cql-agx-orin64 — 17:25Z**"',
+      '- "17:25Z" — 13 min ahead — in: "**cql-accelerator — 17:25Z**"',
       'Treat its claims as unverified until a fresh tool result confirms them; nothing above was removed or changed.',
     ].join('\n');
     // (round 4: there is no carry-through — a repeat-annotation-only prior is never compared, whatever sits behind it)
@@ -7141,7 +7396,7 @@ describe('struck-note repeat (tickets 4c7aebf7 + 9a976d83)', () => {
   const REPEAT_ANNOTATION_1720 = [
     ANNOTATION_HEADER,
     "This note was delivered as written. It is a near-verbatim copy (100% the same, timestamps aside) of this chat's previous note (posted 2026-10-21T17:12:19.000Z), which the integrity check had flagged; it was sent back once, and the retry came back as the same copy.",
-    '- "17:25Z" — 13 min ahead — in: "**cql-agx-orin64 — 17:25Z**"',
+    '- "17:25Z" — 13 min ahead — in: "**cql-accelerator — 17:25Z**"',
     'Treat its claims as unverified until a fresh tool result confirms them; nothing above was removed or changed.',
   ].join('\n');
 
@@ -7390,11 +7645,11 @@ describe('computer_task claim check (related to ticket 4c7aebf7 (c))', () => {
   const PRIOR_BLOCK = '[PRIOR NOTE STRUCK — harness, not typed by the user]';
   const LABEL = "[SUB-AGENT NARRATION — UNVERIFIED] The report below is the computer-use sub-agent's own account of what it did and saw, NOT a harness-verified observation.";
   const NOTE = [
-    '**cql-agx-orin64 — status**',
+    '**cql-accelerator — status**',
     '',
     "Drove the owner's Mac via computer_task: opened the Tailscale admin console → Access controls, applied the ACL edit (tag:agx → port 22 for the orin64 node) and clicked Save — the policy file saved without errors.",
     '',
-    'Verify probe: `tailscale ping cql-agx-orin64` from the gateway is still RED (timeout after 3 tries).',
+    'Verify probe: `tailscale ping cql-accelerator` from the gateway is still RED (timeout after 3 tries).',
   ].join('\n');
   const ctParts = (header: string) => [
     { type: 'tool_call', name: 'computer_task', args: { task: 'apply the ACL edit' } },
@@ -7437,7 +7692,7 @@ describe('computer_task claim check (related to ticket 4c7aebf7 (c))', () => {
     mockGuardMachineWakeFinalAnswer.mockClear();
     mockGenerateOwnerBriefing.mockClear();
     (runCodingAgent as jest.Mock).mockClear();
-    mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'cql-agx-orin64 Supervisor', isProjectSupervisor: true, userId: 'u1' }));
+    mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'cql-accelerator Supervisor', isProjectSupervisor: true, userId: 'u1' }));
     delete process.env.ACTION_VERIFIER_ENFORCE;
     delete process.env.COMPUTER_TASK_CLAIM_CHECK_DISABLED;
     delete process.env.COMPUTER_TASK_CLAIM_ANNOTATE_ENABLED;
@@ -7686,7 +7941,7 @@ describe('ghost mode routing + privacy (owner 2026-10-22)', () => {
   });
   afterEach(() => { clearGhostEndpointCache(); delete process.env.CHAT_GHOST_MODE_DISABLED; });
 
-  it('a ghost chat with a live designation runs the lead AND the peer checker on the designated model', async () => {
+  it('GHOST ONE-LEAD (owner 2026-11-03): a signed-in ghost chat runs the lead ONLY — exactly one model call, no checker', async () => {
     setGhostDesignationForTests('homelab:abliterated-llama-70b');
     // The chat row says ghost. findUnique serves every consumer in the run —
     // the seat seam's read carries ghostMode:true.
@@ -7695,14 +7950,59 @@ describe('ghost mode routing + privacy (owner 2026-10-22)', () => {
     await waitFor(() => !isRunActive(key!));
     await new Promise(r => setTimeout(r, 50));
 
+    // The lead ran on the designated abliterated endpoint…
     const orch = agentMock.mock.calls.at(-1)?.[0];
     expect(orch.model).toBe('homelab:abliterated-llama-70b');
-    const checker = workerMock.mock.calls.find(([i]: any[]) => !String(i.userMessage).includes('YOUR DRAFT ANSWER'));
-    expect(checker).toBeTruthy();
-    expect(checker![0].model).toBe('homelab:abliterated-llama-70b');
+    // …and the Double Checker NEVER spawned. Pre-ruling this chat ran the peer
+    // checker on the same spec ('thinking' ⇒ preset spawnChecker true); the
+    // owner's 2026-11-03 ruling retired that second inference outright.
+    expect(workerMock).not.toHaveBeenCalled();
   });
 
-  it('a NON-ghost chat is untouched: the normal seats resolve (kimi-k3 lead, deepseek-flash checker)', async () => {
+  it('GHOST ONE-LEAD: a guest ghost send makes exactly one model call on the designation — no checker', async () => {
+    setGhostDesignationForTests('homelab:abliterated-llama-70b');
+    const key = await startDetachedChatRun({ ...BASE, mode: 'thinking', userId: null, chatId: null, sessionId: 'anon-ghost-one', ghost: true });
+    await waitFor(() => !isRunActive(key!));
+    await new Promise(r => setTimeout(r, 50));
+    const orch = agentMock.mock.calls.at(-1)?.[0];
+    expect(orch.model).toBe('homelab:abliterated-llama-70b');
+    // A guest ghost send ALSO asked for 'thinking' — still one call, no checker.
+    expect(workerMock).not.toHaveBeenCalled();
+  });
+
+  it('GHOST ONE-LEAD: a ghost research-rung turn does not promise findings that will never post', async () => {
+    // Review finding (2026-11-04): `if (args.escalation?.rung === 'research')
+    // send('progress', keyedProgress('deeper_findings_started'))` told the user
+    // "Deeper findings will post here as a new message when they're ready…" —
+    // but the ghost collapse forces council 'none' and `isCouncil` false, so
+    // nothing would ever post them. Same defect class as the Double Checker
+    // banner: a status line advertising a second model that will not run.
+    // Pinned here as a source predicate so a later refactor cannot drop it.
+    const src = require('fs').readFileSync(require('path').join(__dirname, 'chat-agent.service.ts'), 'utf8');
+    expect(src).toContain('if (!ghostSingleModel) send(\'progress\', keyedProgress(\'deeper_findings_started\'));');
+  });
+
+  it('GHOST ONE-LEAD: a ghost run makes one model call, so there is no second inference for a banner to describe', async () => {
+    // The banner is `STATUS.lane.checked` / `PROGRESS_LINES.second_opinion`,
+    // both keyed on `spawnChecker` (chat-agent.service.ts:3773 & :4286). The
+    // end-to-end proof is the call-count assertion: the SSE harness is not
+    // exposed to this suite, so instead of grepping a stream it cannot see,
+    // this case pins the SEAM the banner keys on — a ghost run's plan reaches
+    // the roster collapsed, and shouldSpawnChecker refuses it structurally.
+    // (ghost-runtime.test.ts pins the pure collapse + the refusal directly.)
+    setGhostDesignationForTests('homelab:abliterated-llama-70b');
+    mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'New Chat', isSupervisor: false, isProjectSupervisor: false, userId: 'u1', leadModel: null, projectId: null, ghostMode: true }));
+    const key = await startDetachedChatRun({ ...BASE, mode: 'thinking', userId: 'u1', chatId: 'chat-ghost-banner', sessionId: null });
+    await waitFor(() => !isRunActive(key!));
+    await new Promise(r => setTimeout(r, 50));
+    // The owner's report verbatim: "Thinking 28s / 2 steps / Digby is digging
+    // in — the Double Checker is researching alongside…". One model call, so
+    // there is no second inference for a banner to describe.
+    expect(agentMock).toHaveBeenCalledTimes(1);
+    expect(workerMock).not.toHaveBeenCalled();
+  });
+
+  it('a NON-ghost chat is untouched: the normal seats resolve (kimi-k3 lead) and the checker still runs', async () => {
     setGhostDesignationForTests('homelab:abliterated-llama-70b');
     mockPrisma.crossModelChat.findUnique.mockImplementation(async () => ({ title: 'New Chat', isSupervisor: false, isProjectSupervisor: false, userId: 'u1', leadModel: null, projectId: null, ghostMode: false }));
     const key = await startDetachedChatRun({ ...BASE, mode: 'thinking', userId: 'u1', chatId: 'chat-plain-1', sessionId: null });
@@ -7710,6 +8010,8 @@ describe('ghost mode routing + privacy (owner 2026-10-22)', () => {
     await new Promise(r => setTimeout(r, 50));
     const orch = agentMock.mock.calls.at(-1)?.[0];
     expect(orch.model).toBe('kimi-k3');
+    // Non-ghost behaviour is PRESERVED: 'thinking' still spawns the Double Checker.
+    expect(workerMock).toHaveBeenCalled();
   });
 
   it('a ghost chat with NO designation keeps the normal lineup (never a throw) and skips the extractors', async () => {

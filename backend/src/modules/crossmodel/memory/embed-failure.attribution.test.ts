@@ -38,13 +38,20 @@ import {
   describeEmbedFailure,
   classifyEmbedAbort,
   embedAttributionComplete,
+  embedGatewaylessMeta,
+  isGatewaylessEmbedLane,
   isKnownEmbedBucket,
   legFromAttributionHeaders,
+  markEmbedLane,
   readAttributionHeader,
   embedRowsWithRetry,
   EMBED_BUCKETS,
+  EMBED_GATEWAYLESS_LANES,
+  EMBED_GWLESS_DIRECT,
   type EmbedFailureCause,
 } from './embed-failure';
+// The emitted-meta builder lives beside the store-path emitter, not in the leaf.
+import { embedFailureMetricMeta } from './unified-memory.service';
 
 /** The gateway header names — LiteLLM's ProxyBaseLLMRequestProcessing sends
  *  `x-litellm-model-api-base` (which upstream answered) on a 200 and
@@ -162,6 +169,110 @@ describe('the attribution RULE (one predicate, used by emitters AND the probe)',
   test('a bucket + leg is attributed; a bucket + a provider error with no leg is not', () => {
     expect(embedAttributionComplete({ bucket: 'store', leg: 'agx-a:8001', abort: 'provider_error' })).toBe(true);
     expect(embedAttributionComplete({ bucket: 'store', abort: 'provider_error', leg: null })).toBe(false);
+  });
+});
+
+describe('the GATEWAYLESS carve-out (supervisor ruling 2026-11-04, option (a))', () => {
+  // THE RESIDUAL THIS CLOSES. The 2026-11-04 window read 6 unattributed rows,
+  // ALL one shape: `store|provider_error|NO-LEG` (row-shape probe, SSM
+  // 8768380f). The Embeddings seat had no override, so embeds went DIRECT to
+  // dashscope-intl — no LiteLLM hop, so no `x-litellm-*` header can ever exist
+  // on a failure there. Demanding a leg made bar 0 unreachable by construction,
+  // which is the same structural argument `caller_timeout`/`network` already get.
+  //
+  // WHAT MUST NOT REGRESS is the opposite shape: a GATEWAYED lane whose gateway
+  // dropped its headers produces the SAME `leg: null`, and exonerating that row
+  // would delete the very defect this KPI exists to catch. The carve-out
+  // therefore needs a POSITIVE fact (`gwless:'direct'`), never an absence.
+
+  test('(i) a provider_error on a PROVEN gatewayless lane IS attributed', () => {
+    // The exact residual shape, plus the transport's own assertion.
+    expect(embedAttributionComplete({
+      bucket: 'store', abort: 'provider_error', leg: null, gwless: EMBED_GWLESS_DIRECT,
+    })).toBe(true);
+  });
+
+  test('(i-b) but a legless provider_error with NO gatewayless proof stays UNATTRIBUTED', () => {
+    // THE SAFETY PROPERTY. Absence of a leg is not proof of a direct lane: a
+    // gatewayed lane that failed to emit headers looks identical, and that is
+    // the defect the KPI exists to find.
+    expect(embedAttributionComplete({ bucket: 'store', abort: 'provider_error', leg: null })).toBe(false);
+    // An unrecognized/absent gwless value never exonerates either.
+    expect(embedAttributionComplete({ bucket: 'store', abort: 'provider_error', leg: null, gwless: 'maybe' })).toBe(false);
+    expect(embedAttributionComplete({ bucket: 'store', abort: 'provider_error', leg: null, gwless: undefined })).toBe(false);
+  });
+
+  test('(i-c) the carve-out still demands a TYPED abort', () => {
+    // bucket + destination with no outcome is not an attribution.
+    expect(embedAttributionComplete({ bucket: 'store', abort: 'unknown', leg: null, gwless: EMBED_GWLESS_DIRECT })).toBe(false);
+    expect(embedAttributionComplete({ bucket: 'store', leg: null, gwless: EMBED_GWLESS_DIRECT })).toBe(false);
+  });
+
+  test('(ii) the caller_timeout carve-out is UNCHANGED — still caller_timeout', () => {
+    // A caller abort has no response at any layer; it was already attributed
+    // and must not depend on the new key at all.
+    const err = Object.assign(new Error('timeout of 8000ms exceeded'), { code: 'ECONNABORTED' });
+    const c = describeEmbedFailure(markEmbedLane(err, 'dashscope'));
+    expect(c.abort).toBe('caller_timeout');
+    expect(c.leg).toBeNull();
+    expect(embedAttributionComplete({ bucket: 'query', abort: c.abort, leg: c.leg })).toBe(true);
+    // and a network fault likewise, untouched.
+    expect(embedAttributionComplete({ bucket: 'backfill', abort: 'network' })).toBe(true);
+  });
+
+  test('(iii) a GATEWAYED provider_error is still attributed BY ITS LEG', () => {
+    // The existing path must not narrow: gateway headers win regardless of lane.
+    const err = Object.assign(new Error('Request failed with status code 503'), {
+      response: { status: 503, headers: headers(undefined, 'deploy-uuid-spark') },
+    });
+    const c = describeEmbedFailure(err);
+    expect(c.leg).toBe('id:deploy-uuid-spark');
+    expect(c.abort).toBe('provider_error');
+    expect(embedAttributionComplete({ bucket: 'store', abort: c.abort, leg: c.leg })).toBe(true);
+    // A lane label of `custom`/`pinned` may sit behind a gateway, so it never
+    // gets the carve-out even with a typed abort.
+    expect(embedAttributionComplete({ bucket: 'store', abort: 'provider_error', leg: null, lane: 'custom' })).toBe(false);
+    expect(embedAttributionComplete({ bucket: 'store', abort: 'provider_error', leg: null, lane: 'pinned' })).toBe(false);
+  });
+
+  test('the lane is stamped by the transport and never inferred at read time', () => {
+    // markEmbedLane attaches the URL owner's knowledge to the error itself.
+    const err: any = Object.assign(new Error('boom'), { response: { status: 400, headers: {} } });
+    expect(describeEmbedFailure(err).lane).toBe('unknown'); // unstamped ⇒ never gatewayless
+    markEmbedLane(err, 'dashscope');
+    const c = describeEmbedFailure(err);
+    expect(c.lane).toBe('dashscope');
+    expect(embedGatewaylessMeta(c.lane)).toEqual({ gwless: EMBED_GWLESS_DIRECT });
+    // An operator endpoint asserts nothing, so the row keeps needing its leg.
+    expect(embedGatewaylessMeta('custom')).toEqual({});
+    expect(embedGatewaylessMeta('pinned')).toEqual({});
+    expect(embedGatewaylessMeta(undefined)).toEqual({});
+  });
+
+  test('only a hard-coded-URL lane may claim gatewayless', () => {
+    // Adding a lane here is a CLAIM about the transport. A registered endpoint
+    // is configured through the Endpoints registry and may be a LiteLLM base
+    // URL, so it must never qualify.
+    expect(isGatewaylessEmbedLane('dashscope')).toBe(true);
+    expect(isGatewaylessEmbedLane('custom')).toBe(false);
+    expect(isGatewaylessEmbedLane('pinned')).toBe(false);
+    expect(isGatewaylessEmbedLane('unknown')).toBe(false);
+    expect(EMBED_GATEWAYLESS_LANES).toEqual(['dashscope']);
+  });
+
+  test('the EMITTED store-path meta carries gwless only on a proven lane', async () => {
+    // Drive the real producer: a direct-lane 400 (the residual's exact cause).
+    const providerErr = markEmbedLane(Object.assign(new Error('Request failed with status code 400'), {
+      response: { status: 400, headers: {}, data: { error: { code: 'InternalError.Algo', message: 'Embedding_pipeline_Error' } } },
+    }), 'dashscope');
+    const r = await embedRowsWithRetry(['a'], async () => { throw providerErr; });
+    const cause = r.cause as EmbedFailureCause;
+    expect(cause.abort).toBe('provider_error');
+    expect(cause.leg).toBeNull();
+    const meta = embedFailureMetricMeta(cause, { rows: 1, maxChars: 10, source: 'test', scopeType: 'session', bucket: 'store' }, r);
+    expect(meta.gwless).toBe(EMBED_GWLESS_DIRECT);
+    // …and the emitted meta is what the rule reads, so the row is attributed.
+    expect(embedAttributionComplete(meta as Record<string, unknown>)).toBe(true);
   });
 });
 

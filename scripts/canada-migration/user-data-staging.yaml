@@ -1,0 +1,93 @@
+#cloud-config
+# user-data-staging.yaml — first-boot guardrails for the ca-central-1 STAGING
+# copy of the prod box. The golden AMI is a live snapshot of prod: its docker
+# volumes contain a full copy of the production database (schedules, queued
+# agent_runs) and its containers carry restart=unless-stopped, so without these
+# guardrails the staging box would, on first boot:
+#   1. start admin-worker-* → double-fire chat/coding SCHEDULES (misfire
+#      catch-up: overdue nextRunAt rows fire immediately) and claim stale
+#      coding agent_runs (a resumed coding run could git push to a real branch);
+#   2. start the nightly digby-backup.timer → duplicate pg_dump → S3;
+#   3. expose adminer (DB admin UI) on a public IP.
+# Docker starts containers BEFORE cloud-final user-data runs, so we cannot
+# "just stop the worker" in runcmd — instead we stop the daemon, edit the
+# containers' restart policy in /var/lib/docker (deterministic, no race),
+# mask the backup units, then start the daemon and defensively disable every
+# schedule row in the COPIED database (throwaway staging DB; prod untouched).
+write_files:
+  - path: /usr/local/bin/digby-staging-guard.py
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env python3
+      # Neuter selected containers on the staging copy by flipping their docker
+      # restart policy to "no" (edit while dockerd is stopped so it sticks).
+      import json, glob, os
+      NEUTER = ("admin-worker-", "admin-adminer-prod")
+      changed = []
+      for cfg in glob.glob("/var/lib/docker/containers/*/config.v2.json"):
+          try:
+              with open(cfg) as f:
+                  c = json.load(f)
+          except Exception:
+              continue
+          name = (c.get("Name") or "").lstrip("/")
+          if not any(name.startswith(p) for p in NEUTER):
+              continue
+          hc = os.path.join(os.path.dirname(cfg), "hostconfig.json")
+          try:
+              with open(hc) as f:
+                  h = json.load(f)
+          except Exception:
+              continue
+          rp = h.setdefault("RestartPolicy", {})
+          if rp.get("Name") != "no":
+              rp["Name"] = "no"
+              rp["MaximumRetryCount"] = 0
+              with open(hc, "w") as f:
+                  json.dump(h, f)
+              changed.append(name)
+      print("neutered restart policy for:", changed or "none")
+
+  - path: /usr/local/bin/digby-staging-guard.sh
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      exec >>/var/log/digby-staging-guard.log 2>&1
+      set -x
+      # 1. Daemon fully down so hostconfig edits persist and nothing is claimed.
+      systemctl stop docker docker.socket containerd || true
+      # 2. restart=no for workers + adminer.
+      python3 /usr/local/bin/digby-staging-guard.py
+      # 3. No nightly pg_dump → S3 from the staging copy.
+      systemctl mask --now digby-backup.timer digby-backup.service 2>/dev/null || true
+      # 4. Bring the stack up (workers/adminer stay down thanks to step 2).
+      systemctl start docker
+      # 5. Wait for postgres healthy, then disable every schedule row in the
+      #    COPIED DB (both schedule tables carry enabled + nextRunAt).
+      for i in $(seq 1 60); do
+        st=$(docker inspect --format '{{.State.Health.Status}}' admin-postgres-prod 2>/dev/null || echo missing)
+        [ "$st" = "healthy" ] && break
+        sleep 5
+      done
+      docker exec admin-postgres-prod psql -U admin -d admin_db <<'SQL' || true
+      DO $$
+      DECLARE t text;
+      BEGIN
+        FOR t IN
+          SELECT c1.table_name
+          FROM information_schema.columns c1
+          JOIN information_schema.columns c2
+            ON c1.table_schema = c2.table_schema AND c1.table_name = c2.table_name
+          WHERE c1.table_schema = 'public' AND c1.column_name = 'nextRunAt'
+            AND c2.column_name = 'enabled'
+        LOOP
+          EXECUTE format('UPDATE %I SET enabled = false WHERE enabled IS DISTINCT FROM false', t);
+          RAISE NOTICE 'staging guard: disabled schedules in %', t;
+        END LOOP;
+      END $$;
+      SQL
+      touch /var/lib/digby-staging-guard.done
+      echo "staging guard complete $(date -Is)"
+
+runcmd:
+  - [bash, /usr/local/bin/digby-staging-guard.sh]

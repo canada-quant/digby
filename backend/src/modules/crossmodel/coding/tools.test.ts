@@ -105,7 +105,6 @@ jest.mock('./self-merge.service', () => ({
   // WAIT-ONCE (agent-decisions prerequisite 4, 2026-09-27) — the pure classifier
   // is mirrored (the real module reaches prisma); the sleep / p50 / slot seams
   // are observable mocks so the tool's wait path runs in microseconds.
-  selfMergeWaitOnceDisabled: () => mockWaitOnceDisabled(),
   classifyMergeWait: (input: any) => input?.failure?.transient
     ?? (Number(input?.apiStatus) >= 500 ? 'server_5xx' : input?.apiStatus === 405 && /in progress|base branch was modified/i.test(String(input?.apiMessage ?? '')) ? 'merge_in_progress' : null),
   mergeWaitOnceMs: (p50: number | null, kind: string) => (kind === 'ci_pending' ? (p50 ? 2 * p50 : 7) : 3),
@@ -114,7 +113,6 @@ jest.mock('./self-merge.service', () => ({
   releaseMergeWaitSlot: (...a: any[]) => mockReleaseWaitSlot(...a),
   mergeWaitSleep: (...a: any[]) => mockMergeWaitSleep(...a),
 }));
-const mockWaitOnceDisabled: jest.Mock = jest.fn((): boolean => false);
 const mockRepoCiP50Ms: jest.Mock = jest.fn(async (): Promise<number | null> => null);
 const mockAcquireWaitSlot: jest.Mock = jest.fn((): boolean => true);
 const mockReleaseWaitSlot: jest.Mock = jest.fn();
@@ -290,7 +288,7 @@ describe('MUTATING_TOOLS', () => {
         'ack_digest_item', 'unack_digest_item', 'revoke_chat_webhook',
         // T5 self-service (2026-09-24); delete_document / delete_chat_upload are also ask-only
         'consolidate_memory', 'rebuild_memory', 'share_project', 'add_project_member', 'remove_project_member', 'resolve_feedback', 'delete_document', 'delete_chat_upload',
-        'create_chat_webhook', // #32 close-out (2026-09-25): consequential + never autonomous
+        'create_chat_webhook', // #32 close-out (2026-09-25): consequential; card-free only on an explicit grant
         'store_secret', // audit 2026-10-06 T2-3: the owner-secret hand-off — value source is owner-authored at execution (this turn, or an owner-typed fromMessageId row; ticket 37a875ee)
         // User Space §4b (P3d): agent-driven workspace attach on the current chat
         // (cheap, owner-scoped, attach-only — NOT consequential)
@@ -404,7 +402,12 @@ describe('ast_search / ast_rewrite (harness roadmap item 3 — ast-grep via npx 
     expect(out).toMatch(/fix the pattern/);
     expect(out).not.toContain('Help:');
     const dead = astCtx(['npm ERR! code ENOTFOUND\nnpm ERR! network request to https://registry.npmjs.org/@ast-grep%2fcli failed']);
-    expect(await executeCodingTool(dead.ctx, 'ast_search', { pattern: 'x' })).toMatch(/^Tool ast_search failed: ast-grep is unavailable in this container \(npm ERR! code ENOTFOUND\) — fall back to grep\./);
+    // Ticket 0c6a47de: an npm/registry outage is the BOX's network, not the
+    // lane's pattern — `npx --yes --package @ast-grep/cli@…` fetches the binary
+    // on a cold cache. It is anchored `[INFRA]` so the derail breaker never
+    // charges it to the model (learnings-index looksLikeToolFailure exempts the
+    // anchor), exactly like the grep branch's transport deaths since #2390.
+    expect(await executeCodingTool(dead.ctx, 'ast_search', { pattern: 'x' })).toMatch(/^\[INFRA\] Tool ast_search failed: ast-grep is unavailable in this container \(npm ERR! code ENOTFOUND\)/);
     const silent = astCtx(['']);
     expect(await executeCodingTool(silent.ctx, 'ast_search', { pattern: 'x' })).toMatch(/^Tool ast_search failed: no output from ast-grep/);
     const badLang = astCtx([]);
@@ -1356,7 +1359,6 @@ describe('merge_pull_request: success telemetry + machine no-project owner card'
   const rowsOf = (kind: string) => mockRecordLoopMetric.mock.calls.map((c: any[]) => c[0]).filter((r: any) => r?.kind === kind);
 
   beforeEach(() => {
-    mockWaitOnceDisabled.mockReset().mockReturnValue(false);
     mockRepoCiP50Ms.mockReset().mockResolvedValue(null);
     mockAcquireWaitSlot.mockReset().mockReturnValue(true);
     mockReleaseWaitSlot.mockReset();
@@ -1418,18 +1420,10 @@ describe('merge_pull_request: success telemetry + machine no-project owner card'
     expect(rowsOf('merge_gate_failure')[0]).toMatchObject({ meta: { gate: 'ci', headSha: HEAD } });
   });
 
-  it('WAIT-ONCE is skipped under SELF_MERGE_WAIT_ONCE_DISABLED=1 and when the concurrent-wait slots are exhausted (bounce as today, no slot leaked)', async () => {
-    mockWaitOnceDisabled.mockReturnValue(true);
-    mockEvaluateMergeGates.mockReset().mockResolvedValueOnce(ciPending());
-    let out = await executeCodingTool(mkMergeCtx(), 'merge_pull_request', { repo: 'o/r', pullNumber: 14 });
-    expect(out).toContain('MERGE BLOCKED (gate ci');
-    expect(mockMergeWaitSleep).not.toHaveBeenCalled();
-    expect(mockAcquireWaitSlot).not.toHaveBeenCalled();
-
-    mockWaitOnceDisabled.mockReturnValue(false);
+  it('WAIT-ONCE is skipped when the concurrent-wait slots are exhausted (bounce as today, no slot leaked)', async () => {
     mockAcquireWaitSlot.mockReturnValue(false);
     mockEvaluateMergeGates.mockReset().mockResolvedValueOnce(ciPending());
-    out = await executeCodingTool(mkMergeCtx(), 'merge_pull_request', { repo: 'o/r', pullNumber: 15 });
+    const out = await executeCodingTool(mkMergeCtx(), 'merge_pull_request', { repo: 'o/r', pullNumber: 15 });
     expect(out).toContain('MERGE BLOCKED (gate ci');
     expect(mockMergeWaitSleep).not.toHaveBeenCalled();
     expect(mockReleaseWaitSlot).not.toHaveBeenCalled();
@@ -1533,8 +1527,9 @@ describe('merge_pull_request: success telemetry + machine no-project owner card'
       (mockedStoreGet as jest.Mock).mockImplementation(async (ns: string[], key: string) => (ns?.[0] === 'merge-intent' && key === 'o/r#29'
         ? { v: 1, key: 'o/r#29', owner: 'o', repo: 'r', pullNumber: 29, headSha: HEX, chatId: 'other-lane-77', userId: 'u1', projectId: 'p1', runId: null, mergeMethod: 'squash', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), nextCheckAt: new Date().toISOString(), waitKind: 'ci_pending', lastGate: 'ci', lastCause: 'x', checks: 0, errors: 0, updateBranchFrom: null, updateBranchAt: null, backstopHookEventId: 'bs-other' }
         : null));
-      mockWaitOnceDisabled.mockReturnValue(true);
-      mockEvaluateMergeGates.mockReset().mockResolvedValueOnce(pendingHex());
+      // The wait is structurally live now: every gate verdict here stays timing-class,
+      // so the post-wait re-gate must answer pending too.
+      mockEvaluateMergeGates.mockReset().mockResolvedValue(pendingHex());
       const out = await executeCodingTool(mkMergeCtx(), 'merge_pull_request', { repo: 'o/r', pullNumber: 29 });
       expect(out).toMatch(/^MERGE QUEUED/);
       expect(out).toContain('session other-la already holds the harness merge intent');
@@ -1542,19 +1537,19 @@ describe('merge_pull_request: success telemetry + machine no-project owner card'
       expect(out).toContain('await_condition condition:"pr_merged" pullNumber:29');
       expect(out).not.toContain('wakes this chat ONCE');
       expect(intentPuts().at(-1)![2]).toMatchObject({ chatId: 'other-lane-77' });
-      mockWaitOnceDisabled.mockReturnValue(false);
+      mockEvaluateMergeGates.mockReset();
       (mockedStoreGet as jest.Mock).mockImplementation(async () => null);
     });
 
     it('a BEHIND branch the gates updated ⇒ queued with the update-branch note; a persisting 5xx at the merge API ⇒ queued too', async () => {
-      mockWaitOnceDisabled.mockReturnValue(true);
-      mockEvaluateMergeGates.mockReset().mockResolvedValueOnce(pendingHex({ gate: 'pr_state', cause: 'PR branch was BEHIND its base', branchUpdatedFrom: HEX }));
+      // The wait is structurally live now: both the first gate pass and the
+      // post-wait re-gate answer BEHIND, so the intent carries the update-branch.
+      mockEvaluateMergeGates.mockReset().mockResolvedValue(pendingHex({ gate: 'pr_state', cause: 'PR branch was BEHIND its base', branchUpdatedFrom: HEX }));
       let out = await executeCodingTool(mkMergeCtx(), 'merge_pull_request', { repo: 'o/r', pullNumber: 22 });
       expect(out).toMatch(/^MERGE QUEUED \(gate pr_state/);
       expect(out).toContain('update-branch from abcdef012345');
       expect(intentPuts()[0][2]).toMatchObject({ updateBranchFrom: HEX });
 
-      mockWaitOnceDisabled.mockReturnValue(false);
       mockEvaluateMergeGates.mockReset().mockResolvedValue({ ok: true, alreadyMerged: false, headSha: HEX, evidenceHash: 'e', evidenceNotes: ['green'] });
       mockGithubApi.put.mockReset().mockResolvedValue({ status: 502, data: { message: 'Bad Gateway' } });
       out = await executeCodingTool(mkMergeCtx(), 'merge_pull_request', { repo: 'o/r', pullNumber: 23 });
@@ -1884,6 +1879,81 @@ describe('describePrDiff (PR diff shape + docs-only / duplicate / results-log no
       );
       expect(out!.refusal).toMatch(/^PR REFUSED \(base drift\):/);
       expect(strikes('base_drift')[0].meta).toMatchObject({ state: 'enforced', machineRun: false });
+    });
+
+    // ── TICKET 7445695d — the merge DELETING a file the branch never deleted ──
+    // Whole-file deletions are invisible to the merged-BLOB rule (mergedBlob is
+    // null ⇒ it read as `incomplete` ⇒ fail open). That is the shape the report
+    // named: relay-operator-viewer.ts (−597) and embed-failure.ts (−189),
+    // other lanes' merged files, showing as deletions in a stale lane's PR.
+    /** The merge DROPS the path; no commit of this branch ever deleted it. */
+    const droppedByResolution = async (path: string) => ({ mergedBlob: null, baseBlob: `tip_${path}`, historyBlobs: [] as string[], deletedByBranch: false });
+    /** The merge drops it because the BRANCH deleted it — a deliberate cleanup. */
+    const ourOwnCleanup = async (path: string) => ({ mergedBlob: null, baseBlob: `tip_${path}`, historyBlobs: [] as string[], deletedByBranch: true });
+
+    it('TICKET 7445695d ACCEPTANCE A — an unrelated whole-file deletion REFUSES, the file named', async () => {
+      const files = [
+        { filename: 'backend/src/relay/relay-operator-viewer.ts', additions: 0, deletions: 597, status: 'removed' },
+        { filename: 'backend/src/memory/embed-failure.ts', additions: 0, deletions: 189, status: 'removed' },
+        { filename: 'backend/src/x.ts', additions: 37, deletions: 0, status: 'modified' },
+      ];
+      const out = await describePrDiff(
+        machineCtx, { ...target, base: BASE },
+        { now: NOW, compareFiles: async () => files, priorReceipts: async () => [], driftProbe: droppedByResolution },
+      );
+      expect(out!.refusal).toMatch(/^PR REFUSED \(base drift\):/);
+      expect(out!.refusal).toContain('DELETE 2 files');
+      expect(out!.refusal).toContain('relay-operator-viewer.ts');
+      expect(out!.refusal).toContain('embed-failure.ts');
+      expect(out!.refusal).toContain('never deleted itself');
+      expect(out!.refusal).toContain('git rebase origin/main');
+      expect(out!.refusal).toContain('allowBaseDrift:true');
+      expect(out!.baseDrift).toBe(true);
+      expect(strikes('base_drift')[0].meta).toMatchObject({ seam: 'base_drift', state: 'enforced', deletedCount: 2 });
+    });
+
+    it('TICKET 7445695d ACCEPTANCE B — the lane’s OWN cleanup of a file it DID delete still opens', async () => {
+      const out = await describePrDiff(
+        machineCtx, { ...target, base: BASE },
+        {
+          now: NOW, priorReceipts: async () => [],
+          compareFiles: async () => [{ filename: 'backend/src/legacy-module.ts', additions: 0, deletions: 210, status: 'removed' }],
+          driftProbe: ourOwnCleanup,
+        },
+      );
+      expect(out!.refusal).toBeNull();
+      expect(out!.baseDrift).toBe(false);
+      expect(strikes('base_drift')).toHaveLength(0);
+    });
+
+    it('an UNKNOWN deleter lookup fails open — a missing read never refuses a PR', async () => {
+      const out = await describePrDiff(
+        machineCtx, { ...target, base: BASE },
+        {
+          now: NOW, priorReceipts: async () => [],
+          compareFiles: async () => [{ filename: 'backend/src/maybe.ts', additions: 0, deletions: 90, status: 'removed' }],
+          driftProbe: async (path: string) => ({ mergedBlob: null, baseBlob: `tip_${path}`, historyBlobs: [] as string[], deletedByBranch: null }),
+        },
+      );
+      expect(out!.refusal).toBeNull();
+      expect(out!.baseDrift).toBe(false);
+    });
+
+    it('allowBaseDrift:true overrides a deletion too — the notice names the deleted file', async () => {
+      const out = await describePrDiff(
+        machineCtx, { ...target, base: BASE },
+        {
+          now: NOW, priorReceipts: async () => [],
+          compareFiles: async () => [{ filename: 'backend/src/relay/relay-operator-viewer.ts', additions: 0, deletions: 597, status: 'removed' }],
+          driftProbe: droppedByResolution,
+        },
+        { allowBaseDrift: true },
+      );
+      expect(out!.refusal).toBeNull();
+      expect(out!.baseDrift).toBe(true);
+      expect(out!.tail).toContain('[BASE DRIFT OVERRIDE] allowBaseDrift:true');
+      expect(out!.tail).toContain('relay-operator-viewer.ts');
+      expect(strikes('base_drift')[0].meta).toMatchObject({ state: 'overridden' });
     });
   });
 });

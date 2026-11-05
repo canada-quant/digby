@@ -143,10 +143,10 @@ describe('253636d6 — the pure stable-key extractor (backup kind)', () => {
   });
 
   it('the deploy-failure and CI-red kinds are unchanged (regression)', () => {
-    expect(extractInfraAlertKey(`Deploy run 39441731823 failed (sha 51946acc) — fix and re-run`, `Failed run: https://github.com/canada-quant/digby/actions/runs/39441731823`))
-      .toEqual({ kind: 'deploy-failure', id: '39441731823', repo: 'canada-quant/digby' });
-    expect(extractInfraAlertKey(`[CI FAILED — canada-quant/digby@1a2b3c4d5e6f] red on GitHub`, `[CI FAILED — canada-quant/digby@1a2b3c4d5e6f] shard 3/4 red.`))
-      .toEqual({ kind: 'ci-red', id: '1a2b3c4d5e6f', repo: 'canada-quant/digby' });
+    expect(extractInfraAlertKey(`Deploy run 39441731823 failed (sha 51946acc) — fix and re-run`, `Failed run: https://github.com/example-org/crossmodel/actions/runs/39441731823`))
+      .toEqual({ kind: 'deploy-failure', id: '39441731823', repo: 'example-org/crossmodel' });
+    expect(extractInfraAlertKey(`[CI FAILED — example-org/crossmodel@1a2b3c4d5e6f] red on GitHub`, `[CI FAILED — example-org/crossmodel@1a2b3c4d5e6f] shard 3/4 red.`))
+      .toEqual({ kind: 'ci-red', id: '1a2b3c4d5e6f', repo: 'example-org/crossmodel' });
   });
 
   it('TEXTUAL — the leaf imports no I/O modules (prisma/redis/logger): the pure-leaf discipline', () => {

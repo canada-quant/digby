@@ -29,7 +29,7 @@ jest.mock('./heic', () => ({
 import { answerImageQuestion, describeImageWithVision, ANSWER_MAX_TOKENS, ANSWER_TIMEOUT_MS, DEFAULT_IMAGE_QUESTION } from './image-describe';
 
 const SEAT = { model: 'glm-5.3-flash', label: 'Z.AI', url: 'https://api.z.ai/x', apiKey: 'k' };
-const FALLBACK = { model: 'cql-vision', label: 'cql', url: 'https://llm.example.com/v1/chat/completions', apiKey: '' };
+const FALLBACK = { model: 'cql-vision', label: 'cql', url: 'https://llm.cql.ca/v1/chat/completions', apiKey: '' };
 const ok = (text: string) => ({ text, reasoning: '', toolCalls: [], finishReason: 'stop', hadReasoning: false });
 const textOf = (call: any[]): string => call[1][0].content[1].text;
 

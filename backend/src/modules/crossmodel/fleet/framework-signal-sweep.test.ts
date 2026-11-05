@@ -1,9 +1,12 @@
 import {
   classifyFileResult,
+  dropLiveWrites,
   findingMetricRows,
+  liveRunWriteStarts,
   mergeSignalFindings,
   runFrameworkSignalSweepOnce,
   signalTicketArgs,
+  writtenByLiveRun,
   type FrameworkSignalSweepDeps,
   type SignalFinding,
   type TicketArgs,
@@ -15,11 +18,27 @@ import {
 // prisma stub captures the exact findMany args the real defaultDeps issues.
 const mockPrismaCalls: any[] = [];
 let mockFingerprintRows: any[] = [];
+// Ticket 92d644c6: the live-run write guard reads agent_runs. Default = no
+// live runs, so every pre-existing expectation in this file is unchanged.
+let mockLiveRuns: any[] = [];
+// Assistant rows the real loadMessages issues; a test may swap them.
+let mockMessageRows: any[] = [{ id: 'm1', chatId: 'chat-1', content: '[/CANVAS]', parts: null }];
 const mockPrisma = {
   crossModelMessage: {
-    findMany: jest.fn(async ({ where }: any = {}) => {
+    findMany: jest.fn(async (args: any = {}) => {
+      const where = args.where;
       if (where?.role === 'user') return [];
-      return [{ id: 'm1', chatId: 'chat-1', content: '[/CANVAS]', parts: null }];
+      mockPrismaCalls.push({ crossModelMessage: true, ...args });
+      // The live-run guard filters ROWS in JS after the query (it needs each
+      // row's createdAt), so the query itself is issued unfiltered.
+      return mockMessageRows;
+    }),
+  },
+  agentRun: {
+    findMany: jest.fn(async (args: any = {}) => {
+      mockPrismaCalls.push({ agentRun: true, ...args });
+      const now = Date.now();
+      return mockLiveRuns.filter((r) => r.status === 'running' && +new Date(r.leaseExpiresAt) > now);
     }),
   },
   ownerQuestion: {
@@ -650,5 +669,174 @@ describe('event times, per-finding rows and the raw-marker default metric', () =
     const b: SignalFinding = { ...a, context: { reason: 'no renderer', observedAt: '2026-10-20T11:00:00.000Z' } };
     expect(mergeSignalFindings([a, b])[0].context.observedAt).toBe('2026-10-20T11:00:00.000Z');
     expect(mergeSignalFindings([b, a])[0].context.observedAt).toBe('2026-10-20T11:00:00.000Z');
+  });
+});
+
+// ── LIVE-RUN WRITE GUARD (ticket 92d644c6) ─────────────────────────────────
+// A coding-run assistant row is INSERTed at run start and rewritten in place
+// with the RAW unscrubbed model stream; the renderer scrub only happens at
+// finalize. The sweep must never convict that mid-flight working copy.
+describe('live-run write guard — never convict a row a live run is still writing', () => {
+  const ENV0 = { ...process.env };
+  const H = 3600_000;
+  const iso = (ms: number) => new Date(ms).toISOString();
+  afterEach(() => {
+    process.env = { ...ENV0 };
+    mockLiveRuns = [];
+    mockMessageRows = [{ id: 'm1', chatId: 'chat-1', content: '[/CANVAS]', parts: null }];
+    mockPrismaCalls.length = 0;
+  });
+
+  it('liveRunWriteStarts: only a RUNNING run with an UNEXPIRED lease is live', () => {
+    const now = new Date('2026-11-03T05:00:00.000Z');
+    const rows = [
+      { sessionId: 'live-1', status: 'running', leaseExpiresAt: new Date('2026-11-03T05:05:00.000Z'), createdAt: new Date('2026-11-03T04:50:00.000Z') },
+      { sessionId: 'expired', status: 'running', leaseExpiresAt: new Date('2026-11-03T04:55:00.000Z'), createdAt: new Date('2026-11-03T04:40:00.000Z') },
+      { sessionId: 'finished', status: 'completed', leaseExpiresAt: new Date('2026-11-03T05:05:00.000Z'), createdAt: new Date('2026-11-03T04:30:00.000Z') },
+      { sessionId: 'no-lease', status: 'running', leaseExpiresAt: null, createdAt: new Date('2026-11-03T04:30:00.000Z') },
+      { sessionId: null, status: 'running', leaseExpiresAt: new Date('2026-11-03T05:05:00.000Z'), createdAt: new Date('2026-11-03T04:30:00.000Z') },
+      { sessionId: 'string-lease', status: 'running', leaseExpiresAt: '2026-11-03T05:05:00.000Z', createdAt: '2026-11-03T04:45:00.000Z' },
+    ];
+    // An EXPIRED lease is a dead run: its leftover raw partial must still be
+    // convictable, so expiry excludes it (a guard only ever DEFERS a conviction).
+    const starts = liveRunWriteStarts(rows, now);
+    expect([...starts.keys()].sort()).toEqual(['live-1', 'string-lease']);
+    expect(starts.get('live-1')!.toISOString()).toBe('2026-11-03T04:50:00.000Z');
+    expect(starts.get('string-lease')!.toISOString()).toBe('2026-11-03T04:45:00.000Z');
+  });
+
+  it('writtenByLiveRun: the row being written is skipped, the chat\'s OLDER finished rows are not', () => {
+    const starts = new Map([['chat-1', new Date('2026-11-03T04:50:00.000Z')]]);
+    const now = new Date('2026-11-03T04:56:00.000Z');
+    // The row INSERTed at run start (and the small clock skew around it).
+    expect(writtenByLiveRun({ chatId: 'chat-1', createdAt: '2026-11-03T04:50:00.100Z' }, starts)).toBe(true);
+    expect(writtenByLiveRun({ chatId: 'chat-1', createdAt: '2026-11-03T04:49:00.000Z' }, starts)).toBe(true); // inside skew
+    // A RESUMED run writes the row its interrupted attempt created: createdAt
+    // predates the start, but a FRESH partial flush (within the 90 s recency
+    // window) makes updatedAt the evidence — still live.
+    expect(writtenByLiveRun({ chatId: 'chat-1', createdAt: '2026-11-03T03:00:00.000Z', updatedAt: '2026-11-03T04:55:30.000Z' }, starts, now)).toBe(true);
+    // REVIEW FINDING 2 (over-suppression): a PREVIOUS run's finalized row also
+    // post-dates the new run's start — but it stopped moving, so the recency
+    // bound must let it through. Without this the row would hide for the whole
+    // of the unrelated run, and permanently if that run outlives the 2 h scan.
+    expect(writtenByLiveRun({ chatId: 'chat-1', createdAt: '2026-11-03T04:40:00.000Z', updatedAt: '2026-11-03T04:52:00.000Z' }, starts, now)).toBe(false);
+    // A row from an EARLIER, finished run in the same chat is real delivered
+    // text — it must stay scannable (a chat-level exclusion would hide it).
+    expect(writtenByLiveRun({ chatId: 'chat-1', createdAt: '2026-11-03T03:00:00.000Z', updatedAt: '2026-11-03T03:05:00.000Z' }, starts, now)).toBe(false);
+    // A different chat is untouched.
+    expect(writtenByLiveRun({ chatId: 'chat-2', createdAt: '2026-11-03T04:50:00.000Z', updatedAt: '2026-11-03T04:50:00.000Z' }, starts, now)).toBe(false);
+    // Rows without any timestamp cannot be attributed — never skip them.
+    expect(writtenByLiveRun({ chatId: 'chat-1' }, starts, now)).toBe(false);
+    // dropLiveWrites is the batch face of the same predicate.
+    expect(dropLiveWrites(
+      [
+        { id: 'live', chatId: 'chat-1', createdAt: '2026-11-03T04:50:01.000Z' },
+        { id: 'final', chatId: 'chat-1', createdAt: '2026-11-03T04:40:00.000Z', updatedAt: '2026-11-03T04:52:00.000Z' },
+        { id: 'other', chatId: 'chat-2', createdAt: '2026-11-03T04:55:00.000Z' },
+      ],
+      starts, now,
+    ).map((r) => r.id)).toEqual(['final', 'other']);
+  });
+
+  it('the scan SELECT carries updatedAt — the resumed-run witness is dead without it', async () => {
+    // Regression pin for the guard's own wiring: writtenByLiveRun's second
+    // witness reads row.updatedAt, so a `select` that omits it silently
+    // disables the resumed-run arm in production while every unit test above
+    // still passes (they supply the field by hand).
+    mockLiveRuns = [];
+    mockPrismaCalls.length = 0;
+    await runFrameworkSignalSweepOnce();
+    const msgCall = mockPrismaCalls.find((c) => c.crossModelMessage && c.where?.role === 'assistant');
+    expect(msgCall).toBeTruthy();
+    expect(Object.keys(msgCall.select).sort()).toEqual(['chatId', 'content', 'createdAt', 'id', 'parts', 'updatedAt']);
+    // …and the liveness read must select what liveRunWriteStarts consumes.
+    const runCall = mockPrismaCalls.find((c) => c.agentRun);
+    expect(Object.keys(runCall.select).sort()).toEqual(['createdAt', 'leaseExpiresAt', 'sessionId', 'status']);
+  });
+
+  it('excludes only the in-flight row of a live chat and still scans that chat\'s older rows', async () => {
+    const startedAt = Date.now() - 5 * 60_000;
+    mockLiveRuns = [{ sessionId: 'chat-1', status: 'running', leaseExpiresAt: iso(Date.now() + H), createdAt: iso(startedAt) }];
+    mockMessageRows = [
+      { id: 'in-flight', chatId: 'chat-1', content: '[SEND_EMAIL to="a@b.c"', parts: null, createdAt: iso(startedAt + 1000), updatedAt: iso(Date.now() - 1000) },
+      { id: 'finished', chatId: 'chat-1', content: '[/CANVAS]', parts: null, createdAt: iso(startedAt - H), updatedAt: iso(startedAt - H + 60_000) },
+    ];
+    // NO deps override: the guard lives in defaultDeps, so this drives the real
+    // liveness read + the real loadMessages path (prisma is the module mock).
+    const fb = jest.requireMock('../feedback/feedback.service') as { fileFeedbackTicket: jest.Mock };
+    fb.fileFeedbackTicket.mockClear();
+    mockRedisStore.clear();
+    const status = await runFrameworkSignalSweepOnce();
+    // The unclosed SEND_EMAIL (in-flight) is NOT convicted; the older stray
+    // [/CANVAS] still is.
+    expect(status).toContain('scanned 1/0/0, found 1');
+    const args = fb.fileFeedbackTicket.mock.calls[0][0] as TicketArgs;
+    expect(args.context.fingerprint).toBe('raw-marker:CANVAS');
+    expect(args.context.chatId).toBe('chat-1');
+  });
+
+  it('a RESUMED run\'s row (created before the start, rewritten now) is excluded too', async () => {
+    const startedAt = Date.now() - 5 * 60_000;
+    mockLiveRuns = [{ sessionId: 'chat-1', status: 'running', leaseExpiresAt: iso(Date.now() + H), createdAt: iso(startedAt) }];
+    // The interrupted attempt created the row an hour ago; the resumed run is
+    // streaming raw markup into it right now (updatedAt is fresh).
+    mockMessageRows = [
+      { id: 'resumed', chatId: 'chat-1', content: '[SEND_EMAIL to="a@b.c"', parts: null, createdAt: iso(startedAt - H), updatedAt: iso(Date.now() - 2000) },
+    ];
+    const fb = jest.requireMock('../feedback/feedback.service') as { fileFeedbackTicket: jest.Mock };
+    fb.fileFeedbackTicket.mockClear();
+    mockRedisStore.clear();
+    const status = await runFrameworkSignalSweepOnce();
+    expect(status).toContain('scanned 0/0/0, found 0');
+    expect(fb.fileFeedbackTicket).not.toHaveBeenCalled();
+  });
+
+  it('DETECTOR-RECALL REPLAY (92d644c6): an EXPIRED lease still convicts the leftover raw partial', async () => {
+    // Prior true positive: a crashed run leaves a raw partial behind and its
+    // lease lapses — that row IS what a reader can still see, so it must fire.
+    const startedAt = Date.now() - 60 * 60_000;
+    mockLiveRuns = [{ sessionId: 'chat-1', status: 'running', leaseExpiresAt: iso(Date.now() - H), createdAt: iso(startedAt) }];
+    mockMessageRows = [{ id: 'm1', chatId: 'chat-1', content: '[SEND_EMAIL to="a@b.c"', parts: null, createdAt: iso(startedAt + 1000) }];
+    const fb = jest.requireMock('../feedback/feedback.service') as { fileFeedbackTicket: jest.Mock };
+    fb.fileFeedbackTicket.mockClear();
+    mockRedisStore.clear();
+    await runFrameworkSignalSweepOnce();
+    expect(fb.fileFeedbackTicket).toHaveBeenCalledTimes(1);
+    const args = fb.fileFeedbackTicket.mock.calls[0][0] as TicketArgs;
+    expect(args.context.fingerprint).toBe('raw-marker:SEND_EMAIL');
+    expect(args.priority).toBe(1);
+  });
+
+  it('DETECTOR-RECALL REPLAY (92d644c6): every prior true positive still fires with no live run', async () => {
+    // The guard must not swallow a SINGLE prior conviction when nothing is in
+    // flight — the same marker set the detector replay pins, driven end-to-end.
+    const cases: Array<[string, string, number]> = [
+      ['[SEND_EMAIL to="a@b.c"', 'raw-marker:SEND_EMAIL', 1],
+      // A closed draft with NO valid `to` is still high — the reader sees the
+      // raw markup AND the mail would go nowhere (pre-existing semantics).
+      ['[SEND_EMAIL subject="hi"]body[/SEND_EMAIL]', 'raw-marker:SEND_EMAIL', 1],
+      ['[/CANVAS]', 'raw-marker:CANVAS', 2],
+      ['[/SEND_EMAIL]', 'raw-marker:SEND_EMAIL', 2],
+    ];
+    for (const [content, fingerprint, priority] of cases) {
+      const fileTicket = jest.fn(async () => ({ deduped: false, ticket: { title: 'x' } }));
+      await runFrameworkSignalSweepOnce(deps({
+        loadMessages: async () => [{ id: 'm1', chatId: 'abcd1234-rest', content, parts: null }],
+        fileTicket,
+      }));
+      expect({ content, calls: fileTicket.mock.calls.length }).toEqual({ content, calls: 1 });
+      const args = (fileTicket.mock.calls as unknown as TicketArgs[][])[0][0];
+      expect({ content, fp: args.context.fingerprint, prio: args.priority }).toEqual({ content, fp: fingerprint, prio: priority });
+    }
+  });
+
+  it('fails OPEN: a liveness read that throws scans exactly as before', async () => {
+    // An hourly detection signal must never be silenced by a telemetry read.
+    mockMessageRows = [{ id: 'm1', chatId: 'chat-1', content: '[/CANVAS]', parts: null, createdAt: iso(Date.now()) }];
+    const spy = jest.spyOn(mockPrisma.agentRun, 'findMany').mockRejectedValueOnce(new Error('agent_runs unavailable'));
+    const status = await runFrameworkSignalSweepOnce();
+    // The scan still happened and still convicted the [/CANVAS] row.
+    expect(status).toContain('scanned 1/0/0, found 1');
+    spy.mockRestore();
   });
 });

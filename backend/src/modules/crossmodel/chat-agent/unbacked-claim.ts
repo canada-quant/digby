@@ -15,7 +15,8 @@
  * a duplicate send.
  */
 import prisma from '../../../config/database';
-import { PLATFORM_READ_TOOLS } from '../platform/platform-tool-names';
+import { PLATFORM_READ_TOOLS, PLATFORM_MUTATING_TOOLS } from '../platform/platform-tool-names';
+import { INTEGRATION_WRITE_TOOL_NAMES } from '../coding/integration-tool-schema';
 import { stripNoActionToolNote, insertNoActionToolNote, noActionToolNoteDisabled, endsInsideOpenFence, hasNoActionToolNote, NO_ACTION_TOOL_NOTE } from './no-action-note';
 import { parseFollowUps, stripAnswerMarkup } from '../langgraph/pipeline-utils';
 import { artifactAttributionDisabled, attributionClaimSentences, attributionMismatches, attributionOfReceiptIds, type AttributionMismatch, type TodoRowForCheck } from '../coding/artifact-attribution';
@@ -1224,6 +1225,14 @@ export interface UnbackedActionClaim {
   end: number;
   /** Which detector found it. */
   source: 'action' | 'freshness' | 'dispatch' | 'credential';
+  /**
+   * HR-1: an EARLIER attempt of this turn ran this write, and the claim's sentence
+   * names the same object but cites no id — the act is plausible and unproven, so
+   * the claim is still replaced, but by a TURN-AWARE line (what the tool log
+   * proves) instead of the false "nothing went out / nothing was changed".
+   * Absent ⇒ the ordinary honest line.
+   */
+  turnBacked?: string;
 }
 
 export function unbackedActionRetryDisabled(): boolean {
@@ -1404,14 +1413,157 @@ function inQuoteOrCode(t: string, s: number, at: number): boolean {
   return false;
 }
 
+// ── HR-1 (todo 76fd0cce): the WRITE ALLOW-LIST ───────────────────────────────
+// Backlog HR-1. Before this, "did this run change anything?" was answered by a
+// DENY-list — `!READ_TOOL_RE.test(name)` — which is wrong in the expensive
+// direction: `resolve_feedback` starts with `resolve_`, so READ_TOOL_RE called
+// the MUTATING ticket close a read, and a true "I've closed your ticket" was
+// rewritten to "I have not made that change yet". The mirror error was as bad:
+// a name the regex did not recognise (an unknown user-MCP tool) counted as a
+// write and backed a fabricated claim. Both come from judging by prefix.
+//
+// The rule here is an explicit ALLOW-list — a name backs a change claim only if
+// it is a known write:
+//   • PLATFORM_MUTATING_TOOLS (platform-tool-names.ts — includes resolve_feedback,
+//     store_secret, update_supervisor_state, every goal/todo/schedule write),
+//   • INTEGRATION_WRITE_TOOL_NAMES (Google + the #26 connector writes),
+//   • the document / browser / council / image writes the finalize's replay set
+//     already calls side effects (tool-call-leak.ts REPLAY_UNSAFE_TOOLS beyond
+//     the two lists above),
+//   • a user-MCP tool (`mcp_<server>_<tool>`) whose OWN verb tail is not a read
+//     verb — the registry's readOnly flag is DB-backed and unavailable here, so
+//     the tail is the only static signal; `mcp_notion_search` stays a READ.
+// Everything else — an unknown platform name, update_plan, a bare read, a name
+// no module declares — backs NOTHING (fail-safe: the claim is rewritten exactly
+// as before rather than exonerated by a name nobody recognises).
+const EXTRA_WRITE_TOOLS: ReadonlySet<string> = new Set([
+  'create_document', 'update_document', 'fill_pdf_form',
+  'browser_task', 'computer_task', 'generate_image', 'dispatch_colleagues',
+]);
+const PLATFORM_MUTATING_SET: ReadonlySet<string> = new Set(PLATFORM_MUTATING_TOOLS);
+/** The verb tail of a user-MCP tool name that means "this is a READ". The server slug and the
+ *  tool name may BOTH carry underscores, so the read verb is looked for as a whole `_`-delimited
+ *  SEGMENT of the tool portion — the backlog's round-5 `mcp_<slug>_list_issues` shape has its
+ *  verb mid-name, and a plain tail check called it a write. */
+const MCP_READ_SEGMENT_RE = /_(?:list|get|search|read|fetch|find|query|describe|inspect|status|preview|count|lookup)(?:_|$)/i;
+
+/** True when `name` is a KNOWN WRITE tool — the allow-list above. Pure; exported for tests. */
+export function isWriteToolName(name: string | null | undefined): boolean {
+  const n = String(name ?? '');
+  if (!n) return false;
+  if (EXTRA_WRITE_TOOLS.has(n) || PLATFORM_MUTATING_SET.has(n) || INTEGRATION_WRITE_TOOL_NAMES.has(n)) return true;
+  if (n.startsWith('mcp_')) return !MCP_READ_SEGMENT_RE.test(n);
+  return false; // unknown names back nothing
+}
+
+/** Kill switch (one, release): SUPERVISOR_UNBACKED_TURN_BACKING_DISABLED=1 restores the pre-HR-1
+ *  behaviour byte-for-byte — the deny-list `!READ_TOOL_RE` change backing and no turn backing. */
+export function unbackedTurnBackingDisabled(): boolean {
+  return process.env.SUPERVISOR_UNBACKED_TURN_BACKING_DISABLED === '1';
+}
+
 /** Which claim classes this run's tool calls back. Pure; exported for tests. */
 export function backedClaimClasses(parts: Array<{ type?: string; name?: string }> | undefined): { any: boolean; send: boolean; change: boolean } {
   const calls = (parts ?? []).filter((p) => p?.type === 'tool_call').map((p) => String(p?.name ?? ''));
   return {
     any: calls.length > 0,
     send: calls.some((n) => SEND_CLAIM_TOOLS.has(n)),
-    change: calls.some((n) => !!n && !READ_TOOL_RE.test(n)),
+    // HR-1: a known WRITE backs a change claim — never "anything the read regex does not match".
+    change: calls.some((n) => (unbackedTurnBackingDisabled() ? !!n && !READ_TOOL_RE.test(n) : isWriteToolName(n))),
   };
+}
+
+// ── HR-1: backing a claim by ANOTHER attempt of the same turn ────────────────
+// The chat seam re-runs the whole orchestration (empty / leak / unbacked retries,
+// seat fallback). The delivered answer is judged on ITS OWN parts — rounds 3–6 of
+// PR #1878 established that class-level backing from every earlier attempt is a
+// hole: a mid-name connector read (gmail_get_message, mcp_<slug>_list_issues)
+// counted as a write, and an earlier `update_supervisor_state` exonerated an
+// unrelated "I've paused the AGX schedule".
+//
+// So backing is granted PER CLAIM, never per class, and only when the claim's own
+// sentence names the object that write acted on:
+//   STRONG — a topic match AND every id the sentence cites appears in that write's
+//            own args. The claim really describes that act ⇒ drop it (no rewrite).
+//   WEAK   — a topic match with no id cited. The act is plausible but unproven, so
+//            the claim is still replaced — by a TURN-AWARE honest line that says
+//            what the tool log proves ("an earlier attempt of this turn ran X")
+//            instead of the false "nothing went out / nothing was changed".
+//   NONE   — no topic match, or ids that the write never saw. Rewritten as today.
+// A write whose object this map does not name backs nothing (fail-safe).
+const WRITE_ACT_TOPICS: Readonly<Record<string, readonly RegExp[]>> = {
+  update_supervisor_state: [/\bsupervisor (?:state|ledger|doc|note|file)\b/i, /\bstate (?:doc|ledger|file)\b/i, /\bledger\b/i],
+  resolve_feedback: [/\bticket\b/i, /\bfeedback\b/i],
+  update_feedback: [/\bticket\b/i, /\bfeedback\b/i],
+  triage_ticket: [/\bticket\b/i],
+  file_feedback: [/\bticket\b/i, /\bfeedback\b/i],
+  goal_update: [/\bgoal\b/i],
+  goal_create: [/\bgoal\b/i],
+  goal_premise_set: [/\bpremise\b/i],
+  todo_update: [/\btodo\b/i],
+  todo_create: [/\btodo\b/i],
+  schedule_message: [/\bschedule\b/i, /\bwatch\b/i, /\bcadence\b/i],
+  update_schedule: [/\bschedule\b/i, /\bwatch\b/i, /\bcadence\b/i],
+  cancel_schedule: [/\bschedule\b/i, /\bwatch\b/i, /\bcadence\b/i],
+  flag_owner_question: [/\bquestion\b/i, /\bcard\b/i, /\bowner card\b/i],
+  dismiss_owner_question: [/\bquestion\b/i, /\bcard\b/i],
+  store_secret: [/\bsecret\b/i, /\bcredential\b/i, /\bkey\b/i],
+  send_chat_message: [/\b(?:messaged|sent|steered|relayed|pinged|nudged|notified|posted|queued)\b/i],
+  send_to_instance: [/\b(?:messaged|sent|pushed|instance|edge)\b/i],
+  notify_user: [/\b(?:notified|pinged|telegram)\b/i],
+};
+
+/** 'strong' | 'weak' | 'none' — see the block comment above. Pure; exported for tests. */
+export type TurnBacking = 'none' | 'weak' | 'strong';
+
+/**
+ * The tool calls of EVERY attempt of the turn minus the delivered attempt's own —
+ * the "some other attempt acted" ledger. Counted, not set-compared: a retry may
+ * repeat the same call, and only the surplus is another attempt's act.
+ */
+export function priorAttemptToolCalls(
+  turnParts: ReadonlyArray<{ type?: string; name?: string; args?: unknown }> | undefined,
+  deliveredParts: ReadonlyArray<{ type?: string; name?: string; args?: unknown }> | undefined,
+): Array<{ name: string; args: unknown }> {
+  const key = (p: { name?: string; args?: unknown }) => `${String(p?.name ?? '')}\u0000${JSON.stringify(p?.args ?? null)}`;
+  const remaining = new Map<string, number>();
+  for (const p of deliveredParts ?? []) if (p?.type === 'tool_call') remaining.set(key(p), (remaining.get(key(p)) ?? 0) + 1);
+  const out: Array<{ name: string; args: unknown }> = [];
+  for (const p of turnParts ?? []) {
+    if (p?.type !== 'tool_call') continue;
+    const k = key(p);
+    const n = remaining.get(k) ?? 0;
+    if (n > 0) { remaining.set(k, n - 1); continue; }
+    out.push({ name: String(p?.name ?? ''), args: p?.args });
+  }
+  return out;
+}
+
+/**
+ * How (if at all) an EARLIER attempt of this turn backs one claim sentence.
+ * `sentence` is the claim's own sentence from the delivered text; `call` is a
+ * prior attempt's tool call. Pure; exported for tests.
+ */
+export function turnBackingForClaim(sentence: string, call: { name: string; args: unknown }, opts: { disabled?: boolean } = {}): TurnBacking {
+  if (opts.disabled ?? unbackedTurnBackingDisabled()) return 'none';
+  if (!isWriteToolName(call.name)) return 'none';
+  const topics = WRITE_ACT_TOPICS[call.name];
+  if (!topics || !topics.some((re) => re.test(sentence))) return 'none';
+  const ids = [...new Set([...sentence.matchAll(HEX8_RE)].map((m) => String(m[1]).toLowerCase()))];
+  if (!ids.length) return 'weak';
+  const seen = JSON.stringify(call.args ?? null).toLowerCase();
+  return ids.every((id) => seen.includes(id)) ? 'strong' : 'none';
+}
+
+/** The best backing any other attempt of the turn gives this claim sentence. */
+export function bestTurnBacking(sentence: string, priorCalls: ReadonlyArray<{ name: string; args: unknown }> | undefined, opts: { disabled?: boolean } = {}): { backing: TurnBacking; tool?: string } {
+  let weakTool: string | undefined;
+  for (const call of priorCalls ?? []) {
+    const b = turnBackingForClaim(sentence, call, opts);
+    if (b === 'strong') return { backing: 'strong', tool: call.name };
+    if (b === 'weak') weakTool = call.name;
+  }
+  return weakTool ? { backing: 'weak', tool: weakTool } : { backing: 'none' };
 }
 
 /**
@@ -1521,7 +1673,18 @@ export async function filterHonestReferences(chatId: string, text: string, claim
  * A claim whose sentence cites a REAL receipt of this chat is an honest
  * reference to an earlier send — never rewritten.
  */
-export async function residualUnbackedClaims(chatId: string, text: string, parts: Array<{ type?: string; name?: string }> | undefined): Promise<UnbackedActionClaim[]> {
+export async function residualUnbackedClaims(
+  chatId: string,
+  text: string,
+  parts: Array<{ type?: string; name?: string }> | undefined,
+  /**
+   * HR-1: EVERY attempt of the turn (delivered + superseded), when the caller has
+   * it. Only used to say what the turn's own tool log proves for a claim the
+   * delivered attempt cannot back — never to drop a claim except on a STRONG
+   * match (a topic match whose cited ids the earlier write's args carry).
+   */
+  opts?: { turnParts?: ReadonlyArray<{ type?: string; name?: string; args?: unknown }> },
+): Promise<UnbackedActionClaim[]> {
   const claims: UnbackedActionClaim[] = [
     ...(unbackedActionRetryDisabled() ? [] : unbackedActionClaims(text, parts)),
     ...(unbackedFreshnessRetryDisabled() ? [] : unbackedFreshnessSpans(text, parts)),
@@ -1539,7 +1702,19 @@ export async function residualUnbackedClaims(chatId: string, text: string, parts
   const toolNounIds = toolNounCitedIds(text, parts);
   if (toolNounIds?.length) claims.push(...inventedReceiptSpans(text, await inventedReceiptIds(chatId, toolNounIds)));
   if (!claims.length) return [];
-  return filterHonestReferences(chatId, text, claims);
+  const honest = await filterHonestReferences(chatId, text, claims);
+  // HR-1: what the REST of the turn proves. Never widens backing by class — only
+  // a claim whose own sentence names the same object does anything here, and only
+  // a STRONG match (the sentence's ids ride the earlier write's args) drops it.
+  const priorCalls = unbackedTurnBackingDisabled() ? [] : priorAttemptToolCalls(opts?.turnParts, parts);
+  if (!priorCalls.length) return honest;
+  const out: UnbackedActionClaim[] = [];
+  for (const c of honest) {
+    const backing = bestTurnBacking(text.slice(c.start, c.end), priorCalls);
+    if (backing.backing === 'strong') continue;
+    out.push(backing.backing === 'weak' ? { ...c, turnBacked: backing.tool } : c);
+  }
+  return out;
 }
 
 /** The harness note the action re-run carries (rides the final user turn). */
@@ -1681,26 +1856,45 @@ export function rewriteUnbackedClaims(text: string, claims: UnbackedActionClaim[
     effClaims = [...outside, { cls: bestCls, phrase: inBlock[0].phrase, start: blockSpan[0], end: blockSpan[1], source: 'action' }];
   }
   const rank: Record<UnbackedClaimClass, number> = { send: 3, change: 2, read: 1 };
-  const merged: Array<{ start: number; end: number; cls: UnbackedClaimClass }> = [];
+  const merged: Array<{ start: number; end: number; cls: UnbackedClaimClass; turnBacked?: string }> = [];
   for (const c of [...effClaims].sort((a, b) => a.start - b.start)) {
     const last = merged[merged.length - 1];
     if (last && c.start < last.end) {
       last.end = Math.max(last.end, c.end);
       if (rank[c.cls] > rank[last.cls]) last.cls = c.cls;
-    } else merged.push({ start: c.start, end: c.end, cls: c.cls });
+      if (c.turnBacked) last.turnBacked = c.turnBacked;
+    } else merged.push({ start: c.start, end: c.end, cls: c.cls, turnBacked: c.turnBacked });
   }
   let out = '';
   let cursor = 0;
   let lastLine = '';
   for (const m of merged) {
     const gap = t.slice(cursor, m.start);
-    const line = HONEST_CLAIM_LINES[m.cls];
+    // HR-1: when ANOTHER attempt of this turn ran a write on the same object, the
+    // false "nothing went out / nothing was changed in this answer" is replaced by
+    // what the tool log actually proves.
+    const line = m.turnBacked ? turnBackedClaimLine(m.cls, m.turnBacked) : HONEST_CLAIM_LINES[m.cls];
     out += line === lastLine && !gap.trim() ? '' : gap + line;
     lastLine = line;
     cursor = m.end;
   }
   out += t.slice(cursor);
   return out.replace(/[ \t]{2,}/g, ' ');
+}
+
+/**
+ * HR-1: the honest line for a claim the DELIVERED answer cannot back but an
+ * EARLIER attempt of the same turn ran a matching write for. It never claims the
+ * act landed in this answer and never says nothing happened — it names the tool
+ * whose receipt the turn owns, and points at the evidence.
+ */
+export function turnBackedClaimLine(cls: UnbackedClaimClass, tool: string): string {
+  const what = cls === 'send'
+    ? 'That message went out from an earlier attempt of this turn, not this answer'
+    : cls === 'read'
+      ? 'That read ran in an earlier attempt of this turn, not this answer'
+      : 'That change was made by an earlier attempt of this turn, not this answer';
+  return `${what} — the \`${tool}\` call is in the turn's tool log.`;
 }
 
 const rank3 = (cls: UnbackedClaimClass): number => (cls === 'send' ? 3 : cls === 'change' ? 2 : 1);

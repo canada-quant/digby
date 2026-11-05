@@ -141,7 +141,7 @@ describe('replay 7177bb71 — consolidated from claims-block.7177bb71.test.ts', 
   ];
   const INCIDENT_PATH = 'scripts/framework-audit/probe-022eb482-e.js';
   const prReceipt = (files: string[] = INCIDENT_FILES, ok = true) =>
-    receipt('open_pull_request', ok, { prNumber: 1433, url: 'https://github.com/canada-quant/digby/pull/1433', files, fileCount: files.length, additions: 490, deletions: 0 });
+    receipt('open_pull_request', ok, { prNumber: 1433, url: 'https://github.com/example-org/crossmodel/pull/1433', files, fileCount: files.length, additions: 490, deletions: 0 });
 
   describe('7177bb71 replay — the raw-shell-commit shape (incident chat 7d269dc5 / run d4e48d87)', () => {
     it('a file_change path claim whose path is in the PR receipt files[] VERIFIES (no git_commit receipts needed)', () => {

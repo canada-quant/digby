@@ -8,7 +8,7 @@
  * What it walks: every `isProjectSupervisor` chat — INCLUDING lanes whose
  * project is PAUSED (projectSupervisorEnabled=false, which ensure returns
  * early on) — and every `isSupervisor` (fleet) chat, optionally for one owner.
- * Stored stock sweep bodies (CodingSchedule.prompt opening with a stock
+ * Stored stock sweep bodies (ChatSchedule.prompt opening with a stock
  * opener) are rewritten to the current generic builders too, so no firing
  * carries the incident-laden step text after the wave.
  *
@@ -84,7 +84,7 @@ export async function migrateSupervisorPrompts(opts: MigrateOpts = {}): Promise<
     }
 
     if (opts.sweeps !== false) {
-      const sweeps = await prisma.codingSchedule.findMany({
+      const sweeps = await prisma.chatSchedule.findMany({
         where: {
           kind: 'recurring',
           OR: [{ prompt: { startsWith: SWEEP_PROMPT_OPENER } }, { prompt: { startsWith: PROJECT_SWEEP_PROMPT_OPENER } }],
@@ -104,7 +104,7 @@ export async function migrateSupervisorPrompts(opts: MigrateOpts = {}): Promise<
         }
         if (!current || current === s.prompt) { outcomes.push({ chatId: chat.id, kind: 'sweep', outcome: current ? 'current' : 'not-stock' }); continue; }
         if (opts.dryRun) { outcomes.push({ chatId: chat.id, kind: 'sweep', outcome: 'would-rewrite', detail: `${String(s.prompt).length} → ${current.length} chars` }); continue; }
-        await prisma.codingSchedule.update({ where: { id: s.id }, data: { prompt: current, promptSetBy: 'system' } as any }).catch((err: any) => logger.warn(`prompt-migrate: sweep rewrite failed ${String(s.id).slice(0, 8)}: ${err?.message}`));
+        await prisma.chatSchedule.update({ where: { id: s.id }, data: { prompt: current, promptSetBy: 'system' } as any }).catch((err: any) => logger.warn(`prompt-migrate: sweep rewrite failed ${String(s.id).slice(0, 8)}: ${err?.message}`));
         rewritten++;
         outcomes.push({ chatId: chat.id, kind: 'sweep', outcome: 'rewritten' });
       }

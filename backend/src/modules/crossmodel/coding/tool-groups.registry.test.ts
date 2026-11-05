@@ -120,14 +120,14 @@ jest.mock('./verify-state', () => ({ __esModule: true, recordVerify: jest.fn(asy
 const REGISTRY: Record<string, any> = {
   // The owner's screen: a Kimi K3 behind the api-optimize LiteLLM proxy — NO cap anywhere.
   'api-optimize:api-optimize-moonshot-kimi-k3': {
-    url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1',
+    url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1',
     apiKey: 'sk-cql', model: 'api-optimize-moonshot-kimi-k3', label: 'api-optimize',
     coding: true, chatCapable: true, kind: 'chat', thinkingOff: false, supportsVision: false,
     providerClass: 'moonshot', maxToolsSource: 'none', reasoningEffort: 'auto',
   },
   // The incident seat: the OpenAI class's DOCUMENTED 128 on the registry entry.
   'cql-litellm:api-openai-gpt-6-astra': {
-    url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1',
+    url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1',
     apiKey: 'sk-cql', model: 'api-openai-gpt-6-astra', label: 'cql-litellm',
     coding: true, chatCapable: true, kind: 'chat', thinkingOff: false, supportsVision: false,
     providerClass: 'openai', maxTools: 128, maxToolsSource: 'class', reasoningEffort: 'auto',

@@ -41,12 +41,12 @@ const attempt = (evidence: any) => verifyMachineCloseEvidence({ ticketId: TICKET
 
 describe('ticket 36b8c979 — the close gate validates + records the liveness probe', () => {
   it('THE 4e818bb9 CLOSE: commitSha + repo + probe audits `live-probe` into the note', async () => {
-    const v = await attempt({ commitSha: SHA, repo: 'canada-quant/example-repo', livenessProbe: PROBE });
+    const v = await attempt({ commitSha: SHA, repo: 'example-org/optcg', livenessProbe: PROBE });
     expect(v.ok).toBe(true);
     if (!v.ok) return;
     expect(v.verified).toContain('commitSha');
     expect(v.auditNote).toContain(`commit ${SHA} (format-verified`);
-    expect(v.auditNote).toContain('repo canada-quant/example-repo');
+    expect(v.auditNote).toContain('repo example-org/optcg');
     expect(v.auditNote).toContain('live-probe https://deckpose.com/ (expects "Save to My Decks|Copy decklist")');
   });
 
@@ -89,7 +89,7 @@ describe('ticket 36b8c979 — the close gate validates + records the liveness pr
   });
 
   it('a probe + prUrl (no commitSha/replayTestPath) still refuses — the bar never loosens', async () => {
-    const v = await attempt({ prUrl: 'https://github.com/canada-quant/example-repo/pull/184', livenessProbe: PROBE });
+    const v = await attempt({ prUrl: 'https://github.com/example-org/optcg/pull/184', livenessProbe: PROBE });
     expect(v).toMatchObject({ ok: false, reason: 'unverifiable_evidence' });
   });
 

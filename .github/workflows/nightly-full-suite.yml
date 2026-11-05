@@ -1,0 +1,109 @@
+# Nightly FULL backend suite (ticket d6f96c89, owner directive 2026-10-16
+# msg 0cd83ba8): PRs run related-only tests (--findRelatedTests, fail-closed
+# scoping) with typecheck+lint as the fast gate — the FULL suite runs HERE,
+# on a schedule, not on every PR.
+#
+# WHY THIS EXISTS: scoping the per-PR suite moves the "every test, every
+# night" guarantee off the PR path. A latent break on main that no open PR's
+# related set covers would otherwise surface as a SILENT gap — the deploy
+# gate reuses CI green on the merge commit, so the nightly is main's own
+# safety net (a red night files an issue via
+# scripts/deploy/ci-nightly-failure-file.sh; the deploy gate independently
+# refuses red main).
+#
+# Runs the SAME 4-way shard split as ci.yml's push path (stable path-hash
+# assignment — the four shards together are exactly the full suite minus the
+# 4 nightly-only integration/e2e suites, which run in
+# integration-e2e-nightly.yml at 07:43 UTC — offset so the two nightlies
+# never collide; combined with the shards' per-shard jest cache, a green
+# night stays cheap).
+#
+# Kill switch: repository variable FULL_SUITE_NIGHTLY_DISABLED=1 (or disable
+# the workflow). Drift guard: scripts/deploy/ci-scoping.test.sh.
+name: Nightly full backend suite
+
+on:
+  schedule:
+    # 08:07 UTC — 24 min after the integration/e2e nightlies (07:43), before
+    # the trajectory evals (09:41) and the nightly query suite (10:17), so a
+    # red full suite is seen in the morning queue.
+    - cron: '7 8 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nightly-full-suite
+  cancel-in-progress: false
+
+jobs:
+  full-suite:
+    name: Full backend suite (shard ${{ matrix.shard }}/4)
+    if: ${{ vars.FULL_SUITE_NIGHTLY_DISABLED != '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false   # every shard reports its own red
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      # Per-shard jest transform cache — same key shape as ci.yml's backend
+      # job (a shard's file set barely moves between runs, so the cache hits
+      # night after night).
+      - name: Restore jest shard cache
+        uses: actions/cache@v4
+        with:
+          path: backend/.jest-tmp/jest-cache
+          key: jest-shard-${{ matrix.shard }}-${{ runner.os }}-${{ hashFiles('backend/package-lock.json', 'backend/jest.config.js') }}
+          restore-keys: |
+            jest-shard-${{ matrix.shard }}-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma@7 generate
+
+      # The FULL suite, the EXACT ci.yml push-path command (ignore list and
+      # shard split pinned by scripts/deploy/ci-scoping.test.sh). Env-less:
+      # every suite mocks config like the rest.
+      - name: Run tests (jest — full suite, shard ${{ matrix.shard }}/4)
+        run: npx jest --maxWorkers=2 --testPathIgnorePatterns '/node_modules/' '/src/relay/relay.integration.test.ts$' '/src/modules/crossmodel/cohesive.e2e.test.ts$' '/src/modules/crossmodel/integrations/moonshot.integration.test.ts$' '/src/modules/crossmodel/platform/fleet-supervisor.e2e.test.ts$' --shard=${{ matrix.shard }}/4
+
+  # Failure filing — see scripts/deploy/ci-nightly-failure-file.sh. Runs
+  # when ANY shard failed. Best-effort (exit 0 on its own failure): the
+  # red run is already the loud signal; this adds the durable issue.
+  file-failure:
+    name: File an issue on a red night
+    needs: full-suite
+    if: ${{ failure() && vars.FULL_SUITE_NIGHTLY_DISABLED != '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code (filing script)
+        uses: actions/checkout@v4
+      - name: File the nightly failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        # No DATE env: github.event.schedule would put the CRON STRING here,
+        # not a date (adversarial review d6f96c89, finding 2). The filer
+        # defaults DATE to today's UTC date ($(date -u +%Y-%m-%d)) — which is
+        # also per-night idempotent under the exact-title dedup.
+        run: bash scripts/deploy/ci-nightly-failure-file.sh

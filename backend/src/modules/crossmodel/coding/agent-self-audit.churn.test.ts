@@ -200,7 +200,7 @@ const okReceipt = (over: Partial<ToolReceipt>): ToolReceipt => ({
 
 /** The tt-rd shape: real steps + the lane's OWN trailing self-audit step, all completed. */
 const ttrdPlan = (auditText: string) => ({
-  goal: 'QB2 speed mission — bisect the phantom token in the async patch',
+  goal: 'node-a speed mission — bisect the phantom token in the async patch',
   acceptanceCriteria: ['probe_speed.py client-visible tok/s recorded'],
   steps: [
     { id: 1, text: 'Edit src/speed/sched.py (L-HT1zd)', status: 'completed' },

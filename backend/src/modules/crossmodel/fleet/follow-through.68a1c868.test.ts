@@ -5,8 +5,8 @@
  *
  * THE INCIDENT (timestamps verbatim from the ticket): at 2026-10-24T07:57:23Z
  * the [FOLLOW-THROUGH] auto-filer filed owner question oq_2cc4131f against
- * the ctrl.example.com project supervisor (chat 99e63f86). The trigger was the
- * supervisor's own 06:16Z note — "Nothing in ctrl.example.com is waiting on the
+ * the ctrl.cql.ca project supervisor (chat 99e63f86). The trigger was the
+ * supervisor's own 06:16Z note — "Nothing in ctrl.cql.ca is waiting on the
  * owner." — a NEGATION, the desired steady state. The auto-filed notice (msg
  * 171f709f on that chat) even acknowledged no owner question was open, then
  * filed a card anyway. Dismissed by the Fleet Supervisor as noise.
@@ -14,7 +14,7 @@
  * ROOT CAUSE: the sentence matched GATING_RE's "is waiting on (the owner)"
  * arm, but BOTH negation windows (NEGATED_FRAME_RE's {0,3} and
  * NOTHING_CLASS_FRAME_RE's {0,5}) use the dot-EXCLUDING gap-word class
- * `[^.;:,\n \t]+` — a dotted identifier ("ctrl.example.com") cannot be consumed
+ * `[^.;:,\n \t]+` — a dotted identifier ("ctrl.cql.ca") cannot be consumed
  * as a gap word, so the "Nothing" marker's scope died before reaching the
  * frame, and the negative status report read as an affirmative owner-wait
  * claim. (The ticket also quotes msg c808a47d "Nothing needs the owner."
@@ -23,7 +23,7 @@
  *
  * THE FIX: the negation windows' gap-word class is now compositional —
  * a dot-free head plus any number of ".lower-or-digit" identifier tails
- * (NEG_GAP_WORD_RE_SOURCE) — so "Nothing in ctrl.example.com is waiting on the
+ * (NEG_GAP_WORD_RE_SOURCE) — so "Nothing in ctrl.cql.ca is waiting on the
  * owner." suppresses like its undotted sibling "Nothing in the project is
  * waiting on the owner.", while every sentence-terminator behavior is kept:
  * a dot followed by whitespace or a CAPITALIZED token still breaks the
@@ -61,16 +61,16 @@ jest.mock('../platform/loop-metrics.service', () => ({ __esModule: true, recordL
 import { mineUnfiledDecisionClaims, sweepFollowThrough } from './follow-through.service';
 
 const NOW = new Date('2026-10-24T08:30:00Z');
-const SUP = '99e63f86-0000-4000-8000-000000000000'; // the ctrl.example.com project supervisor chat shape
+const SUP = '99e63f86-0000-4000-8000-000000000000'; // the ctrl.cql.ca project supervisor chat shape
 const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60000);
 
 /** The exact sentence that auto-filed oq_2cc4131f (note at 2026-10-24T06:16Z). */
-const INCIDENT = 'Nothing in ctrl.example.com is waiting on the owner.';
+const INCIDENT = 'Nothing in ctrl.cql.ca is waiting on the owner.';
 /** The other supervisor note the ticket quotes (never matches GATING_RE; pinned
  *  so a future widening of the frame cannot regress it). */
 const SIBLING = 'Nothing needs the owner.';
 
-const supRow = { id: SUP, userId: 'u1', title: 'ctrl.example.com Supervisor', projectId: 'p-ctrl', isSupervisor: false, isProjectSupervisor: true };
+const supRow = { id: SUP, userId: 'u1', title: 'ctrl.cql.ca Supervisor', projectId: 'p-ctrl', isSupervisor: false, isProjectSupervisor: true };
 const note = (content: string, createdAt: Date, id = 'note-68a1c868') => ({
   id, content, createdAt, metadata: { origin: 'schedule' },
 });
@@ -86,8 +86,8 @@ describe('replay 68a1c868 — miner level', () => {
   it('dotted-identifier negative reports across the guard window suppress (the 68a1c868 class)', () => {
     expect(mineUnfiledDecisionClaims('Nothing in i-020850b4.prod.aws is waiting on the owner.')).toEqual([]);
     expect(mineUnfiledDecisionClaims('Nothing in project.paul-2.config.json waits on the owner.')).toEqual([]);
-    expect(mineUnfiledDecisionClaims('Nothing about digby.example.com v0.8.2 is owner-gated.')).toEqual([]);
-    expect(mineUnfiledDecisionClaims('No lane in cluster.example.com is owner-gated.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('Nothing about digby.ai v0.8.2 is owner-gated.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('No lane in cluster.cql.ca is owner-gated.')).toEqual([]);
   });
 
   it('DETECTOR-RECALL REPLAY — the affirmative owner-wait claims the detector exists for STILL mine', () => {
@@ -97,8 +97,8 @@ describe('replay 68a1c868 — miner level', () => {
     expect(mineUnfiledDecisionClaims('The seat swap remains blocked on the owner.')).toEqual([
       'The seat swap remains blocked on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('The deploy of digby.example.com waits on the owner.')).toEqual([
-      'The deploy of digby.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('The deploy of digby.ai waits on the owner.')).toEqual([
+      'The deploy of digby.ai waits on the owner.',
     ]);
   });
 
@@ -160,7 +160,7 @@ describe('replay 68a1c868 — miner level', () => {
 
   it('mixed note: a dotted no-op status line next to an affirmative claim still auto-files only the claim', () => {
     const claims = mineUnfiledDecisionClaims(
-      'Nothing in ctrl.example.com is waiting on the owner. Publishing v0.8.2 is owner-gated on Gates 1–3.',
+      'Nothing in ctrl.cql.ca is waiting on the owner. Publishing v0.8.2 is owner-gated on Gates 1–3.',
     );
     expect(claims).toEqual(['Publishing v0.8.2 is owner-gated on Gates 1–3.']);
   });
@@ -169,35 +169,35 @@ describe('replay 68a1c868 — miner level', () => {
     // D1 — dot tolerance had made "connective + dotted identifier" consumable as two
     // plain gap words, so the affirmative exception idiom suppressed where parent mined:
     // the generic {0,3} window now guards a DOTTED word with a connective lookbehind
-    // (the exception names the thing that DOES wait — "Nothing but deploy.example.com waits…"
-    // = ONLY deploy.example.com waits, an affirmative owner-wait claim that must file).
-    expect(mineUnfiledDecisionClaims('Nothing but deploy.example.com waits on the owner.')).toEqual([
-      'Nothing but deploy.example.com waits on the owner.',
+    // (the exception names the thing that DOES wait — "Nothing but deploy.cql.ca waits…"
+    // = ONLY deploy.cql.ca waits, an affirmative owner-wait claim that must file).
+    expect(mineUnfiledDecisionClaims('Nothing but deploy.cql.ca waits on the owner.')).toEqual([
+      'Nothing but deploy.cql.ca waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing except digby.example.com waits on the owner.')).toEqual([
-      'Nothing except digby.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing except digby.ai waits on the owner.')).toEqual([
+      'Nothing except digby.ai waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing other than box.example.com waits on the owner.')).toEqual([
-      'Nothing other than box.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing other than box.cql.ca waits on the owner.')).toEqual([
+      'Nothing other than box.cql.ca waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('No gate but deploy.example.com waits on the owner.')).toEqual([
-      'No gate but deploy.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('No gate but deploy.cql.ca waits on the owner.')).toEqual([
+      'No gate but deploy.cql.ca waits on the owner.',
     ]);
     // D2 — a STANDALONE dash is a clause boundary, not a gap word: the negation must not
     // reach across it and wrongly suppress a genuinely affirmative post-dash claim
     // (parent had absorbed the dash as a gap word — its own FN hole of this exact class).
-    expect(mineUnfiledDecisionClaims('Nothing in ctrl.example.com — the gate waits on the owner.')).toEqual([
-      'Nothing in ctrl.example.com — the gate waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing in ctrl.cql.ca — the gate waits on the owner.')).toEqual([
+      'Nothing in ctrl.cql.ca — the gate waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing in ctrl.example.com - the gate waits on the owner.')).toEqual([
-      'Nothing in ctrl.example.com - the gate waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing in ctrl.cql.ca - the gate waits on the owner.')).toEqual([
+      'Nothing in ctrl.cql.ca - the gate waits on the owner.',
     ]);
     // Emphatic appositive still negates (a trailing dash may END the window):
     expect(mineUnfiledDecisionClaims('Nothing — absolutely nothing — waits on the owner.')).toEqual([]);
     // Intra-token dash stays legal (one word): "Gates 1–3" does not break a negative report.
     expect(mineUnfiledDecisionClaims('Nothing on Gates 1–3 is waiting on the owner.')).toEqual([]);
     // The incident class is unchanged: a dotted negative status report still suppresses.
-    expect(mineUnfiledDecisionClaims('Nothing in ctrl.example.com today is waiting on the owner.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('Nothing in ctrl.cql.ca today is waiting on the owner.')).toEqual([]);
   });
 
   it('round-2 guard strength: the dotted-word guard must NOT re-suppress plain connective idioms or the ≤3-band pins', () => {
@@ -261,11 +261,11 @@ describe('replay 68a1c868 — miner level', () => {
     ]);
     // The exception idiom survives an ellipsis in the gap (the dotted branch's
     // lookbehind sees through one punct-only token):
-    expect(mineUnfiledDecisionClaims('Nothing but … deploy.example.com waits on the owner.')).toEqual([
-      'Nothing but … deploy.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing but … deploy.cql.ca waits on the owner.')).toEqual([
+      'Nothing but … deploy.cql.ca waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing other than … box.example.com waits on the owner.')).toEqual([
-      'Nothing other than … box.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing other than … box.cql.ca waits on the owner.')).toEqual([
+      'Nothing other than … box.cql.ca waits on the owner.',
     ]);
     // A glued (unspaced) dash aside is NOT an aside in this class: no space follows
     // the marker, so the word arm consumes the tokens and the negative report
@@ -280,12 +280,12 @@ describe('replay 68a1c868 — miner level', () => {
     // words with a per-word exception guard. The dash aside mirrors it VERBATIM:
     // a DOTTED identifier inside a dash aside is consumable (the negative report
     // suppresses — without this the merge would have re-opened the 68a1c868 FP)…
-    expect(mineUnfiledDecisionClaims('Nothing — per ctrl.example.com status — waits on the owner.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('Nothing — per ctrl.cql.ca status — waits on the owner.')).toEqual([]);
     expect(mineUnfiledDecisionClaims('Nothing — as of this sweep — waits on the owner.')).toEqual([]);
     // …while a MID-ASIDE exception preposition or contrastive connective MINES
     // (= ONLY the named thing waits — an affirmative claim; 11354cbe review F1).
-    expect(mineUnfiledDecisionClaims('Nothing — per ctrl.example.com except the publish gate — waits on the owner.')).toEqual([
-      'Nothing — per ctrl.example.com except the publish gate — waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing — per ctrl.cql.ca except the publish gate — waits on the owner.')).toEqual([
+      'Nothing — per ctrl.cql.ca except the publish gate — waits on the owner.',
     ]);
     expect(mineUnfiledDecisionClaims('Nothing — per the ledger except the publish gate — waits on the owner.')).toEqual([
       'Nothing — per the ledger except the publish gate — waits on the owner.',
@@ -339,7 +339,7 @@ describe('replay 68a1c868 — sweep level (no owner question is filed for the ne
   it('regression pin: an affirmative owner-gated claim in the same-shaped note STILL auto-files', async () => {
     seedCursor(6 * 3600_000);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
-      note('Nothing in ctrl.example.com is waiting on the owner. Publishing v0.8.2 is owner-gated on Gates 1–3.', minutesAgo(120)),
+      note('Nothing in ctrl.cql.ca is waiting on the owner. Publishing v0.8.2 is owner-gated on Gates 1–3.', minutesAgo(120)),
     ]);
     const out = await run();
     expect(out.autofiled).toBe(1);
@@ -416,20 +416,20 @@ describe('replay 68a1c868 — sweep level (no owner question is filed for the ne
     expect(mineUnfiledDecisionClaims('Nothing other than digi.ai waits on the owner.')).toEqual([
       'Nothing other than digi.ai waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing apart from ctrl.example.com waits on the owner.')).toEqual([
-      'Nothing apart from ctrl.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing apart from ctrl.cql.ca waits on the owner.')).toEqual([
+      'Nothing apart from ctrl.cql.ca waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing short of deploy.example.com waits on the owner.')).toEqual([
-      'Nothing short of deploy.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing short of deploy.cql.ca waits on the owner.')).toEqual([
+      'Nothing short of deploy.cql.ca waits on the owner.',
     ]);
-    expect(mineUnfiledDecisionClaims('Nothing exclusive of box.example.com waits on the owner.')).toEqual([
-      'Nothing exclusive of box.example.com waits on the owner.',
+    expect(mineUnfiledDecisionClaims('Nothing exclusive of box.cql.ca waits on the owner.')).toEqual([
+      'Nothing exclusive of box.cql.ca waits on the owner.',
     ]);
     // Guard strength — the negative-report classes this family fixed stay suppressed:
     // a dotted id after NO exception phrase is a negative report, not a claim.
-    expect(mineUnfiledDecisionClaims('Nothing re queue.example.com waits on the owner.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('Nothing re queue.cql.ca waits on the owner.')).toEqual([]);
     expect(mineUnfiledDecisionClaims('Nothing faster than digi.ai waits on the owner.')).toEqual([]);
-    expect(mineUnfiledDecisionClaims('Nothing from cluster.example.com waits on the owner.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('Nothing from cluster.cql.ca waits on the owner.')).toEqual([]);
     expect(mineUnfiledDecisionClaims('Nothing including digi.ai waits on the owner.')).toEqual([]);
     // Guard strength — the POST-VERB suffix arm still EXCLUDES "otherwise" (adverbial
     // reading; []-parity with main, pinned in follow-through.service.test.ts): this fix
@@ -445,8 +445,8 @@ describe('replay 68a1c868 — sweep level (no owner question is filed for the ne
     // cross-product mined a false positive in the 68a1c868 incident class. Pinned
     // suppressed (base parity): a negative status report through a non-idiomatic
     // preposition pair must never auto-file.
-    expect(mineUnfiledDecisionClaims('Nothing otherwise from ctrl.example.com is waiting on the owner.')).toEqual([]);
-    expect(mineUnfiledDecisionClaims('Nothing otherwise of ctrl.example.com is waiting on the owner.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('Nothing otherwise from ctrl.cql.ca is waiting on the owner.')).toEqual([]);
+    expect(mineUnfiledDecisionClaims('Nothing otherwise of ctrl.cql.ca is waiting on the owner.')).toEqual([]);
     // Benefit shapes the reviewer confirmed beyond dotted hostnames: version ids and
     // AWS box ids ride the same arm.
     expect(mineUnfiledDecisionClaims('Nothing otherwise than v0.8.2 waits on the owner.')).toEqual([

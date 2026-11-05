@@ -156,21 +156,21 @@ jest.mock('./loop-metrics.service', () => ({
 import { updateTodo } from './goals.service';
 
 // ── The incident's verbatim ids (goal ef33afb6, live todo_get reads 2026-10-16).
-const GOAL = 'ef33afb6-ab77-4077-a816-3e8ec54fb36e'; // Rebuild llm.example.com on Hyperstack rutherford-2
+const GOAL = 'ef33afb6-ab77-4077-a816-3e8ec54fb36e'; // Rebuild llm.cql.ca on Hyperstack rutherford-2
 const DNS_TODO = 'fe467ced-572a-49db-aff8-02dac35030c6'; // DNS cutover (in_progress at 21:51Z)
 const SWEEP_TODO = '06c26d0f-a77f-41dc-adcb-c3268309a2db'; // drop-in sweep (the done attempt — dependsOn VERIFY)
 const VERIFY = '10023020-f24b-4416-8aeb-e9072c70003a';    // "Verify cutover…" (blocked at 21:51Z)
 const VERIFY_TITLE =
-  'Verify cutover: /v1/models roster vs 50, census script, StAnne legs (mbp-2 utility 100.64.0.11:8095, asr, ' +
-  'edge image 100.64.0.12), self-hosted tailnet legs (box-a 100.64.0.13:8091, box-b 100.64.0.14:8000, ' +
-  'GLM nodes), E2E completion through https://llm.example.com';
+  'Verify cutover: /v1/models roster vs 50, census script, StAnne legs (mbp-2 utility 100.64.0.1:8095, asr, ' +
+  'accelerator image 100.64.0.1), self-hosted tailnet legs (node-a 100.64.0.1:8091, node-b 100.64.0.1:8000, GLM ' +
+  'heads), E2E completion through https://llm.cql.ca';
 
 const todoRow = (over: any = {}) => ({
   id: DNS_TODO,
   userId: OWNER,
   goalId: GOAL,
   projectId: PROJECT_ID,
-  title: 'DNS cutover llm.example.com → rutherford-2 via Cloudflare',
+  title: 'DNS cutover llm.cql.ca → rutherford-2 via Cloudflare',
   status: 'in_progress',
   blockedReason: null,
   blockKind: null,
@@ -236,7 +236,7 @@ describe('62f14ea6 — refusal 2 (receipt aa12af7d): the done-gate on a todo who
 
     await expect(updateTodo({
       userId: OWNER, todoId: SWEEP_TODO, status: 'done',
-      evidence: 'Fresh-host verification this run (SSH deploy@203.0.113.10): no KNOWN_DOWN overrides in any systemd drop-in.',
+      evidence: 'Fresh-host verification this run (SSH deploy@69.19.140.37): no KNOWN_DOWN overrides in any systemd drop-in.',
     })).rejects.toThrow(
       `Todo cannot be marked done: waiting on 1 todo(s) not done: "${VERIFY_TITLE}" (blocked). Pass force: true to override.`,
     );
@@ -265,7 +265,7 @@ describe('62f14ea6 — refusal 2 (receipt aa12af7d): the done-gate on a todo who
     // real done-gate, with EVERY dep row present so the gate sees them:
     db.todos.push(todoRow({ id: SWEEP_TODO, title: 'sweep', status: 'in_progress' }));
     db.todos.push(todoRow({ id: VERIFY, title: VERIFY_TITLE, status: 'in_progress' }));
-    db.todos.push(todoRow({ id: DNS_TODO, title: 'DNS cutover llm.example.com', status: 'in_progress' }));
+    db.todos.push(todoRow({ id: DNS_TODO, title: 'DNS cutover llm.cql.ca', status: 'in_progress' }));
     const MINT = 'ed2fd190-9846-42c6-a938-d7ccefcab5ed';
     db.todos.push(todoRow({ id: MINT, title: 'Mint per-client virtual keys', status: 'done' }));
     db.todoDeps.push({ todoId: VERIFY, dependsOnTodoId: DNS_TODO });
@@ -275,7 +275,7 @@ describe('62f14ea6 — refusal 2 (receipt aa12af7d): the done-gate on a todo who
     // With DNS still OPEN (in_progress — NOT in TODO_DONE_ISH), VERIFY's close
     // is refused by the real gate naming DNS: the 21:51Z refusal class.
     await expect(updateTodo({ userId: OWNER, todoId: VERIFY, status: 'done', evidence: 'premature' }))
-      .rejects.toThrow(`Todo cannot be marked done: waiting on 1 todo(s) not done: "DNS cutover llm.example.com" (in_progress). Pass force: true to override.`);
+      .rejects.toThrow(`Todo cannot be marked done: waiting on 1 todo(s) not done: "DNS cutover llm.cql.ca" (in_progress). Pass force: true to override.`);
 
     // DNS lands (the 22:03Z close)…
     const dns = await updateTodo({ userId: OWNER, todoId: DNS_TODO, status: 'done', evidence: 'A record created, edge verified 200' });

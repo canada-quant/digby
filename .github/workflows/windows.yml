@@ -1,0 +1,309 @@
+name: Windows
+
+# Windows client pipeline (roadmap §2.10 W2 — ship shape). Two halves:
+#
+#  1. windows-agent tests — the agent's pure layers (keymap, typing planner,
+#     DPI math, cdp-attach predicates, dispatch contracts) are DESIGNED to run
+#     on Linux (W0 decision: no os-gate in its package.json, .mjs node:test
+#     importing dist/*.js), so this job runs on ubuntu-latest and closes the
+#     W1 review gap (49 tests that ran nowhere in CI). The Win32 FFI seam is
+#     null-implemented off-Windows — koffi is lazily required inside a win32
+#     factory only (pinned by tests).
+#
+#  2. windows build — the C# WebView2 shell (windows-shell/, roadmap §2.8)
+#     built self-contained on windows-latest + the NSIS per-user installer
+#     (roadmap §2.9: RequestExecutionLevel user, $LOCALAPPDATA\Programs\Digby,
+#     HKCU auto-start). The directory lands via the W2 PR, so a resolve step
+#     probes for the .csproj/.nsi on THIS ref: until windows-shell/ exists the
+#     job builds nothing and passes — no red window for refs that predate the
+#     shell (this workflow can merge before the child PR lands).
+#
+# Signing (roadmap §2.9: Azure Artifact Signing, Basic tier): wired but
+# OPTIONAL — the sign steps run only when ALL six repo secrets are configured
+# (AZURE_TENANT_ID, AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_SIGNING_ENDPOINT,
+# AZURE_SIGNING_ACCOUNT, AZURE_SIGNING_PROFILE). Until the owner completes the
+# Artifact Signing identity validation (owner-gated — see
+# docs/WINDOWS_W2_SHIPPING.md for the checklist), builds upload UNSIGNED with a
+# visible skip notice. Identity validation lead time is 1-3 business days
+# (individual) / 3-5 (organization); start it before the first public release.
+#
+# Not wired into deploy.yml's test gate on purpose: the Windows client is not
+# part of the web deploy, and this workflow only runs on windows-path changes.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'windows-agent/**'
+      - 'windows-shell/**'
+      - '.github/workflows/windows.yml'
+  pull_request:
+    paths:
+      - 'windows-agent/**'
+      - 'windows-shell/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  agent-tests:
+    name: Windows agent tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10 # see ci.yml's timeout note (2026-09-18 wedge)
+    defaults:
+      run:
+        working-directory: windows-agent
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          # No npm cache: the agent dep tree is small and it has no committed
+          # package-lock.json (npm install is its documented flow).
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Run tests (node:test)
+        run: npm test
+
+  build:
+    name: Windows shell build
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Resolve what exists on THIS ref: the shell project and the NSIS script
+      # both land with the W2 PR; refs without them (this workflow can merge
+      # first) skip the build with a notice instead of failing.
+      - name: Resolve shell project / installer script
+        id: resolve
+        shell: pwsh
+        # `secrets.*` is NOT a valid context inside a step-level `if:`
+        # (GitHub rejects the WHOLE workflow at parse time — every run failed
+        # with zero jobs until this was computed here instead). The six
+        # signing secrets are env-injected and folded into one boolean output
+        # the sign/skip steps branch on.
+        env:
+          SIGN_TENANT: ${{ secrets.AZURE_TENANT_ID }}
+          SIGN_CLIENT: ${{ secrets.AZURE_CLIENT_ID }}
+          SIGN_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          SIGN_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          SIGN_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          SIGN_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
+        run: |
+          $proj = Get-ChildItem windows-shell -Recurse -Filter *.csproj -ErrorAction SilentlyContinue | Select-Object -First 1
+          $nsi  = Get-ChildItem windows-shell -Recurse -Filter *.nsi -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $nsi) { $nsi = Get-ChildItem windows-agent -Recurse -Filter *.nsi -ErrorAction SilentlyContinue | Select-Object -First 1 }
+          # W3: the Rust helper crate (cargo builds digby-win-helper.exe).
+          $cargo = Test-Path "windows-agent/rust-helper/Cargo.toml"
+          if ($cargo) { Write-Host "rust helper crate: windows-agent/rust-helper" } else { Write-Host "::notice::no rust-helper crate on this ref — helper build skipped" }
+          if ($proj) { Write-Host "shell project: $($proj.FullName)" } else { Write-Host "::notice::windows-shell/*.csproj not on this ref — build skipped" }
+          if ($nsi)  { Write-Host "nsis script: $($nsi.FullName)" }    else { Write-Host "::notice::no .nsi installer script on this ref — installer skipped" }
+          "shellProj=$($proj.FullName)" >> $env:GITHUB_OUTPUT
+          "nsiScript=$($nsi.FullName)" >> $env:GITHUB_OUTPUT
+          "cargoCrate=$(if ($cargo) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+          $signingOk = ($env:SIGN_TENANT -ne '') -and ($env:SIGN_CLIENT -ne '') -and ($env:SIGN_SECRET -ne '') -and ($env:SIGN_ENDPOINT -ne '') -and ($env:SIGN_ACCOUNT -ne '') -and ($env:SIGN_PROFILE -ne '')
+          "signing=$(if ($signingOk) { 'true' } else { 'false' })" >> $env:GITHUB_OUTPUT
+
+      - name: Setup .NET
+        if: steps.resolve.outputs.shellProj != ''
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      # ── W3: the Rust helper (digby-win-helper.exe) ─────────────────────────
+      # Built natively on windows-latest (MSVC target) BEFORE the agent bundle
+      # staging + the sign steps — the exe must exist by the time NSIS packs
+      # and Azure Artifact Signing runs. Cached by Swatinem/rust-cache.
+      - name: Setup Rust toolchain
+        if: steps.resolve.outputs.cargoCrate == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        if: steps.resolve.outputs.cargoCrate == 'true'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows-agent/rust-helper
+
+      - name: Build the Rust helper (cargo, MSVC)
+        if: steps.resolve.outputs.cargoCrate == 'true'
+        shell: pwsh
+        run: |
+          cargo build --release --manifest-path windows-agent/rust-helper/Cargo.toml
+          $exe = "windows-agent/rust-helper/target/release/digby-win-helper.exe"
+          if (-not (Test-Path $exe)) { throw "cargo build produced no $exe" }
+          Write-Host "helper: $exe ($((Get-Item $exe).Length) bytes)"
+
+      # ── W3: the agent bundle (node runtime + agent dist + helper) ──────────
+      # Staged to <workspace>\publish\agent — the layout digby.nsi's
+      # AGENT_PUBLISH_DIR default expects. node.exe comes from the official
+      # win-x64 zip; the agent's dist/ + production node_modules from npm.
+      - name: Stage the agent bundle
+        if: steps.resolve.outputs.nsiScript != '' && steps.resolve.outputs.cargoCrate == 'true'
+        shell: pwsh
+        env:
+          NODE_VERSION: '22.23.3'
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # ABSOLUTE path (repo-root-relative breaks after Push-Location
+          # windows-agent below — the B1 review finding; CI run 36147752626).
+          $out = Join-Path $env:GITHUB_WORKSPACE 'publish/agent'
+          New-Item -ItemType Directory -Force -Path "$out/dist" | Out-Null
+
+          # 1. node.exe from the official win-x64 zip (cached per-version).
+          $nodeVer = $env:NODE_VERSION
+          $zip = "$env:TEMP/node-v$nodeVer-win-x64.zip"
+          if (-not (Test-Path $zip)) {
+            Invoke-WebRequest -Uri "https://nodejs.org/dist/v$nodeVer/node-v$nodeVer-win-x64.zip" -OutFile $zip
+          }
+          Expand-Archive -Path $zip -DestinationPath "$env:TEMP/node-extract" -Force
+          Copy-Item "$env:TEMP/node-extract/node-v$nodeVer-win-x64/node.exe" "$out/node.exe"
+          Write-Host "agent: node.exe staged (v$nodeVer)"
+
+          # 2. The agent: install (needs tsc for the build), build, then
+          #    reinstall PRODUCTION-ONLY so node_modules carries no devdeps.
+          Push-Location windows-agent
+          npm ci --no-audit --no-fund
+          npm run build
+          Copy-Item dist/* "$out/dist/" -Recurse -Force
+          Remove-Item -Recurse -Force node_modules
+          npm ci --omit=dev --no-audit --no-fund
+          Pop-Location
+          Copy-Item windows-agent/node_modules "$out/node_modules" -Recurse -Force
+          Write-Host "agent: dist/ + node_modules/ staged"
+
+          # 3. The Rust helper (built above).
+          Copy-Item "windows-agent/rust-helper/target/release/digby-win-helper.exe" "$out/digby-win-helper.exe"
+          Write-Host "agent: digby-win-helper.exe staged"
+
+          # 4. The launcher (mirrors build-installer.sh's — kept in sync).
+          # Built as an array + -NoNewline join so the YAML indentation NEVER
+          # leaks into the .bat (batch files are whitespace-sensitive).
+          $launcher = @(
+            '@echo off',
+            'rem Digby Agent launcher (per-user autostart target) - runs the agent loop',
+            'rem under the bundled node.exe from the install directory.',
+            'setlocal',
+            'set "DIR=%~dp0"',
+            '"%DIR%node.exe" "%DIR%dist\index.js" run >> "%LOCALAPPDATA%\Digby\agent.log" 2>&1',
+            'endlocal'
+          ) -join "`r`n"
+          [IO.File]::WriteAllText("$out/launch-agent.bat", $launcher + "`r`n")
+          Write-Host "agent: launch-agent.bat staged"
+
+      - name: Publish the shell (self-contained, win-x64)
+        if: steps.resolve.outputs.shellProj != ''
+        shell: pwsh
+        run: |
+          dotnet publish "${{ steps.resolve.outputs.shellProj }}" `
+            -c Release -r win-x64 --self-contained `
+            -o "${{ github.workspace }}\publish\shell"
+
+      # Sign the shell binaries + the W3 Rust helper BEFORE they are packaged
+      # into the installer (the installer embeds them; a post-package sign
+      # would leave the inner files unsigned). Optional-secrets gate — see
+      # the header comment. digby-win-helper.exe rides the same publish/
+      # tree (publish/agent/), so files-folder-recurse picks it up.
+      - name: Sign shell + helper binaries (Azure Artifact Signing)
+        if: steps.resolve.outputs.shellProj != '' && steps.resolve.outputs.signing == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\publish
+          files-folder-filter: exe,dll
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Note unsigned build (signing not configured)
+        if: steps.resolve.outputs.shellProj != '' && steps.resolve.outputs.signing != 'true'
+        shell: pwsh
+        run: Write-Host "::notice::Azure Artifact Signing secrets are not configured — the build artifact is UNSIGNED (internal testing only). See docs/WINDOWS_W2_SHIPPING.md for the owner checklist."
+
+      - name: Install NSIS
+        if: steps.resolve.outputs.nsiScript != ''
+        shell: pwsh
+        run: choco install nsis --no-progress -y
+
+      - name: Build the installer (per-user NSIS)
+        if: steps.resolve.outputs.nsiScript != ''
+        shell: pwsh
+        run: |
+          $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) { $makensis = (Get-Command makensis -ErrorAction Stop).Source }
+          & $makensis "${{ steps.resolve.outputs.nsiScript }}"
+
+      # The installer itself gets signed too (SmartScreen evaluates the file
+      # the user downloads, which is the installer — the inner payloads are
+      # already signed above).
+      - name: Sign the installer (Azure Artifact Signing)
+        if: steps.resolve.outputs.nsiScript != '' && steps.resolve.outputs.signing == 'true'
+        uses: azure/artifact-signing-action@v2
+        with:
+          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          files-folder: ${{ github.workspace }}\publish
+          files-folder-filter: exe
+          files-folder-recurse: false
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # cd63c7d5 — fail FAST when the installer would blow the GitHub 100 MiB
+      # blob limit. The exe lands in this repo (committed to frontend/public/
+      # by hand after CI) and a >100 MiB binary is rejected at PUSH time — the
+      # worst possible moment to discover the payload grew. 95 MiB leaves
+      # headroom for signing overhead + feed notes. The exe path matches the
+      # signing step's files-folder (workspace\publish, digby.nsi's default
+      # DIST_DIR) and the fixed name the feed (windows-latest.json) points at.
+      - name: Guard installer size (GitHub 100 MiB limit)
+        if: steps.resolve.outputs.nsiScript != ''
+        shell: pwsh
+        run: |
+          $exe = Join-Path "${env:GITHUB_WORKSPACE}" "publish\Digby-Setup.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "Digby-Setup.exe not found at '$exe' — did the build step or DIST_DIR change?"
+            exit 1
+          }
+          $limitBytes = 95 * 1024 * 1024
+          $size = (Get-Item $exe).Length
+          Write-Host ("Digby-Setup.exe is {0:N2} MiB (guard limit {1:N0} MiB, GitHub hard limit 100 MiB)" -f ($size / 1MB), ($limitBytes / 1MB))
+          if ($size -gt $limitBytes) {
+            Write-Error ("Digby-Setup.exe is {0:N2} MiB — over the {1:N0} MiB guard. Trim the payload or tighten NSIS compression (SetCompressor lzma) BEFORE committing it to frontend/public/." -f ($size / 1MB), ($limitBytes / 1MB))
+            exit 1
+          }
+
+      - name: Upload build artifact
+        if: steps.resolve.outputs.shellProj != '' || steps.resolve.outputs.nsiScript != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: digby-windows-${{ github.sha }}
+          path: |
+            publish/**
+          if-no-files-found: error
+          retention-days: 30

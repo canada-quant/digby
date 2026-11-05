@@ -24,11 +24,34 @@ const SECRET = process.env.BROWSER_SERVICE_SECRET || '';
 const DATA_DIR = process.env.BROWSER_SERVICE_DATA_DIR || '/data/contexts';
 const CONTEXTS_MAX = Number(process.env.BROWSER_CONTEXTS_MAX || 16);
 const IDLE_MS = Number(process.env.BROWSER_CONTEXT_IDLE_MS || 15 * 60_000);
+/** Kill switch (BS-1 D3): =1 restores the pre-fix silent-healthy behaviour. */
+const INERT_LOUD = process.env.BS_INERT_LOUD_DISABLED !== '1';
 
 if (!SECRET) {
-  // Inert-healthy mode: no secret → every token check fails → no context can
-  // ever be created. See the header comment — never crash-loop a deploy wave.
-  console.warn('browser-service: BROWSER_SERVICE_SECRET unset — starting INERT (/health 200, every action 401; set the secret to activate)');
+  // BS-1 D3 (2026-11-02): INERT is no longer silent. Before this, a secretless
+  // service answered /health 200 and reported itself healthy, so a deploy wave
+  // went green over a feature that could never serve a single action (every
+  // token check fails without a secret). Three signals now, all greppable:
+  //
+  //   1. this warn line, with an explicit BROWSER_SERVICE_INERT marker;
+  //   2. /health answers 503 {status:"inert"} instead of 200 — the container's
+  //      own healthcheck (docker-compose.base.yml) reports it unhealthy;
+  //   3. the listen banner repeats the inert state.
+  //
+  // The service still STARTS (never crash-loop a deploy wave) — it just cannot
+  // claim to be healthy while it is useless. `BS_INERT_LOUD_DISABLED=1` restores
+  // the old silent-healthy behaviour for an operator who needs the container to
+  // read healthy while the secret is being provisioned.
+  if (INERT_LOUD) {
+    console.warn(
+      'browser-service: BROWSER_SERVICE_INERT — BROWSER_SERVICE_SECRET unset: '
+      + '/health reports 503 INERT and every action is 401 byte-identically '
+      + 'rejected; set BROWSER_SERVICE_SECRET to activate '
+      + '(BS_INERT_LOUD_DISABLED=1 silences this and answers /health 200)',
+    );
+  } else {
+    console.warn('browser-service: BROWSER_SERVICE_SECRET unset — starting INERT (/health 200 by BS_INERT_LOUD_DISABLED, every action 401; set the secret to activate)');
+  }
 }
 
 const mgr = new BrowserContextManager({

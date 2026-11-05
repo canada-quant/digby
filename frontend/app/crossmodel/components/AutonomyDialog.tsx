@@ -54,6 +54,7 @@ const TOOL_LABELS: Record<FleetAutonomyTool, string> = {
   update_schedule: 'Update scheduled runs',
   dispatch_platform_task: 'Dispatch platform tasks',
   send_to_instance: 'Send messages to paired instances',
+  create_chat_webhook: 'Mint / rotate chat webhooks (bearer — explicit grant only)',
 };
 
 export default function AutonomyDialog({ chatId, chatTitle, onClose }: {
@@ -134,8 +135,9 @@ export default function AutonomyDialog({ chatId, chatTitle, onClose }: {
             Checked tools run in this chat <strong>without a confirmation card</strong> —
             including scheduled and hook-triggered runs. On coding chats, setting
             Agent mode to <em>Auto</em> grants all of these automatically (and
-            leaving Auto revokes that grant); edits made here are yours and
-            survive mode changes.
+            leaving Auto revokes that grant) — <strong>except</strong> tools marked
+            explicit-grant-only, which Auto never enables for you; edits made here
+            are yours and survive mode changes.
           </DialogDescription>
         </DialogHeader>
 

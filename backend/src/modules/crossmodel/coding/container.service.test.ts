@@ -602,7 +602,7 @@ describe('isDockerAvailable — a negative probe expires (autonomy loop #16: a d
   test('down → memoized false for DOCKER_NEGATIVE_MEMO_MS (no re-probe) → re-probed after the window → positive memo expires', async () => {
     let infoOk = false;
     execFileMock.mockImplementation((_c: string, args: string[], _o: any, cb: any) => {
-      if (args[0] === 'info') return infoOk ? cb(null, { stdout: '27.0\n', stderr: '' }) : cb(new Error('Cannot connect to the Docker daemon at tcp://10.0.0.12:2375'), { stdout: '', stderr: '' });
+      if (args[0] === 'info') return infoOk ? cb(null, { stdout: '27.0\n', stderr: '' }) : cb(new Error('Cannot connect to the Docker daemon at tcp://10.0.0.15:2375'), { stdout: '', stderr: '' });
       return cb(null, { stdout: '', stderr: '' });
     });
     expect(await isDockerAvailable()).toBe(false);

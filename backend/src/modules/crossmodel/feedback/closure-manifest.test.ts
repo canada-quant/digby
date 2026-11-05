@@ -116,13 +116,13 @@ describe('applyClosureManifest — evidence-gated entries (audit DOI-27)', () =>
     expect(mockResolveFixState).toHaveBeenCalledTimes(evidenceEntries().length);
     const [row, note] = (mockResolveFixState.mock.calls[0] as any[]);
     expect(row).toEqual({ id: 'row-1', userId: 'owner-1' });
-    expect(note).toEqual({ commitSha: 'e18c15c4', prUrl: 'https://github.com/canada-quant/digby/pull/1123', deployRunId: '36472901762' });
+    expect(note).toEqual({ commitSha: 'e18c15c4', prUrl: 'https://github.com/example-org/crossmodel/pull/1123', deployRunId: '36472901762' });
     // The 7acaa7ba close: adminNote carries the block fix-state.ts parses back.
     const calls = mockPrisma.userFeatureRequest.updateMany.mock.calls.map((c: any[]) => c[0]);
     const seven = calls.find((c: any) => c.where.id?.startsWith === '7acaa7ba');
     expect(seven.data.status).toBe('done');
     expect(seven.data.adminNote).toContain('[closed by manifest, evidence-verified]');
-    expect(parseClosureEvidenceNote(seven.data.adminNote)).toEqual({ commitSha: 'e18c15c4', prUrl: 'https://github.com/canada-quant/digby/pull/1123', deployRunId: '36472901762' });
+    expect(parseClosureEvidenceNote(seven.data.adminNote)).toEqual({ commitSha: 'e18c15c4', prUrl: 'https://github.com/example-org/crossmodel/pull/1123', deployRunId: '36472901762' });
     // The d6110694 close: per-row update (context merge), duplicateOf + autoDispatch:false, prior context kept.
     const dup = calls.find((c: any) => c.where.id === 'row-1' && c.data.context?.duplicateOf === '7acaa7ba');
     expect(dup).toBeDefined();
@@ -166,16 +166,16 @@ describe('applyClosureManifest — evidence-gated entries (audit DOI-27)', () =>
   });
 
   it('renderMachineCloseEvidence round-trips through fix-state.ts parseClosureEvidenceNote (sha lowercased)', () => {
-    const note = renderMachineCloseEvidence({ commitSha: 'E18C15C4', prUrl: 'https://github.com/canada-quant/digby/pull/1123', deployRunId: '36472901762' });
-    expect(note).toBe('[machine-close evidence: commit e18c15c4; PR https://github.com/canada-quant/digby/pull/1123; deploy run 36472901762]');
-    expect(parseClosureEvidenceNote(note)).toEqual({ commitSha: 'e18c15c4', prUrl: 'https://github.com/canada-quant/digby/pull/1123', deployRunId: '36472901762' });
+    const note = renderMachineCloseEvidence({ commitSha: 'E18C15C4', prUrl: 'https://github.com/example-org/crossmodel/pull/1123', deployRunId: '36472901762' });
+    expect(note).toBe('[machine-close evidence: commit e18c15c4; PR https://github.com/example-org/crossmodel/pull/1123; deploy run 36472901762]');
+    expect(parseClosureEvidenceNote(note)).toEqual({ commitSha: 'e18c15c4', prUrl: 'https://github.com/example-org/crossmodel/pull/1123', deployRunId: '36472901762' });
     expect(parseClosureEvidenceNote(renderMachineCloseEvidence({ commitSha: 'abcdef1' }))).toEqual({ commitSha: 'abcdef1' });
     // Ticket cf5f9718 — the repo member round-trips (lowercased by the render,
     // parsed back by fix-state.ts) so the done-bar reads the scope from the
     // audit note itself.
-    const noteWithRepo = renderMachineCloseEvidence({ commitSha: 'E18C15C4', repo: 'Acme-Corp/Widgets', prUrl: 'https://github.com/canada-quant/example-repo/pull/184', deployRunId: '36472901762' });
-    expect(noteWithRepo).toBe('[machine-close evidence: commit e18c15c4; repo acme-corp/widgets; PR https://github.com/canada-quant/example-repo/pull/184; deploy run 36472901762]');
-    expect(parseClosureEvidenceNote(noteWithRepo)).toEqual({ commitSha: 'e18c15c4', repo: 'acme-corp/widgets', prUrl: 'https://github.com/canada-quant/example-repo/pull/184', deployRunId: '36472901762' });
+    const noteWithRepo = renderMachineCloseEvidence({ commitSha: 'E18C15C4', repo: 'example-org/optcg', prUrl: 'https://github.com/example-org/optcg/pull/184', deployRunId: '36472901762' });
+    expect(noteWithRepo).toBe('[machine-close evidence: commit e18c15c4; repo example-org/optcg; PR https://github.com/example-org/optcg/pull/184; deploy run 36472901762]');
+    expect(parseClosureEvidenceNote(noteWithRepo)).toEqual({ commitSha: 'e18c15c4', repo: 'example-org/optcg', prUrl: 'https://github.com/example-org/optcg/pull/184', deployRunId: '36472901762' });
   });
 });
 

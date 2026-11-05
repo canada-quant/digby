@@ -14,8 +14,8 @@
  * armed." — receipts held ONLY reads + git_push ok:false — yet GUARD 1 mined
  * commit_local off "banked commit 0bf7dda2d". The line already reports the
  * push as REFUSED and the lane as blocked: exactly what the strike would say.
- * Fix: PUSH_REFUSED_RE (line-scoped, beside LOCAL_HONEST_RE, rides the A1
- * kill switch) suppresses the branch.
+ * Fix: PUSH_REFUSED_RE (line-scoped, beside LOCAL_HONEST_RE) suppresses the
+ * branch.
  *
  * CLASS 2 (the 2026-10-11T06:13Z sibling, chat 6ef785c3 run 72efa842 — named
  * by the 06:13Z adjudication as the banked/board-id seam, still live at f22):
@@ -31,7 +31,8 @@
  * suppressed (a refused push is still a push claim to verify); (4) the
  * board-id forms ("todo 198ff490", "todo-id 198ff490", "session 837a636a",
  * "schedule d2b633c0") mine nothing while a real sha on the same line still
- * mines; (5) the A1 kill switch restores the old behaviour.
+ * mines. The A1 kill switch is GONE (RSW-1 delete-with-ledger 2026-11-03), so
+ * no case restores the pre-split behaviour.
  *
  * Boundary-mocked like run-evidence-guard.commit-local.test.ts: logger +
  * GitHub token manager are stubs, global.fetch is a mock; the real modules
@@ -50,7 +51,7 @@ jest.mock('../github/token-manager', () => ({
 }));
 
 import { extractCompletionClaims, applyCompletionClaimGuard, guardFindingKinds } from './run-evidence-guard';
-import { commitLocalClaimGuardDisabled, type ToolReceipt } from './run-receipts';
+import { type ToolReceipt } from './run-receipts';
 import type { MessagePart } from './agent';
 
 const NOW = new Date('2026-10-12T15:23:57.000Z');
@@ -69,18 +70,14 @@ const rc = (tool: string, ids: Record<string, unknown> = {}, ok = true, id = `r-
   ({ id, chatId: 'c1', runId: 'run1', tool, ok, ids, inputHash: null, outputHash: null, createdAt: NOW });
 const call = (name: string): MessagePart => ({ type: 'tool_call', name, args: {} } as any);
 
-const KS = 'COMMIT_LOCAL_CLAIM_GUARD_DISABLED';
-
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetValidToken.mockResolvedValue('tok');
   mockFetch.mockReset();
   global.fetch = mockFetch as any;
-  delete process.env[KS];
 });
 afterEach(() => {
   global.fetch = realFetch;
-  delete process.env[KS];
 });
 
 // The verbatim final that struck 4× on 2026-10-12 (chat 837a636a).
@@ -139,13 +136,6 @@ describe('0cea589d class 1 — an honest BLOCKED line never mines commit_local',
     expect(out[0].sha).toBe(SHA);
   });
 
-  it('kill switch COMMIT_LOCAL_CLAIM_GUARD_DISABLED=1 turns the whole class off (the incident line mines nothing, as does the spark case)', () => {
-    process.env[KS] = '1';
-    expect(commitLocalClaimGuardDisabled()).toBe(true);
-    expect(extractCompletionClaims(INCIDENT_LINE)).toEqual([]);
-    expect(extractCompletionClaims(`Spark B11: fully banked ${SHA} on lane/spark-b11.`)).toEqual([]);
-    delete process.env[KS];
-  });
 });
 
 describe('0cea589d class 2 — a BOARD-ID-labelled hex token is never a commit sha', () => {
@@ -174,18 +164,6 @@ describe('0cea589d class 2 — a BOARD-ID-labelled hex token is never a commit s
     const out = extractCompletionClaims(`pushed ${SHA} after todo 198ff490 was done.`);
     expect(out.map((c) => c.kind)).toEqual(['commit_pushed']);
     expect(out[0].sha).toBe(SHA);
-  });
-
-  it('kill switch restores the old behaviour on the PUSH path (a board-labelled hex is mined as a sha again)', () => {
-    // The label rules ride the A1 switch: under KS=1 the commit_local branch
-    // is off entirely (nothing to mine there), and commitShasInClause stops
-    // excluding board-labelled tokens — so a "pushed todo 198ff490" line
-    // mines the board id as a commit_pushed sha, the pre-fix behaviour.
-    process.env[KS] = '1';
-    const out = extractCompletionClaims(`pushed todo 198ff490 to the board.`);
-    expect(out.map((c) => c.kind)).toEqual(['commit_pushed']);
-    expect(out[0].sha).toBe('198ff490');
-    delete process.env[KS];
   });
 
   it('the label window is bounded: a distant board noun does not swallow a later sha', () => {

@@ -2,7 +2,7 @@
  * Ticket 36b8c979 — a server-side LIVENESS PROBE for the repo-scoped done-bar
  * (closure-evidence.ts / fix-state.ts), for evidence on repos that deploy
  * WITHOUT GitHub Actions and are NOT Digby boxes (the 2026-10-28 observed
- * shape: canada-quant/example-repo → deckpose.com, total_count 0 Actions runs, no
+ * shape: example-org/optcg → deckpose.com, total_count 0 Actions runs, no
  * .github/workflows, never a box_health row — the two existing deployed legs
  * (b-i isDeployRunGreen, b-ii isFixLivePerTelemetry) can never pass, so a
  * verified merged+live fix refuses fix_not_live forever).

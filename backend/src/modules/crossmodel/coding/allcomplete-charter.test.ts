@@ -13,7 +13,7 @@ const mockPrisma: any = {
   projectTodo: { findUnique: jest.fn(), findMany: jest.fn(), count: jest.fn() },
   todoDependency: { findMany: jest.fn() },
   projectGoal: { findUnique: jest.fn(), count: jest.fn() },
-  codingSchedule: { findUnique: jest.fn() },
+  chatSchedule: { findUnique: jest.fn() },
   watchedResource: { count: jest.fn() },
   agentRun: { count: jest.fn() },
   hookEvent: { count: jest.fn() },
@@ -50,7 +50,7 @@ beforeEach(() => {
   mockPrisma.projectTodo.count.mockResolvedValue(0);
   mockPrisma.projectGoal.findUnique.mockResolvedValue(null);
   mockPrisma.projectGoal.count.mockResolvedValue(0);
-  mockPrisma.codingSchedule.findUnique.mockResolvedValue({ deltaGate: null, requiredProbes: null });
+  mockPrisma.chatSchedule.findUnique.mockResolvedValue({ deltaGate: null, requiredProbes: null });
   mockPrisma.watchedResource.count.mockResolvedValue(0);
   mockPrisma.agentRun.count.mockResolvedValue(0);
   mockPrisma.hookEvent.count.mockResolvedValue(0);
@@ -145,7 +145,7 @@ describe('decideAllCompleteFiring', () => {
     ['assigned_todo', () => mockPrisma.projectTodo.count.mockImplementation(async ({ where }: any) => (where.assigneeChatId ? 1 : 0))],
     ['pending_wake', () => mockPrisma.hookEvent.count.mockResolvedValue(1)],
     ['board_changed', () => mockPrisma.projectGoal.count.mockResolvedValue(1)],
-    ['registered_gate', () => mockPrisma.codingSchedule.findUnique.mockResolvedValue({ deltaGate: { probes: [] }, requiredProbes: null })],
+    ['registered_gate', () => mockPrisma.chatSchedule.findUnique.mockResolvedValue({ deltaGate: { probes: [] }, requiredProbes: null })],
     ['watched_resource', () => mockPrisma.watchedResource.count.mockResolvedValue(1)],
   ])('anything that moved or a registered poll (%s) ⇒ the advisory, never a skip', async (why, arrange) => {
     arrange();

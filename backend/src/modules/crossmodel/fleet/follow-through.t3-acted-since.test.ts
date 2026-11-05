@@ -18,7 +18,7 @@ const mockPrisma: any = {
   projectTodo: { findFirst: jest.fn(async () => null) },
   ownerQuestion: { findFirst: jest.fn(async () => null) },
   agentRun: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null) },
+  chatSchedule: { findFirst: jest.fn(async () => null) },
 };
 const store = new Map<string, string>();
 const mockRedis: any = {

@@ -5,7 +5,7 @@
  * was double-counted:
  *
  *  1. 4 of the 5 ticket sample chats were model-bench traffic
- *     (claudebot@digby.example.com, titles "model-bench …", turnPlan.synthetic=true) —
+ *     (claudebot@digby.ai, titles "model-bench …", turnPlan.synthetic=true) —
  *     synthetic answers counted as "real human turns" by the audit.
  *  2. Every one of the 14 rows carried deadlineHit=false, stepsExhausted=false,
  *     stagedCard=false: no run-state incompleteness evidence at all. The real

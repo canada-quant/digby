@@ -7,11 +7,11 @@
  * consequential tool whose ONLY execution evidence is the MessagePart log).
  * Chat b9cd2f21-0c9e-44dd-984f-b1f73afbf73a (assistant msg e87286da,
  * 2026-09-27T18:56:14Z) told the user "Sent ✅ — the test email just went out
- * from your CQL Gmail (paul@example.com) to paul@example.com" — and the claim was TRUE.
+ * from your CQL Gmail (example-user@example.com) to example-user@example.com" — and the claim was TRUE.
  * The run's own parts (crossmodel_messages.parts, read from prod via SSM the
  * same evening) show THREE email attempts in order:
  *   1. send_email_as_digby  → {ok:false, reason:'not_configured'}
- *   2. gmail_send_email (label 'paul@example.com') → {ok:false, reason:'label_not_found'}
+ *   2. gmail_send_email (label 'example-user@example.com') → {ok:false, reason:'label_not_found'}
  *   3. gmail_send_email (label 'CQL') → {ok:true, account:'CQL',
  *      message:'1a0e43973e3cca6c'} — the real Gmail send (gmail_search
  *      confirms message 1a0e43973e3cca6c landed 18:56:05Z, nine seconds
@@ -50,7 +50,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -99,17 +99,17 @@ const CHAT = 'b9cd2f21-0c9e-44dd-984f-b1f73afbf73a';
 
 // Verbatim claim line + note from the incident message (msg e87286da,
 // 2026-09-27T18:56:14Z — as quoted in the filed ticket).
-const CLAIM_DETAIL = 'the test email just went out from your **CQL Gmail** (paul@example.com) to paul@example.com';
-const MISHAP_NOTE = `Sent ✅ — ${CLAIM_DETAIL}, subject "Digby email test — checking the send pipeline". Check your inbox.\n\nOne catch I hit: Digby's own sender address (digby@digby.example.com) isn't configured on your instance — it needs SMTP credentials (\`DIGBY_SMTP_USER\`/\`DIGBY_SMTP_PASS\`) set by the instance owner. So for now I email you via your Gmail accounts, which works fine.`;
+const CLAIM_DETAIL = 'the test email just went out from your **CQL Gmail** (example-user@example.com) to example-user@example.com';
+const MISHAP_NOTE = `Sent ✅ — ${CLAIM_DETAIL}, subject "Digby email test — checking the send pipeline". Check your inbox.\n\nOne catch I hit: Digby's own sender address (digby@digby.ai) isn't configured on your instance — it needs SMTP credentials (\`DIGBY_SMTP_USER\`/\`DIGBY_SMTP_PASS\`) set by the instance owner. So for now I email you via your Gmail accounts, which works fine.`;
 
 // The run's REAL email executions, verbatim from the prod parts log
 // (crossmodel_messages.parts of msg e87286da, read via SSM 2026-09-27).
 const DIGBY_REFUSED = JSON.stringify({ ok: false, tool: 'send_email_as_digby', reason: 'not_configured', message: 'Digby email is not configured on this instance: set DIGBY_SMTP_USER and DIGBY_SMTP_PASS (Gmail workspace SMTP — see docs/EMAIL_AS_DIGBY.md). Nothing was sent; do not claim an email went out. Nothing was sent — do not claim an email went out.' });
-const GMAIL_LABEL_REFUSED = JSON.stringify({ ok: false, tool: 'gmail_send_email', reason: 'label_not_found', ids: {}, message: 'No connected Google account matches \\"paul@example.com\\". Connected accounts: Personal, Work, Recovery Institute of Ohio, CQL. Pass the bare label or the email address.' });
+const GMAIL_LABEL_REFUSED = JSON.stringify({ ok: false, tool: 'gmail_send_email', reason: 'label_not_found', ids: {}, message: 'No connected Google account matches \\"example-user@example.com\\". Connected accounts: Personal, Work, Recovery Institute of Ohio, CQL. Pass the bare label or the email address.' });
 const GMAIL_CQL_OK = JSON.stringify({ ok: true, tool: 'gmail_send_email', account: 'CQL', ids: {}, message: '1a0e43973e3cca6c' });
-const DIGBY_ARGS = { to: 'paul@example.com', text: "Hi Paul,\n\nTesting the email pipeline — if you're reading this, it works end to end.\n\nI send from digby@digby.example.com. I can use this for anything you ask me to email you: digests, alerts, monitor results, or scheduled reports.\n\n— Digby", subject: 'Digby email test — yes, I can send these' };
-const GMAIL_ARGS_1 = { to: 'paul@example.com', body: "Hi Paul,\n\nTesting that Digby can send you email — if this lands in your inbox, it works.\n\nThis one came from your Gmail (paul@example.com). Note: Digby's own sender (digby@digby.example.com) isn't configured on your instance yet — it needs SMTP credentials set. Your Gmail route works fine for now.\n\n— Digby", label: 'paul@example.com', subject: 'Digby email test — checking the send pipeline' };
-const GMAIL_ARGS_2 = { to: 'paul@example.com', body: "Hi Paul,\n\nTesting that Digby can send you email — if this lands in your inbox, it works.\n\nThis one came from your CQL Gmail. Note: Digby's own sender (digby@digby.example.com) isn't configured on your instance yet — it needs SMTP credentials set. Your Gmail route works.\n\n— Digby", label: 'CQL', subject: 'Digby email test — checking the send pipeline' };
+const DIGBY_ARGS = { to: 'example-user@example.com', text: "Hi Paul,\n\nTesting the email pipeline — if you're reading this, it works end to end.\n\nI send from digby@digby.ai. I can use this for anything you ask me to email you: digests, alerts, monitor results, or scheduled reports.\n\n— Digby", subject: 'Digby email test — yes, I can send these' };
+const GMAIL_ARGS_1 = { to: 'example-user@example.com', body: "Hi Paul,\n\nTesting that Digby can send you email — if this lands in your inbox, it works.\n\nThis one came from your Gmail (example-user@example.com). Note: Digby's own sender (digby@digby.ai) isn't configured on your instance yet — it needs SMTP credentials set. Your Gmail route works fine for now.\n\n— Digby", label: 'example-user@example.com', subject: 'Digby email test — checking the send pipeline' };
+const GMAIL_ARGS_2 = { to: 'example-user@example.com', body: "Hi Paul,\n\nTesting that Digby can send you email — if this lands in your inbox, it works.\n\nThis one came from your CQL Gmail. Note: Digby's own sender (digby@digby.ai) isn't configured on your instance yet — it needs SMTP credentials set. Your Gmail route works.\n\n— Digby", label: 'CQL', subject: 'Digby email test — checking the send pipeline' };
 const PARTS_INCIDENT: any[] = [
   { type: 'tool_call', name: 'send_email_as_digby', args: DIGBY_ARGS },
   { type: 'tool_result', name: 'send_email_as_digby', result: DIGBY_REFUSED },
@@ -129,8 +129,8 @@ const PARTS_ALL_REFUSED: any[] = [
   { type: 'tool_result', name: 'gmail_send_email', result: GMAIL_LABEL_REFUSED },
 ];
 const PARTS_DRAFT_ONLY: any[] = [
-  { type: 'tool_call', name: 'gmail_create_draft', args: { to: 'paul@example.com', subject: 'Digby email test — checking the send pipeline', body: 'draft body' } },
-  { type: 'tool_result', name: 'gmail_create_draft', result: JSON.stringify({ ok: true, tool: 'gmail_create_draft', account: 'CQL (paul@example.com)', ids: { draftId: 'r-8123456789012345' }, message: 'Draft created: r-8123456789012345' }) },
+  { type: 'tool_call', name: 'gmail_create_draft', args: { to: 'example-user@example.com', subject: 'Digby email test — checking the send pipeline', body: 'draft body' } },
+  { type: 'tool_result', name: 'gmail_create_draft', result: JSON.stringify({ ok: true, tool: 'gmail_create_draft', account: 'CQL (example-user@example.com)', ids: { draftId: 'r-8123456789012345' }, message: 'Draft created: r-8123456789012345' }) },
 ];
 
 const extractEmailClaim = () =>
@@ -204,7 +204,7 @@ describe('ticket 169846b6 — extractExecutedActions now surfaces the email tool
     const out = extractExecutedActions(PARTS_INCIDENT);
     const gmail = out.filter((a) => a.tool === 'gmail_send_email');
     const digby = out.filter((a) => a.tool === 'send_email_as_digby');
-    // FIFO per-tool pairing: the first gmail call (label 'paul@example.com') pairs
+    // FIFO per-tool pairing: the first gmail call (label 'example-user@example.com') pairs
     // the label_not_found refusal; the second (label 'CQL') pairs the ok.
     expect(gmail).toHaveLength(2);
     expect(gmail[0].ok).toBe(false);
@@ -217,7 +217,7 @@ describe('ticket 169846b6 — extractExecutedActions now surfaces the email tool
   it('a successful send_email_as_digby (account-tools j() envelope) parses ok', () => {
     const parts: any[] = [
       { type: 'tool_call', name: 'send_email_as_digby', args: { to: 'owner@example.com', subject: 'Nightly report', text: 'All green.' } },
-      { type: 'tool_result', name: 'send_email_as_digby', result: JSON.stringify({ ok: true, tool: 'send_email_as_digby', to: 'owner@example.com', from: 'digby@digby.example.com', messageId: '<m-1@digby.example.com>', note: 'delivered to the SMTP relay' }, null, 1) },
+      { type: 'tool_result', name: 'send_email_as_digby', result: JSON.stringify({ ok: true, tool: 'send_email_as_digby', to: 'owner@example.com', from: 'digby@digby.ai', messageId: '<m-1@digby.ai>', note: 'delivered to the SMTP relay' }, null, 1) },
     ];
     const out = extractExecutedActions(parts);
     expect(out).toHaveLength(1);
@@ -251,8 +251,8 @@ describe('ticket 169846b6 — extractExecutedActions now surfaces the email tool
     mockUtilityChat.mockResolvedValueOnce(JSON.stringify({
       claims: [
         { kind: 'message', detail: CLAIM_DETAIL },
-        { kind: 'message', detail: 'the follow-up email went out to paul@example.com' },
-        { kind: 'message', detail: 'the third reminder email was delivered to paul@example.com' },
+        { kind: 'message', detail: 'the follow-up email went out to example-user@example.com' },
+        { kind: 'message', detail: 'the third reminder email was delivered to example-user@example.com' },
       ],
     }) as never);
     // One real send only (the CQL ok); the two extra claims cite no execution.
@@ -260,7 +260,7 @@ describe('ticket 169846b6 — extractExecutedActions now surfaces the email tool
       { type: 'tool_call', name: 'gmail_send_email', args: GMAIL_ARGS_2 },
       { type: 'tool_result', name: 'gmail_send_email', result: GMAIL_CQL_OK },
     ];
-    verifyRunActionClaimsAsync({ chatId: CHAT, userId: 'u-1', finalText: `${CLAIM_DETAIL}. The follow-up email went out to paul@example.com. The third reminder email was delivered to paul@example.com.`, parts, receipts: [], machineTriggered: false });
+    verifyRunActionClaimsAsync({ chatId: CHAT, userId: 'u-1', finalText: `${CLAIM_DETAIL}. The follow-up email went out to example-user@example.com. The third reminder email was delivered to example-user@example.com.`, parts, receipts: [], machineTriggered: false });
     await flush(); await flush(); await flush(); await flush(); await flush(); await flush();
     expect(mockFileFeedbackTicket).toHaveBeenCalledTimes(1);
     const ticket = mockFileFeedbackTicket.mock.calls[0][0] as any;

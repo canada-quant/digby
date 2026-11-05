@@ -12,7 +12,7 @@ namespace Digby.Shell;
 internal sealed partial class MainForm : Form
 {
     // ── Constants (main.swift:7-8) ───────────────────────────────────────────
-    private const string HomeUrl = "https://digby.example.com/"; // the chat lives at the root (2026-10-14; /crossmodel 308s here)
+    private const string HomeUrl = "https://digby.ai/"; // the chat lives at the root (2026-10-14; /crossmodel 308s here)
     // Chrome-like UA WITHOUT the "Edg/" token (brief item 11) — plain Chrome,
     // so sites don't take Edge-specific paths. 2026-10-09 fix: the major was
     // FROZEN at 131 (≈2 years stale) — a stale major is a first-class bot-detection
@@ -144,7 +144,7 @@ internal sealed partial class MainForm : Form
             ShellLog.Error("WebView2 environment creation failed: " + ex.Message);
             _startupPanel.ShowError(
                 "Digby needs the Microsoft Edge WebView2 runtime",
-                "Digby uses the Microsoft Edge WebView2 runtime to display digby.example.com.\n\n" +
+                "Digby uses the Microsoft Edge WebView2 runtime to display digby.ai.\n\n" +
                 "Most Windows 10/11 PCs already have it (it ships with Edge). If this keeps " +
                 "happening, install the Evergreen WebView2 runtime from Microsoft, then start " +
                 "Digby again.\n\n" + ex.Message);
@@ -279,7 +279,7 @@ internal sealed partial class MainForm : Form
             var reason = e.WebErrorStatus.ToString();
             ShellLog.Error("boot: first navigation FAILED — " + reason);
             _startupPanel.ShowError(
-                "Digby couldn't reach digby.example.com",
+                "Digby couldn't reach digby.ai",
                 $"The first page load failed ({reason}).\n\n" +
                 "Check your internet connection and try again.");
         }

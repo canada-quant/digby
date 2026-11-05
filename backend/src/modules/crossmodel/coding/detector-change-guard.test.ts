@@ -109,7 +109,7 @@ function apiFor(diff: string): GithubApi {
     async put() { return { status: 405, data: {} }; },
   };
 }
-const base = { owner: 'canada-quant', repo: 'crossmodel', pullNumber: 9, sessionId: 'lane-1' };
+const base = { owner: 'example-org', repo: 'crossmodel', pullNumber: 9, sessionId: 'lane-1' };
 const strikes = () => mockRecordLoopMetric.mock.calls.map((c: any[]) => c[0]).filter((r: any) => r?.kind === 'guard_strike' && r?.meta?.seam === 'detector_change');
 
 describe('evaluateMergeGates — G7 detector_recall', () => {

@@ -45,11 +45,11 @@ function oauthConfigured(): boolean {
 function getConfig() {
   const clientId     = process.env.GOOGLE_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
-  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
   // The callback derives from THIS instance's public URL (self-host setup
   // hardening 2026-10-20): a self-host without the explicit override used to
   // send its OAuth dance to production. On production FRONTEND_URL's first
-  // entry is https://digby.example.com, so the derived value is byte-identical.
+  // entry is https://digby.ai, so the derived value is byte-identical.
   const redirectUri  = process.env.GOOGLE_OAUTH_REDIRECT_URI ||
     `${frontendUrl}/api/crossmodel/google/callback`;
 
@@ -117,7 +117,7 @@ export class GoogleOAuthController {
         // Self-host setup hardening (2026-10-20): the same not_configured redirect
         // Slack/Asana use — the tab says "not set up on this instance" + the how-to
         // instead of landing the browser on a raw 500 page.
-        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
         logger.warn('Google OAuth: GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET not configured');
         res.redirect(`${frontendUrl}/account?tab=integrations&google=not_configured`);
         return;
@@ -253,7 +253,7 @@ export class GoogleOAuthController {
       // A completed consent that cannot be stored (no GOOGLE_TOKEN_ENCRYPTION_KEY on
       // this instance) is a configuration fact, not "try again" (2026-10-20).
       if (error instanceof EncryptionKeyError) {
-        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
         res.redirect(`${frontendUrl}/account?tab=integrations&google=not_configured&reason=encryption_key`);
         return;
       }

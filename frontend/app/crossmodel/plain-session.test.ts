@@ -8,7 +8,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { buildPlainMeta, makeLegacyNormalizer, mapPlainMessages, pollPlainRevision } from './plain-session';
+import { buildPlainMeta, makeLegacyNormalizer, mapPlainMessages, pollPlainRevision, stripForStorage, stripLiveTags } from './plain-session';
 
 describe('makeLegacyNormalizer — progress forwarding (C3 kid flip, D5 rail)', () => {
   it('forwards progress events with a message (kid status lines + adult parity)', () => {
@@ -444,5 +444,69 @@ describe('makeLegacyNormalizer — thinking stays hidden by default (owner 2026-
     expect(n('agent-activity', { kind: 'reasoning', label: 'Digby', delta: 'secret' })).toBeNull();
     const out = n('agent-activity', { kind: 'tool', label: 'Digby', name: 'search_engine', detail: 'x' });
     expect(out?.type).toBe('tool_call');
+  });
+});
+
+/**
+ * Ticket 7af42393 — ORPHAN FOLLOWUPS CLOSER.
+ *
+ * Specimen (chat 9430e12f, msg 6a8f46bc, 2026-11-03T03:37:28Z): the model
+ * emitted a misspelled, spaced opener `[ FOLOWUPS ]` (ONE L) and then a
+ * correctly spelled `[/FOLLOWUPS]`. Every strip rule here keys on the LITERAL
+ * opener, so nothing matched, the closer rendered verbatim at the end of the
+ * answer, and the framework sweep correctly filed it as a raw marker.
+ *
+ * The fix is renderer-side: a `[/FOLLOWUPS]` token is never prose a reader is
+ * meant to see, so the bare token is deleted. The misspelled opener stays as
+ * ordinary prose (it is not a marker any renderer consumes, and fuzzy-matching
+ * openers would risk eating real prose).
+ *
+ * Scope is FOLLOWUPS only, deliberately: `[/CANVAS]` is the LAST canvas shape
+ * that still reaches a reader, so stripping it would retire canvas detection
+ * outright — a separate decision needing its own specimen.
+ */
+describe('stripForStorage — orphan FOLLOWUPS closer (ticket 7af42393)', () => {
+  it('deletes the specimen orphan closer under a misspelled spaced opener', () => {
+    const stored = '[ FOLOWUPS ]\n\n- Go — copy my file into the lane\n- Show me the prompt\n[/FOLLOWUPS]';
+    const out = stripForStorage(stored);
+    expect(out).not.toContain('[/FOLLOWUPS]');
+    // The prose and the (harmless, non-marker) misspelled opener survive.
+    expect(out).toContain('- Go — copy my file into the lane');
+    expect(out).toContain('[ FOLOWUPS ]');
+  });
+
+  it('deletes a bare orphan closer on its own', () => {
+    expect(stripForStorage('[/FOLLOWUPS]')).toBe('');
+  });
+
+  it('leaves a stray [/CANVAS] closer alone — canvas scope is unchanged', () => {
+    expect(stripForStorage('[/CANVAS]')).toBe('[/CANVAS]');
+  });
+
+  it('still strips well-formed blocks (recall unchanged)', () => {
+    expect(stripForStorage('[FOLLOWUPS]\n- a\n- b\n[/FOLLOWUPS]')).toBe('');
+    // A bare [CANVAS]…[/CANVAS] block keeps the surrounding prose.
+    expect(stripForStorage('body [CANVAS]art[/CANVAS] tail')).toBe('body  tail');
+    // An ATTRIBUTED opener has no closer contract: rule 3 deletes to the end
+    // of the string (pre-existing behaviour, unchanged by this ticket).
+    expect(stripForStorage('body [CANVAS title="t"]art[/CANVAS] tail')).toBe('body');
+  });
+
+  it('leaves ordinary prose and SEND_EMAIL blocks untouched', () => {
+    const email = '[SEND_EMAIL to="a@b.c"]hi[/SEND_EMAIL]';
+    expect(stripForStorage(email)).toBe(email);
+    expect(stripForStorage('no markers here')).toBe('no markers here');
+  });
+});
+
+describe('stripLiveTags — orphan FOLLOWUPS closer (ticket 7af42393)', () => {
+  it('a live bubble never flashes an orphan closer', () => {
+    const live = stripLiveTags('[ FOLOWUPS ]\n\n- Go — start it\n[/FOLLOWUPS]');
+    expect(live).not.toContain('[/FOLLOWUPS]');
+    expect(live).toContain('- Go — start it');
+  });
+
+  it('still strips SEND_EMAIL blocks live (unchanged contract)', () => {
+    expect(stripLiveTags('[SEND_EMAIL to="a@b.c"]hi[/SEND_EMAIL]')).toBe('');
   });
 });

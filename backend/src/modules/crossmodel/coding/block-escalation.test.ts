@@ -14,7 +14,7 @@ import {
 // The baseline specimen class: the One Piece TCG prod-watch re-reporting the
 // suspended AWS account day after day (ids/timestamps churn, tokens do not).
 const TCG_REPORT = (n: number) =>
-  `Check #${n} (2026-10-1${n}): AWS account 000000000000 remains suspended — provision is BLOCKED on the owner's account decision. No end date. Nothing else changed; task 4e8c22ab still pending.`;
+  `Check #${n} (2026-10-1${n}): AWS account 123456789012 remains suspended — provision is BLOCKED on the owner's account decision. No end date. Nothing else changed; task 4e8c22ab still pending.`;
 
 describe('isBlockedNoEndDateFinding (todo 27c215d6)', () => {
   it('a strong blocked/waiting finding with no end date reads true', () => {

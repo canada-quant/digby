@@ -402,7 +402,7 @@ export function registryContextFamilyDisabled(): boolean {
 //     Qwen3.8-Max bills $2/M input). Only SKUs with NO further suffix: the
 //     self-hosted `-next` checkpoints, size-tagged `-27b` builds and the `-open`
 //     route are not the hosted model and stay on the default.
-//   - Xiaomi MiMo V2.6 Flash (mimo-v26-flash-rl, spark-mimo-v26-flash-rl):
+//   - Xiaomi node-b V2.6 Flash (mimo-v26-flash-rl, spark-mimo-v26-flash-rl):
 //     hosted window 1,048,576 tokens (openrouter.ai/xiaomi/mimo-v2.6-flash), but
 //     the RL variants are self-hosted — 400,000 chars (~100k tok), conservative.
 //   - Moonshot kimi-for-coding: ~256k window — 400,000 chars (~100k tok), the
@@ -2431,7 +2431,7 @@ export async function runModelTurn(
         } catch {
           // Non-JSON `data:` line. Standard OpenAI SSE carries JSON delta
           // chunks, but some OpenAI-compatible gateways (observed on a
-          // LiteLLM/vLLM proxy config, llm.example.com — a registered Digby Edge
+          // LiteLLM/vLLM proxy config, llm.cql.ca — a registered Digby Edge
           // endpoint) stream RAW TEXT tokens as the data payload instead.
           // This parser used to discard every such line as a "keepalive", so
           // those endpoints produced an empty answer — a blank/hung chat with

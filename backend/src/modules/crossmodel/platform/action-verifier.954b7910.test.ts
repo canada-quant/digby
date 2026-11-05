@@ -51,7 +51,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
@@ -158,8 +158,8 @@ beforeEach(() => {
   // (the Drive/Recorder chats, their schedules, the two blocked todos).
   mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: '1c2b28d6-21fc-4fb4-9b3b-9f04cd3f7ec5' });
   mockPrisma.chatCodingState.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: '50532ee7-0000-4000-8000-000000000000' });
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: '50532ee7-0000-4000-8000-000000000000' });
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null);
   mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
   mockPrisma.projectGoal.findFirst.mockResolvedValue(null);

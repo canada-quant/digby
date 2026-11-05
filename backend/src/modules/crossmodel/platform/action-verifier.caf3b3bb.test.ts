@@ -124,7 +124,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) }, // coding_sessions (ticket f1cb73ff lane)
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) }, // the ticket lane's existence + near-miss probes (b216475a)
   // citedIdExistsAnywhere's remaining probes (the fabricatedId stamp checks SIX
   // artifact tables; a MISSING model throws inside the probe and fails toward
@@ -290,11 +290,11 @@ beforeEach(() => {
   // The cited ladder 39144e3d is a REAL schedule row (cancelled, but
   // existence is the whole exoneration test) — exonerated live; the phantom
   // is no schedule row either (the stamp's third table).
-  mockPrisma.codingSchedule.findFirst.mockImplementation(async (args: any) =>
+  mockPrisma.chatSchedule.findFirst.mockImplementation(async (args: any) =>
     isPhantomArgs(args)
       ? null
       : { id: '39144e3d-42d8-443f-9998-b3d29bbd1f84' });
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null);
   mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
   // The stamp's remaining tables + the receipt row probe: all MISS.

@@ -58,7 +58,7 @@
  * (contents API, ref=main, riding the ticket owner's connected GitHub token
  * — the same token path the fleet pulse and run-evidence-guard use; repo
  * slug $GITHUB_REPO_SLUG resolved per instance — production defaults to
- * canada-quant/digby, a NON-prod instance has NO default and never
+ * example-org/crossmodel, a NON-prod instance has NO default and never
  * falls back (instance-targets.ts boundary)): a local FILE miss (012d3aa2's original case) AND a
  * local CITATION miss on a file that exists (cc7004a7: a pre-existing test
  * file whose citation was appended by a just-merged commit — the stale bind
@@ -108,7 +108,7 @@ export interface CloseEvidence {
   /**
    * A server-side liveness probe (ticket 36b8c979) for a fix whose repo
    * deploys WITHOUT GitHub Actions and is not a Digby box (no deploy run, no
-   * box_health telemetry — e.g. canada-quant/example-repo → deckpose.com): the live
+   * box_health telemetry — e.g. example-org/optcg → deckpose.com): the live
    * surface the fix ships on + the strings that prove it. SUPPORTING only —
    * it never satisfies the bar alone (it proves nothing about a merge), but
    * the done-bar's deployed leg re-fetches it server-side at resolve time
@@ -556,7 +556,7 @@ export async function verifyMachineCloseEvidence(opts: {
     // commitSha check where to look. An invalid slug refuses (a malformed
     // scope must not silently downgrade to the platform repo and 404).
     if (!REPO_SLUG_RE.test(repo)) {
-      return { ok: false, reason: 'invalid_repo', message: `evidence.repo "${ev.repo}" is not a GitHub "owner/name" repo slug (e.g. "canada-quant/example-repo"). ${contract}` };
+      return { ok: false, reason: 'invalid_repo', message: `evidence.repo "${ev.repo}" is not a GitHub "owner/name" repo slug (e.g. "example-org/optcg"). ${contract}` };
     }
     noteParts.push(`repo ${repo.toLowerCase()}`);
   }

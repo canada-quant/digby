@@ -68,13 +68,13 @@ describe('structured data', () => {
       expect(w.dateModified, p.slug).toBe(p.updated);
       expect(w.inLanguage, p.slug).toBe(p.lang ?? 'en-CA');
       expect(w.url, p.slug).toBe(absoluteUrl(`/${p.slug}`));
-      expect(w.publisher).toEqual({ '@id': 'https://digby.example.com/#organization' });
+      expect(w.publisher).toEqual({ '@id': 'https://digby.ai/#organization' });
     }
   });
 
   it('the Organization is a Canadian entity with a resolvable @id', () => {
     const org = organizationLd();
-    expect(org['@id']).toBe('https://digby.example.com/#organization');
+    expect(org['@id']).toBe('https://digby.ai/#organization');
     expect(org.address).toMatchObject({ addressCountry: 'CA' });
     expect(org.knowsLanguage).toEqual(['en-CA', 'fr-CA']);
     expect(org.contactPoint[0].areaServed).toBe('CA');
@@ -85,7 +85,7 @@ describe('structured data', () => {
     expect(ld.itemListElement).toHaveLength(3);
     ld.itemListElement.forEach((el, i) => {
       expect(el.position).toBe(i + 1);
-      expect(el.item).toMatch(/^https:\/\/digby\.example\.com/);
+      expect(el.item).toMatch(/^https:\/\/digby\.ai/);
     });
   });
 

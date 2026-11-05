@@ -14,19 +14,19 @@ import { formatOrganizer } from './calendar.js';
 
 describe('formatOrganizer', () => {
   it('emits "Name <email>" when both displayName and email exist', () => {
-    expect(formatOrganizer({ displayName: 'Felipe', email: 'felipe@sunday.market' }))
-      .toBe('Felipe <felipe@sunday.market>');
+    expect(formatOrganizer({ displayName: 'Felipe', email: 'example-user@example.com' }))
+      .toBe('Felipe <example-user@example.com>');
   });
 
   it('keeps the email parseable by the backend extractEmail regex', () => {
     // Mirror of backend calendar-events.parser.ts extractEmail — the contract.
-    const line = formatOrganizer({ displayName: 'Felipe', email: 'felipe@sunday.market' });
+    const line = formatOrganizer({ displayName: 'Felipe', email: 'example-user@example.com' });
     const m = line.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/);
-    expect(m?.[0]).toBe('felipe@sunday.market');
+    expect(m?.[0]).toBe('example-user@example.com');
   });
 
   it('falls back to the bare email when no displayName is set', () => {
-    expect(formatOrganizer({ email: 'paul@sunday.market' })).toBe('paul@sunday.market');
+    expect(formatOrganizer({ email: 'example-user@example.com' })).toBe('example-user@example.com');
   });
 
   it('falls back to the bare name when no email exists', () => {
@@ -34,8 +34,8 @@ describe('formatOrganizer', () => {
   });
 
   it('does not duplicate the email when displayName IS the email', () => {
-    expect(formatOrganizer({ displayName: 'paul@sunday.market', email: 'paul@sunday.market' }))
-      .toBe('paul@sunday.market');
+    expect(formatOrganizer({ displayName: 'example-user@example.com', email: 'example-user@example.com' }))
+      .toBe('example-user@example.com');
   });
 
   it('returns an empty string for a missing/empty organizer', () => {
@@ -45,7 +45,7 @@ describe('formatOrganizer', () => {
   });
 
   it('trims surrounding whitespace from name and email', () => {
-    expect(formatOrganizer({ displayName: '  Felipe  ', email: ' felipe@sunday.market ' }))
-      .toBe('Felipe <felipe@sunday.market>');
+    expect(formatOrganizer({ displayName: '  Felipe  ', email: ' example-user@example.com ' }))
+      .toBe('Felipe <example-user@example.com>');
   });
 });

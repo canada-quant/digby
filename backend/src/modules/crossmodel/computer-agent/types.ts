@@ -276,6 +276,11 @@ export interface ComputerHarnessCounters {
   /** Harness positive-control probes run / passed (fix #2). */
   probesRun: number;
   probesPassed: number;
+  /** ticket 09c984d8 (MEDIUM-1): probes that produced a COMPARED FRAME PAIR
+   *  (≥1 conclusive leg) — the only ones that may spend MAX_PROBE_ATTEMPTS.
+   *  probesRun − probesConclusive = inconclusive dispatches, which extend the
+   *  budget instead of spending it. */
+  probesConclusive: number;
   /** True once a probe proved input lands on this device this session. */
   inputProven: boolean;
   /** Frontmost-app changes observed on byte-identical frames (positive input evidence). */

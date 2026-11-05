@@ -16,7 +16,7 @@ const mockPrisma: any = {
   ownerQuestion: { findMany: jest.fn(async () => []) },
   // Timing block (owner 2026-09-17) — computeProjectTiming reads these too.
   agentRun: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   crossModelMessage: { findFirst: jest.fn(async () => null) },
   // Supervisor OFF switch (owner 2026-09-26): null = no row = ON.
   systemSetting: { findUnique: jest.fn(async () => null) },
@@ -259,7 +259,7 @@ describe('buildBoardDigestBlock', () => {
     mockPrisma.crossModelChat.findMany
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ id: uuid('c1'), title: 'lane', isProjectSupervisor: false, archivedAt: null }]);
-    mockPrisma.codingSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
+    mockPrisma.chatSchedule.findMany.mockRejectedValueOnce(new Error('db down'));
     const plain = await buildBoardDigestBlock({ scope: 'project', projectId: uuid('p1'), now: NOW });
     expect(plain).toContain('GOALS:');
     expect(plain).not.toContain(TIMING_BLOCK_HEADER);
@@ -337,12 +337,12 @@ describe('supervisor OFF switch × board digest line', () => {
   it('fleet OFF: the line names OFF since / by / wakes skipped and rides an otherwise-empty board alone; fleet scope appends it after the roll-up', async () => {
     mockPrisma.systemSetting.findUnique.mockImplementation(async ({ where }: any) =>
       where?.key === 'fleet_supervisor_enabled' ? { key: where.key, value: '0', updatedAt: new Date('2026-09-26T17:30:00Z') }
-        : where?.key === 'fleet_supervisor_enabled_by' ? { key: where.key, value: 'paul@sunday.market', updatedAt: new Date() }
+        : where?.key === 'fleet_supervisor_enabled_by' ? { key: where.key, value: 'example-user@example.com', updatedAt: new Date() }
           : null);
     mockRedisGet.mockResolvedValue('5');
     invalidateSupervisorSwitchCache();
     const line = await supervisorSwitchBoardLine();
-    expect(line).toBe(`${SUPERVISOR_SWITCH_BOARD_PREFIX} Fleet supervisor: OFF since 2026-09-26 17:30Z by paul@sunday.market — wakes skipped: 5`);
+    expect(line).toBe(`${SUPERVISOR_SWITCH_BOARD_PREFIX} Fleet supervisor: OFF since 2026-09-26 17:30Z by example-user@example.com — wakes skipped: 5`);
     mockPrisma.crossModelProject.findUnique.mockResolvedValueOnce(null);
     expect(await buildBoardDigestBlock({ scope: 'project', projectId: uuid('nope') })).toBe(line);
     mockPrisma.crossModelProject.findMany.mockResolvedValueOnce([{ id: uuid('p1'), name: 'spark-cluster' }]);
@@ -371,13 +371,13 @@ describe('board — kpi: premise rendering + adoption ladder (kpi-honesty-loops 
     const facts: BoardFacts = {
       projectName: 'tt-rd', now: NOWK, todos: [], ownerQuestions: [],
       goals: [{
-        id: uuid('226be7b7'), title: 'Qwen3.8-Flash-Next serving on QB2', status: 'active', premises: [KPI],
+        id: uuid('226be7b7'), title: 'Qwen3.8-Flash-Next serving on node-a', status: 'active', premises: [KPI],
         adoption: { goalId: uuid('226be7b7'), projectId: 'p', goalTitle: 't', kpiKey: KPI.key, kpiValue: 5.08, kpiUnit: 'tok/s', bar: 10, receiptId: KPI.receiptId, lastMoveAt: '2026-09-21T08:42:00Z', experiments: 27, hours: 150.4, lanes: ['ddd26be0'], tripped: true },
       }],
     };
     const block = renderProjectBoardBlock(facts);
     // GOAL-PRIORITY-SPEND: 62 = P2 (60) + the KPI-gap accrual (bar ≥10 unmet).
-    expect(block).toContain('- [P2 · 62] goal 226be7b7 [active] "Qwen3.8-Flash-Next serving on QB2" · todos 0 open/0 done · UNPLANNED · premises: KPI client_visible_e2e_tok_s=5.08 tok/s (receipt f5b42fe6 · 2h ago · bar ≥10) · last change 2.464→5.08 @13:22Z · KPI 5.08 tok/s unchanged since 09-21 08:42Z · 27 experiments / 6.3 d without adoption');
+    expect(block).toContain('- [P2 · 62] goal 226be7b7 [active] "Qwen3.8-Flash-Next serving on node-a" · todos 0 open/0 done · UNPLANNED · premises: KPI client_visible_e2e_tok_s=5.08 tok/s (receipt f5b42fe6 · 2h ago · bar ≥10) · last change 2.464→5.08 @13:22Z · KPI 5.08 tok/s unchanged since 09-21 08:42Z · 27 experiments / 6.3 d without adoption');
   });
 });
 

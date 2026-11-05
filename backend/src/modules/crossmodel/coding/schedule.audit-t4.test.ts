@@ -37,7 +37,7 @@ const mockTodoFindMany = jest.fn(async (..._a: any[]): Promise<any[]> => []);
 
 jest.mock('../../../config/database', () => {
   const db: any = {
-    codingSchedule: {
+    chatSchedule: {
       create: (...a: any[]) => mockCreate(...a),
       count: (...a: any[]) => mockCount(...a),
       findMany: (...a: any[]) => mockFindMany(...a),

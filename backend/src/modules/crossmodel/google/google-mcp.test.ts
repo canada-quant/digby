@@ -64,7 +64,7 @@ process.env.GOOGLE_MCP_API_KEY = 'test-key';
 const gm = require('./google-mcp') as typeof import('./google-mcp');
 
 const ACCOUNTS = [
-  { token: 'tok-personal', label: 'Personal', email: 'paul@gmail.com' },
+  { token: 'tok-personal', label: 'Personal', email: 'example-user@example.com' },
   { token: 'tok-work', label: 'Work', email: 'paul@work.com' },
 ];
 
@@ -143,7 +143,7 @@ describe('resolveGoogleAccount', () => {
   it('no match → label_not_found and the message LISTS the valid accounts', async () => {
     const r = await gm.resolveGoogleAccount('u1', 'Uni');
     expect(r).toMatchObject({ ok: false, reason: 'label_not_found' });
-    expect((r as any).message).toContain('Personal (paul@gmail.com)');
+    expect((r as any).message).toContain('Personal (example-user@example.com)');
     expect((r as any).message).toContain('Work (paul@work.com)');
   });
 });
@@ -452,7 +452,7 @@ describe('unlabeled reads fan out across accounts', () => {
     mockPost.mockImplementation(sseImplementation(i => okResult(i === 0 ? 'personal.doc' : 'work.doc')));
     const out = await gm.listDriveFiles('u1', 'spec');
     expect(out).toContain('[Google Drive Files]');
-    expect(out).toContain('--- Personal (paul@gmail.com) ---');
+    expect(out).toContain('--- Personal (example-user@example.com) ---');
     expect(out).toContain('--- Work (paul@work.com) ---');
     expect(out).toContain('personal.doc');
     expect(out).toContain('work.doc');
@@ -496,7 +496,7 @@ describe('failed reads surface ONE readable line per account', () => {
   it('a Google 401 on every account → the reconnect line per account (never "" / "no messages")', async () => {
     mockPost.mockImplementation(sseImplementation(() => errResult(AUTH)));
     const out = await gm.getGmailMessages('u1', 'from:bob');
-    expect(out).toContain('--- Personal (paul@gmail.com) ---\nGoogle gmail list messages call was rejected by Google (Request had invalid authentication credentials.');
+    expect(out).toContain('--- Personal (example-user@example.com) ---\nGoogle gmail list messages call was rejected by Google (Request had invalid authentication credentials.');
     expect(out).toContain('the Google connection needs re-authorizing: Account → Integrations → Google → reconnect that account');
     expect(out).toContain('--- Work (paul@work.com) ---');
   });
@@ -505,7 +505,7 @@ describe('failed reads surface ONE readable line per account', () => {
     mockPost.mockImplementation(sseImplementation(i => (i === 0 ? okResult('📅 Standup') : errResult('Error: Backend Error'))));
     const out = await gm.getCalendarEvents('u1');
     expect(out).toContain('[Google Calendar Events]');
-    expect(out).toContain('--- Personal (paul@gmail.com) ---\n📅 Standup');
+    expect(out).toContain('--- Personal (example-user@example.com) ---\n📅 Standup');
     expect(out).toContain("--- Work (paul@work.com) ---\nGoogle calendar list events call failed on Google's side (Backend Error) — Google is unavailable right now; try again later.");
   });
 

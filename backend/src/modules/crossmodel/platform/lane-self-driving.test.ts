@@ -6,7 +6,7 @@
 
 const mockPrisma: any = {
   agentRun: { findMany: jest.fn() },
-  codingSchedule: { findMany: jest.fn() },
+  chatSchedule: { findMany: jest.fn() },
   projectTodo: { findMany: jest.fn() },
   todoDependency: { findMany: jest.fn() },
 };
@@ -21,7 +21,7 @@ const NOW = new Date('2026-10-20T12:00:00Z');
 beforeEach(() => {
   jest.clearAllMocks();
   mockPrisma.agentRun.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.projectTodo.findMany.mockResolvedValue([]);
   mockPrisma.todoDependency.findMany.mockResolvedValue([]);
 });
@@ -60,9 +60,9 @@ describe('reads', () => {
     mockPrisma.agentRun.findMany.mockResolvedValue([{ sessionId: 'lane-1', status: 'running' }]);
     const facts = await readLaneDriveFacts(['lane-1', 'lane-1', 'lane-2'], NOW);
     expect(facts.map((f) => f.chatId)).toEqual(['lane-1', 'lane-2']);
-    expect(mockPrisma.codingSchedule.findMany.mock.calls[0][0].where).toMatchObject({ enabled: true, nextRunAt: { lte: new Date(NOW.getTime() + SELF_DRIVING_ARMED_HORIZON_MS) } });
+    expect(mockPrisma.chatSchedule.findMany.mock.calls[0][0].where).toMatchObject({ enabled: true, nextRunAt: { lte: new Date(NOW.getTime() + SELF_DRIVING_ARMED_HORIZON_MS) } });
     await readLaneDriveFacts(['lane-1'], NOW, { horizonMs: null });
-    expect(mockPrisma.codingSchedule.findMany.mock.calls[1][0].where.nextRunAt).toBeUndefined();
+    expect(mockPrisma.chatSchedule.findMany.mock.calls[1][0].where.nextRunAt).toBeUndefined();
     expect(mockPrisma.projectTodo.findMany).not.toHaveBeenCalled();
     mockPrisma.agentRun.findMany.mockClear();
     expect(await readLaneDriveFacts([], NOW)).toEqual([]);
@@ -74,7 +74,7 @@ describe('reads', () => {
     expect((await allLanesSelfDriving(['lane-1'], NOW)).selfDriving).toBe(true);
     expect((await allLanesSelfDriving(['lane-1', 'lane-2'], NOW)).selfDriving).toBe(false);
     expect((await allLanesSelfDriving([], NOW)).selfDriving).toBe(false);
-    mockPrisma.codingSchedule.findMany.mockRejectedValue(new Error('db down'));
+    mockPrisma.chatSchedule.findMany.mockRejectedValue(new Error('db down'));
     await expect(allLanesSelfDriving(['lane-2'], NOW)).rejects.toThrow('db down');
   });
 

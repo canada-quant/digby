@@ -55,7 +55,7 @@ import { Prisma } from '@prisma/client';
 import prisma from '../../../config/database';
 import logger from '../../../utils/logger';
 import { killSwitchOn } from '../../../utils/kill-switch';
-import { sweepOrphanedRunningSessions, pickTranscriptSource } from './coding-data.service';
+import { sweepOrphanedRunningSessions } from './coding-data.service';
 import { sweepLoopMetrics } from '../platform/loop-metrics.service';
 
 export const RESUME_WINDOW_MS = 7 * 24 * 3600 * 1000;
@@ -160,15 +160,13 @@ async function restoredAmong(ids: string[]): Promise<Set<string> | null> {
 }
 
 /**
- * MERGE-1 slice 1: "did this chat write a transcript row since `cutoff`" — through the
- * read-switch, so a mirror-only chat (no coding_messages rows) is seen as ACTIVE rather
- * than quiet and reaped while it is still in use.
+ * "Did this chat write a transcript row since `cutoff`" — the row lives in
+ * `crossmodel_messages`, the only transcript table since MERGE-1 completed, so a
+ * chat with a fresh row is seen as ACTIVE rather than quiet and reaped while it
+ * is still in use.
  */
 async function recentTranscriptProbe(chatId: string, cutoff: Date): Promise<{ id: string } | null> {
-  const source = await pickTranscriptSource(chatId);
-  return source === 'legacy'
-    ? await prisma.codingMessage.findFirst({ where: { chatId, createdAt: { gte: cutoff } }, select: { id: true } })
-    : await prisma.crossModelMessage.findFirst({ where: { chatId, createdAt: { gte: cutoff } }, select: { id: true } });
+  return await prisma.crossModelMessage.findFirst({ where: { chatId, createdAt: { gte: cutoff } }, select: { id: true } });
 }
 
 /**
@@ -493,7 +491,7 @@ export async function runAgentRunReaper(): Promise<void> {
           updatedAt: { lt: cutoff },
           ...(childReapCursor ? { id: { gt: childReapCursor } } : {}),
           // C4: rows that can never pass (archived chat, enabled schedule) never take a page slot.
-          chat: { is: { parentChatId: { not: null }, updatedAt: { lt: cutoff }, archivedAt: null, codingSchedules: { none: { enabled: true } } } },
+          chat: { is: { parentChatId: { not: null }, updatedAt: { lt: cutoff }, archivedAt: null, chatSchedules: { none: { enabled: true } } } },
         },
         select: { id: true, userId: true },
         orderBy: { id: 'asc' },
@@ -522,7 +520,7 @@ export async function runAgentRunReaper(): Promise<void> {
         // read the table the read-switch serves; a mirror-only chat has no coding_messages
         // rows, so the old probe always said "quiet" and reaped a live chat.
         recentTranscriptProbe(c.id, cutoff),
-        prisma.codingSchedule.count({ where: { sessionId: c.id, enabled: true } }),
+        prisma.chatSchedule.count({ where: { sessionId: c.id, enabled: true } }),
       ]);
       if (recentRun || activeRun || recentMsg || enabledSchedules > 0) continue;
       ready.push(c);
@@ -559,7 +557,7 @@ export async function runAgentRunReaper(): Promise<void> {
           status: { in: ['ready', 'error'] },
           updatedAt: { lt: cutoff },
           ...(finishedChildCursor ? { id: { gt: finishedChildCursor } } : {}),
-          chat: { is: { parentChatId: { not: null }, archivedAt: null, codingSchedules: { none: { enabled: true } } } },
+          chat: { is: { parentChatId: { not: null }, archivedAt: null, chatSchedules: { none: { enabled: true } } } },
         },
         select: { id: true, userId: true },
         orderBy: { id: 'asc' },
@@ -585,7 +583,7 @@ export async function runAgentRunReaper(): Promise<void> {
       const [liveRun, lastRun, enabledSchedules] = await Promise.all([
         prisma.agentRun.findFirst({ where: { sessionId: c.id, status: { in: ['queued', 'running', 'interrupted'] } }, select: { id: true } }),
         prisma.agentRun.findFirst({ where: { sessionId: c.id }, orderBy: { createdAt: 'desc' }, select: { status: true, finishedAt: true, createdAt: true } }),
-        prisma.codingSchedule.count({ where: { sessionId: c.id, enabled: true } }),
+        prisma.chatSchedule.count({ where: { sessionId: c.id, enabled: true } }),
       ]);
       if (liveRun || enabledSchedules > 0) continue;
       // Never ran → not "finished" (rule (e) handles abandoned children after 7 d).

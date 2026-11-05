@@ -1,11 +1,11 @@
 /**
  * REPLAY PIN — ticket c8c7fd41 (mishap, 2026-10-21T17:48:38.734Z): "3×
- * tool-failure streak: todo_update on 'cql-agx-orin64 Supervisor · hook:
+ * tool-failure streak: todo_update on 'cql-accelerator Supervisor · hook:
  * lane b' — framework or model?" Auto-filed at breaker trip (owner doctrine
  * 2026-09-10: self-heal + attribute, never just escalate).
  *
  * THE INCIDENT (session e03452f4-7f79-4a47-a95c-fb10a8873d47 — the
- * cql-agx-orin64 project supervisor, machine hook wake "lane b", 17:44–17:48Z
+ * cql-accelerator project supervisor, machine hook wake "lane b", 17:44–17:48Z
  * Oct 21): THREE consecutive todo_update refusals, all the IDENTICAL text —
  * "blockedReason can only be set on a blocked todo (current status:
  * 'pending'). Pass status:'blocked' to block it first." — with args
@@ -73,7 +73,7 @@ jest.mock('../../../utils/logger', () => ({
 
 // ── Stateful fake DB ─────────────────────────────────────────────────────────
 const OWNER = 'u-c8c7fd41';
-const PROJECT_ID = 'p-cql-agx-orin64';
+const PROJECT_ID = 'p-cql-accelerator';
 
 const db: {
   projects: any[]; goals: any[]; todos: any[]; goalDeps: any[]; todoDeps: any[];
@@ -201,7 +201,7 @@ const todoRow = (over: any = {}) => ({
 });
 
 beforeEach(() => {
-  db.projects = [{ id: PROJECT_ID, userId: OWNER, name: 'cql-agx-orin64', path: '/cql-agx' }];
+  db.projects = [{ id: PROJECT_ID, userId: OWNER, name: 'cql-accelerator', path: '/cql-agx' }];
   db.goals = [goalRow()];
   db.todos = [
     todoRow({ id: MEM_TODO, title: '2/6 Re-verify memory budget fresh on-box (8B pair + laya 29.35 GiB held, 15 GiB floor) and pull cyankiwi/Qwen3.5-4B-AWQ-4bit' }),

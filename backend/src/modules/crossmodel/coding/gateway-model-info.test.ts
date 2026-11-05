@@ -12,7 +12,7 @@ import {
 } from './gateway-model-info';
 
 const mockGet = axios.get as unknown as jest.Mock;
-const BASE = 'https://llm.example.com/v1';
+const BASE = 'https://llm.cql.ca/v1';
 
 /** The LiteLLM /model/info shape: one row per DEPLOYMENT of a model group. */
 const BODY = {
@@ -44,7 +44,7 @@ describe('pure parsers (moved from capability-detect — still re-exported there
     expect(m.has('api-optimize-zai-glm-5.3')).toBe(false);
   });
   it('urls: /v1 base → /v1/model/info then /model/info', () => {
-    expect(litellmModelInfoUrls('https://llm.example.com/v1/')).toEqual(['https://llm.example.com/v1/model/info', 'https://llm.example.com/model/info']);
+    expect(litellmModelInfoUrls('https://llm.cql.ca/v1/')).toEqual(['https://llm.cql.ca/v1/model/info', 'https://llm.cql.ca/model/info']);
   });
   it('capability-detect re-exports the same functions', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -84,7 +84,7 @@ describe('gatewayModelInfoWindow', () => {
   it('a body with no data[] list falls through to the alias path', async () => {
     mockGet.mockResolvedValueOnce({ data: { error: 'nope' } }).mockResolvedValueOnce({ data: BODY });
     expect(await gatewayModelInfoWindow({ baseUrl: BASE, model: 'api-alibaba-qwen3.8-max' })).toBe(262_144);
-    expect(mockGet.mock.calls.map((c) => c[0])).toEqual([`${BASE}/model/info`, 'https://llm.example.com/model/info']);
+    expect(mockGet.mock.calls.map((c) => c[0])).toEqual([`${BASE}/model/info`, 'https://llm.cql.ca/model/info']);
   });
 
   it('single-flight: concurrent resolves share ONE fetch', async () => {

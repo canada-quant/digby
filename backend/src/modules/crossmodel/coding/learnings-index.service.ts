@@ -456,6 +456,17 @@ export function looksLikeToolFailure(result: string): boolean {
   // shape for BOTH consumers here (breaker + learning nudger); a model that
   // truly loops identical staging calls is still caught by the repeat-breaker.
   if (/^\{\s*"ok":\s*false/.test(text) && /"needsConfirmation":\s*true/.test(text.slice(0, 400))) return false;
+  // FAMILY tool-failure-streak (2026-11-03, 9 auto-filed mishaps): an INFRA
+  // death is not a model failure. Tools anchor a transport-death result with
+  // `[INFRA]` (the session shell/container died before the command ran — see
+  // isExecTransportFailure in container.service.ts). Counting those convicted
+  // the MODEL for a dead BOX: each lane obeyed the "narrow the scope/path"
+  // advice, changed a perfectly valid pattern, racked the 3× streak, had the
+  // tool withheld for a model round, and auto-filed a model-blaming mishap.
+  // The breaker must never be fed by infrastructure (the same principle as the
+  // confirmation-gate exemption above). A lane that truly loops is still caught
+  // by the repeat-breaker, which counts identical calls regardless of result.
+  if (/^\[INFRA\]/.test(text)) return false;
   if (FAILURE_MARKERS.some(re => re.test(text))) return true;
   return EXIT_MARKER_TAIL_RE.test((result || '').slice(-500));
 }

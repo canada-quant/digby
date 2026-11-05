@@ -2,7 +2,7 @@
  * REPLAY test — ticket d1a7bec2 (enhancement, filed 2026-11-02T12:50Z), CASE 2:
  * "bool-unit KPI premises always read 'suspect kpi_bar_unmet'".
  *
- * The mishap, verbatim from the ticket: goal f43bce21 (ctrl.example.com embeddings
+ * The mishap, verbatim from the ticket: goal f43bce21 (ctrl.cql.ca embeddings
  * seat, status done since 11-02 08:05Z) carried the kpi premise
  * `caller_kpi_certified` — unit "bool", value 1, bar 90, barDirection "up".
  * The board rendered it
@@ -70,7 +70,7 @@ const premises = (...rows: any[]) => rows;
 
 const baseInput = (over: any = {}): any => ({
   id: 'f43bce21-0000-4000-8000-000000000001',
-  title: 'ctrl.example.com embeddings seat',
+  title: 'ctrl.cql.ca embeddings seat',
   status: 'done',
   progressNote: 'Seat certified and serving.',
   blockedReason: null,
@@ -251,7 +251,7 @@ describe('ticket d1a7bec2 CASE 2 (review fix) — every reader agrees on one bar
     });
     expect(ladder).not.toBeNull();
     expect(ladder!.bar).toBe(BOOLEAN_KPI_BAR);
-    const wake = renderNoAdoptionWake(ladder!, 'ctrl.example.com', new Date('2026-11-02T12:00:00.000Z'));
+    const wake = renderNoAdoptionWake(ladder!, 'ctrl.cql.ca', new Date('2026-11-02T12:00:00.000Z'));
     expect(wake).toContain('bar ≥1');
     expect(wake).not.toContain('bar ≥90');
   });

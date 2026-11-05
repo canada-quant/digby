@@ -1,6 +1,6 @@
 /**
  * STRUCK-NOTE REPEAT — tickets 4c7aebf7 + 9a976d83 (2026-10-21, chat e03452f4, the
- * 'cql-agx-orin64 Supervisor' project-supervisor chat).
+ * 'cql-accelerator Supervisor' project-supervisor chat).
  *
  * THE INCIDENT: at 17:12:19Z a machine-wake note claimed it had driven the owner's Mac via
  * computer_task (Tailscale ACL edit applied + saved, verify probe red) and headlined the FUTURE
@@ -143,6 +143,9 @@ const SIDE_ROW_KINDS: ReadonlySet<string> = new Set([
   'owner_briefing', 'stuck-note-nudge', 'report_up_ack', 'material_gate_ack', 'decision-autofiled',
   'verify-starve-notice', 'watched-resource', 'project_status', 'session_status', 'deeper_findings', 'continuation_result',
   'deliverable_handoff', 'background_worker_report', 'control_note', 'check_addendum', 'council_addendum',
+  // Ticket 9ecabc73: a background TOOL result posted at run end / after the run —
+  // the sibling of background_worker_report, never the lane's own note.
+  'background_tool_result',
 ]);
 /**
  * The BRIEFING-UNVERIFIED-FILTER footnote (platform/unverified-claims renderUnverifiedClaimsFootnote) shares the

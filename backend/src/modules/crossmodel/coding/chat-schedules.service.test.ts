@@ -25,7 +25,7 @@ const mockCount = jest.fn();
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       findFirst: (...a: any[]) => mockFindFirst(...a),
       update: (...a: any[]) => mockUpdate(...a),
       count: (...a: any[]) => mockCount(...a),

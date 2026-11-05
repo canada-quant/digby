@@ -59,6 +59,88 @@ export function isKnownEmbedBucket(v: unknown): v is EmbedBucket {
  */
 export type EmbedAbort = 'caller_timeout' | 'provider_error' | 'parse_failure' | 'network' | 'unknown';
 
+/**
+ * WHICH TRANSPORT carried the attempt — the positive "is there a gateway in
+ * front of me?" fact (goal 4e432dff, supervisor ruling 2026-11-04 on the
+ * residual `store|provider_error|NO-LEG` class).
+ *
+ * WHY A LANE, AND NOT JUST "no leg". The residual 6 rows proved the point: a
+ * `provider_error` on a lane with no LiteLLM hop can never carry an
+ * `x-litellm-*` header, so demanding a leg there makes bar 0 unreachable by
+ * construction — the same argument `caller_timeout`/`network` already get. But
+ * "the leg is absent" is an ABSENCE, and an absence cannot distinguish
+ *   (a) a direct-to-provider lane with no gateway in front  → no leg CAN exist
+ *   (b) a GATEWAYED lane whose gateway failed to emit headers → a leg SHOULD
+ *       have existed and its absence is the real defect
+ * Case (b) is exactly what this KPI exists to catch, so attributing on a
+ * missing leg would silently exonerate it. The lane is the positive fact that
+ * separates the two: it is written by the code that chose the URL, not inferred
+ * at read time from what failed to arrive.
+ *
+ * The set is CLOSED, and only a lane whose URL is a hard-coded constant in this
+ * repo can claim `gatewayless` — see `EMBED_GATEWAYLESS_LANES`. An operator
+ * endpoint (`custom`/`pinned`) may or may not sit behind a gateway, and we
+ * cannot tell, so it stays fail-closed (a leg is still required).
+ */
+export type EmbedLane = 'dashscope' | 'custom' | 'pinned' | 'unknown';
+
+/**
+ * The lanes that provably have NO gateway in front — the URL is the literal
+ * `DASHSCOPE_EMBEDDING_URL` constant in rag.service.ts, not operator config, so
+ * no LiteLLM hop can exist and no `x-litellm-*` header can ever arrive.
+ *
+ * Adding a lane here is a CLAIM about the transport, not a convenience: do it
+ * only when the destination is a hard-coded constant in this repo. A registered
+ * endpoint (`custom`/`pinned`) is configured through the Endpoints registry and
+ * may be a LiteLLM base URL, so it must never appear here.
+ */
+export const EMBED_GATEWAYLESS_LANES: readonly EmbedLane[] = ['dashscope'];
+
+/** True when this lane provably routes direct, with no gateway that could have
+ *  emitted an attribution header. */
+export function isGatewaylessEmbedLane(v: unknown): boolean {
+  return typeof v === 'string' && (EMBED_GATEWAYLESS_LANES as readonly string[]).includes(v);
+}
+
+/**
+ * The VALUE of the emitted `gwless` meta key — a transport's own assertion that
+ * no gateway sat in front of the call.
+ *
+ * WHY A DEDICATED KEY, and not the existing `lane` meta key. `lane` on a
+ * `rag_embed_call` row is a TRANSPORT-SELECTION LABEL chosen by the caller
+ * ('dashscope' | 'custom' | 'pinned'), and 'pinned' covers BOTH the hard-coded
+ * DashScope URL and an operator-registered endpoint — one of which is
+ * gatewayless and one of which may be Gatewayed. Reading `lane` for this
+ * question would therefore be wrong in one direction and unanswerable in the
+ * other. `gwless:'direct'` is instead written by the code that owns the URL, so
+ * it is a fact about the wire, not a label about the branch.
+ *
+ * Present ONLY when the assertion holds. Absent means "a gateway may exist", so
+ * the row keeps needing its leg — fail-closed by default.
+ */
+export const EMBED_GWLESS_DIRECT = 'direct';
+
+/** The meta spread that asserts a gatewayless transport — `{}` when the lane
+ *  cannot prove it. Kept as a helper so both emit surfaces spell the key once. */
+export function embedGatewaylessMeta(lane: unknown): Record<string, unknown> {
+  return isGatewaylessEmbedLane(lane) ? { gwless: EMBED_GWLESS_DIRECT } : {};
+}
+
+/** Stamp the transport lane on an error as it leaves the embed path.
+ *
+ *  The lane is known only WHERE THE URL IS CHOSEN (rag.service.ts), which is
+ *  deeper than `describeEmbedFailure` sits — the store path re-throws through
+ *  `embedRowsWithRetry`, so by the time a cause is built the choice is already
+ *  out of scope. Stamping it on the error keeps the fact attached to the
+ *  failure it describes instead of re-deriving it later from a config read that
+ *  may have changed in between. Never throws; non-objects pass through. */
+export function markEmbedLane<T>(err: T, lane: EmbedLane): T {
+  if (err && typeof err === 'object') {
+    try { (err as any).embedLane = lane; } catch { /* frozen error — the cause reports `unknown` */ }
+  }
+  return err;
+}
+
 export interface EmbedFailureCause {
   kind: EmbedFailureKind;
   /** HTTP status when the provider answered. */
@@ -83,6 +165,19 @@ export interface EmbedFailureCause {
   leg: string | null;
   /** Who ended the attempt (see `EmbedAbort`). */
   abort: EmbedAbort;
+  /**
+   * The transport that carried it (see `EmbedLane`) — the POSITIVE half of the
+   * attribution argument. `leg: null` says a header did not arrive; the lane
+   * says whether one could have. `unknown` when nothing stamped it, which is
+   * deliberately NOT gatewayless: an unstamped error must never be exonerated.
+   */
+  lane: EmbedLane;
+}
+
+/** Coerce anything to a known lane; anything unrecognized is `unknown`, never
+ *  silently treated as gatewayless. */
+export function normalizeEmbedLane(v: unknown): EmbedLane {
+  return v === 'dashscope' || v === 'custom' || v === 'pinned' ? v : 'unknown';
 }
 
 /** The gateway header names that identify a leg — the wire contract, spelled once. */
@@ -171,7 +266,35 @@ export function embedAttributionComplete(meta: Record<string, unknown> | null | 
   // A network fault can also resolve no response (ECONNRESET before headers) —
   // it is attributable by its typed reason the same way a caller abort is.
   if (abort === 'network') return true;
+  // THE GATEWAYLESS CARVE-OUT (supervisor ruling 2026-11-04, option (a)).
+  //
+  // A `provider_error` on a lane with no LiteLLM hop in front can never carry
+  // an `x-litellm-*` header, so demanding a leg there makes bar 0 unreachable
+  // by construction — the identical structural argument `caller_timeout` and
+  // `network` already get above. The 2026-11-04 residual proved it: all 6
+  // unattributed rows were `store|provider_error|NO-LEG` on the built-in
+  // DashScope lane, a URL that is a literal constant in rag.service.ts.
+  //
+  // WHAT KEEPS THIS HONEST. The exemption needs TWO positive facts, never an
+  // absence:
+  //   1. `gwless:'direct'` proves no gateway could have answered — written by
+  //      the transport that owns the URL (see embedGatewaylessMeta). A bare
+  //      `leg: null` would ALSO describe a GATEWAYED lane whose gateway failed
+  //      to emit headers, and exonerating that row would delete the very defect
+  //      this KPI exists to catch;
+  //   2. `abort` must be TYPED. `unknown`/absent means the row cannot say how
+  //      it ended, and bucket + a destination is not an attribution — it is a
+  //      flow with no outcome.
+  // Any other row (custom / pinned / unstamped) still requires its leg, so an
+  // operator endpoint that may sit behind a gateway stays fail-closed.
+  if (meta.gwless === EMBED_GWLESS_DIRECT && isTypedEmbedAbort(abort)) return true;
   return false;
+}
+
+/** A typed end reason — a real answer to "which side ended it", as opposed to
+ *  the `unknown` sentinel or a missing key. */
+export function isTypedEmbedAbort(v: unknown): v is Exclude<EmbedAbort, 'unknown'> {
+  return v === 'caller_timeout' || v === 'provider_error' || v === 'parse_failure' || v === 'network';
 }
 
 const MESSAGE_CAP = 200;
@@ -264,6 +387,9 @@ export function describeEmbedFailure(err: unknown): EmbedFailureCause {
     // property of the emitter rather than a habit of its call sites.
     leg: legFromAttributionHeaders(e?.response?.headers),
     abort: classifyEmbedAbort(err, kind),
+    // The lane was stamped by the code that CHOSE the URL (see markEmbedLane).
+    // `unknown` when nothing stamped it — never treated as gatewayless.
+    lane: normalizeEmbedLane(e?.embedLane),
   };
 }
 

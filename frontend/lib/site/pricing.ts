@@ -1,6 +1,6 @@
 /**
  * The ONE source of truth for the published pricing row (owner ruling
- * 2026-10-30 on the digby.example.com copy layer: "no names models and it's free").
+ * 2026-10-30 on the digby.ai copy layer: "no names models and it's free").
  *
  * ── THE MODEL HALF IS SETTLED, AND IT IS NOT A PLACEHOLDER ────────────────
  * "no names models" is a RULING, not a pending decision: every named

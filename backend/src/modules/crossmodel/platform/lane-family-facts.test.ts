@@ -41,7 +41,7 @@ const mockPrisma: any = {
   crossModelMessage: { findMany: jest.fn(async ({ where, take }: any) => messages.filter((m) => inList(m.chatId, where.chatId) && m.role === where.role && m.createdAt >= where.createdAt.gte).slice(0, take)) },
   chatShareLink: { findMany: jest.fn(async ({ where }: any) => shares.filter((x) => inList(x.chatId, where.chatId))) },
   userFeatureRequest: { findMany: jest.fn(async ({ where }: any) => tickets.filter((t) => inList(t.status, where.status) && where.OR.some((o: any) => t.context?.dispatchedTo === o.context.equals))) },
-  codingSchedule: { findMany: jest.fn(async ({ where }: any) => schedules.filter((s) => inList(s.sessionId, where.sessionId) && s.enabled)) },
+  chatSchedule: { findMany: jest.fn(async ({ where }: any) => schedules.filter((s) => inList(s.sessionId, where.sessionId) && s.enabled)) },
   chatCodingState: { findMany: jest.fn(async ({ where }: any) => states.filter((s) => inList(s.id, where.id) && inList(s.status, where.status))) },
 };
 const mockStoreGetMany = jest.fn(async (ns: string[], keys: string[]) => {
@@ -104,7 +104,7 @@ describe('readLaneFamilyFacts', () => {
     expect(await readLaneFamilyFacts(['X'])).not.toBeNull();
     mockPrisma.crossModelChat.findMany.mockResolvedValueOnce(Array.from({ length: LANE_FAMILY_ROWS_CAP }, (_, i) => ({ id: `k${i}`, parentChatId: 'X' })));
     expect(await readLaneFamilyFacts(['X'])).toBeNull();
-    mockPrisma.codingSchedule.findMany.mockRejectedValueOnce(new Error('down'));
+    mockPrisma.chatSchedule.findMany.mockRejectedValueOnce(new Error('down'));
     expect(await readLaneFamilyFacts(['X'])).toBeNull();
     mockStoreGetMany.mockRejectedValueOnce(new Error('down'));
     expect(await readLaneFamilyFacts(['X'])).toBeNull();

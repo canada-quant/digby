@@ -32,7 +32,7 @@ const mockPrisma: any = {
   supervisorState: { findUnique: jest.fn(), upsert: jest.fn() },
   crossModelChat: { findUnique: jest.fn() },
   projectTodo: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []) },
   agentRun: { groupBy: jest.fn(async () => []) },
 };
@@ -62,10 +62,10 @@ function mockTodos({ stalled = [] as any[], pending = [] as any[] } = {}) {
   );
 }
 
-/** Route the two codingSchedule queries: machinePrompts (where.userId) → [];
+/** Route the two chatSchedule queries: machinePrompts (where.userId) → [];
  *  assignee-cadence (where.sessionId.in) → cadenceRows. */
 function mockSchedules(cadenceRows: any[] = []) {
-  mockPrisma.codingSchedule.findMany.mockImplementation(async ({ where }: any) =>
+  mockPrisma.chatSchedule.findMany.mockImplementation(async ({ where }: any) =>
     where?.sessionId?.in ? cadenceRows : [],
   );
 }
@@ -76,7 +76,7 @@ const runAgg = (sessionId: string, newest: Date): any => ({ sessionId, _max: { u
 beforeEach(() => {
   jest.clearAllMocks();
   mockPrisma.projectTodo.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.ownerQuestion.findMany.mockResolvedValue([]);
   mockPrisma.agentRun.groupBy.mockResolvedValue([]);
 });
@@ -156,7 +156,7 @@ describe('ticket 8f5a45f7 replay — STALLED heuristic vs live watch lanes', () 
 
   it('liveness-lookup failure degrades to FLAGGING (never hides a stall, never throws)', async () => {
     mockTodos({ stalled: [stalledTodo()] });
-    mockPrisma.codingSchedule.findMany.mockImplementation(async ({ where }: any) =>
+    mockPrisma.chatSchedule.findMany.mockImplementation(async ({ where }: any) =>
       where?.sessionId?.in ? Promise.reject(new Error('db down')) : [],
     );
     mockPrisma.agentRun.groupBy.mockRejectedValue(new Error('db down'));

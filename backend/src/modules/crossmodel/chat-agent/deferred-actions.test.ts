@@ -151,7 +151,7 @@ describe('fcee0741 — cadence announcements and cited schedules are not unarmed
       '| crossmodel | Framework Operator mid-firing; PR #1259 merge unverified by my own read | next wake |',
       '| crossmodel (platform) | Not re-read this wake; ticket-row verification carried | Next sweep |',
       '## Next (my next wake)',
-      "- MiMo key: the lane's next run should act on your ruling — I could not verify it landed this wake.",
+      "- node-b key: the lane's next run should act on your ruling — I could not verify it landed this wake.",
       '**Research watch 6ef785c3**: idle until next wake 17:54Z future.',
       '- **Main lane ddd26be0**: idle, no error, no pending input, plan 5/5 complete; next wake 23:43Z future.',
       '- **Board (01:03Z ledger):** goal b3f240e4 active (9/11); FO next wake 02:32Z future; research watch idle.',

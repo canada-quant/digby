@@ -176,10 +176,21 @@ describe('4. server-listed queued rows (ticket c0b2b0c8) — pendingMessages sur
   it('reloadPlain re-lists the server queue (dedup append), keeps still-listed ids pending, and releases drained ones', () => {
     const r = region(VIEW, 'const reloadPlain = useCallback(async (sid: string) => {', '}, [startPendingRowPoll]);');
     expect(r).toContain('const restoredPending = mapPlainPendingMessages(full);');
-    expect(r).toContain('return [...prev, ...restoredPending.filter(m => !seen.has(m.id))];');
+    // Ticket 81b229e1: the append is now ONE atomic commit (a dropped echo + the
+    // server rows) instead of two sequential setMessages calls — the old
+    // `return [...prev, ...restoredPending.filter(...)]` append double-rendered
+    // a plain "Send now" message (tmp-* echo + its pending-<rowId> row).
+    expect(r).toContain('const appendedPending = restoredPending.filter(m => !baseIds.has(m.id));');
+    expect(r).toContain('setMessages(finalMessages);');
     expect(r).toContain('const listedPendingIds = new Set(restoredPending.map(m => m.id));');
-    expect(r).toContain('for (const id of prev) if (mergedIds.has(id) && !r.idMap.has(id)) next.add(id);');
+    expect(r).toContain('if (mergedIds.has(id) && !r.idMap.has(id)) next.add(id);');
     expect(r).toContain('for (const id of listedPendingIds) next.add(id);');
+    // The superseded echo must be released from the pending set, or the queued
+    // partition keeps rendering a bubble that maps to no row.
+    expect(r).toContain('if (replacedEchoIds.has(id)) continue;');
+    // And the re-open snapshot must carry the SAME deduped array, or a remount
+    // paints the duplicate straight back.
+    expect(r).toContain('refreshPlainSnapshotMessages(sid, finalMessages);');
   });
 
   it('the PLAIN merge page-gates pending-* rows (a prev queue row the fresh page no longer lists was drained — never a duplicate bubble); the CODING merge is unchanged', () => {

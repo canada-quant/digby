@@ -29,8 +29,8 @@ const mockPrisma: any = {
     update: jest.fn(async () => ({})),
   },
   agentEvent: { deleteMany: jest.fn(async () => ({ count: 0 })) },
-  codingMessage: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  crossModelMessage: { findFirst: jest.fn(async () => null) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   runToolReceipt: { findMany: jest.fn(async () => []), deleteMany: jest.fn(async () => ({ count: 0 })) },
   // Rule (g) — hook_events terminal-row GC (hardening review 2026-09-14); empty here.
   hookEvent: { findMany: jest.fn(async () => []), deleteMany: jest.fn(async () => ({ count: 0 })) },
@@ -50,9 +50,6 @@ jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPr
 const mockSweepOrphans: jest.Mock = jest.fn(async () => 0);
 jest.mock('./coding-data.service', () => ({
   sweepOrphanedRunningSessions: (...a: any[]) => mockSweepOrphans(...a),
-  // MERGE-1 slice 1: the reaper's recent-activity probe resolves through the read-switch
-  // seam. 'legacy' preserves every existing expectation (they seed codingMessage.findFirst).
-  pickTranscriptSource: async () => 'legacy',
 }));
 
 // The wave-1 loop-metrics GC — mocked to pin the WIRING (the sweep itself is
@@ -81,8 +78,8 @@ beforeEach(() => {
   mockPrisma.chatCodingState.updateMany.mockResolvedValue({ count: 0 });
   mockPrisma.chatCodingState.findMany.mockResolvedValue([]);
   mockPrisma.chatCodingState.update.mockResolvedValue({});
-  mockPrisma.codingMessage.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.crossModelMessage.findFirst.mockResolvedValue(null);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.runToolReceipt.findMany.mockResolvedValue([]);
   mockPrisma.$queryRaw.mockResolvedValue([]);
 });
@@ -130,24 +127,24 @@ describe('rule (e) — idle child sessions are archived', () => {
 
   it('a child with a recent MESSAGE is untouched', async () => {
     mockPrisma.chatCodingState.findMany.mockResolvedValue([{ id: 'child-1' }]);
-    mockPrisma.codingMessage.findFirst.mockResolvedValue({ id: 'm1' });
+    mockPrisma.crossModelMessage.findFirst.mockResolvedValue({ id: 'm1' });
     await runAgentRunReaper();
     expect(mockArchiveChat).not.toHaveBeenCalled();
   });
 
   it('a child with an ENABLED schedule is untouched', async () => {
     mockPrisma.chatCodingState.findMany.mockResolvedValue([{ id: 'child-1' }]);
-    mockPrisma.codingSchedule.count.mockResolvedValue(1);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1);
     await runAgentRunReaper();
     expect(mockArchiveChat).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.count).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.count).toHaveBeenCalledWith({
       where: { sessionId: 'child-1', enabled: true },
     });
   });
 
   it('mixed batch: archives only the fully idle child', async () => {
     mockPrisma.chatCodingState.findMany.mockResolvedValue([{ id: 'busy-child' }, { id: 'idle-child' }]);
-    mockPrisma.codingSchedule.count.mockImplementation(async ({ where }: any) =>
+    mockPrisma.chatSchedule.count.mockImplementation(async ({ where }: any) =>
       where.sessionId === 'busy-child' ? 2 : 0);
     await runAgentRunReaper();
     expect(mockArchiveChat).toHaveBeenCalledTimes(1);
@@ -172,11 +169,11 @@ describe('REAPER CANDIDATE ROTATION (lane lifecycle C4, 2026-10-21)', () => {
   it('rule (e)/(h) pages skip archived chats and chats with an enabled schedule at the query, ordered by id', async () => {
     await runAgentRunReaper();
     const [e] = pageArgs(isRuleE);
-    expect(e.where.chat).toEqual({ is: { parentChatId: { not: null }, updatedAt: { lt: expect.any(Date) }, archivedAt: null, codingSchedules: { none: { enabled: true } } } });
+    expect(e.where.chat).toEqual({ is: { parentChatId: { not: null }, updatedAt: { lt: expect.any(Date) }, archivedAt: null, chatSchedules: { none: { enabled: true } } } });
     expect(e.orderBy).toEqual({ id: 'asc' });
     expect(e.where.id).toBeUndefined();
     const [h] = pageArgs((a) => a?.where?.chat?.is?.archivedAt === null && !isRuleE(a));
-    expect(h.where.chat).toEqual({ is: { parentChatId: { not: null }, archivedAt: null, codingSchedules: { none: { enabled: true } } } });
+    expect(h.where.chat).toEqual({ is: { parentChatId: { not: null }, archivedAt: null, chatSchedules: { none: { enabled: true } } } });
     expect(h.orderBy).toEqual({ id: 'asc' });
   });
 

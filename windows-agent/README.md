@@ -79,13 +79,13 @@ zero-history profile.
 ### The desktop shell + installer (`../windows-shell/`)
 
 W2's installable-client half — a C#/.NET 8 WinForms + WebView2 shell around
-`https://digby.example.com/` (the port of the macOS `main.swift`), plus an
+`https://digby.ai/` (the port of the macOS `main.swift`), plus an
 NSIS per-user installer. Full architecture, the `__digbyDesktop` bridge
 message table, and the deviation table live in
 [`../windows-shell/README.md`](../windows-shell/README.md); the short version:
 
 - **Shell**: persistent login profile under `%LOCALAPPDATA%\Digby\WebView2`,
-  host allowlist (`digby.example.com` + OAuth hosts in-app, user-clicked external
+  host allowlist (`digby.ai` + OAuth hosts in-app, user-clicked external
   links → default browser), `__digbyDesktop = { platform: 'windows',
   canSetupIMessage: true }` + a WebKit shim so the web app needs **zero
   changes**, native downloads, close-to-tray, update check against

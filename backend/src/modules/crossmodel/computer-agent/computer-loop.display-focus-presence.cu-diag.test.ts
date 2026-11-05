@@ -288,15 +288,18 @@ describe("fix #1 — focus split: unchanged frame of the WRONG display is not de
 
   /** cu-diag fix #2 (merged 2026-09-25): a legacy agent cannot say WHERE the
    *  focus went, but the SAME frames still trip the watchdog — through the
-   *  harness's own positive-control probe (Cmd+Space → Escape at strike 2),
-   *  not a blind third strike. The first action's Terminal→TextEdit on a
-   *  byte-identical frame is positive input evidence (fix #2a: the incident's
-   *  own signature), so it is never a strike; the next two are. The probe
-   *  below is fed the same identical frame with an unchanged frontmost app —
-   *  a FAILED probe — which is the only ground the merged loop aborts on. */
+   *  harness's own positive-control probe (Cmd+Space → Cmd+Tab → Escape at
+   *  strike 2), not a blind third strike. The first action's
+   *  Terminal→TextEdit on a byte-identical frame is positive input evidence
+   *  (fix #2a: the incident's own signature), so it is never a strike; the
+   *  next two are. The probe below is fed the same identical frame with an
+   *  unchanged frontmost app on EVERY leg (ticket a40f64d9 made the control
+   *  multi-leg) — a FAILED probe — which is the only ground the merged loop
+   *  aborts on. */
   const failingProbe = (shot: (o?: Record<string, unknown>) => any) => {
     mockDispatch
-      .mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce(shot({ frontmostApp: "TextEdit", frontmostWindowDisplayId: 2 })) // probe: cmd+space
+      .mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce(shot({ frontmostApp: "TextEdit", frontmostWindowDisplayId: 2 })) // probe leg 1: cmd+space (inert)
+      .mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce(shot({ frontmostApp: "TextEdit", frontmostWindowDisplayId: 2 })) // probe leg 2: cmd+tab (inert)
       .mockResolvedValueOnce({ ok: true }).mockResolvedValueOnce(shot({ frontmostApp: "TextEdit", frontmostWindowDisplayId: 2 })); // probe: escape
   };
   const resultsOf = () =>

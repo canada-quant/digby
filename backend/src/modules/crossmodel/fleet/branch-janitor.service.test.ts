@@ -36,7 +36,7 @@ jest.mock('../../../config/database', () => ({
     crossModelProject: { findMany: (...a: any[]) => mockProjectFindMany(...a) },
     crossModelChat: { findMany: (...a: any[]) => mockChatFindMany(...a) },
     agentRun: { count: (...a: any[]) => mockRunCount(...a) },
-    codingSchedule: { count: (...a: any[]) => mockScheduleCount(...a) },
+    chatSchedule: { count: (...a: any[]) => mockScheduleCount(...a) },
   },
 }));
 
@@ -53,10 +53,8 @@ jest.mock('../github/token-manager', () => ({
   getValidToken: (...a: any[]) => mockGetValidToken(...a),
 }));
 
-const mockSingleBranch: jest.Mock = jest.fn(() => true);
 jest.mock('../coding/session-history-sync.service', () => ({
   __esModule: true,
-  sessionHistorySingleBranchEnabled: () => mockSingleBranch(),
   LEGACY_SESSION_HISTORY_PREFIX: 'digby/session-history/',
   SESSION_HISTORY_BRANCH: 'digby/session-history',
 }));
@@ -327,7 +325,6 @@ const savedEnv: Record<string, string | undefined> = {};
 beforeEach(() => {
   jest.clearAllMocks();
   mockGetValidToken.mockResolvedValue('TOK');
-  mockSingleBranch.mockReturnValue(true);
   mockProjectFindMany.mockResolvedValue([{ id: 'p1', userId: 'u1', repoUrl: 'https://github.com/o/r.git', defaultBranch: 'main' }]);
   mockChatFindMany.mockResolvedValue([]);
   mockRunCount.mockResolvedValue(0);
@@ -349,7 +346,7 @@ describe('pure helpers', () => {
   });
 
   it('parseGithubSlug handles https/.git/ssh shapes and rejects non-GitHub URLs', () => {
-    expect(parseGithubSlug('https://github.com/canada-quant/digby.git')).toEqual({ owner: 'canada-quant', repo: 'digby' });
+    expect(parseGithubSlug('https://github.com/example-org/crossmodel.git')).toEqual({ owner: 'example-org', repo: 'crossmodel' });
     expect(parseGithubSlug('https://github.com/o/r')).toEqual({ owner: 'o', repo: 'r' });
     expect(parseGithubSlug('git@github.com:o/r.git')).toEqual({ owner: 'o', repo: 'r' });
     expect(parseGithubSlug('https://gitlab.com/o/r')).toBeNull();
@@ -363,8 +360,6 @@ describe('pure helpers', () => {
     expect(isLegacySessionHistoryBranch('digby/session-history/abc')).toBe(true);
     expect(isLegacySessionHistoryBranch('digby/session-history')).toBe(false);        // the consolidated branch
     expect(isLegacySessionHistoryBranch('digby/session-history/a/b')).toBe(false);    // not the per-session shape
-    mockSingleBranch.mockReturnValue(false);
-    expect(isLegacySessionHistoryBranch('digby/session-history/abc')).toBe(false);    // legacy mode = they are live history
     expect(encodeRef('feat/a b#c')).toBe('feat/a%20b%23c');
   });
 });
@@ -475,19 +470,6 @@ describe('janitorRepo — the rules (BRANCH_JANITOR_EXTENDED_RULES_DISABLED=1: t
     const r = await janitorRepo({ api, owner: 'o', repo: 'r', now: NOW, dryRun: false, budget: { remaining: 50 } });
     expect(api.deletes).toEqual([]);
     expect(r.reasons).toEqual({ kept_unknown_age: 1 });
-  });
-
-  it('SESSION_HISTORY_SINGLE_BRANCH_DISABLED (legacy mode): per-session history branches are LIVE history — judged by the ordinary rules, not deleted as legacy', async () => {
-    mockSingleBranch.mockReturnValue(false);
-    const api = mkApi({
-      branches: [{ name: 'digby/session-history/abc', sha: 'l' }],
-      aheadBy: { 'digby/session-history/abc': 1 },
-      commitDates: { l: hoursAgo(20) },
-    });
-    const r = await janitorRepo({ api, owner: 'o', repo: 'r', now: NOW, dryRun: false, budget: { remaining: 50 } });
-    expect(api.deletes).toEqual([]);
-    expect(r.reasons).toEqual({ kept_active: 1 });
-    expect(api.gets.some(u => u.includes('/compare/main...digby/session-history/abc'))).toBe(true);
   });
 
   it('the per-pass deletion cap is shared across repos: budget exhausted ⇒ kept_cap, nothing else is called', async () => {
@@ -716,19 +698,19 @@ describe('extended rules — pure helpers', () => {
 
   it('isFrameworkOwnedRepo: the instance\'s own repo (SELF_REPO; the platform repo on prod) — never a user repo, never prod from a non-prod instance', () => {
     // Prod, SELF_REPO unset: the platform repo, any spelling.
-    expect(isFrameworkOwnedRepo('canada-quant/digby', {})).toBe(true);
-    expect(isFrameworkOwnedRepo('Canada-Quant/DIGBY', {})).toBe(true);
-    expect(isFrameworkOwnedRepo('https://github.com/canada-quant/digby.git', {})).toBe(true);
+    expect(isFrameworkOwnedRepo('example-org/crossmodel', {})).toBe(true);
+    expect(isFrameworkOwnedRepo('example-org/crossmodel', {})).toBe(true);
+    expect(isFrameworkOwnedRepo('https://github.com/example-org/crossmodel.git', {})).toBe(true);
     expect(isFrameworkOwnedRepo('someuser/their-app', {})).toBe(false);
     expect(isFrameworkOwnedRepo('o/r', {})).toBe(false);
     expect(isFrameworkOwnedRepo('', {})).toBe(false);
     // SELF_REPO names the instance's own repo.
     expect(isFrameworkOwnedRepo('acme/digby-fork', { SELF_REPO: 'https://github.com/acme/digby-fork' })).toBe(true);
-    expect(isFrameworkOwnedRepo('canada-quant/digby', { SELF_REPO: 'acme/digby-fork' })).toBe(false);
+    expect(isFrameworkOwnedRepo('example-org/crossmodel', { SELF_REPO: 'acme/digby-fork' })).toBe(false);
     // A non-prod instance: its SELF_REPO only; unset or the prod repo ⇒ owns nothing.
     expect(isFrameworkOwnedRepo('acme/digby-fork', { DIGBY_INSTANCE: 'selfhost', SELF_REPO: 'acme/digby-fork' })).toBe(true);
-    expect(isFrameworkOwnedRepo('canada-quant/digby', { DIGBY_INSTANCE: 'selfhost' })).toBe(false);
-    expect(isFrameworkOwnedRepo('canada-quant/digby', { DIGBY_INSTANCE: 'selfhost', SELF_REPO: 'canada-quant/digby' })).toBe(false);
+    expect(isFrameworkOwnedRepo('example-org/crossmodel', { DIGBY_INSTANCE: 'selfhost' })).toBe(false);
+    expect(isFrameworkOwnedRepo('example-org/crossmodel', { DIGBY_INSTANCE: 'selfhost', SELF_REPO: 'example-org/crossmodel' })).toBe(false);
   });
 
   it('defaultLaneLive: an unarchived chat with a queued/running/interrupted run or an enabled schedule is live; an error is live (fail closed)', async () => {
@@ -1494,13 +1476,13 @@ describe('sweepBranches — extended rules', () => {
   });
 
   it('the platform repo: the consolidated history branch is kept, the lane probe is threaded through, both squash/closed lanes go into ONE archive before their delete', async () => {
-    mockProjectFindMany.mockResolvedValue([{ id: 'p1', userId: 'u1', repoUrl: 'https://github.com/canada-quant/digby.git', defaultBranch: 'main' }]);
+    mockProjectFindMany.mockResolvedValue([{ id: 'p1', userId: 'u1', repoUrl: 'https://github.com/example-org/crossmodel.git', defaultBranch: 'main' }]);
     const api = mkApi(laneFixture());
     const laneLive = jest.fn(async () => true);
     const r = await sweepBranches({ now: NOW, apiFactory: () => api, laneLive });
     expect(laneLive).toHaveBeenCalledWith('0a1b2c3d');
     expect(r).toMatchObject({ repos: 1, scanned: 15, deleted: 4, kept: 11 });
-    expect(r.perRepo[0]).toMatchObject({ repo: 'canada-quant/digby', ownRepo: true, archiveTag: ARCHIVE_TAG });
+    expect(r.perRepo[0]).toMatchObject({ repo: 'example-org/crossmodel', ownRepo: true, archiveTag: ARCHIVE_TAG });
     expect(r.perRepo[0].reasons).toMatchObject({ kept_session_history: 1, kept_live_lane: 1, kept_active: 2 });
     expect(r.perRepo[0].deletedBranches).toEqual(['digby/merged-fully', 'digby/session-history/abc', 'digby/squashed', 'fix/closed-unmerged']);
     expect(archiveCommitPosts(api)).toEqual([expect.objectContaining({ tree: 'tree-main', parents: ['sha-sq', 'sha-cu'] })]);

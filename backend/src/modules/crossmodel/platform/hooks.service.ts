@@ -137,12 +137,22 @@ import {
 import {
   WAKE_TRIAGE_LANE_LOOKUP_MAX, WAKE_TRIAGE_RUN_LABELLED_QUESTIONS, buildWakeTriageRequest, wakeTriageAnsweredKeys,
   wakeTriageCodeLabels, wakeTriageSourceIds, wakeTriageV2Note, type WakeSourceLaneFacts,
-  drawWakeTriageControl, WAKE_TRIAGE_CONTROL_EXTRA,
+  drawWakeTriageControl, WAKE_TRIAGE_CONTROL_EXTRA, wakeTriageCodeFlags,
 } from './wake-triage-request';
 // audit 2026-10-06 T3-3: hook summaries are redacted with the shared scanner (leaf, no imports).
 import { redactSecrets } from './secret-scan';
 // audit 2026-10-08 W6-2: the deterministic material-change wake gate for supervisor targets.
 import { closeStashesForGateSkip, materialGateForHook, readInflightMachineWakeStart, readWakeHighWaterMark, recordMaterialGateAgreement, type MaterialGateResult } from './supervisor-wake-ledger';
+// SAA-1.1 PHASE 1 (todo eb328629): deterministic trigger admission BEFORE any model call.
+import { decideHookSourcePolicy, hookBatchKey, hookSourcePolicyMetricMeta } from './hook-source-policy';
+// SAA-1.2 PHASE 1 (todo c0b8b8cf): thread pass-through — resolve the lane that
+// OWNS the thread. OBSERVE-ONLY: the fire site still uses hook.targetChatId.
+import { hookThreadPassthroughDisabled, planThreadPassthrough, threadPassthroughMetricMeta, distinctGroupSourceChatIds, groupSpansMultipleThreads } from './hook-thread-passthrough';
+// SAA-1.1 PHASE 1 (2026-11-03): the SAME "did the run do real work" definition
+// the harness's later wakeActed() label uses, so the policy and the label that
+// grades it agree on what a mutation is (leaf import; no cycle back here).
+import { isRealActionTool } from './decision-outcome-labels';
+import { PLATFORM_MUTATING_TOOLS } from './platform-tool-names';
 import { HOOK_STATUS_NO_MATERIAL_CHANGE, HOOK_STATUS_PROGRESS_SELF_DRIVING } from './wake-material-rule';
 import { quietAlarmCause } from './alarm-cause';
 import { archivedTargetRetireDisabled } from './archived-target-retire';
@@ -1918,7 +1928,7 @@ async function parkBusyRows(targetChatId: string, rows: any[]): Promise<void> {
  *   - the chat is ARCHIVED (archivedAt set — explicit retirement; the
  *     2026-09-20 lane-scoped ending now archives finished sub-sessions, so
  *     stale peer hooks would otherwise fire into shelved chats forever);
- *   - a CODING lane (codingState present) with NO enabled CodingSchedule AND
+ *   - a CODING lane (codingState present) with NO enabled ChatSchedule AND
  *     NO open ProjectTodo (LIVE_TODO_STATUSES) assigned to it.
  *
  * Deliberate exemptions (false-positive guards — pausing these would break
@@ -1975,7 +1985,7 @@ async function hookTargetRetired(hook: any, tgt: any): Promise<boolean> {
   if (!tgt.codingState) return false;
   try {
     const [enabledSchedules, liveTodos] = await Promise.all([
-      prisma.codingSchedule.count({ where: { sessionId: hook.targetChatId, enabled: true } }),
+      prisma.chatSchedule.count({ where: { sessionId: hook.targetChatId, enabled: true } }),
       prisma.projectTodo.count({ where: { assigneeChatId: hook.targetChatId, status: { in: [...LIVE_TODO_STATUSES] } } }),
     ]);
     return enabledSchedules === 0 && liveTodos === 0;
@@ -2026,7 +2036,6 @@ async function handoffParentWakeSkip(hook: any, tgt: any, rows: any[]): Promise<
       },
       flipFailedCard: async (row) => {
         const te = await import('../chat-agent/task-events');
-        if (te.taskCardDisabled()) return false;
         const childChatId = String(hook.sourceChatId);
         const title = String((row?.payload as any)?.sourceChatTitle ?? '').trim();
         const cause = rowSummary(row).replace(/\s+/g, ' ').trim().slice(0, 300);
@@ -2138,6 +2147,106 @@ export async function reportedInRunRows(hook: { targetChatId: string }, rows: an
   } catch (err: any) {
     logger.warn(`hooks: reported-in-run check failed (${err?.message ?? err}) — delivering as before`);
     return [];
+  }
+}
+
+/**
+ * SAA-1.1 PHASE 1 (2026-11-03) — did the run that produced this batch's
+ * `run_completed` row ACTUALLY DO ANYTHING?
+ *
+ * THE DEFECT THIS ANSWERS. The admission policy used to ignore a lone
+ * `run_completed` batch as `routine_completion` on the strength of its summary
+ * prose. Measured on the live replay: hook `15ba91cf` sent the same lone
+ * `run_completed` shape into the same chat twice ~33 minutes apart — once at
+ * 03:23:39Z and once at 03:56:29Z — and the SECOND wake went on to mutate four
+ * things (goal_create, todo_create, send_chat_message, todo_update) while the
+ * first did not. Both summaries read "RUN_OUTCOME: completed · VERDICT: n/a ·
+ * BLOCKING: 0", so the event rows alone cannot separate them: the summary says
+ * the run FINISHED, never what it DID.
+ *
+ * What CAN separate them is the run's own tool receipts. Those rows are written
+ * as each tool call executes — i.e. BEFORE the hook wake for that run is
+ * processed — so reading them here is admission-time information, not
+ * hindsight. `isRealActionTool` is the SAME definition the harness's later
+ * `wakeActed()` label uses (mutating platform tools minus wake housekeeping),
+ * so the policy and the label that grades it finally agree on what "did work"
+ * means instead of the policy guessing from prose.
+ *
+ * TRI-STATE CONTRACT — and today only TWO of the three values are reachable:
+ *   true  — a real action was proven: the batch must NOT be ignored.
+ *   null  — we could not rule it out (no runId, no receipt, or the lookup
+ *           threw). The policy treats null like true, because "I could not rule
+ *           out that this run did work" is precisely the state in which
+ *           suppressing the wake is unsafe. Fail-safe = deliver.
+ *   false — provably quiet, i.e. the ONLY value that permits `ignore`. The type
+ *           keeps it because it is the right answer the moment a COMPLETE
+ *           admission-time channel exists — but no such channel exists today, so
+ *           this function never returns it. See the coverage note below.
+ *
+ * WHY `false` IS UNREACHABLE (the review finding that reshaped this guard).
+ * The first cut returned `receipts.some(isRealActionTool)`, which reads a MISS as
+ * "quiet". That is unsound: receipt rows exist only for `RECEIPT_TOOLS` (21
+ * names) while `isRealActionTool` ranges over `PLATFORM_MUTATING_TOOLS` (91, 74
+ * after housekeeping), so 43 of 74 real actions — hook_subscribe, infra_action,
+ * register_watched_resource, set_session_model, archive_project, delete_chat, … —
+ * mint NO receipt. A run whose only act was `hook_subscribe` would have read
+ * "provably quiet" and been suppressed: the ORIGINAL defect through a new door.
+ * The alternative — reading the transcript the way `wakeActed()` does — is not
+ * run-scoped at admission time (a chat's newest assistant row belongs to the
+ * LAST run, and chat-agent turns carry a `chat-<uuid>` telemetry id with no
+ * stored row at all), so it cannot prove THIS run was quiet either.
+ *
+ * CONSEQUENCE, stated plainly: a lone `run_completed` batch is now classified
+ * `candidate` (deliver) — exactly today's behaviour, never a false suppression.
+ * The `ignore` branch this guard once fed is retired for `run_completed` until
+ * receipt coverage spans the mutating vocabulary; `todo_done` and
+ * `schedule_near_cap` batches, which carry no source run, are unaffected.
+ *
+ * Scoped to the run ids the batch actually names, bounded, and never throws.
+ */
+export async function sourceRunMutated(rows: any[]): Promise<boolean | null> {
+  try {
+    const runIds = [...new Set(
+      (rows ?? [])
+        .filter((r) => String(r?.eventType ?? '') === 'run_completed')
+        .map((r) => rowRunId(r as HandoffWakeRow))
+        .filter((v): v is string => typeof v === 'string' && v.length > 0),
+    )];
+    // No run id ⇒ nothing to look up. NOT "the run did nothing" — unknown.
+    if (!runIds.length) return null;
+    // ── CHANNEL 1: RECEIPTS — positive proof ONLY (review fix, 2026-11-03) ──
+    // A receipt row proves a run DID something. Its ABSENCE proves nothing: a row
+    // only exists for a tool in `RECEIPT_TOOLS` (coding/run-receipts.ts, 21
+    // entries) while `isRealActionTool` draws on `PLATFORM_MUTATING_TOOLS` (91,
+    // 74 after housekeeping) — so 43 of 74 real actions mint NO receipt at all
+    // (hook_subscribe, hook_update, infra_action, register_watched_resource,
+    // set_session_model, set_chat_mode, archive_project, delete_chat, …). A first
+    // cut of this guard returned `receipts.some(...)` and therefore read a run
+    // whose ONLY action was `hook_subscribe` as "provably quiet" and suppressed
+    // it — the original defect through a new door. So a hit is proof; a miss is
+    // "could not rule it out", and no admission-time channel today can do better.
+    //
+    // Two narrowings that remove avoidable false negatives WITHIN the channel:
+    //  - restrict to real-action names, so the cap bounds MATCHING rows instead of
+    //    being starved by hundreds of run_command / observe rows (an unrestricted
+    //    `take: 500` with no orderBy dropped real actions in busier runs);
+    //  - do NOT filter `ok`: a staged or refused `delete_chat` is still evidence
+    //    the run reached for a mutation, and this is the one direction the guard
+    //    must never get wrong.
+    const receipts: any[] = (await prisma.runToolReceipt.findMany({
+      where: { runId: { in: runIds }, tool: { in: [...PLATFORM_MUTATING_TOOLS] } },
+      select: { tool: true },
+      take: 50,
+    })) ?? [];
+    // A hit is proof. A MISS IS NOT PROOF OF ABSENCE → null (unknown), never
+    // false. `false` stays in this function's contract because it is the right
+    // answer the moment a COMPLETE admission-time channel exists; today there is
+    // none, so the honest value is "could not rule it out" and the policy takes
+    // the fail-safe branch (deliver).
+    return receipts.some((rc) => isRealActionTool(String(rc?.tool ?? ''))) ? true : null;
+  } catch (err: any) {
+    logger.warn(`hooks: source-run mutation check failed (${err?.message ?? err}) — treating as UNKNOWN (will not ignore)`);
+    return null;
   }
 }
 
@@ -2849,6 +2958,57 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
     ? await materialGateForHook({ targetChatId: hook.targetChatId, rows, alarm: alarmRows.length > 0 || capBypassed, isAlarmRow }).catch(() => null)
     : null;
 
+  // SAA-1.1 PHASE 1 — DETERMINISTIC TRIGGER ADMISSION (todo eb328629, 2026-11-02;
+  // platform/hook-source-policy.ts). Runs HERE, before `decisionMode('wake_triage')`
+  // and therefore before ANY model call: the essay's two-stage Fast/Slow split puts
+  // the cheap deterministic "does this batch need a model at all?" FIRST, and today
+  // Digby has no such stage — `eventTypes` is the only subscriber-side filter, so
+  // admission is a model judgment. This is that stage.
+  //
+  // OBSERVE-ONLY, and not merely by discipline: the decision type pins `applied` to
+  // the literal false, so nothing below reads it and no row is suppressed — every
+  // batch still reaches the triage exactly as before. The ONLY production effect is
+  // the `hook_source_policy_observe` row. That is what makes the 48 h window
+  // meaningful: we measure what the policy WOULD have done against what actually
+  // happened, because the wakes we would have dropped still run and still get the
+  // harness's own later label (wakeActed, via decision-outcome-labels).
+  // Never throws: a policy fault must not cost a wake (fail-open, like the triage).
+  // 03bcf00f: the DURABLE correlation key for this batch (hookId + the policy's
+  // batch ids). Stamped on the delivery metric AND on the triage/park decision
+  // stash so the final run-outcome row carries the SAME string — the grader then
+  // joins key-to-key instead of guessing inside a time window.
+  let hookBatch: string | null = null;
+  if (rows.length) {
+    try {
+      const policyDecision = decideHookSourcePolicy({
+        rows,
+        // ONE alarm definition on the path — the caller's cause-aware classifier,
+        // never a second re-derivation (a schedule_disabled carrying a successorId
+        // is a routine rollover and must NOT read as an alarm here).
+        alarm: alarmRows.length > 0 || capBypassed,
+        flags: wakeTriageCodeFlags(rows),
+        // SAA-1.1 PHASE 1 (2026-11-03): did the run this batch reports on
+        // actually DO anything? Read from that run's own tool receipts, which
+        // are written before this wake is processed — so this is admission-time
+        // information, not hindsight. Tri-state: true = it mutated (never
+        // ignore), false = provably quiet (ignore allowed), null = unknown
+        // (treated as mutated). This is the ONLY thing on the path that can
+        // separate two identical-looking run_completed summaries.
+        sourceRunMutated: await sourceRunMutated(rows),
+      });
+      hookBatch = hookBatchKey(hookId, policyDecision.ids);
+      const policyMeta = hookSourcePolicyMetricMeta(policyDecision);
+      if (policyMeta) {
+        recordLoopMetric({
+          kind: LOOP_METRIC_KINDS.HOOK_SOURCE_POLICY_OBSERVE,
+          sessionId: hook.targetChatId,
+          value: 1,
+          meta: { ...policyMeta, hookId },
+        });
+      }
+    } catch { /* observe-only: never blocks or fails a wake */ }
+  }
+
   // DECISION GATE — WAKE TRIAGE (2026-09-24). The Fleet Supervisor was
   // saturated (121 turns / 24 h, p50 8 min per turn, 66 of them single ~1.2 KB
   // report-ups): every non-alarm event group cost a full reasoning turn. A
@@ -2928,7 +3088,7 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
           // audit 2026-10-06 T3-1: the park decision rides in the row (slim — no
           // challengers) so the finalize of the wake the row later rides labels
           // it; the first park time anchors the max hold, which also caps retryAt.
-          const parkStash = parkRide ? slimParkStash(stashDecision(gate, 'wake_triage')) : null;
+          const parkStash = parkRide ? slimParkStash(stashDecision(gate, 'wake_triage', hookBatch ? { extra: { hookBatch } } : {})) : null;
           const maxHoldMs = WAKE_TRIAGE_MAX_HOLD_MS();
           const nowIso = new Date().toISOString();
           for (const r of rows) {
@@ -2953,11 +3113,13 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
           if (debounceGateHeld) await redisClient.del(DEBOUNCE_GATE_KEY(hookId)).catch(() => {});
           recordLoopMetric({ kind: LOOP_METRIC_KINDS.WAKE_PARKED, sessionId: hook.targetChatId, value: rows.length, meta: { reason: 'triage', ttlPark: true, deferMs, eventType: preview.eventType, hookId, ...(reTriaged ? { retriaged: parkedInGroup.length } : {}) } });
           const v2 = wakeTriageV2Note(gate.answers);
-          recordDecisionOutcome(gate, 'wake_triage', { question: 'needs_turn_now', actual: null, acted: true, sessionId: hook.targetChatId, note: `parked ${rows.length} row(s) for ${Math.round(deferMs / 60000)} min${reTriaged ? ` (re-triaged ${parkedInGroup.length} parked)` : ''}${v2 ? `; ${v2}` : ''}` });
+          recordDecisionOutcome(gate, 'wake_triage', { question: 'needs_turn_now', actual: null, acted: true, sessionId: hook.targetChatId, note: `parked ${rows.length} row(s) for ${Math.round(deferMs / 60000)} min${reTriaged ? ` (re-triaged ${parkedInGroup.length} parked)` : ''}${v2 ? `; ${v2}` : ''}`, ...(hookBatch ? { extra: { hookBatch } } : {}) });
           logger.info(`hook ${hookId.slice(0, 8)}: decision gate parked ${rows.length} ${preview.eventType} event(s) for chat ${hook.targetChatId.slice(0, 8)} (needs_turn_now ${p.toFixed(2)}) — they ride the next wake or deliver in ~${Math.round(deferMs / 60000)} min`);
           return;
         }
-        const controlExtra = triageControl ? { extra: { ...WAKE_TRIAGE_CONTROL_EXTRA } } : {};
+        const controlExtra = triageControl
+          ? { extra: { ...WAKE_TRIAGE_CONTROL_EXTRA, ...(hookBatch ? { hookBatch } : {}) } }
+          : (hookBatch ? { extra: { hookBatch } } : {});
         triageStash = stashDecision(gate, 'wake_triage', controlExtra);
       }
     } catch (err: any) {
@@ -3000,6 +3162,75 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
     return;
   }
 
+  // SAA-1.2 PHASE 2 (todo c0b8b8cf): THREAD PASS-THROUGH — APPLIES.
+  // A wildcard hook's target is fixed at subscribe time (`subscribeHook` writes
+  // targetChatId once; nothing re-derives it), so a thread-bearing chat's wake
+  // landed on the supervisor even when its `parentChatId` names the lane that
+  // already holds the context — that lane then had to RE-DERIVE the thread
+  // (list_chats, get_chat_messages, memory search) before it could act. Phase 1
+  // measured this on the wire (first row 01:10:54Z: 2c354da1 → c0e22e36);
+  // this phase delivers there instead.
+  //
+  // Every uncertainty resolves to the SUBSCRIBED target: the old route is always
+  // correct, only less efficient, so a guard failure must never be a gamble.
+  // The resolver refuses a parent that is missing, archived (fireScheduleTarget
+  // would refuse it and the rows would sit pending while the supervisor wake
+  // that used to be acted on is silently skipped) or owned by another account.
+  // Kill switch HOOK_THREAD_PASSTHROUGH_DISABLED=1 restores fixed-target
+  // delivery from box env with no deploy. Fail-open: a read error delivers to
+  // the subscribed target unchanged.
+  let deliveryChatId = hook.targetChatId;
+  if (!hookThreadPassthroughDisabled()) {
+    try {
+      const threadTargetIsSupervisor = tgt?.isSupervisor === true || tgt?.isProjectSupervisor === true;
+      // THREAD-KEY CONTINUITY (SAA-1.2 residual, 2026-11-05): a delivery group is
+      // keyed by hookId ALONE, so a wildcard group routinely fans in from several
+      // chats — the coalesce contract says so itself ("Source chat id: multiple").
+      // Lineage facts can only describe ONE thread, so a multi-thread group is
+      // never re-targeted: doing so hands every other thread's events to that one
+      // thread's owning lane. Checked BEFORE the lineage reads so the common
+      // multi-source supervisor wake pays nothing for a route it cannot take.
+      const threadGroupSources = distinctGroupSourceChatIds(
+        rows.map((r: any) => (r?.payload as any)?.sourceChatId),
+        hook.sourceChatId,
+      );
+      const threadSourceChatId = threadGroupSources[0] ?? String(hook.sourceChatId ?? '');
+      if (threadSourceChatId && hook.sourceChatId === null && threadTargetIsSupervisor
+        && !groupSpansMultipleThreads(threadGroupSources, threadSourceChatId)) {
+        const sourceLineage = await prisma.crossModelChat
+          .findUnique({ where: { id: threadSourceChatId }, select: { parentChatId: true } })
+          .catch(() => null);
+        // Read the PARENT row: lineage says who OWNS the thread, never whether
+        // that lane is a deliverable place to put a wake.
+        const parentId = typeof sourceLineage?.parentChatId === 'string' ? sourceLineage.parentChatId : '';
+        const parentFacts = parentId
+          ? await prisma.crossModelChat
+            .findUnique({ where: { id: parentId }, select: { archivedAt: true, userId: true } })
+            .catch(() => null)
+          : null;
+        const threadDecision = planThreadPassthrough({
+          hook: { sourceChatId: hook.sourceChatId, targetChatId: hook.targetChatId },
+          sourceChatId: threadSourceChatId,
+          source: sourceLineage,
+          target: tgt,
+          parent: parentFacts,
+          ownerUserId: (hook as any).userId ?? null,
+          // Passed even though the branch above already refused a multi-thread
+          // group: the leaf must be able to reach the same refusal on its own,
+          // so removing EITHER check alone cannot silently re-enable a
+          // mis-delivery (two independent guards, one rule).
+          groupSourceChatIds: threadGroupSources,
+        });
+        if (threadDecision.applied) deliveryChatId = threadDecision.targetChatId;
+        const threadMeta = threadPassthroughMetricMeta(threadDecision);
+        if (threadMeta) {
+          recordLoopMetric({ kind: LOOP_METRIC_KINDS.HOOK_THREAD_PASSTHROUGH_OBSERVE, sessionId: threadSourceChatId, value: 1, meta: threadMeta });
+          logger.info(`hook ${hookId.slice(0, 8)}: thread pass-through — ${threadSourceChatId.slice(0, 8)} is owned by chat ${deliveryChatId.slice(0, 8)}, delivering there instead of supervisor ${hook.targetChatId.slice(0, 8)}`);
+        }
+      }
+    } catch { /* fail-open: routing must never block a wake */ }
+  }
+
   const coalesced = coalesce(rows);
   // Review 2026-09-13 issue 1: what this wake could NOT show rides inside the
   // summary so every template (default, custom, child result-hook) carries it.
@@ -3012,7 +3243,7 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
   // Deliver via the SAME internal machine-run path the schedule sweeper uses
   // (fireScheduleTarget): code-capable chat → queued coding run; plain chat →
   // detached chat-agent turn. No userTurnAt — the wake stays machine-triggered.
-  // origin 'hook' (audit p10): a hook wake is NOT a CodingSchedule firing —
+  // origin 'hook' (audit p10): a hook wake is NOT a ChatSchedule firing —
   // the fleet views must attribute it to the hooks subsystem, not the sweeper.
   let res: { started: boolean; reason?: string; decisionDeferred?: boolean };
   try {
@@ -3041,7 +3272,7 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
       .map((r) => (r?.payload as any))
       .filter((p) => p?.kind === 'owner_ask_unanswered' && typeof p?.askMessageId === 'string' && p.askMessageId.trim())
       .map((p) => String(p.askMessageId).trim().slice(0, 64)))];
-    res = await fireScheduleTarget({ id: `hook-${hookId}`, sessionId: hook.targetChatId, prompt, origin: 'hook', ...(fireDecision ? { decision: fireDecision } : {}), ...(childResultWake ? { childResult: true } : {}), ...(ownerAskMessageIds.length ? { ownerAskMessageIds } : {}) });
+    res = await fireScheduleTarget({ id: `hook-${hookId}`, sessionId: deliveryChatId, prompt, origin: 'hook', ...(fireDecision ? { decision: fireDecision } : {}), ...(childResultWake ? { childResult: true } : {}), ...(ownerAskMessageIds.length ? { ownerAskMessageIds } : {}) });
   } catch (err: any) {
     res = { started: false, reason: `error:${String(err?.message).slice(0, 60)}` };
   }
@@ -3057,7 +3288,7 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
     const questions = WAKE_TRIAGE_RUN_LABELLED_QUESTIONS.filter((q) => q === 'needs_turn_now' || answered.has(q));
     for (const question of questions) {
       recordDecisionOutcome(reconstructDecision(triageStash), 'wake_triage', {
-        question, actual: null, acted: false, sessionId: hook.targetChatId,
+        question, actual: null, acted: false, sessionId: deliveryChatId,
         note: res.started ? 'delivered (steered/queued — outcome not attributable)' : `not started: ${res.reason ?? 'unknown'}`,
         // 2026-10-04: an unstarted CONTROL keeps its stamp (unlabelled — counts the draws that never reached a finalize).
         ...(triageControl ? { extra: { ...WAKE_TRIAGE_CONTROL_EXTRA } } : {}),
@@ -3077,19 +3308,19 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
       await prisma.eventHook.updateMany({ where: { id: { in: sib.siblingHookIds } }, data: { lastFiredAt: new Date() } }).catch(() => {});
       recordLoopMetric({
         kind: LOOP_METRIC_KINDS.HOOK_SIBLING_DRAIN,
-        sessionId: hook.targetChatId,
+        sessionId: deliveryChatId,
         value: sib.drained,
         meta: { hookId, siblingHooks: sib.siblingHookIds.length, rows: sib.drained },
       });
     }
     // Depth propagation: the woken run's own emissions carry depth+1 (monotonic
     // MAX — a concurrent shallower stamp must not lower the ladder).
-    await stampHookDepth(hook.targetChatId, coalesced.depth + 1);
+    await stampHookDepth(deliveryChatId, coalesced.depth + 1);
     logger.info(
-      `hook ${hookId.slice(0, 8)}: delivered ${rows.length} event(s) (${coalesced.eventType}) to chat ${hook.targetChatId.slice(0, 8)} at depth ${coalesced.depth + 1}`,
+      `hook ${hookId.slice(0, 8)}: delivered ${rows.length} event(s) (${coalesced.eventType}) to chat ${deliveryChatId.slice(0, 8)} at depth ${coalesced.depth + 1}`,
     );
     // Review 2026-09-13 issue 1: `drained` = rows the window drain added beyond the fair batch.
-    recordLoopMetric({ kind: LOOP_METRIC_KINDS.WAKE_DELIVERED, sessionId: hook.targetChatId, value: rows.length, meta: { eventType: coalesced.eventType, hookId, capBypassed, drained: drain.drained, ...(triageControl ? { triageControl: true } : {}), ...(parkRiders.length ? { parkedRode: parkRiders.length, parkHoldExpired, reTriaged } : {}) } });
+    recordLoopMetric({ kind: LOOP_METRIC_KINDS.WAKE_DELIVERED, sessionId: deliveryChatId, value: rows.length, meta: { eventType: coalesced.eventType, hookId, capBypassed, drained: drain.drained, ...(deliveryChatId !== hook.targetChatId ? { reroutedFrom: hook.targetChatId } : {}), ...(hookBatch ? { hookBatch } : {}), ...(triageControl ? { triageControl: true } : {}), ...(parkRiders.length ? { parkedRode: parkRiders.length, parkHoldExpired, reTriaged } : {}) } });
   } else {
     // Busy target (or a transient not_found/error): non-alarm rows stay
     // pending with attempts+1 (failed at MAX_DELIVERY_ATTEMPTS) — unchanged.
@@ -3117,7 +3348,7 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
       // mark as the pre-fire lane: no attempt burn, no park, no replay.
       await prisma.hookEvent.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { status: HOOK_STATUS_SUPERVISOR_OFF } }).catch(() => {});
       await releaseLaneIdleSlotsOf(rows);
-      logger.info(`hook ${hookId.slice(0, 8)}: target chat ${hook.targetChatId.slice(0, 8)} is a switched-off supervisor — ${rows.length} event(s) skipped at dispatch, no wake`);
+      logger.info(`hook ${hookId.slice(0, 8)}: target chat ${deliveryChatId.slice(0, 8)} is a switched-off supervisor — ${rows.length} event(s) skipped at dispatch, no wake`);
     } else if (res.reason === 'archived') {
       // Archived target AT DISPATCH (autonomy loop #13): the chat retired after
       // the pre-fire check above, or a system:* hook (exempt from the
@@ -3126,16 +3357,16 @@ async function deliverHookGroup(hookId: string, rows: any[]): Promise<void> {
       // hook itself is left as it is (system hooks are bounded by
       // construction; a non-system hook was already paused pre-fire).
       await prisma.hookEvent.updateMany({ where: { id: { in: rows.map((r) => r.id) } }, data: { status: HOOK_STATUS_TARGET_RETIRED } }).catch(() => {});
-      logger.info(`hook ${hookId.slice(0, 8)}: target chat ${hook.targetChatId.slice(0, 8)} is ARCHIVED — ${rows.length} event(s) retired at dispatch, no wake`);
+      logger.info(`hook ${hookId.slice(0, 8)}: target chat ${deliveryChatId.slice(0, 8)} is ARCHIVED — ${rows.length} event(s) retired at dispatch, no wake`);
     } else if (res.reason === 'busy') {
       const alarmPark = rows.filter(isAlarmRow);
       const busyPark = rows.filter((r) => !alarmPark.includes(r));
-      if (busyPark.length) await parkBusyRows(hook.targetChatId, busyPark);
-      if (alarmPark.length) await parkAlarmRows(hook.targetChatId, alarmPark, 'busy');
+      if (busyPark.length) await parkBusyRows(deliveryChatId, busyPark);
+      if (alarmPark.length) await parkAlarmRows(deliveryChatId, alarmPark, 'busy');
     } else {
       await retryOrFail(rows, res.reason ?? 'unknown');
     }
-    logger.info(`hook ${hookId.slice(0, 8)}: target chat ${hook.targetChatId.slice(0, 8)} not deliverable (${res.reason}) — events stay pending`);
+    logger.info(`hook ${hookId.slice(0, 8)}: target chat ${deliveryChatId.slice(0, 8)} not deliverable (${res.reason}) — events stay pending`);
   }
 }
 

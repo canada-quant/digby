@@ -236,13 +236,13 @@ const DECLINE_RE = /\b(?:not\s+re-?fil(?:e|ed|ing)|no\s+duplicate\s+(?:card|ques
 const GATING_MATCH_RE = new RegExp(GATING_RE.source, 'gi');
 /**
  * Gap word for the negation windows (ticket 68a1c868). A gap word may carry
- * INTERNAL dots when they read as an identifier — "ctrl.example.com",
+ * INTERNAL dots when they read as an identifier — "ctrl.cql.ca",
  * "i-020850b4.prod.aws", "v0.8.2" — but a dot that ends a token or starts a
  * new CAPITALIZED token is a sentence boundary and always breaks the window:
  *   head  [^.;:,\n \t]+                 — dot-free head of the token
  *   tail  (?:\.[a-z0-9][^.;:,\n \t]*)* — ".lowercase-or-digit" identifier tails
- * "Nothing in ctrl.example.com is waiting on the owner." (the 68a1c868 incident:
- * auto-filed oq_2cc4131f at 2026-10-24T07:57Z against the ctrl.example.com
+ * "Nothing in ctrl.cql.ca is waiting on the owner." (the 68a1c868 incident:
+ * auto-filed oq_2cc4131f at 2026-10-24T07:57Z against the ctrl.cql.ca
  * project supervisor) suppressed NOTHING under the old dot-excluding class
  * `[^.;:,\n \t]+` — the dotted project name could not be consumed as a gap
  * word, the negation scope died and a NEGATIVE status report read as an
@@ -271,7 +271,7 @@ const NEG_GAP_WORD_RE_SOURCE = '[^.;:,\n \t]*[a-z0-9][^.;:,\n \t]*(?:\\.[a-z0-9]
  *  owner." and "No lane … is owner-gated." mined at the tip while parent and
  *  round-1 suppressed — the ticket's own incident class reborn through
  *  typography). Dashes stay excluded here on purpose: a dash is not gap noise
- *  but a CLAUSE BOUNDARY (D2 — "Nothing in ctrl.example.com — the gate waits…" must
+ *  but a CLAUSE BOUNDARY (D2 — "Nothing in ctrl.cql.ca — the gate waits…" must
  *  mine) or the opening delimiter of a DASH ASIDE, which has its own frame
  *  below (DASH_PARENTHETICAL_FRAME_RE). The class contains no letters or
  *  digits — a WORD can never match it, so a connective lookahead on this arm
@@ -281,21 +281,21 @@ const NEG_GAP_PUNCT_RE_SOURCE = '[^.;:,\\n \\t—–a-zA-Z0-9-]+';
  *  now requires an ALPHANUMERIC (head `…[a-z0-9]…`), so a STANDALONE dash — " — ", " - " —
  *  is no longer a consumable gap word and breaks the window like a semicolon: parent had
  *  absorbed the dash and let the negation reach across a genuinely affirmative post-dash
- *  clause ("Nothing in ctrl.example.com — the gate waits on the owner." wrongly suppressed —
+ *  clause ("Nothing in ctrl.cql.ca — the gate waits on the owner." wrongly suppressed —
  *  D2). An intra-token dash stays legal ("i-020850b4", "Gates 1–3" — matched as one word,
  *  so "Nothing on Gates 1–3 is waiting…" still suppresses). The plain/dotted SPLIT is the
  *  D1 guard in the generic window below: a plain word consumes its internal dots as
  *  noise, but a DOTTED identifier word is guarded by a connective lookbehind —
- *  "Nothing but deploy.example.com waits…" (exception idiom, must mine) puts the connective
+ *  "Nothing but deploy.cql.ca waits…" (exception idiom, must mine) puts the connective
  *  directly before the dotted word and the guard refuses the branch; "Nothing in
- *  ctrl.example.com is waiting…" (negative report) has a plain word before the dotted one and
+ *  ctrl.cql.ca is waiting…" (negative report) has a plain word before the dotted one and
  *  suppresses. A trailing optional dash class ends the window so an emphatic appositive
  *  ("Nothing — absolutely nothing — waits on the owner.") still negates its frame.
  *
  *  F2 SCOPE (round-3 review of PR #1947): "standalone dash is a clause boundary" is
  *  TRUE ONLY FOR A SPACE-DELIMITED DASH. A GLUED (unspaced) dash rides inside the
- *  gap-word token — "Nothing in ctrl.example.com—the gate waits on the owner." — the dotted
- *  class accepts "ctrl.example.com—the" as one word, so the negation spans it and the
+ *  gap-word token — "Nothing in ctrl.cql.ca—the gate waits on the owner." — the dotted
+ *  class accepts "ctrl.cql.ca—the" as one word, so the negation spans it and the
  *  affirmative post-dash claim stays suppressed (parent 6defebc9a mined it — a
  *  pre-existing-from-round-2 FN residual, deliberately documented rather than fixed
  *  here: distinguishing a glued em-dash from an intra-token hyphen needs a lexicon,
@@ -323,9 +323,9 @@ const EXCEPTION_CONNECTIVE_RE_SOURCE = `(?:${ci('but|however|yet|though|although
  *  of", "exclusive of" …). The generic window's dotted-branch lookbehind inspects only
  *  the word IMMEDIATELY before the dotted identifier — for a multi-word connector that
  *  is the TAIL ("than"/"from"/"of"), which is not itself in the connective class, so
- *  "Nothing other than box.example.com waits…" slipped through as a negation scope (round-2
+ *  "Nothing other than box.cql.ca waits…" slipped through as a negation scope (round-2
  *  D1, 2026-10-24). This arm matches the HEAD+TAIL pair ending right at the dotted word.
- *  A bare tail WITHOUT its head ("faster than digi.ai", "from cluster.example.com") does NOT
+ *  A bare tail WITHOUT its head ("faster than digi.ai", "from cluster.cql.ca") does NOT
  *  match — a comparative or plain preposition before a dotted identifier is a negative
  *  report's own vocabulary (the 68a1c868 incident shape), never an exception idiom.
  *  "otherwise than" joins as its OWN arm (ticket efb63eb9, round-3 review of PR #1947
@@ -339,7 +339,7 @@ const EXCEPTION_CONNECTIVE_RE_SOURCE = `(?:${ci('but|however|yet|though|although
  *  (parent 6defebc9a mined it — an FN residual of the D1 fix itself, the safe direction
  *  but still a hole). It pairs with "than" ONLY — adversarial review of THIS fix
  *  (finding F1): "otherwise" is unidiomatic with "from"/"of", so sharing the general
- *  head|tail cross-product would have mined "Nothing otherwise from ctrl.example.com is
+ *  head|tail cross-product would have mined "Nothing otherwise from ctrl.cql.ca is
  *  waiting…" — a false positive in exactly the 68a1c868 incident class (an
  *  independently-measured 215k-sentence sweep found the whole F1 family built on
  *  otherwise+from/of; none is idiomatic supervisor prose). The POST-VERB suffix arm
@@ -380,14 +380,14 @@ const EXCEPTION_CONNECTIVE_PHRASE_HEAD_RE_SOURCE = `(?:${ci('other|more|less|apa
  *
  *  ROUND 2 (cross-family review of the merged 4b655f10, findings D1/D2, ticket 68a1c868):
  *  the {0,3} window is now TWO-ARMED per gap word — a DOTTED identifier word
- *  (deploy.example.com, i-020850b4.prod.aws) is guarded by a connective lookbehind so an
- *  exception idiom ("Nothing but deploy.example.com waits…" = ONLY deploy.example.com waits) refuses
- *  the branch and the claim MINES (D1: dot tolerance had made "but deploy.example.com" two
+ *  (deploy.cql.ca, i-020850b4.prod.aws) is guarded by a connective lookbehind so an
+ *  exception idiom ("Nothing but deploy.cql.ca waits…" = ONLY deploy.cql.ca waits) refuses
+ *  the branch and the claim MINES (D1: dot tolerance had made "but deploy.cql.ca" two
  *  consumable gap words, so the affirmative exception suppressed — parent mined it), while
  *  a PLAIN word keeps consuming internal dots as noise so a negative status report
- *  ("Nothing in ctrl.example.com is waiting…") still suppresses. {0,3} counts WORDS (a dotted
+ *  ("Nothing in ctrl.cql.ca is waiting…") still suppresses. {0,3} counts WORDS (a dotted
  *  identifier is one word). A standalone dash is a CLAUSE BOUNDARY, not a gap word (D2:
- *  "Nothing in ctrl.example.com — the gate waits on the owner." mines — parent had absorbed the
+ *  "Nothing in ctrl.cql.ca — the gate waits on the owner." mines — parent had absorbed the
  *  dash and wrongly suppressed a genuinely affirmative post-dash claim); a trailing
  *  optional dash ends the window so an emphatic appositive still negates ("Nothing —
  *  absolutely nothing — waits on the owner."). INTENTIONAL divergence vs parent: the
@@ -403,7 +403,7 @@ const EXCEPTION_CONNECTIVE_PHRASE_HEAD_RE_SOURCE = `(?:${ci('other|more|less|apa
  *  ellipsis unconsumable and re-broken them (the ticket's own FP class).
  *  The dotted branch's connective lookbehind sees THROUGH one such token, so
  *  an exception idiom still mines even when the writer dots it: "Nothing but
- *  … deploy.example.com waits on the owner." (the \b anchors hold at the ellipsis). */
+ *  … deploy.cql.ca waits on the owner." (the \b anchors hold at the ellipsis). */
 const NEGATED_FRAME_RE = new RegExp(
   `\\b(?:${NEG_MARKER_RE_SOURCE})\\b` +
   `(?:[ \\t]+(?:(?<!\\b(?:${EXCEPTION_CONNECTIVE_RE_SOURCE})\\b[ \\t]+|${EXCEPTION_CONNECTIVE_PHRASE_RE_SOURCE}|\\b(?:${EXCEPTION_CONNECTIVE_RE_SOURCE})\\b[ \\t]+${NEG_GAP_PUNCT_RE_SOURCE}[ \\t]+)${NEG_GAP_WORD_DOTTED_RE_SOURCE}|${NEG_GAP_PUNCT_RE_SOURCE}|${NEG_GAP_WORD_PLAIN_RE_SOURCE})){0,3}` +
@@ -484,7 +484,7 @@ const NOTHING_CLASS_FRAME_RE =
  *
  *  11354cbe (68a1c868 residual, same root-cause family through a different
  *  door): the aside body was the raw dot-EXCLUDING class [^.;:,\n]{1,60}?,
- *  so an aside CARRYING a dotted identifier — "Nothing, per ctrl.example.com
+ *  so an aside CARRYING a dotted identifier — "Nothing, per ctrl.cql.ca
  *  status, waits on the owner." — could not be consumed, the parenthetical
  *  guard died, and a negative status report mined as an affirmative claim
  *  (verified parent-parity at 6defebc9a: a pre-existing hole, not a 68a1c868
@@ -498,7 +498,7 @@ const NOTHING_CLASS_FRAME_RE =
  *  gap word carries the SAME exception-connective guard as
  *  NOTHING_CLASS_FRAME_RE above (adversarial review of this fix, finding
  *  F1: guarding only the OPENING word let a mid-aside exception — "Nothing,
- *  per ctrl.example.com except the publish gate, waits on the owner." = ONLY the
+ *  per ctrl.cql.ca except the publish gate, waits on the owner." = ONLY the
  *  gate waits, an affirmative claim — be consumed as an ordinary gap word
  *  and wrongly suppressed). This also closes the dot-free mid-aside hole
  *  the old body carried ("Nothing, per the sweep except the publish gate,
@@ -542,13 +542,13 @@ const PARENTHETICAL_FRAME_RE =
  *  nothing (the 68a1c868 incident class, oq_2cc4131f, reborn through
  *  typography). A single trailing dash cannot carry an aside (no closing
  *  delimiter) — it stays a CLAUSE BOUNDARY, so D2 holds: "Nothing in
- *  ctrl.example.com — the gate waits on the owner." still mines, and "Nothing —
+ *  ctrl.cql.ca — the gate waits on the owner." still mines, and "Nothing —
  *  however — waits on the owner." (a contrastive aside) keeps mining exactly
  *  like its comma sibling "Nothing, however, waits…" — same guard, same
  *  pre-existing FP class, comma-arm parity by construction. THE BODY IS THE COMMA
  *  ARM'S POST-11354cbe BODY, VERBATIM (main b1b9c7625): a run of the same
  *  compositional gap words (NEG_GAP_WORD_RE_SOURCE — dotted identifiers inside
- *  a dash aside are consumable: "Nothing — per ctrl.example.com status — waits…"
+ *  a dash aside are consumable: "Nothing — per ctrl.cql.ca status — waits…"
  *  suppresses) with the SAME per-word exception-connective guard, so a MID-ASIDE
  *  exception ("Nothing — per the ledger except the publish gate — waits…" =
  *  ONLY the gate waits) MINES — the exact hole that fix's review finding F1
@@ -857,7 +857,7 @@ async function actedTowardLane(sup: SupervisorRow, laneId8: string, noteAt: Date
   // prefix, and the lane binds by its 8-char prefix. Same-owner guard mirrors
   // the chat lookup below — another user's same-prefix schedule never credits.
   for (const sid of [...new Set(cancelledScheduleIds)]) {
-    const sched = await prisma.codingSchedule.findFirst({
+    const sched = await prisma.chatSchedule.findFirst({
       where: { id: { startsWith: sid }, sessionId: { startsWith: laneId8 }, userId: sup.userId },
       select: { id: true },
     }).catch(() => null);

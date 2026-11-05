@@ -149,8 +149,8 @@ test('2f646c10: PANE_URLS centralizes the three Privacy & Security deep links', 
 // ── 5. Version lockstep ──────────────────────────────────────────────────────
 
 test('2f646c10: agent version is 0.6.0 (the backend routes permission actions to ≥ 0.6.0)', () => {
-  assert.match(configSrc, /AGENT_VERSION = '0\.9\.19'/, 'config.ts AGENT_VERSION must be 0.9.19');
-  assert.equal(pkg.version, '0.9.19', 'package.json version must match AGENT_VERSION');
+  assert.match(configSrc, /AGENT_VERSION = '0\.9\.23'/, 'config.ts AGENT_VERSION must be 0.9.23');
+  assert.equal(pkg.version, '0.9.23', 'package.json version must match AGENT_VERSION');
 });
 
 // ── 6. Source-bytes pins on the macOS-only wiring ─────────────���──────────────

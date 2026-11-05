@@ -54,13 +54,13 @@ jest.mock('../model-endpoints/model-roles.service', () => ({
 
 /** The hung seat model exactly as production carried it (llm-cql gateway). */
 const HUNG_SPEC = 'llm-cql:tt-qwen3.8-flash-next';
-const HUNG_URL = 'http://llm.example.com/v1/chat/completions';
+const HUNG_URL = 'http://llm.cql.ca/v1/chat/completions';
 
 jest.mock('../model-endpoints/model-endpoints.service', () => ({
   __esModule: true,
   resolveRegistryModel: async (spec: string) => (spec === 'llm-cql:tt-qwen3.8-flash-next' ? {
-    url: 'http://llm.example.com/v1/chat/completions',
-    baseUrl: 'http://llm.example.com/v1',
+    url: 'http://llm.cql.ca/v1/chat/completions',
+    baseUrl: 'http://llm.cql.ca/v1',
     apiKey: 'sk-cql',
     model: 'tt-qwen3.8-flash-next',
     label: 'llm-cql',
@@ -126,7 +126,7 @@ describe('ticket c4fa5417 — the prior true positive', () => {
     expect(isVisionTimeout({ code: 'ETIMEDOUT' })).toBe(true);
     // A provider that REJECTED the request is a different failure — never latched off.
     expect(isVisionTimeout({ response: { status: 400 }, message: 'Request failed with status code 400' })).toBe(false);
-    expect(isVisionTimeout(new Error('getaddrinfo ENOTFOUND llm.example.com'))).toBe(false);
+    expect(isVisionTimeout(new Error('getaddrinfo ENOTFOUND llm.cql.ca'))).toBe(false);
   });
 
   it('REPLAY: before the fix this hop had a 90s envelope — pinned so the total budget can never silently grow', () => {

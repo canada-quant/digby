@@ -1,7 +1,7 @@
 /**
  * audit 2026-10-06 T1-7 + T1-8 — the REAL agent loop on a coding profile.
  *
- * T1-7 (litellm.md F5): the MiMo lane ran 340 + 416 min with ZERO file edits
+ * T1-7 (litellm.md F5): the node-b lane ran 340 + 416 min with ZERO file edits
  * while its "add the routes" plan step sat in_progress — nothing inside a run
  * watched for "no file mutation for hours". Now ≥ NO_PROGRESS_BRAKE_CALLS
  * consecutive calls that change nothing, while a step is in_progress, get ONE
@@ -125,11 +125,11 @@ const makeInput = (sessionId: string, maxSteps: number, permissionMode: 'auto' |
   sessionId, projectId: 'p1', userId: 'u1', permissionMode, model: 'kimi-k3',
   projectName: 'test', branch: 'main', profile: profile(maxSteps),
   doctrineOverride: 'You are a test agent.', history: [],
-  userMessage: 'add the two MiMo routes to config.yaml', emit: jest.fn(),
+  userMessage: 'add the two node-b routes to config.yaml', emit: jest.fn(),
 });
 
 const plan = (s1: 'in_progress' | 'pending' = 'in_progress') => ({
-  goal: 'add the MiMo routes', acceptanceCriteria: ['routes live'],
+  goal: 'add the node-b routes', acceptanceCriteria: ['routes live'],
   steps: [{ id: 1, text: 'write the two routes', status: s1 }, { id: 2, text: 'push + PR', status: 'pending' }],
   version: 1, updatedAt: '2026-10-05T18:00:00.000Z',
 });

@@ -35,11 +35,34 @@ const mockPrisma: any = {
   // Busy-chat queue: the run's finally drains pending_chat_messages — empty here.
   pendingChatMessage: {
     findFirst: jest.fn(async () => null), delete: jest.fn(async () => ({})),
+    // MERGE-1 kill-window fix (2026-11-05): consume-at-persist needs
+    // deleteMany({ id: { in } }). Delegate to `delete` — `useQueue` overrides
+    // THAT to actually remove the row, so the consume is visible to findFirst
+    // (a static {count} stub left the row served forever → unbounded drain).
+    deleteMany: jest.fn(async ({ where }: any) => {
+      const ids: string[] = where?.id?.in ?? (where?.id ? [where.id] : []);
+      for (const id of ids) await mockPrisma.pendingChatMessage.delete({ where: { id } });
+      return { count: ids.length };
+    }),
     // shutdown re-queue (2026-09-11) — enqueueChatMessage counts then creates.
     count: jest.fn(async () => 0), create: jest.fn(async (a: any) => ({ id: 'pend-1', ...a.data })),
   },
   // chat-busy's durable layer (worker-tier coding runs) — none in these tests.
   agentRun: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  // MERGE-1 kill-window fix (2026-11-05): createMessagesConsumingPending runs
+  // the transcript write and the queue-row consume in ONE $transaction.
+  // Buffered/all-or-nothing like the real client and the sibling drain suites:
+  // a throw leaves the queue row intact (the LOSS half).
+  $transaction: jest.fn(async (fn: any) => {
+    // Delegate to the SAME per-test mocks the non-transactional path uses, so
+    // `useQueue`'s delete actually removes the row (recording the ids without
+    // deleting left findFirst serving the same row forever — an infinite drain).
+    const tx = {
+      crossModelMessage: { create: jest.fn(async (a: any) => mockPrisma.crossModelMessage.create(a)) },
+      pendingChatMessage: { deleteMany: jest.fn(async (a: any) => mockPrisma.pendingChatMessage.deleteMany(a)) },
+    };
+    return fn(tx);
+  }),
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
 
@@ -367,6 +390,7 @@ jest.mock('../platform/harness-receipts', () => {
 });
 
 import { startDetachedChatRun, drainChatQueue } from './chat-agent.service';
+import { __resetDrainAttemptLedgerForTests } from './message-queue.service';
 import { runCodingAgent } from '../coding/agent';
 import { isRunActive, cancelRun, subscribeRun } from '../coding/live-runs';
 import { buildChatQueryContext } from './chat-context';
@@ -421,6 +445,9 @@ let leadPolls: Array<Array<string | null>> = [];
 beforeEach(() => {
   skew = 0;
   leadPolls = [];
+  // Module-level drain ledger (MERGE-1 rework): this fixture mints the SAME row
+  // id ('pend-af') in every case, so attempts would otherwise carry over.
+  __resetDrainAttemptLedgerForTests();
   nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => realNow() + skew);
   redisStore.clear();
   redisLists.clear();

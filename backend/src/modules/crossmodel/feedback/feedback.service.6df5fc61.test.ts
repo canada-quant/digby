@@ -5,7 +5,7 @@
  *   596718e7 (type mishap, source agent-harness, auto-filed at breaker trip)
  *   62f14ea6 (type general_feedback, source agent, Fleet Supervisor sighting)
  * shared an IDENTICAL normalized title ("3× tool-failure streak: todo_update
- * on \"DNS cutover llm.example.com → · Phase 3 remai\" — framework or model?") yet
+ * on \"DNS cutover llm.cql.ca → · Phase 3 remai\" — framework or model?") yet
  * existed as TWO rows and BOTH were lane-dispatched (6412da7d 01:03Z,
  * 6549170e 02:03Z) — the exact pass scoped candidates to {type,
  * source:'agent'} so the mishap AUTO-filing (agent-harness) and the agent
@@ -54,7 +54,7 @@ jest.mock('./incident-twin', () => ({
 import { fileFeedbackTicket } from './feedback.service';
 
 // The live pair's SHARED title (verbatim from both rows).
-const SHARED_TITLE = '3× tool-failure streak: todo_update on "DNS cutover llm.example.com → · Phase 3 remai" — framework or model?';
+const SHARED_TITLE = '3× tool-failure streak: todo_update on "DNS cutover llm.cql.ca → · Phase 3 remai" — framework or model?';
 // 62f14ea6's adjudication adminNote (verbatim head — the model-behavior verdict).
 const ADJUDICATED_NOTE = "ADJUDICATED + CLOSED (ticket lane 6549170e, dispatch 1 of 3): NO DETERMINISTIC FRAMEWORK DEFECT — MODEL BEHAVIOR, confirming the filer's (Fleet Supervisor's) recommendation.";
 

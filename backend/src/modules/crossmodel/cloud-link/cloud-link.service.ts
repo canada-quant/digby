@@ -62,19 +62,19 @@ export interface CloudLinkStatus {
 
 /**
  * Normalize a user-entered cloud URL: trim, prepend https:// when no scheme
- * ("digby.example.com" works), lowercase scheme+host (the URL constructor does both),
+ * ("digby.ai" works), lowercase scheme+host (the URL constructor does both),
  * strip trailing slashes. Anything that still isn't a valid http(s) URL is a
  * clear 400, not a confusing downstream connection failure.
  */
 export function normalizeCloudUrl(raw: string): string {
   let s = String(raw || '').trim();
   if (!s) {
-    throw new AppError(400, 'cloudUrl is required — expected something like https://digby.example.com.');
+    throw new AppError(400, 'cloudUrl is required — expected something like https://digby.ai.');
   }
   if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(s)) s = `https://${s}`;
   let u: URL;
   try { u = new URL(s); } catch {
-    throw new AppError(400, `cloudUrl "${s.slice(0, 80)}" is not a valid URL — expected something like https://digby.example.com.`);
+    throw new AppError(400, `cloudUrl "${s.slice(0, 80)}" is not a valid URL — expected something like https://digby.ai.`);
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') {
     throw new AppError(400, `cloudUrl must be http:// or https:// (got "${u.protocol}//").`);

@@ -134,7 +134,7 @@ jest.mock('./loop-metrics.service', () => ({
 import { updateTodo } from './goals.service';
 
 // ── The incident's verbatim ids (ticket 596718e7 / sighting 62f14ea6 live reads) ─
-const FE467CED = 'fe467ced-572a-49db-aff8-02dac35030c6'; // "DNS cutover llm.example.com → rutherford-2" (in_progress; own dep = the DONE deploy row)
+const FE467CED = 'fe467ced-572a-49db-aff8-02dac35030c6'; // "DNS cutover llm.cql.ca → rutherford-2" (in_progress; own dep = the DONE deploy row)
 const ED2FD190 = 'ed2fd190-9846-42c6-a938-d7ccefcab5ed'; // "Mint virtual keys for infrastructure callers"
 const VERIFY_TODO = '10023020-f24b-4416-8aeb-e9072c70003a'; // "Verify cutover: /v1/models roster vs 50 …" (blocked at 21:51Z)
 const DEPLOY_TODO = '221e21bc-6655-4119-a3ff-d09fa64b1fc0'; // deploy row (done)
@@ -143,10 +143,10 @@ const SWEEP_TODO = '06c26d0f-a77f-41dc-adcb-c3268309a2db'; // drop-in sweep — 
 const REASON_ARG =
   'Client list is owner/fleet-side: per the 2026-10-11 incident brief every caller requests a virtual key through the owner/gateway lane.';
 const EVIDENCE_ARG =
-  'Fresh-host verification this run (SSH deploy@203.0.113.10): /etc/gateway-health-monitor.env does not exist; no KNOWN_DOWN overrides in any systemd drop-in.';
+  'Fresh-host verification this run (SSH deploy@69.19.140.37): /etc/gateway-health-monitor.env does not exist; no KNOWN_DOWN overrides in any systemd drop-in.';
 
 const goalRow = (over: any = {}) => ({
-  id: 'g-rutherford2', userId: OWNER, projectId: PROJECT_ID, title: 'Rebuild llm.example.com on Hyperstack rutherford-2',
+  id: 'g-rutherford2', userId: OWNER, projectId: PROJECT_ID, title: 'Rebuild llm.cql.ca on Hyperstack rutherford-2',
   status: 'active', blockedReason: null, blockKind: null, gateQuestionId: null, progressNote: null,
   createdByChatId: null, ...over,
 });
@@ -161,15 +161,15 @@ const todoRow = (over: any = {}) => ({
 });
 
 const VERIFY_TITLE =
-  'Verify cutover: /v1/models roster vs 50, census script, StAnne legs (mbp-2 utility 100.64.0.11:8095, asr, ' +
-  'edge image 100.64.0.12), self-hosted tailnet legs (box-a 100.64.0.13:8091, box-b 100.64.0.14:8000, GLM nodes), ' +
-  'E2E completion through https://llm.example.com';
+  'Verify cutover: /v1/models roster vs 50, census script, StAnne legs (mbp-2 utility 100.64.0.1:8095, asr, ' +
+  'accelerator image 100.64.0.1), self-hosted tailnet legs (node-a 100.64.0.1:8091, node-b 100.64.0.1:8000, GLM nodes), ' +
+  'E2E completion through https://llm.cql.ca';
 
 beforeEach(() => {
   db.projects = [{ id: PROJECT_ID, userId: OWNER, name: 'LiteLLM', path: '/litellm' }];
   db.goals = [goalRow()];
   db.todos = [
-    todoRow({ id: FE467CED, title: 'DNS cutover llm.example.com → rutherford-2 (Tunnel edge per owner dedicated-host design, or A record 203.0.113.10)' }),
+    todoRow({ id: FE467CED, title: 'DNS cutover llm.cql.ca → rutherford-2 (Tunnel edge per owner dedicated-host design, or A record 69.19.140.37)' }),
     todoRow({ id: ED2FD190, title: 'Mint virtual keys for the infrastructure callers named in the verify row' }),
     todoRow({ id: VERIFY_TODO, title: VERIFY_TITLE, status: 'blocked', blockedReason: 'Awaiting the fleet verify pass' }),
     todoRow({ id: DEPLOY_TODO, title: 'Deploy the gateway to rutherford-2', status: 'done' }),

@@ -2,7 +2,7 @@
  * Ticket 36b8c979 — the liveness-probe leaf (the deployed leg's third path).
  *
  * The 2026-10-28 observed shape (family lane 3548ec41, ticket 4e818bb9):
- * canada-quant/example-repo deploys manually — repos/canada-quant/example-repo/actions/runs →
+ * example-org/optcg deploys manually — repos/example-org/optcg/actions/runs →
  * total_count 0, no .github/workflows, and deckpose.com is not a Digby box so
  * no box_health row will ever carry an optcg sha. Both existing deployed legs
  * can never pass, so a verified merged+live fix refused fix_not_live forever.
@@ -103,7 +103,7 @@ describe('note serialization round-trip (the audit-note member)', () => {
   it('serializes to ONE line and parses back exactly', () => {
     const s = serializeLivenessProbe({ url: 'https://deckpose.com/', expect: ['Save to My Decks', 'Copy decklist'] });
     expect(s).toBe('live-probe https://deckpose.com/ (expects "Save to My Decks|Copy decklist")');
-    expect(parseLivenessProbeFromNote(`commit 23fb3716 (format-verified); repo canada-quant/example-repo; ${s}`)).toEqual({
+    expect(parseLivenessProbeFromNote(`commit 23fb3716 (format-verified); repo example-org/optcg; ${s}`)).toEqual({
       url: 'https://deckpose.com/',
       expect: ['Save to My Decks', 'Copy decklist'],
     });

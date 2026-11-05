@@ -1,12 +1,12 @@
 # Digby — macOS desktop app
 
-A real native Mac app: a thin **WKWebView** wrapper around **digby.example.com**. It gives
+A real native Mac app: a thin **WKWebView** wrapper around **digby.ai**. It gives
 you a proper `.app` in /Applications, a dock icon, native window + menus
 (⌘C/⌘V/⌘R/⌘W), persistent login, and external links that open in your default
 browser. No Electron, no Chrome PWA — it uses Safari's engine, so the binary is tiny.
 
 Distribution is **direct download** (a signed + notarized `Digby.dmg` served from
-digby.example.com). This is **not** an App Store build — see `../macos-pkg/README.md` notes;
+digby.ai). This is **not** an App Store build — see `../macos-pkg/README.md` notes;
 the App Store rejects pure web-wrappers and forbids the iMessage agent's Full Disk
 Access. Direct download avoids all of that.
 
@@ -27,14 +27,14 @@ app **and** the dmg, and staples both. The dmg is a **drag-to-Applications** ins
 **move itself into /Applications** (and eject the dmg) if it's run from the disk image
 or Downloads — so it can't get stuck running from the wrong place.
 
-## Publish (serve from digby.example.com)
+## Publish (serve from digby.ai)
 ```bash
 cp ../Digby.dmg ../frontend/public/Digby.dmg
 git add ../frontend/public/Digby.dmg
 git commit -m "chore: publish Digby.dmg"
 git push origin main
 ```
-Then it's at **https://digby.example.com/Digby.dmg** and we can add a "Download for Mac" button in the UI.
+Then it's at **https://digby.ai/Digby.dmg** and we can add a "Download for Mac" button in the UI.
 
 ## Bundled iMessage helper (one download, no separate installer)
 The app **ships the iMessage agent inside it** (`Contents/Resources/imessage-agent/`:
@@ -174,30 +174,30 @@ The smallest shippable voice slice, all native side — **no web-app changes**:
   that renames them degrades voice to a status message, never a crash.
 
 ## What it does / limits
-- Loads `https://digby.example.com/`; stays logged in (persistent data store).
+- Loads `https://digby.ai/`; stays logged in (persistent data store).
 - **File pickers work in-app** (v0.1.9): clicking an attachment/paperclip button
   opens a native open panel. macOS WKWebView has no default one — the shell
   implements `WKUIDelegate.runOpenPanelWith` (ticket 8a25754c); before 0.1.9 the
   click was silently dropped (drag-and-drop still worked).
 - Requires **macOS 12+** (native in-app downloads via `WKDownloadDelegate` need 11.3+).
-- `digby.example.com`, Google, GitHub and Apple hosts stay in-app (so sign-in works); other
+- `digby.ai`, Google, GitHub and Apple hosts stay in-app (so sign-in works); other
   links open in your default browser.
 - **Downloads happen in-app.** Clicking the iMessage helper `.pkg`, the app `.dmg`,
   or any `.pkg/.dmg/.zip/.exe/.msi` downloads it with WKWebView's own downloader
   straight to `~/Downloads`, then reveals it in Finder and opens it (a `.pkg` launches
   Installer). It does **not** hand the URL to the system browser — doing so used to
-  route the download to whatever app claims `digby.example.com` (e.g. a leftover Chrome PWA),
+  route the download to whatever app claims `digby.ai` (e.g. a leftover Chrome PWA),
   which rendered the raw binary as garbled text.
 - **OAuth caveat:** Google sometimes blocks its sign-in inside embedded web views
-  ("this browser may not be secure"). Primary digby.example.com login (email) works fine; if a
-  Google *integration* connect is blocked, do it once in a normal browser at digby.example.com —
+  ("this browser may not be secure"). Primary digby.ai login (email) works fine; if a
+  Google *integration* connect is blocked, do it once in a normal browser at digby.ai —
   the session syncs. A v2 can route OAuth through `ASWebAuthenticationSession`.
 - If `codesign` throws `errSecInternalComponent` / "unable to build chain", see the
   **Troubleshooting** section in `../macos-pkg/README.md` (almost always a leftover
   "Always Trust" override on your Developer ID cert).
 
 ## Updates
-- **Web app changes are automatic.** The app loads digby.example.com live, so every web deploy
+- **Web app changes are automatic.** The app loads digby.ai live, so every web deploy
   shows up on next launch/reload — no rebuild, no re-download.
 - **The bundled Mac agent is NOT updated by re-downloading the app or by the app's
   self-update.** The `.dmg` bundles one agent version at build time (stamped as
@@ -207,15 +207,22 @@ The smallest shippable voice slice, all native side — **no web-app changes**:
   installs that copy **only when no self-managed agent exists** — with one present
   (label `com.digby.agent`) it refuses and explains instead of clobbering (ticket
   405927c9), and agent ≥ 0.9.2 retires the old bundled/.pkg jobs automatically.
-  To move a Mac to the CURRENT agent, use the one-line
+  That refusal alert points at the one-line command on the iMessage card, and since
+  ticket 0afda0af the card renders it **inside the desktop app too** (it used to be
+  gated to browser-only, so an app user was sent to a command that never appeared).
+  That card command installs the current release with a FRESH pairing code — use it
+  when this Mac is paired to the wrong Digby account, after clearing the stale
+  pairing with `rm ~/.config/digby-agent/config.json` (the installer deliberately
+  keeps an existing pairing, so it cannot re-pair by itself).
+  To only move a Mac to the CURRENT agent, use the one-line
   installer with `--update-only` (Account → Integrations → iMessage shows it when a
-  Mac's agent is behind the release): `curl -fsSL https://digby.example.com/install-digby-agent.sh
+  Mac's agent is behind the release): `curl -fsSL https://digby.ai/install-digby-agent.sh
   | bash -s -- --update-only`. It keeps the existing pairing, stops the app-bundled
   helper, and installs the current release at
   `~/Library/Application Support/Digby/imessage-agent`, which then keeps itself
   updated (ticket 31fd8440).
 - **Native shell changes** (this file, menus, download handling) need a new build. The
-  app self-checks `https://digby.example.com/desktop-latest.json` on launch (and via
+  app self-checks `https://digby.ai/desktop-latest.json` on launch (and via
   **Check for Updates…** in the app menu); if it advertises a newer version it offers
   to download the new `.dmg`.
 - **To ship a shell update:** bump `VERSION` in `build-app.sh` **and** the `version` in

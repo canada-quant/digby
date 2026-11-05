@@ -126,6 +126,11 @@ export const ADJUDICATION_SKIPPED_SEAMS: ReadonlySet<string> = new Set([
   // unavailable / no call) — written only under the opt-in COMPUTER_TASK_CLAIM_ANNOTATE_ENABLED=1, a deterministic
   // observe-only annotation, never a fabrication verdict, never G17.
   'machine_wake_computer_task_claim',
+  // Ticket e7e40322 (2026-11-03, platform-tools.ts lapsed-dispatch seam): records that an update_feedback call
+  // reached a ticket whose context.dispatchedTo names an ARCHIVED lane — a DEAD stamp the gate now treats as
+  // lapsed. Observe-only routing telemetry (it fires on a SUCCESSFUL mutation too, and the run has no
+  // fabrication to convict); it exists so the fleet can count rows still carrying dead stamps. Never G17.
+  'update_feedback_lapsed_dispatch',
 ]);
 
 // ── Pure classification helpers (exported for tests) ─────────────────────────

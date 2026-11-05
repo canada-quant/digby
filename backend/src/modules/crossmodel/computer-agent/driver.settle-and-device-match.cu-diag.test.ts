@@ -95,7 +95,7 @@ describe("device-name matching (fix #6)", () => {
   // single-device carve-out. The abbreviation aliases make it a REAL match,
   // including with a second paired Mac.
   it("alias expansion: 'MacBook Pro' resolves to Pauls-MBP even with a Mac mini paired (no carve-out needed)", () => {
-    const all = [mac(), mac({ id: "a2", label: "home-pauls-mac-mini", deviceName: "mini.local", deviceId: "d2" })];
+    const all = [mac(), mac({ id: "a2", label: "example-tailnet-peer", deviceName: "mini.local", deviceId: "d2" })];
     const r = matchDeviceTarget(all, "MacBook Pro");
     expect(r).toMatchObject({ kind: "match", device: { id: "a1" } });
     expect((r as any).note).toBeUndefined();

@@ -306,6 +306,17 @@ router.post('/agent/stop', controller.stopAgentRun);
 // One-Digby: live-run check (authenticated — normal fetch, Bearer header works).
 router.get('/agent/active', controller.agentRunActive);
 
+// ── Busy-chat QUEUE CONTROLS (ticket ea04454c) ──────────────────────────────
+// Messages typed while a run is active have always been persisted + drained
+// FIFO (message-queue.service, 2026-08-07), but the person who typed one could
+// only WAIT or STOP everything — no position, no cancel, no "run this next".
+// These four routes are the control plane for the caller's OWN user rows. The
+// order they manipulate IS the drain order (createdAt re-stamp, no migration).
+router.get('/chats/:id/queue', rejectChild, controller.listChatQueue);
+router.post('/chats/:id/queue/:pendingId/cancel', rejectChild, controller.cancelChatQueueItem);
+router.post('/chats/:id/queue/:pendingId/promote', rejectChild, controller.promoteChatQueueItem);
+router.post('/chats/:id/queue/:pendingId/move', rejectChild, controller.moveChatQueueItem);
+
 // ── P5-B: the CANONICAL coding run surface lives on the chat id ─────────────
 // Coding is a per-message capability of a chat (workspace satellite), so its
 // run controls mount here; the /coding/* paths remain as thin compat aliases.
@@ -580,7 +591,7 @@ router.patch('/admin/feedback/:id/resolve', controller.adminResolveFeedback);
 
 /**
  * GET /api/crossmodel/admin/settings
- * Returns all SystemSettings (admin only — ADMIN role or paul@sunday.market).
+ * Returns all SystemSettings (admin only — ADMIN role or example-user@example.com).
  */
 router.get('/admin/settings', controller.getAdminSettings);
 

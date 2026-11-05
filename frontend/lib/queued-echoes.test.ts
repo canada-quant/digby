@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { partitionQueuedEchoes, reconcileQueuedEchoes } from './queued-echoes';
+import { partitionQueuedEchoes, reconcileQueuedEchoes, reconcilePendingEchoes, isPlainQueueEchoId } from './queued-echoes';
 
 type Row = { id: string; content: string };
 const row = (id: string): Row => ({ id, content: `content of ${id}` });
@@ -178,5 +178,148 @@ describe('dropPrevAbsent (ticket c0b2b0c8 — the fresh page is the source of tr
     const page = [{ id: 'srv-run', role: 'assistant', content: '', createdAt: at('02') }];
     const { messages } = reconcileQueuedEchoes(prev, page, new Set(['steer-2']), { isLocalEcho });
     expect(messages.map((m) => m.id)).toEqual(['srv-run', 'steer-2']);
+  });
+});
+
+/**
+ * reconcilePendingEchoes — "Send now" rendered the message TWICE
+ * (owner report 2026-11-05, ticket 81b229e1).
+ *
+ * INCIDENT: the plain-chat Send now path queues the message, promotes it, then
+ * STOPS the live run. The stop calls reloadPlain while the promoted row is
+ * still in `pending_chat_messages` (nothing has drained it yet), so the SAME
+ * text arrived over two paths:
+ *   - the optimistic `tmp-<epochMs>` echo the composer appended at send time
+ *     (still in pendingSteerIds — nothing persisted it yet, so
+ *     reconcileQueuedEchoes could not twin it), and
+ *   - that same message as the server-listed `pending-<rowId>` row.
+ * Dedup was by id only, so both survived and the queued partition drew two
+ * identical bubbles. The server row is the record (it is what will run), so
+ * the local echo is dropped and the echo id is mapped onto the row id.
+ */
+describe('reconcilePendingEchoes (ticket 81b229e1 — "Send now" showed the message twice)', () => {
+  const at = (s: string) => `2026-11-05T21:${s}:00.000Z`;
+  const row = (id: string, content: string, createdAt: string, role = 'user') => ({ id, role, content, createdAt });
+
+  it('THE BUG: a promoted queue row supersedes its own tmp-* echo — exactly ONE row survives', () => {
+    const echo = row('tmp-1762376400000', 'fix the send now bug', at('00'));
+    const serverRow = row('pending-pq1', 'fix the send now bug', at('00'));
+    const { messages, idMap } = reconcilePendingEchoes([echo], [serverRow], { isQueueEcho: isPlainQueueEchoId });
+    // The echo is DROPPED — the caller appends serverRow, so the rendered set
+    // is one bubble, not two.
+    expect(messages).toEqual([]);
+    expect([...idMap.entries()]).toEqual([['tmp-1762376400000', 'pending-pq1']]);
+  });
+
+  it('without the reconcile the duplicate is structural: both ids are distinct, so an id-only append keeps both', () => {
+    const echo = row('tmp-1762376400000', 'same text', at('00'));
+    const serverRow = row('pending-pq1', 'same text', at('00'));
+    const naive = [...[echo], ...[serverRow].filter((p) => !new Set([echo.id]).has(p.id))];
+    expect(naive.map((m) => m.id)).toEqual(['tmp-1762376400000', 'pending-pq1']); // 2 bubbles = the bug
+  });
+
+  it('an echo with NO matching queue row is KEPT (the run is still live — nothing has been queued yet)', () => {
+    const echo = row('tmp-1762376400000', 'not queued', at('00'));
+    const { messages, idMap } = reconcilePendingEchoes([echo], [], { isQueueEcho: isPlainQueueEchoId });
+    expect(messages.map((m) => m.id)).toEqual(['tmp-1762376400000']);
+    expect(idMap.size).toBe(0);
+  });
+
+  it('DIFFERENT text never matches — an unrelated queued row cannot swallow the echo', () => {
+    const echo = row('tmp-1762376400000', 'message A', at('00'));
+    const other = row('pending-pq1', 'message B', at('00'));
+    const { messages } = reconcilePendingEchoes([echo], [other], { isQueueEcho: isPlainQueueEchoId });
+    expect(messages.map((m) => m.id)).toEqual(['tmp-1762376400000']);
+  });
+
+  it('an OLD identical message is never claimed by the clock fallback (outside the window)', () => {
+    const echo = row('tmp-1762376400000', 'ok', at('00'));
+    const stale = row('pending-pq9', 'ok', '2026-11-05T19:00:00.000Z');
+    const { messages, idMap } = reconcilePendingEchoes([echo], [stale], { isQueueEcho: isPlainQueueEchoId });
+    expect(messages.map((m) => m.id)).toEqual(['tmp-1762376400000']);
+    expect(idMap.size).toBe(0);
+  });
+
+  /**
+   * Blocking finding #2 from the adversarial review: `promoteQueuedUserMessage`
+   * REWRITES the row this reconciles (backend …/chat-agent/queue-controls.ts) —
+   * it re-stamps createdAt to just before the caller's OLDEST queued row. So
+   * the row may be far OLDER than the echo, and a clock window alone would miss
+   * the pair and leave the duplicate on screen. The send path therefore records
+   * the exact pairing, and identity wins outright regardless of timestamps.
+   */
+  it('IDENTITY beats the clock: a promote-re-stamped row is still matched (the bug this was blocking)', () => {
+    const echo = row('tmp-1762376400000', 'send now me', at('00'));
+    // Re-stamped 40 minutes earlier by promoteQueuedUserMessage — far outside
+    // any sane clock window, identical text.
+    const restamped = row('pending-pq1', 'send now me', '2026-11-05T20:20:00.000Z');
+    const pairing = new Map([['tmp-1762376400000', 'pending-pq1']]);
+    const { messages, idMap } = reconcilePendingEchoes([echo], [restamped], {
+      isQueueEcho: isPlainQueueEchoId, echoToPending: pairing,
+    });
+    expect(messages).toEqual([]);                       // echo dropped
+    expect([...idMap.entries()]).toEqual([['tmp-1762376400000', 'pending-pq1']]);
+  });
+
+  it('identity never claims a row that is not actually listed (the drain already took it)', () => {
+    const echo = row('tmp-1762376400000', 'gone', at('00'));
+    const pairing = new Map([['tmp-1762376400000', 'pending-vanished']]);
+    const { messages, idMap } = reconcilePendingEchoes([echo], [], {
+      isQueueEcho: isPlainQueueEchoId, echoToPending: pairing,
+    });
+    expect(messages.map((m) => m.id)).toEqual(['tmp-1762376400000']); // keep the echo — it is all we have
+    expect(idMap.size).toBe(0);
+  });
+
+  it('identity is not double-spent by two echoes pointing at the SAME row', () => {
+    const e1 = row('tmp-1', 'a', at('00'));
+    const e2 = row('tmp-2', 'b', at('01'));
+    const only = row('pending-a', 'a', at('00'));
+    const pairing = new Map([['tmp-1', 'pending-a'], ['tmp-2', 'pending-a']]);
+    const { messages } = reconcilePendingEchoes([e1, e2], [only], {
+      isQueueEcho: isPlainQueueEchoId, echoToPending: pairing,
+    });
+    expect(messages.map((m) => m.id)).toEqual(['tmp-2']); // second echo kept
+  });
+
+  it('an unparseable timestamp never matches on content alone', () => {
+    const echo = row('tmp-1762376400000', 'same', at('00'));
+    const bad = row('pending-pq1', 'same', 'not-a-date');
+    const { messages } = reconcilePendingEchoes([echo], [bad], { isQueueEcho: isPlainQueueEchoId });
+    expect(messages.map((m) => m.id)).toEqual(['tmp-1762376400000']);
+  });
+
+  it('each queue row is claimed at most ONCE (two identical sends map to two distinct rows)', () => {
+    const e1 = row('tmp-1', 'dup', at('00'));
+    const e2 = row('tmp-2', 'dup', at('01'));
+    const r1 = row('pending-a', 'dup', at('00'));
+    const { messages, idMap } = reconcilePendingEchoes([e1, e2], [r1], { isQueueEcho: isPlainQueueEchoId });
+    expect(messages.map((m) => m.id)).toEqual(['tmp-2']); // only the second echo survives
+    expect([...idMap.entries()]).toEqual([['tmp-1', 'pending-a']]);
+  });
+
+  it('is narrow: steer-* and non-tmp rows are untouched (coding steers are persisted eagerly, not queued)', () => {
+    const steer = row('steer-1762376400000', 'steered', at('00'));
+    const tmpEcho = row('tmp-1762376400000', 'steered', at('00'));
+    const { messages } = reconcilePendingEchoes([steer, tmpEcho], [row('pending-pq1', 'steered', at('00'))], { isQueueEcho: isPlainQueueEchoId });
+    // steer-* is not a plain-queue echo → never dropped here.
+    expect(messages.map((m) => m.id)).toEqual(['steer-1762376400000']);
+  });
+
+  it('isPlainQueueEchoId matches ONLY the plain composer echo family', () => {
+    expect(isPlainQueueEchoId('tmp-1762376400000')).toBe(true);
+    expect(isPlainQueueEchoId('steer-1762376400000')).toBe(false);
+    expect(isPlainQueueEchoId('pending-pq1')).toBe(false);
+    expect(isPlainQueueEchoId('srv-abc')).toBe(false);
+    expect(isPlainQueueEchoId('')).toBe(false);
+    expect(isPlainQueueEchoId(null)).toBe(false);
+    expect(isPlainQueueEchoId(undefined)).toBe(false);
+  });
+
+  it('an assistant row of the same text is never a twin', () => {
+    const echo = row('tmp-1762376400000', 'same words', at('00'));
+    const asst = row('pending-pq1', 'same words', at('00'), 'assistant');
+    const { messages } = reconcilePendingEchoes([echo], [asst], { isQueueEcho: isPlainQueueEchoId });
+    expect(messages.map((m) => m.id)).toEqual(['tmp-1762376400000']);
   });
 });

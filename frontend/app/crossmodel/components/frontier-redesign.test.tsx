@@ -157,9 +157,15 @@ describe('Thinking + streaming', () => {
     const fs = require('node:fs') as typeof import('node:fs');
     const PAGE = fs.readFileSync(new URL('../page.tsx', import.meta.url), 'utf8');
     const VIEW = fs.readFileSync(new URL('./CodeSessionView.tsx', import.meta.url), 'utf8');
-    expect((PAGE.match(/src="\/digbyspin\.gif"/g) || []).length).toBe(2);
+    // The hero spinners go through the shared branding core (2026-11-05, todo
+    // d2d32b57): an operator's spinner + its reduced-motion static twin replace
+    // the hard-coded /digbyspin.gif, so the pin is "two BrandSpinners, no
+    // literal asset path". The animated-asset behaviour itself is unchanged and
+    // is pinned in components/ui/custom/BrandSpinner.tsx + lib/branding tests.
+    expect((PAGE.match(/<BrandSpinner size=\{40\}/g) || []).length).toBe(2);
+    expect(PAGE).not.toContain('src="/digbyspin.gif"');
     expect(PAGE).not.toContain('src="/digbyhat.png" alt="Digby" width={34}');
-    expect(VIEW).toContain('<DigbyLoader size={40} label="Digby" />');
+    expect(VIEW).toContain('<DigbyLoader size={40} label={branding.name} />');
   });
 });
 
@@ -276,8 +282,8 @@ describe('walkthrough fixes (2026-10-06)', () => {
   const PAGE = fs.readFileSync(new URL('../page.tsx', import.meta.url), 'utf8');
 
   it('the account footer shows the email once when there is no display name', () => {
-    const same = html(createElement(RailFooter, { name: 'bot@digby.example.com', email: 'bot@digby.example.com' }));
-    expect(same.match(/bot@digby\.example\.com/g)?.length).toBe(1);
+    const same = html(createElement(RailFooter, { name: 'bot@digby.ai', email: 'bot@digby.ai' }));
+    expect(same.match(/bot@digby\.ai/g)?.length).toBe(1);
   });
 
   it('How Digby answered never echoes the role line as the note', () => {

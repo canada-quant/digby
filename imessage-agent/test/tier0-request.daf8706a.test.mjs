@@ -194,9 +194,9 @@ test('daf8706a: the dispatch latch treats never-requested as a permission negati
 
 // ── 5. Version pin ──────────────────────────────────────────────────────────
 
-test('daf8706a version pin: the tier-0 fix ships stamped 0.9.19', () => {
-  assert.ok(pkg.version === '0.9.19', `agent version must be 0.9.19 (found ${pkg.version})`);
-  assert.match(read('config.ts'), /export const AGENT_VERSION = '0\.9\.19';/, 'AGENT_VERSION stamped');
+test('daf8706a version pin: the tier-0 fix ships stamped 0.9.23', () => {
+  assert.ok(pkg.version === '0.9.23', `agent version must be 0.9.23 (found ${pkg.version})`);
+  assert.match(read('config.ts'), /export const AGENT_VERSION = '0\.9\.23';/, 'AGENT_VERSION stamped');
 });
 
 // ── 6. REAL behavioral test: fake osascript proves the whole flow ──────────

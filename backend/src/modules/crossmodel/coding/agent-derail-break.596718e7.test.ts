@@ -1,6 +1,6 @@
 /**
  * REPLAY PIN — ticket 596718e7 (mishap, 2026-10-15T21:51:35.507Z): "3×
- * tool-failure streak: todo_update on 'DNS cutover llm.example.com → · Phase 3
+ * tool-failure streak: todo_update on 'DNS cutover llm.cql.ca → · Phase 3
  * remai' — framework or model?" Auto-filed at the breaker trip (owner
  * doctrine 2026-09-10: self-heal + attribute, never just escalate).
  *
@@ -234,7 +234,7 @@ const SWEEP_TODO = '06c26d0f-a77f-41dc-adcb-c3268309a2db'; // drop-in sweep — 
  *  row ids verbatim — the grounding haystack for the calls below). */
 const BRIEF = [
   '[FLEET GOAL BOARD — todos unblocked to this chat]',
-  `Todo "DNS cutover llm.example.com → rutherford-2" (${FE467CED}) and "Mint virtual keys for infrastructure callers" (${ED2FD190}) are actionable — execute now, then roll into roster verify.`,
+  `Todo "DNS cutover llm.cql.ca → rutherford-2" (${FE467CED}) and "Mint virtual keys for infrastructure callers" (${ED2FD190}) are actionable — execute now, then roll into roster verify.`,
   `Deploy row ${DEPLOY_TODO} is done; the drop-in sweep ${SWEEP_TODO} is still gated on the verify pass. Report units + healthz, then close out.`,
 ].join('\n');
 
@@ -259,9 +259,9 @@ const makeInput = (): AgentRunInput => ({
 // ── The incident's verbatim failure texts (ticket 596718e7, executor shape) ──
 const FAIL_409 =
   'Tool todo_update failed: Todo cannot be marked done: waiting on 1 todo(s) not done: ' +
-  '"Verify cutover: /v1/models roster vs 50, census script, StAnne legs (mbp-2 utility 100.64.0.11:8095, asr, ' +
-  'edge image 100.64.0.12), self-hosted tailnet legs (box-a 100.64.0.13:8091, box-b 100.64.0.14:8000, GLM nodes), ' +
-  'E2E completion through https://llm.example.com" (blocked). Pass force: true to override.';
+  '"Verify cutover: /v1/models roster vs 50, census script, StAnne legs (mbp-2 utility 100.64.0.1:8095, asr, ' +
+  'accelerator image 100.64.0.1), self-hosted tailnet legs (node-a 100.64.0.1:8091, node-b 100.64.0.1:8000, GLM nodes), ' +
+  'E2E completion through https://llm.cql.ca" (blocked). Pass force: true to override.';
 const FAIL_400 =
   "Tool todo_update failed: blockedReason can only be set on a blocked todo (current status: 'in_progress'). " +
   "Pass status:'blocked' to block it first.";
@@ -271,7 +271,7 @@ const REASON_ARG =
   'Client list is owner/fleet-side: per the 2026-10-11 incident brief (docs/SECURITY-INCIDENT_2026-10-11.md §5) ' +
   'every caller requests a virtual key through the owner/gateway lane. Mechanical callers are minted per-host.';
 const EVIDENCE_ARG =
-  'Fresh-host verification this run (SSH deploy@203.0.113.10): /etc/gateway-health-monitor.env does not exist; ' +
+  'Fresh-host verification this run (SSH deploy@69.19.140.37): /etc/gateway-health-monitor.env does not exist; ' +
   'no KNOWN_DOWN overrides in any systemd drop-in (grep across /etc/systemd/system).';
 
 /** The modeled LIVE reasoning of the convicted message (glm-5.3 reasoning is
@@ -325,7 +325,7 @@ const failBatchTurn = {
 const withholdRoundTurn = {
   content: 'Anchoring on real state: reading the record back from the host before any further status writes.',
   reasoning: 'The notice says the row tool sits out this round; reading the host state directly.',
-  toolCalls: [{ id: 't6', name: 'run_command', arguments: JSON.stringify({ command: 'ssh deploy@203.0.113.10 "systemctl is-active litellm-gateway"' }) }],
+  toolCalls: [{ id: 't6', name: 'run_command', arguments: JSON.stringify({ command: 'ssh deploy@69.19.140.37 "systemctl is-active litellm-gateway"' }) }],
   finishReason: 'tool_calls' as const,
 };
 /** The 21:54:14 recovery (receipts f7e8c9c0 on ed2fd190 + 5bd284cf on

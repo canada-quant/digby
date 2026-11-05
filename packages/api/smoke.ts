@@ -129,7 +129,7 @@ async function streamingChecks() {
   let disposed = false;
 
   const client = new DigbyApiClient({
-    baseUrl: 'https://digby.example.com',
+    baseUrl: 'https://digby.ai',
     fetch: stubFetch as any,
     getRefreshToken: async () => 'R1',
   });
@@ -173,7 +173,7 @@ async function streamingChecks() {
   // non-2xx stream → error event (not a throw), dispose works
   const errEvents: SseEvent[] = [];
   const badHandle = await attachChatStream(
-    new DigbyApiClient({ baseUrl: 'https://digby.example.com', fetch: stubFetch as any, accessToken: 'T9' }),
+    new DigbyApiClient({ baseUrl: 'https://digby.ai', fetch: stubFetch as any, accessToken: 'T9' }),
     'missing-chat',
     (ev) => errEvents.push(ev)
   );
@@ -191,7 +191,7 @@ async function streamingChecks() {
       ok: true, status: 200, json: async () => ({}), text: async () => '', headers: undefined,
       body: { getReader: () => ({ read: async () => i < parts.length ? { done: false, value: parts[i++] } : { done: true, value: undefined }, cancel: async () => {} }) },
     });
-    const mbClient = new DigbyApiClient({ baseUrl: 'https://digby.example.com', fetch: mbFetch as any, accessToken: 'T9' });
+    const mbClient = new DigbyApiClient({ baseUrl: 'https://digby.ai', fetch: mbFetch as any, accessToken: 'T9' });
     const mbEvents: SseEvent[] = [];
     const mbHandle = await attachChatStream(mbClient, 'any', (ev) => mbEvents.push(ev));
     await mbHandle.done;
@@ -259,7 +259,7 @@ async function main() {
   const rotations: string[] = [];
   let storedRefreshToken: string | undefined;
   const client = new DigbyApiClient({
-    baseUrl: 'https://digby.example.com',
+    baseUrl: 'https://digby.ai',
     fetch: stub as any,
     getRefreshToken: async () => storedRefreshToken,
     onRefreshToken: (t) => { rotations.push(t); storedRefreshToken = t; },
@@ -297,14 +297,14 @@ async function main() {
   // 5. auth-endpoint 401 must NOT trigger refresh
   refreshCount = 0;
   const stub401 = async () => err(401);
-  const c2 = new DigbyApiClient({ baseUrl: 'https://digby.example.com', fetch: stub401 as any, getRefreshToken: async () => 'R-STORED', onSessionExpired: () => expired.push('expired2') });
+  const c2 = new DigbyApiClient({ baseUrl: 'https://digby.ai', fetch: stub401 as any, getRefreshToken: async () => 'R-STORED', onSessionExpired: () => expired.push('expired2') });
   const auth2 = fetchAuth(c2);
   await auth2.logout(); // must not throw, must not refresh
   if (refreshCount !== 0) throw new Error('logout triggered refresh');
   console.log('✓ auth endpoints skip refresh; logout never throws');
 
   // 6. definitive failure: refresh token invalid → ApiError + onSessionExpired
-  const c3 = new DigbyApiClient({ baseUrl: 'https://digby.example.com', fetch: stub as any, getRefreshToken: async () => 'WRONG', onSessionExpired: () => expired.push('expired3') });
+  const c3 = new DigbyApiClient({ baseUrl: 'https://digby.ai', fetch: stub as any, getRefreshToken: async () => 'WRONG', onSessionExpired: () => expired.push('expired3') });
   const chats3 = fetchChats(c3);
   c3.setAccessToken('T1');
   let threw = false;

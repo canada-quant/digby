@@ -15,10 +15,10 @@
  * failure reads as code 0 → 'down'/'degraded').
  *
  * Kill switch: DEPLOY_HEALTH_PROBE_DISABLED=1 skips the outbound https call
- * entirely (self-hosted edges with no route to digby.example.com) — the probe answers
+ * entirely (self-hosted edges with no route to digby.ai) — the probe answers
  * status 'skipped' and the callers keep the rest of their picture.
  * DEPLOY_HEALTH_PROBE_BASE_URL overrides the probed origin (a PRODUCTION
- * instance defaults to https://digby.example.com — a NON-prod instance has NO default
+ * instance defaults to https://digby.ai — a NON-prod instance has NO default
  * and probes its own SELFHOST_PUBLIC_URL or answers 'skipped'; the backend leg appends /api/health, the backend's own
  * health route (app.ts) — 200 means db+redis connected, 503 means the process
  * is up but unhealthy. Healthy therefore REQUIRES backend 200. The previous
@@ -32,7 +32,7 @@ import http from 'http';
 
 export const DEPLOY_HEALTH_CACHE_MS = 60_000;
 export const DEPLOY_HEALTH_PROBE_TIMEOUT_MS = 8_000;
-export const DEPLOY_HEALTH_DEFAULT_BASE_URL = 'https://digby.example.com';
+export const DEPLOY_HEALTH_DEFAULT_BASE_URL = 'https://digby.ai';
 
 export type DeployHealthStatus = 'healthy' | 'degraded' | 'down' | 'unknown' | 'skipped';
 
@@ -65,8 +65,8 @@ export const isDeployHealthProbeDisabled = (): boolean => process.env.DEPLOY_HEA
  * The deploy-health probe origin. MAY RETURN '' on a non-prod instance with
  * neither DEPLOY_HEALTH_PROBE_BASE_URL nor SELFHOST_PUBLIC_URL set — that is
  * the isolation boundary's designed answer ("nothing to probe": probeDeployHealth
- * returns status 'skipped', never a digby.example.com fallback). Production keeps the
- * historical https://digby.example.com default; DEPLOY_HEALTH_PROBE_BASE_URL always wins.
+ * returns status 'skipped', never a digby.ai fallback). Production keeps the
+ * historical https://digby.ai default; DEPLOY_HEALTH_PROBE_BASE_URL always wins.
  */
 
 // Instance isolation boundary (ticket c75b5f34) — import-free leaf.

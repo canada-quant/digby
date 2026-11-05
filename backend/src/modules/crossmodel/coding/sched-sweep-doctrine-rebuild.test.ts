@@ -35,7 +35,7 @@ const mockChatFindUnique = jest.fn(async (..._a: any[]): Promise<any> => null);
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       update: jest.fn(async () => ({})),
       findUnique: jest.fn(async () => ({
         enabled: true, kind: 'recurring', runsCount: 0, maxRuns: null, expiresAt: null, lastFiredAt: null,

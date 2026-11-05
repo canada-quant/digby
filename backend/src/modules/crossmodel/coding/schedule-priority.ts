@@ -69,14 +69,14 @@ export function slotYields(fired: FiredOutcome | null): boolean {
 export async function claimStarvedScheduleSlot(chatId: string, now: Date = new Date()): Promise<StarvedSchedule | null> {
   if (!chatId) return null;
   try {
-    const row = await prisma.codingSchedule.findFirst({
+    const row = await prisma.chatSchedule.findFirst({
       where: { sessionId: chatId, enabled: true, kind: 'recurring', busySkips: { gte: SCHEDULE_PRIORITY_SKIPS } },
       orderBy: { busySkips: 'desc' },
       select: { id: true, busySkips: true, intervalSec: true, nextRunAt: true },
     });
     if (!row) return null;
     if (row.nextRunAt.getTime() > now.getTime()) {
-      await prisma.codingSchedule.update({ where: { id: row.id }, data: { nextRunAt: now } });
+      await prisma.chatSchedule.update({ where: { id: row.id }, data: { nextRunAt: now } });
     }
     let fired: FiredOutcome | null = null;
     try {

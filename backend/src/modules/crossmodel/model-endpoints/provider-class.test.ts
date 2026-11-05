@@ -37,7 +37,7 @@ describe('endpointProviderClass — host-derived', () => {
     ['https://api.x.ai/v1', 'frontier'],
     ['http://192.168.1.50:11434/v1', 'open'],
     ['https://api.studio.nebius.com/v1', 'open'],
-    ['https://llm.example.com/v1', 'open'],
+    ['https://llm.cql.ca/v1', 'open'],
     ['https://openrouter.ai/api/v1', 'open'],
     ['https://api.deepseek.com', 'open'],
   ])('%s → %s', (url, expected) => {
@@ -145,11 +145,11 @@ describe('modelProviderClass — host OR id', () => {
     expect(modelProviderClass('https://api.openai.com/v1', 'qwen3:32b')).toBe('frontier');
   });
   it('an open host with a frontier model id is frontier (LiteLLM / OpenRouter proxy)', () => {
-    expect(modelProviderClass('https://llm.example.com/v1', 'api-anthropic-claude-fable-5-1')).toBe('frontier');
+    expect(modelProviderClass('https://llm.cql.ca/v1', 'api-anthropic-claude-fable-5-1')).toBe('frontier');
     expect(modelProviderClass('https://openrouter.ai/api/v1', 'openai/gpt-5.6-sol')).toBe('frontier');
   });
   it('an open host with an open id is open', () => {
-    expect(modelProviderClass('https://llm.example.com/v1', 'agx-laya')).toBe('open');
+    expect(modelProviderClass('https://llm.cql.ca/v1', 'agx-laya')).toBe('open');
     expect(modelProviderClass('http://192.168.1.50:11434/v1', 'qwen3:32b')).toBe('open');
     expect(modelProviderClass('https://api.studio.nebius.com/v1', 'openai/gpt-oss-120b')).toBe('open');
     expect(modelProviderClass('http://vllm.local:8000/v1', 'xai-org/grok-2')).toBe('open');

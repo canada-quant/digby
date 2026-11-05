@@ -150,6 +150,9 @@ describe('parseClaimsBlock', () => {
     expect([...CLAIMS_BLOCK_TYPES]).toEqual([
       'push', 'pr', 'deploy', 'ticket_update', 'message_sent', 'dispatch', 'file_change', 'verify', 'merge',
       'commit', 'schedule_armed', 'email_sent', 'state_update',
+      // CT-5 (todo 76fd0cce): the two observation classes, verified against the
+      // run_command receipt that produced them.
+      'probe', 'benchmark',
     ]);
   });
 });
@@ -259,6 +262,52 @@ describe('refNamesPrNumber / refNamesSha', () => {
 describe('verifyClaimsBlock', () => {
   const claim = (type: ClaimsBlockEntry['type'], ref: string): ClaimsBlockEntry => ({ type, ref });
 
+  // ── CT-5 (todo 76fd0cce): typed probe / benchmark claims ─────────────────
+  it('probe/benchmark: verified by the run_command receipt that produced it — command hash, receipt id, or the sha it read', () => {
+    const rc = receipt('run_command', true, { exitCode: 0, commandHash: 'c0ffee1234567890abcdef' }, '7ac15e25-1111-2222-3333-444455556666');
+    // the COMMAND HASH, full or the short prefix a lane pastes
+    expect(verifyClaimsBlock([claim('probe', 'c0ffee1234567890abcdef')], [rc]).verified).toHaveLength(1);
+    expect(verifyClaimsBlock([claim('probe', 'c0ffee12')], [rc]).verified).toHaveLength(1);
+    // the receipt id
+    expect(verifyClaimsBlock([claim('benchmark', '7ac15e25-1111-2222-3333-444455556666')], [rc]).verified).toHaveLength(1);
+    // …and NO ids.sha leg: run_command's real envelope is { exitCode, commandHash }
+    // only (review fix D2 — the old fixture hand-built a shape extractReceipt never
+    // returns, so it pinned a channel that could not fire in production).
+    const real = receipt('run_command', true, { exitCode: 0, commandHash: 'c0ffee1234567890abcdef' });
+    expect(verifyClaimsBlock([claim('probe', '7d38730f')], [real]).verified).toHaveLength(0);
+  });
+
+  it('probe/benchmark: a SHORT ref never verifies (review fix D1 — the ≥8-char floor; "0" is a prefix of every sha256)', () => {
+    const rc = receipt('run_command', true, { exitCode: 0, commandHash: 'c0ffee1234567890abcdef' }, '7ac15e25-1111-2222-3333-444455556666');
+    for (const short of ['0', 'a', 'c0', 'c0f', 'c0ff', 'c0ffe', 'c0ffee']) {
+      expect(verifyClaimsBlock([claim('probe', short)], [rc]).verified).toHaveLength(0);
+    }
+    // …while an 8-char prefix still matches: the floor is a floor, not a ban.
+    expect(verifyClaimsBlock([claim('probe', 'c0ffee12')], [rc]).verified).toHaveLength(1);
+    // the same floor governs the inputHash leg
+    const withInput = { ...receipt('run_command', true, {}, '8ac56737-aaaa-bbbb-cccc-dddddddddddd'), inputHash: 'deadbeef00112233' };
+    expect(verifyClaimsBlock([claim('benchmark', 'd')], [withInput]).verified).toHaveLength(0);
+    expect(verifyClaimsBlock([claim('benchmark', 'deadbeef')], [withInput]).verified).toHaveLength(1);
+  });
+
+  it('probe/benchmark: NO coarse tier — an ok run_command does not vouch an arbitrary ref (the P4 v1#23 hole)', () => {
+    const rc = receipt('run_command', true, { exitCode: 0, commandHash: 'c0ffee1234567890abcdef' });
+    const out = verifyClaimsBlock([claim('probe', 'something-else-entirely')], [rc]);
+    expect(out.verified).toHaveLength(0);
+    // …and it lands in the CONVICTABLE tier, not the advisory one: a probe ref is
+    // a hash/label, not a uuid, so the deploy-style unverifiable gate must not
+    // swallow it.
+    expect(out.unverifiable).toHaveLength(0);
+    expect(out.unverified).toHaveLength(1);
+  });
+
+  it('probe/benchmark: never verified by a failed run_command, nor by a non-run_command receipt', () => {
+    const failed = receipt('run_command', false, { exitCode: 1, commandHash: 'c0ffee1234567890abcdef' });
+    expect(verifyClaimsBlock([claim('probe', 'c0ffee12')], [failed]).verified).toHaveLength(0);
+    const ls = receipt('git_push', true, { sha: '7d38730f6c' });
+    expect(verifyClaimsBlock([claim('probe', '7d38730f')], [ls]).verified).toHaveLength(0);
+  });
+
   it('push: verified by an ok git_push via sha prefix, branch, or receipt id — never by ok:false', () => {
     const push = receipt('git_push', true, { branch: 'digby/fix-x', sha: '1539fa86b1c2d3e4' }, '3f09a1bc-aaaa-bbbb-cccc-dddddddddddd');
     expect(verifyClaimsBlock([claim('push', '1539fa86')], [push]).verified).toHaveLength(1);
@@ -297,14 +346,14 @@ describe('verifyClaimsBlock', () => {
     // The 09-08 hole: any ok run_command (even `ls`) stamped a descriptive
     // deploy ref VERIFIED. It is now 'unverifiable' — advisory, no coverage,
     // no conviction (GUARD 5's Actions-API check owns run-id truth).
-    const descriptive = verifyClaimsBlock([claim('deploy', 'digby.example.com blue-green flip')], [receipt('run_command', true)]);
+    const descriptive = verifyClaimsBlock([claim('deploy', 'digby.ai blue-green flip')], [receipt('run_command', true)]);
     expect(descriptive.verified).toHaveLength(0);
     expect(descriptive.unverified).toHaveLength(0);
     expect(descriptive.unverifiable).toHaveLength(1);
     // A ref naming the receipted push sha still VERIFIES (real id binding).
     expect(verifyClaimsBlock([claim('deploy', '1539fa86')], [receipt('git_push', true, { sha: '1539fa86b1c2' })]).verified).toHaveLength(1);
     // No class receipt at all → still unverifiable (nothing to bind to), not a conviction.
-    expect(verifyClaimsBlock([claim('deploy', 'digby.example.com blue-green flip')], [receipt('verify', true, { passed: true })]).unverifiable).toHaveLength(1);
+    expect(verifyClaimsBlock([claim('deploy', 'digby.ai blue-green flip')], [receipt('verify', true, { passed: true })]).unverifiable).toHaveLength(1);
     expect(verifyClaimsBlock([claim('deploy', 'anything')], []).unverifiable).toHaveLength(1);
   });
 

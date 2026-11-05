@@ -1,4 +1,4 @@
-import { minimalMessages, minimalEvent, minimalParts, minimalText, minimalToolArgs, minimalChatDto, agentSenderTitle } from './minimal-view';
+import { minimalMessages, minimalEvent, minimalParts, minimalText, minimalToolArgs, minimalChatDto, agentSenderTitle, classifyUserRow } from './minimal-view';
 import { filterSseChunk, wrapSseResponse } from './minimal-sse';
 import { resolveViewMode, resolveViewModeForRequest, isAdminViewer, __resetViewModeCacheForTests } from './view-mode';
 
@@ -218,13 +218,13 @@ describe('view mode resolution', () => {
     expect(await resolveViewMode({ id: 'u', role: 'USER', email: 'a@b.c' })).toBe('minimal');
     expect(await resolveViewMode(null)).toBe('minimal');
     expect(await resolveViewMode({ id: 'admin1', role: 'ADMIN' })).toBe('full');
-    expect(isAdminViewer({ role: 'USER', email: 'paul@sunday.market' })).toBe(true);
+    expect(isAdminViewer({ role: 'USER', email: 'example-user@example.com' })).toBe(true);
     // Self-host 2026-10-20: the owner-email fallback is PRODUCTION-only — on any other instance kind
     // (open registration) that address is an ordinary user; the ADMIN role is the only admin there.
     const prevKind = process.env.DIGBY_INSTANCE;
     process.env.DIGBY_INSTANCE = 'selfhost';
     try {
-      expect(isAdminViewer({ role: 'USER', email: 'paul@sunday.market' })).toBe(false);
+      expect(isAdminViewer({ role: 'USER', email: 'example-user@example.com' })).toBe(false);
       expect(isAdminViewer({ role: 'ADMIN', email: 'anyone@example.com' })).toBe(true);
     } finally {
       if (prevKind !== undefined) process.env.DIGBY_INSTANCE = prevKind; else delete process.env.DIGBY_INSTANCE;
@@ -234,7 +234,7 @@ describe('view mode resolution', () => {
   });
   it('the verification account may ask for the full view per request; nobody else can', async () => {
     delete process.env.MINIMAL_VIEW_DISABLED;
-    const bot = { id: 'b', role: 'USER', email: 'claudebot@digby.example.com' };
+    const bot = { id: 'b', role: 'USER', email: 'claudebot@digby.ai' };
     expect(await resolveViewModeForRequest({ user: bot, headers: {} })).toBe('minimal');
     expect(await resolveViewModeForRequest({ user: bot, headers: { 'x-digby-view': 'full' } })).toBe('full');
     expect(await resolveViewModeForRequest({ user: bot, headers: {}, query: { view: 'full' } })).toBe('full');
@@ -266,5 +266,103 @@ describe('view mode resolution', () => {
     mockRedis.delete('view:debug:admin3');
     expect(await resolveViewMode({ id: 'admin3', role: 'ADMIN' })).toBe('minimal');
     expect(mockRedis.get('view:debug:admin3')).toBe('0');
+  });
+});
+
+/**
+ * ============================================================================
+ * DETECTOR-RECALL REPLAY — ticket 739e8191
+ * ============================================================================
+ * This change relaxes a RECALL predicate (wakeIsOwnerFacing, which decides
+ * whether a minimum viewer sees the reply at all), so these cases re-assert
+ * the PRIOR true positives still fire. Owner report (chat 99e63f86): "you dont
+ * see to communicate with the user/human after you get a message from a sub
+ * session ie...you should then relay to me whatever message was sent back from
+ * the subsession … ie the agent has finished the work and everything is done".
+ * md() already flattened childResult but NOTHING consumed it, so a delivered
+ * sub-session result was hidden from the minimal view.
+ */
+describe('minimal view — delivered sub-session results (ticket 739e8191)', () => {
+  const wake = (id: string, metadata: any, content = '[MACHINE-TRIGGERED RUN — EVENT HOOK FIRED]\nwake') =>
+    ({ id, role: 'user', content, metadata });
+
+  it('keeps the reply of a child-result wake — the owner is waiting on that delivery', () => {
+    const out = minimalMessages([
+      wake('k1', { origin: 'hook', childResult: true }),
+      { id: 'k2', role: 'assistant', content: 'The lane finished — the last fix landed.' },
+    ] as any);
+    expect((out[1] as any).minimal).toBeUndefined();
+    expect(out[1].content).toContain('last fix landed');
+  });
+
+  it('DETECTOR-RECALL REPLAY: an unarmed machine wake reply is STILL a hidden stub', () => {
+    const out = minimalMessages([
+      wake('w1', { origin: 'hook' }),
+      { id: 'w2', role: 'assistant', content: 'Status: nominal, nothing to do.' },
+    ] as any);
+    expect((out[1] as any).minimal?.hidden).toBe(true);
+  });
+
+  it('DETECTOR-RECALL REPLAY: a quiet "nothing new" watch reply is STILL hidden', () => {
+    const out = minimalMessages([
+      wake('q1', { origin: 'hook', childResult: true }),
+      { id: 'q2', role: 'assistant', content: 'Nothing new.' },
+    ] as any);
+    expect((out[1] as any).minimal?.hidden).toBe(true);
+  });
+
+  it('DETECTOR-RECALL REPLAY: a non-child [AGENT-SENT MESSAGE] relay is STILL an agent stub', () => {
+    const row = {
+      id: 's1', role: 'user',
+      content: '[AGENT-SENT MESSAGE — from chat "other lane" (sibling3) in project "p", another Digby agent, NOT the owner.]\nhello',
+      metadata: { origin: 'agent', sourceChatId: 'sibling-3' },
+    };
+    expect(classifyUserRow(row as any)).toBe('agent');
+    const out = minimalMessages([row, { id: 's2', role: 'assistant', content: 'Acknowledged.' }] as any);
+    expect((out[0] as any).minimal?.note).toBe('message_from');
+  });
+});
+
+/**
+ * Ticket 739e8191 — REVIEW MAJOR regression pin.
+ *
+ * Real assistant rows are STAMPED with the turn's own machine origin
+ * (chat-agent.service.ts ~:7806, run-executor.ts ~:973), so `isMachineAssistant`
+ * is true BY CONSTRUCTION on the reply. The first cut of this fix set
+ * `turnOwnerFacing` but still gated on `!isMachineAssistant(row)`, which
+ * re-hid the very reply it was meant to surface. This fixture carries the
+ * stamp — which the earlier fixture omitted, hiding the bug.
+ */
+describe('minimal view — child-result reply carrying its OWN machine origin stamp', () => {
+  it('the child relay flattens the marker and the STAMPED reply is still kept', () => {
+    const out = minimalMessages([
+      // The fleet thread flattens `childResult` onto the relay row (top level).
+      { id: 'r1', role: 'user', childResult: true, origin: 'agent',
+        content: '[AGENT-SENT MESSAGE — from chat "lane" (child9) in project "p", another Digby agent, NOT the owner.]\nfinished',
+        metadata: { origin: 'agent', sourceChatId: 'child-9' } },
+      // REAL shape: the reply inherits the turn origin, so it IS machine-stamped.
+      { id: 'r2', role: 'assistant', origin: 'agent',
+        content: 'The lane finished — here is what it delivered.',
+        metadata: { origin: 'agent', sourceChatId: 'child-9' } },
+    ] as any);
+    expect((out[1] as any).minimal).toBeUndefined(); // NOT stubbed
+    expect(out[1].content).toContain('here is what it delivered');
+  });
+
+  it('DETECTOR-RECALL REPLAY: an agent-stamped reply in a turn WITHOUT the marker stays hidden', () => {
+    const out = minimalMessages([
+      { id: 'n1', role: 'user', content: '[AGENT-SENT MESSAGE — from chat "other" (sibl3), another Digby agent, NOT the owner.]\nhi',
+        metadata: { origin: 'agent', sourceChatId: 'sibling-3' } },
+      { id: 'n2', role: 'assistant', content: 'Acknowledged.', metadata: { origin: 'agent' } },
+    ] as any);
+    expect((out[1] as any).minimal?.hidden).toBe(true);
+  });
+
+  it('DETECTOR-RECALL REPLAY: a quiet "nothing new" reply in a marked turn is STILL hidden', () => {
+    const out = minimalMessages([
+      { id: 'q1', role: 'user', childResult: true, metadata: { origin: 'hook', childResult: true }, content: '[MACHINE-TRIGGERED RUN — EVENT HOOK FIRED]\nwake' },
+      { id: 'q2', role: 'assistant', metadata: { origin: 'hook' }, content: 'Nothing new.' },
+    ] as any);
+    expect((out[1] as any).minimal?.hidden).toBe(true);
   });
 });

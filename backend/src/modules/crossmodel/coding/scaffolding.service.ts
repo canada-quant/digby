@@ -31,6 +31,14 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import logger from '../../../utils/logger';
 import { git } from './workspace.service';
+// TYPE-ONLY (erased at compile): repo-hooks.ts imports loop-metrics → config/database →
+// config/env, so a value import would break this module's env-free leaf property.
+import type { RepoHooksConfig } from './repo-hooks';
+// Ticket 91120212: the scaffolded loop.perCommandTimeoutMs must track the code
+// default it overrides, not hard-code a tighter value. Sourced from the LEAF
+// loop-defaults module (zero imports) so this module keeps its env-free leaf
+// property — verify.service.ts reaches config/env through utils/logger.
+import { DEFAULT_PER_COMMAND_TIMEOUT_MS } from './loop-defaults';
 
 /**
  * Telemetry (remediation P0 scaffold_commit_failed) via DYNAMIC import: this
@@ -72,8 +80,43 @@ export interface DetectedStack {
   conventions: string[];
   /** Manifest we read commands from, for provenance. */
   source: string;
+  /**
+   * Starter repo-hook section for `.digby/config.json` (backlog E05). Emitted
+   * ONLY when the repo actually owns the tooling it names, so a scaffolded hook
+   * can never point at a binary the project does not have — same ground-truth
+   * rule as the commands. `undefined` = write no `hooks` key at all (the
+   * pre-E05 byte-identical config).
+   */
+  hooks?: RepoHooksConfig;
   /** True when nothing meaningful was detected (blank/greenfield). */
   empty: boolean;
+}
+
+/**
+ * The starter hooks a detected stack earns (backlog E05 — "shipped, never
+ * exercised": `runPostEditHooks` recorded 0 `repo_hook` rows all-time because
+ * no project ever had a `hooks` section to run).
+ *
+ * Deliberately conservative:
+ *  - LOCAL BINARIES ONLY (`./node_modules/.bin/…`) — a hook runs on every
+ *    matching edit, so it must never touch the network. No `npx` (which fetches
+ *    on a miss), no `pnpm dlx` / `bunx`.
+ *  - postEdit only. The runner implements exactly `postEdit` + `preCommand`
+ *    (repo-hooks.ts); an "on-finish typecheck" hook has no runner and is NOT
+ *    scaffolded here rather than shipping a no-op key.
+ *  - Never blocking by construction: postEdit hooks annotate the tool result and
+ *    the file is already on disk. A blocking shape stays the PROJECT's own
+ *    opt-in (`preCommand`), never something a scaffold writes for it.
+ */
+export function renderStarterHooks(tooling: { prettier?: boolean; eslint?: boolean }): RepoHooksConfig | undefined {
+  const postEdit: NonNullable<RepoHooksConfig['postEdit']> = [];
+  if (tooling.prettier) {
+    postEdit.push({ run: './node_modules/.bin/prettier --write {file}', match: '**/*.{ts,tsx,js,jsx,css,scss,md,yml,yaml}', timeoutMs: 20_000 });
+  }
+  if (tooling.eslint) {
+    postEdit.push({ run: './node_modules/.bin/eslint --fix {file}', match: '**/*.{ts,tsx,js,jsx}', timeoutMs: 30_000 });
+  }
+  return postEdit.length ? { postEdit } : undefined;
 }
 
 const EMPTY_CMD: StackCommands = { install: null, dev: null, build: null, test: null, testOne: null, typecheck: null, lint: null };
@@ -129,6 +172,7 @@ export async function detectStack(root: string): Promise<DetectedStack> {
   const cmd: StackCommands = { ...EMPTY_CMD };
   let label = '';
   let source = '';
+  let hooks: RepoHooksConfig | undefined;
 
   // ── Node / TypeScript ──────────────────────────────────────────────────
   const pkg = await readJson(path.join(root, 'package.json'));
@@ -160,10 +204,23 @@ export async function detectStack(root: string): Promise<DetectedStack> {
     if (scripts.build) cmd.build = sc('build');
 
     if (isTS) conventions.push('TypeScript — keep it `tsc`-clean; do not introduce new type errors.');
-    if ('prettier' in deps || (await exists(path.join(root, '.prettierrc'))) || (await exists(path.join(root, 'prettier.config.js'))))
+    const hasPrettier = 'prettier' in deps || (await exists(path.join(root, '.prettierrc'))) || (await exists(path.join(root, 'prettier.config.js')));
+    const hasEslint = 'eslint' in deps || (await exists(path.join(root, '.eslintrc.json'))) || (await exists(path.join(root, '.eslintrc.js'))) || (await exists(path.join(root, 'eslint.config.js')));
+    if (hasPrettier)
       conventions.push('Prettier is configured — match it; do not hand-reformat.');
-    if ('eslint' in deps || (await exists(path.join(root, '.eslintrc.json'))) || (await exists(path.join(root, '.eslintrc.js'))) || (await exists(path.join(root, 'eslint.config.js'))))
+    if (hasEslint)
       conventions.push('ESLint is configured — run the lint command before committing.');
+
+    // Backlog E05: a starter `hooks` section so the shipped repo-hook path is
+    // exercised. Gated on the tool being ROOT-DECLARED **and** its binary
+    // resolvable at the repo root — a workspace package's devDependency (e.g.
+    // this monorepo's backend/) does not put the bin at ./node_modules/.bin, so
+    // scaffolding a root-relative hook for it would fail on every edit.
+    const rootDeclared = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
+    hooks = renderStarterHooks({
+      prettier: 'prettier' in rootDeclared && (await exists(path.join(root, 'node_modules', '.bin', 'prettier'))),
+      eslint: 'eslint' in rootDeclared && (await exists(path.join(root, 'node_modules', '.bin', 'eslint'))),
+    });
   }
 
   // ── Python (dynamically typed → no typecheck unless mypy present) ──────────
@@ -225,7 +282,7 @@ export async function detectStack(root: string): Promise<DetectedStack> {
 
   const hasAny = Object.values(cmd).some(Boolean);
   const empty = !label && !hasAny;
-  return { label, cmd, verify: verifyChain(cmd), keyDirs, conventions, source, empty };
+  return { label, cmd, verify: verifyChain(cmd), keyDirs, conventions, source, hooks, empty };
 }
 
 // ── file rendering ─────────────────────────────────────────────────────────
@@ -322,6 +379,17 @@ ${structure}
 
 Discovery/secret exclusions live in \`.digbyignore\`; the machine-readable command list is \`.digby/config.json\`.
 
+\`.digby/config.json\` may also carry an optional **\`hooks\`** section — the repo's own
+deterministic rules around tool calls, run by the harness with no model judgment:
+\`postEdit\` hooks run AFTER an edit to a matching path (\`{file}\` = the path, shell-quoted)
+and their outcome is appended to the tool result as a \`[post-edit hook] … → ok | FAILED\`
+line — they never block and the file is already on disk, so a formatter can reshape it;
+\`preCommand\` hooks match \`run_command\` BEFORE it runs and refuse it with this repo's own
+message. A starter \`postEdit\` section is scaffolded when this repo declares a formatter or
+linter it can run locally — tune it, or delete it, in the config. Rules live with the repo,
+never in the platform: with no \`hooks\` section nothing changes. Full shape:
+\`docs/DIGBY_CODE_HARNESS.md\`; implementation \`coding/repo-hooks.ts\`.
+
 ## Conventions
 
 ${conventions}
@@ -364,7 +432,7 @@ harness verifies each entry against its own tool receipts (receipt lookup, not p
 [{"type":"push","ref":"1539fa86","note":"branch digby/fix-x"},{"type":"pr","ref":"241"}]
 \`\`\`
 
-Types: \`push\` \`pr\` \`merge\` \`deploy\` \`commit\` \`ticket_update\` \`message_sent\` \`dispatch\` \`file_change\` \`verify\` \`schedule_armed\` \`email_sent\` \`state_update\` — the same type set the finish_run tool documents. A \`commit\` entry is a LOCAL commit (sha ref, vouched by a git_commit receipt, never a push); a \`schedule_armed\` entry cites a schedule id; an \`email_sent\`/\`state_update\` entry cites the send / state action.
+Types: \`push\` \`pr\` \`merge\` \`deploy\` \`commit\` \`ticket_update\` \`message_sent\` \`dispatch\` \`file_change\` \`verify\` \`schedule_armed\` \`email_sent\` \`state_update\` \`probe\` \`benchmark\` — the same type set the finish_run tool documents. A \`commit\` entry is a LOCAL commit (sha ref, vouched by a git_commit receipt, never a push); a \`schedule_armed\` entry cites a schedule id; an \`email_sent\`/\`state_update\` entry cites the send / state action.
 \`ref\` is the receipt-visible id of what you actually did: the pushed sha or branch, the PR
 number/URL from the open_pull_request result, the ticket id, the changed path, or a receipt id
 an envelope returned. A \`verify\` entry is vouched ONLY by a this-run \`verify\`-tool receipt (a
@@ -428,15 +496,30 @@ export function renderConfigJson(defaultBranch: string, stack: DetectedStack): s
     // the agent must get the verify chain green before it can open_pull_request
     // (a human clicking "Open PR" bypasses it). Set false to disable the gate for
     // this project. See docs/DIGBY_CODE_HARNESS.md.
-    loop: {
-      maxAutoVerifyIterations: 3,
-      resumeStepBudget: 8,
-      perCommandTimeoutMs: 300000,
-      sameFailureStop: 2,
-      oscillationWindow: 4,
-      gatePullRequest: true,
-    },
+    // perCommandTimeoutMs (ticket 91120212) is an OVERRIDE of the harness default
+// and the per-repo escape hatch when a suite is legitimately slower than the
+// verify budget — so the scaffold must never ship something TIGHTER than the
+// default it overrides. It used to hard-code 300000 against a 600000 default
+// (half the budget of a config with no loop block at all), which
+// deterministically walled a 329 s suite. The value now comes from the LEAF
+// loop-defaults module so the scaffold and the code default cannot drift apart
+// without also pulling verify.service's import graph into this env-free leaf.
+loop: {
+  maxAutoVerifyIterations: 3,
+  resumeStepBudget: 8,
+  perCommandTimeoutMs: DEFAULT_PER_COMMAND_TIMEOUT_MS,
+  sameFailureStop: 2,
+  oscillationWindow: 4,
+  gatePullRequest: true,
+},
     ignore: '.digbyignore',
+    // Backlog E05 (harness roadmap #2): the shipped repo-hook path
+    // (coding/repo-hooks.ts) had 0 prod rows because nothing ever wrote a
+    // `hooks` section. A starter section is emitted ONLY when the detected
+    // stack actually owns the tooling it names (root-declared + locally
+    // resolvable), so adoption is possible without a hook that fails on every
+    // edit. Omitted entirely when no hook qualifies — no key, no behavior change.
+    ...(stack.hooks ? { hooks: stack.hooks } : {}),
   };
   return JSON.stringify(config, null, 2) + '\n';
 }

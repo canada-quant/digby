@@ -1,8 +1,9 @@
 import { LEARN_ARTICLES, getLearnArticle } from '@/lib/site/content';
 import { OG_SIZE, renderOg } from '@/lib/site/og';
+import { brandingFromEnv } from '@/lib/branding';
 
 // Each guide's own social card (2026-10-16 site review).
-export const alt = 'A Digby guide';
+export const alt = `A ${brandingFromEnv().name} guide`;
 export const size = OG_SIZE;
 export const contentType = 'image/png';
 export const dynamicParams = false;

@@ -83,7 +83,7 @@ describe('minimal view: a stretch of "Message from" notes is one line', () => {
 
   it('the owner\'s pasted stretch collapses to one line with per-sender counts', () => {
     const rows = [
-      note('a', 'crossmodel Supervisor'), note('b', '5. Close the JWT pending-IP watch'), note('c', 'cql-agx-orin64 Supervisor'),
+      note('a', 'crossmodel Supervisor'), note('b', '5. Close the JWT pending-IP watch'), note('c', 'cql-accelerator Supervisor'),
       note('d', '5. Close the JWT pending-IP watch'), note('e', 'crossmodel Supervisor'), note('f', 'crossmodel Supervisor'),
       note('g', 'Schooltime Supervisor'),
     ];
@@ -91,8 +91,8 @@ describe('minimal view: a stretch of "Message from" notes is one line', () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({
       kind: 'notes', key: 'a', rows,
-      text: 'Messages from crossmodel Supervisor (3), 5. Close the JWT pending-IP watch (2), cql-agx-orin64 Supervisor, +1 more',
-      title: 'Messages from crossmodel Supervisor (3), 5. Close the JWT pending-IP watch (2), cql-agx-orin64 Supervisor, Schooltime Supervisor',
+      text: 'Messages from crossmodel Supervisor (3), 5. Close the JWT pending-IP watch (2), cql-accelerator Supervisor, +1 more',
+      title: 'Messages from crossmodel Supervisor (3), 5. Close the JWT pending-IP watch (2), cql-accelerator Supervisor, Schooltime Supervisor',
     });
   });
 

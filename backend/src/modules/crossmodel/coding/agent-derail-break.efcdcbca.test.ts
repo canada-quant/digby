@@ -27,7 +27,7 @@
  *     2026-10-23): AFTER the 19:46Z streak the same session committed
  *     917dc650 (git_commit 4e92d14, 23:27Z) and c753c64 (23:45Z) on branch
  *     digby/b4d89c80-verify-guard, pushed 6d5deae5 + 62cad5e6, opened and
- *     MERGED PR #14 (merge fe706062, canada-quant/cql-agx-orin64, 23:46Z) and
+ *     MERGED PR #14 (merge fe706062, example-org/cql-accelerator, 23:46Z) and
  *     completed further runs through 00:30Z Oct 23. No perma-withhold.
  *
  * No platform code change; this pin replays the filed text against

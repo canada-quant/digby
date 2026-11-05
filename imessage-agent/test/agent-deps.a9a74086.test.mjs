@@ -84,7 +84,7 @@ test('a9a74086: an npm install failure explains itself instead of a bare node-gy
 });
 
 test('a9a74086: the served bootstrap installer (frontend/public) carries the same preflight', () => {
-  // The one-line command the web card shows pipes THIS file from digby.example.com;
+  // The one-line command the web card shows pipes THIS file from digby.ai;
   // an old Node must be stopped before the download+build too. (The four
   // --update-only strings the frontend test pins are untouched by this.)
   const bootstrap = readFileSync(
@@ -97,8 +97,27 @@ test('a9a74086: the served bootstrap installer (frontend/public) carries the sam
 });
 
 test('a9a74086: the bump is stamped — tree current (installer-duality release line)', () => {
-  assert.equal(pkg.version, '0.9.19');
-  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.19'/);
+  assert.equal(pkg.version, '0.9.23');
+  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.23'/);
   assert.match(read('src/config.ts'), /a9a74086/);
   assert.match(read('src/config.ts'), /8bcd1c4a/);
+});
+
+test('e530220e: package-lock.json names the SAME version as package.json (the lock ships inside the tarball)', () => {
+  // THE DEFECT THIS PINS. 0.9.22 was published with a package-lock.json still
+  // stamping 0.9.21: only package.json was bumped, and until e530220e the
+  // publish script verified package.json ALONE. The lock is staged into the
+  // tarball (scripts/publish-agent-tarball.sh), so the released artifact
+  // misstated its own version in two fields — the one artifact a device
+  // downloads and a human reads to answer "what is this?". Caught by
+  // adversarial review, not by CI, which is exactly why it is pinned here.
+  //
+  // BOTH fields, because npm writes the version twice: the lock's root
+  // `version` and `packages[""].version`. A bump that updates one and not the
+  // other is the same lie in a smaller font.
+  assert.equal(lock.version, pkg.version);
+  assert.equal(lock.packages[''].version, pkg.version);
+  // And config.ts AGENT_VERSION is the third leg of the same lockstep —
+  // publish-agent-tarball.sh refuses to ship when they disagree.
+  assert.match(read('src/config.ts'), new RegExp(`AGENT_VERSION = '${pkg.version.replace(/\./g, '\\.')}'`));
 });

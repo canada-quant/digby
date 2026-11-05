@@ -1945,7 +1945,7 @@ async function lanesWithOwnerArmedSchedules(ids: string[]): Promise<Set<string>>
   if (!ids.length) return new Set();
   const gapsOn = !laneArchiveGapsDisabled();
   type SchedRow = { sessionId: string; id?: string; promptSetBy?: string | null; ownerSubscribed?: boolean | null; renewedFromId?: string | null };
-  const rows: SchedRow[] = await prisma.codingSchedule.findMany({
+  const rows: SchedRow[] = await prisma.chatSchedule.findMany({
     where: {
       sessionId: { in: ids }, enabled: true,
       OR: [{ promptSetBy: 'user' }, { promptSetBy: null }, ...(gapsOn ? [{ ownerSubscribed: true }, { renewedFromId: { not: null } }] : [])],
@@ -1966,7 +1966,7 @@ async function lanesWithOwnerArmedSchedules(ids: string[]): Promise<Set<string>>
     pending.set(r.renewedFromId, list);
   }
   for (let hop = 0; hop < OWNER_CHAIN_MAX_HOPS && pending.size; hop++) {
-    const parents: SchedRow[] = await prisma.codingSchedule.findMany({
+    const parents: SchedRow[] = await prisma.chatSchedule.findMany({
       where: { id: { in: [...pending.keys()] } },
       select: { id: true, sessionId: true, promptSetBy: true, ownerSubscribed: true, renewedFromId: true },
     });

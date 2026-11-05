@@ -141,7 +141,7 @@ jest.mock('../../../config/database', () => {
         findUnique: jest.fn(async () => null),
         update: jest.fn(async () => ({})),
       },
-      codingSchedule: { count: jest.fn(async () => 0) },
+      chatSchedule: { count: jest.fn(async () => 0) },
       activity: { create: jest.fn(async () => ({})) },
       projectMember: { findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
       crossModelProject: { findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },

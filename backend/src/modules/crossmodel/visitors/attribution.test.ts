@@ -51,8 +51,8 @@ describe('classifyChannel — the channel table', () => {
     ['reddit referrer', { referrer: 'old.reddit.com' }, 'social_organic'],
     ['gmail webmail referrer', { referrer: 'mail.google.com' }, 'email'],
     ['other site referrer', { referrer: 'news.example.org' }, 'referral'],
-    ['own host referrer is internal → direct', { referrer: 'digby.example.com' }, 'direct'],
-    ['own subdomain referrer → direct', { referrer: 'app.digby.example.com' }, 'direct'],
+    ['own host referrer is internal → direct', { referrer: 'digby.ai' }, 'direct'],
+    ['own subdomain referrer → direct', { referrer: 'app.digby.ai' }, 'direct'],
     // nothing
     ['empty touch', {}, 'direct'],
     ['null touch', null, 'direct'],
@@ -101,16 +101,16 @@ describe('referrerHost / isOwnHost / hasSource', () => {
     expect(referrerHost(42)).toBeUndefined();
   });
   it('knows Digby\'s own hosts', () => {
-    expect(isOwnHost('digby.example.com')).toBe(true);
-    expect(isOwnHost('staging.digby.example.com')).toBe(true);
+    expect(isOwnHost('digby.ai')).toBe(true);
+    expect(isOwnHost('staging.digby.ai')).toBe(true);
     expect(isOwnHost('localhost')).toBe(true);
-    expect(isOwnHost('notdigby.example.com')).toBe(false);
+    expect(isOwnHost('notdigby.ai')).toBe(false);
   });
   it('a source = a utm tag, a click id or an EXTERNAL referrer', () => {
     expect(hasSource({ utm_source: 'x' })).toBe(true);
     expect(hasSource({ fbclid: 'x' })).toBe(true);
     expect(hasSource({ referrer: 'google.com' })).toBe(true);
-    expect(hasSource({ referrer: 'digby.example.com' })).toBe(false);
+    expect(hasSource({ referrer: 'digby.ai' })).toBe(false);
     expect(hasSource({ landing: '/' })).toBe(false);
     expect(hasSource(null)).toBe(false);
   });
@@ -127,7 +127,7 @@ describe('normalizePath', () => {
     ['/crossmodel/projects/123e4567-e89b-12d3-a456-426614174000', '/crossmodel/projects/:id'],
     ['/crossmodel/shared/abcDEF1234567890xyzQRS', '/crossmodel/shared/:token'],
     ['/coding/sessions/12345/diff', '/coding/sessions/:n/diff'],
-    ['https://digby.example.com/help/depth#x', '/help/depth'],
+    ['https://digby.ai/help/depth#x', '/help/depth'],
     ['', '/'],
     ['/', '/'],
     ['/a/b/c/d/e/f/g/h/i/j/k/l/m/n', '/a/b/c/d/e/f/g/h/i/j/k/l'],

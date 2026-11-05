@@ -114,7 +114,7 @@ describe('KPI re-announcement guard (ticket abca56ce)', () => {
     mockKpis.push(SCHOOLTIME_KPI);
     await rememberKpiAnnouncements('u1', 'Schooltime MET at 103.9 clips/hr', t0);
     // Another lane's unrelated rate in a DIFFERENT unit.
-    expect(await findKpiReannouncement('u1', 'QB2 hit 42.7 tok/s — new best.', t0 + 60_000)).toBeNull();
+    expect(await findKpiReannouncement('u1', 'node-a hit 42.7 tok/s — new best.', t0 + 60_000)).toBeNull();
     // A rate in the same unit from a DIFFERENT KPI (no schooltime key word) —
     // the unit alone is not an announcement.
     expect(await findKpiReannouncement('u1', 'Spark serving at 101.2 clips/hr on the bench.', t0 + 60_000)).toBeNull();

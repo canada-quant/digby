@@ -263,8 +263,8 @@ const R_POSTCYCLE = [
 ].join('\n');
 
 const R_RESTORE = [
-  'The post-cycle restore order is prod first: S3+S5 GLM back serving (never-dark floor), then MiMo TP2 on S1+S2, then Mia, then S6.',
-  '4. Then MiMo restore (att6_mimo_restore.sh — ready; up to ~13 min incl. health poll). 5. Mia + S6 verify (quick probe).',
+  'The post-cycle restore order is prod first: S3+S5 GLM back serving (never-dark floor), then node-b TP2 on S1+S2, then Mia, then S6.',
+  '4. Then node-b restore (att6_node-b-restore.sh — ready; up to ~13 min incl. health poll). 5. Mia + S6 verify (quick probe).',
   'Parallelization: legs 1 and 3 are independent (S3+S5 vs S2). Leg 4 depends on leg 3 (dumps before load). Leg 5 independent anytime.',
   'Write the S3+S5 restore fire script now (adapted from att4_abort_restore.sh), fire it + the S2 harvest as two parallel SSM sends, collect both, then bootwatch + mimo restore.',
 ].join('\n');

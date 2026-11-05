@@ -98,10 +98,12 @@ jest.mock('./tools', () => {
 // D-1: the ledger seams the loop calls (captured).
 const mockNoteBackgroundWorkerPhase: jest.Mock = jest.fn();
 const mockNoteBackgroundWorkersLost: jest.Mock = jest.fn();
+const mockSweepOrphans: jest.Mock = jest.fn();
 jest.mock('../platform/delegation-tasks', () => ({
   __esModule: true,
   noteBackgroundWorkerPhase: (...a: any[]) => mockNoteBackgroundWorkerPhase(...a),
   noteBackgroundWorkersLost: (...a: any[]) => mockNoteBackgroundWorkersLost(...a),
+  sweepOrphanedBackgroundWorkerTasks: (...a: any[]) => mockSweepOrphans(...a), // d5974d65: run-start orphan sweep seam
 }));
 
 import * as fs from 'fs/promises';

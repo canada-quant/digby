@@ -83,15 +83,51 @@ function fakeIo(overrides = {}) {
 }
 
 // ── Parsers ────────────────────────────────────────────────────────────────
-test('parseAllowScreenSharing: 1 ⇒ enabled, 0 ⇒ disabled, absent ⇒ unknown (never a fabricated false)', () => {
+test('parseAllowScreenSharing: 1 ⇒ enabled, 0 ⇒ disabled, an unreadable read ⇒ unknown', () => {
   assert.equal(parseAllowScreenSharing('1'), true);
   assert.equal(parseAllowScreenSharing('ALLOW_SCREENSHARING = 1'), true);
   assert.equal(parseAllowScreenSharing('0'), false);
   assert.equal(parseAllowScreenSharing('ALLOW_SCREENSHARING = 0'), false);
-  // The key does not exist on a Mac that never enabled it — that is UNKNOWN
-  // (null), not "disabled", so the verdict cannot accuse a device of exposure.
+  // A read that failed for an unreadable reason stays UNKNOWN — never a
+  // fabricated "disabled" (that would hide an exposure behind a false green).
   assert.equal(parseAllowScreenSharing('', 1), null);
-  assert.equal(parseAllowScreenSharing('The domain/default pair does not exist', 1), null);
+  assert.equal(parseAllowScreenSharing('', 1, 'Could not write domain'), null);
+});
+
+// TICKET e530220e. This is the pin for the defect the owner reported: on a Mac
+// that never enabled Screen Sharing the key is ABSENT, macOS says so on stderr,
+// and the agent therefore used to advertise NOTHING — which the fleet rendered
+// as "the agent on this Mac is too old to report a remote channel — update it".
+// The `off` state already existed in the backend for exactly this case; the
+// agent simply never emitted it. A positive "not enabled" is a measurement and
+// must read `off`, NOT `unavailable`.
+test('parseAllowScreenSharing: macOS "does not exist" is a POSITIVE not-enabled, not an unknown (e530220e)', () => {
+  const ABSENT = 'The domain/default pair of (/Library/Preferences/com.apple.RemoteManagement, ALLOW_SCREENSHARING) does not exist';
+  // The real shape: empty stdout, exit 1, the sentence on stderr.
+  assert.equal(parseAllowScreenSharing('', 1, ABSENT), false);
+  // Tolerate the sentence arriving on stdout (older/other `defaults` shapes, and
+  // the fake-IO runners in this suite) — same meaning, same answer.
+  assert.equal(parseAllowScreenSharing(ABSENT, 1), false);
+  // …and the whole-domain form with no key set.
+  assert.equal(parseAllowScreenSharing('', 1, 'Domain /Library/Preferences/com.apple.RemoteManagement does not exist'), false);
+});
+
+test('e530220e: a stock Mac advertises `off` instead of falling silent (the end-to-end wire value)', async () => {
+  const ABSENT = 'The domain/default pair of (/Library/Preferences/com.apple.RemoteManagement, ALLOW_SCREENSHARING) does not exist';
+  const { probeMacRemoteListener, remoteAccessAdvertValue } = await import('../dist/remote-access.js');
+  // io.run for the ONE defaults read the cheap listener probe performs.
+  const stockIo = {
+    run: async () => ({ stdout: '', code: 1, stderr: ABSENT }),
+    exists: async () => false,
+  };
+  const listener = await probeMacRemoteListener(stockIo);
+  assert.equal(listener, false, 'the stock Mac is PROVED not listening');
+  const advert = remoteAccessAdvertValue({ enabled: false, tunnelOnly: false, blockers: [], off: true });
+  assert.equal(advert, 'off', 'and it says so on the poll, so the card shows "off (healthy default)"');
+  // The contrast that used to be invisible: a genuinely unreadable probe
+  // emits nothing, and the backend keeps reporting `unavailable`.
+  const unreadableIo = { run: async () => ({ stdout: '', code: 1, stderr: 'Operation not permitted' }), exists: async () => false };
+  assert.equal(await probeMacRemoteListener(unreadableIo), null);
 });
 
 test('parseSocketfilterState: only an explicit wording decides; anything else is unknown', () => {

@@ -57,7 +57,7 @@ export const MODEL_BENCH_STORE_KEY = 'scorecard';
 /** Chat-title prefix the bench writes and the ingest selects on: `model-bench <runId> q<idx> <spec>[ k:<kind>]`. */
 export const MODEL_BENCH_TITLE_PREFIX = 'model-bench';
 /** The one account the bench may run on (AGENTS.md "Canonical prod test account" — never a real user). */
-export const MODEL_BENCH_ACCOUNT_EMAIL = 'claudebot@digby.example.com';
+export const MODEL_BENCH_ACCOUNT_EMAIL = 'claudebot@digby.ai';
 export const MODEL_BENCH_ALL_LANE = 'all';
 export const MODEL_BENCH_NO_LANE = 'none';
 export const MODEL_BENCH_UPDATED_BY = 'model-bench-ingest';
@@ -73,7 +73,11 @@ const KIND_KEY_RE = /^[a-z]{1,32}$/;
 // Rows that are NOT a turn's answer — mirrors live-chat-audit.ts SIDE_KINDS and the query suite's SIDE_KINDS /
 // SIDE_ORIGINS (a late Double Checker addendum, Deeper findings, a hand-off, a control note, a verifier row).
 const SIDE_KINDS = new Set(['deeper_findings', 'continuation_result', 'deliverable_handoff', 'control_note', 'check_addendum', 'council_addendum']);
-const SIDE_ORIGINS = new Set(['machine', 'agent', 'deliverable_handoff']);
+const SIDE_ORIGINS = new Set(['machine', 'agent', 'deliverable_handoff',
+  // Ticket 9ecabc73: a background tool result posted at/after run end is a harness
+  // report about a call, never a turn's answer. (`background_worker` — its sibling —
+  // has the same gap; listed here too so neither can be picked as a bench answer.)
+  'background_tool', 'background_worker']);
 /**
  * Web tools whose calls happen BEFORE the first answer word on a real turn (roster 2026-10-06 C-2): the bench counts
  * them per answer so the picker's tool-aware latency model (model-evidence.ts) can subtract the tool use a bench

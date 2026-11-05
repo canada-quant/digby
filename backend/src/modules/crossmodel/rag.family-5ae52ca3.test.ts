@@ -241,7 +241,7 @@ describe('log-signal family 5ae52ca3 — designed-degradation taxonomy at the em
     // from Cloudflare ("origin web server returned an invalid or incomplete
     // response") means the provider's ORIGIN is dead — the transient lane
     // retries, and the UNTAGGED warns keep sweep-filing the owner-side
-    // gateway failure (all coding seats route through llm.example.com). Pin the
+    // gateway failure (all coding seats route through llm.cql.ca). Pin the
     // predicate's refusal on the exact prod shapes:
     const { isStatuslessTransportAbort } = require('./coding/turn-failure-classification');
     // The ticket's raw shapes (502 + body, 524 + body) — both UNTAGGED:

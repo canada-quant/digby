@@ -26,10 +26,18 @@ jest.mock('../platform/supervisor.service', () => ({ __esModule: true, classifyS
 import * as fs from 'fs';
 import * as path from 'path';
 import { PROGRESS_LINES, escalationPlan } from './compute-policy-wiring';
+import { isExportTree, readDroppedFile } from '../../../utils/export-mode';
 
 const REPO_ROOT = path.resolve(__dirname, '../../../../..');
 const read = (abs: string) => fs.readFileSync(abs, 'utf8');
 const norm = (s: string) => s.replace(/\s+/g, ' ');
+
+// CLAUDE.md is DROPPED-PRIVATE doctrine: a public export does not ship it, so
+// the clause pin below cannot run there. `readDroppedFile` returns null in a
+// genuine export (licensing the skip) and THROWS when the file is missing from
+// any other kind of tree — a damaged private checkout keeps failing loudly.
+const CLAUDE: string | null = readDroppedFile('CLAUDE.md', REPO_ROOT);
+const IN_EXPORT = isExportTree(REPO_ROOT);
 
 /** Every non-test .ts file under backend/src that mentions maxBackgroundMs, repo-relative. */
 function filesMentioning(needle: string): string[] {
@@ -97,4 +105,20 @@ describe('research rung — the wording matches the inline run (docs-drift-1)', 
     ]);
   });
 
+  it('the user-facing help and CLAUDE.md say the run continues on this turn (and the served twin is in sync)', () => {
+    const help = read(path.resolve(REPO_ROOT, 'docs/DEPTH_AND_DIG_DEEPER.md'));
+    expect(norm(help)).not.toMatch(/runs it in the background/);
+    expect(norm(help)).toMatch(/you can navigate away or close the tab/);
+    expect(read(path.resolve(REPO_ROOT, 'frontend/content/help/depth.md'))).toBe(help);
+    // The help doc is PUBLIC (asserted above); the CLAUDE.md clause is private
+    // doctrine. In an export the file's ABSENCE is the expected fact — assert it
+    // rather than silently skipping, so the skip is itself a verified claim.
+    if (CLAUDE === null) {
+      expect(IN_EXPORT).toBe(true);
+      expect(fs.existsSync(path.resolve(REPO_ROOT, 'CLAUDE.md'))).toBe(false);
+      return;
+    }
+    expect(CLAUDE).not.toMatch(/a council is a background job/);
+    expect(CLAUDE).toMatch(/runs on the tapper's own SSE stream/);
+  });
 });

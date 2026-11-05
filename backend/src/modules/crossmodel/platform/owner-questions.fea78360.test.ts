@@ -104,10 +104,10 @@ async function flag(args: Record<string, unknown>, chatId: string = uniqueChat()
 }
 
 /** The four ACL-chain question bodies, from the 2026-10-16 stall. */
-const ACL_Q1 = '[ctrl.example.com] Decision needed — auto-filed from the ctrl.example.com Supervisor · idle since 10:20Z note at 10-16 10:00Z: "**Probe loop cap reached — the continuation armed itself: auto-renew successor is live, no supervisor action needed.** Lane healthy, firing 12/12 in flight, vantage still pending the';
-const ACL_Q2 = "[ctrl.example.com] Action needed in the Tailscale admin console (only you can do this): save the v2 ACL that grants the deploy lane's key access to amd-server-1. The Next 16.4.2 dashboard deploy has been held on this since 05:35Z — once the save lands, the probe loop detects it and the lane deploys";
-const ACL_Q3 = '[ctrl.example.com] One console save (2 minutes): in the Tailscale admin console → Access Controls, replace the tag:digby-dev tests-line for 100.64.0.1 with the corrected complete line in the instructions below, and click Save. The Next 16.4.2 dashboard deploy to amd-server-1 has been held on this sinc';
-const ACL_Q4 = '[ctrl.example.com] One more console save (2 minutes) — your 14:01Z save worked (amd-server-1 is visible on the tailnet again), but the actual ACCESS rule is missing from the policy file, so the deploy lane still can\'t SSH in. The "tests" line you fixed is a lint-check only and grants nothing; the live "a';
+const ACL_Q1 = '[ctrl.cql.ca] Decision needed — auto-filed from the ctrl.cql.ca Supervisor · idle since 10:20Z note at 10-16 10:00Z: "**Probe loop cap reached — the continuation armed itself: auto-renew successor is live, no supervisor action needed.** Lane healthy, firing 12/12 in flight, vantage still pending the';
+const ACL_Q2 = "[ctrl.cql.ca] Action needed in the Tailscale admin console (only you can do this): save the v2 ACL that grants the deploy lane's key access to amd-server-1. The Next 16.4.2 dashboard deploy has been held on this since 05:35Z — once the save lands, the probe loop detects it and the lane deploys";
+const ACL_Q3 = '[ctrl.cql.ca] One console save (2 minutes): in the Tailscale admin console → Access Controls, replace the tag:digby-dev tests-line for 100.64.0.1 with the corrected complete line in the instructions below, and click Save. The Next 16.4.2 dashboard deploy to amd-server-1 has been held on this sinc';
+const ACL_Q4 = '[ctrl.cql.ca] One more console save (2 minutes) — your 14:01Z save worked (amd-server-1 is visible on the tailnet again), but the actual ACCESS rule is missing from the policy file, so the deploy lane still can\'t SSH in. The "tests" line you fixed is a lint-check only and grants nothing; the live "a';
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -460,7 +460,7 @@ describe('fea78360 pure helpers', () => {
   // out in prose the cue list could not see. Third FP in the family after
   // 84b11946 (consoleAction) and 65cfec1b (inline background+options).
   const OQ_2d874126_ASK = [
-    '[ctrl.example.com] Lab gateway is LIVE and public (llm.example.com + mcp.example.com, verified 17:41Z) — 5 provider keys are missing on amd-1, so their routes return 401 until you paste them',
+    '[ctrl.cql.ca] Lab gateway is LIVE and public (llm.cql.ca + mcp.cql.ca, verified 17:41Z) — 5 provider keys are missing on amd-1, so their routes return 401 until you paste them',
     '',
     "The r-2 replacement is live: the LiteLLM gateway now runs on amd-server-1 in the StAnnes lab behind Cloudflare tunnel stanne-lab-amd1, in the CQL Cloudflare account. Public health checks pass from off-box, and the flagship routes (deepseek-v4.1-flash, glm-5.3-flash, spark-glm-5.3-flash at 262144 ctx) answer end-to-end through the public edge.",
     '',

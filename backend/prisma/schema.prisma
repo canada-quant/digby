@@ -85,7 +85,7 @@ model User {
   imessageAgents       IMessageAgent[]
   telegramLinks        TelegramLink[]
   codingCredentials    CodingCredential[]
-  codingSchedules      CodingSchedule[]
+  chatSchedules        ChatSchedule[]
   codingProjects       CodingProject[] // @deprecated (One-Digby merge) — retained for rollback; unread
   agentTokens          AgentToken[]
   pendingChatMessages  PendingChatMessage[]
@@ -310,7 +310,7 @@ model CrossModelChat {
   pendingMessages PendingChatMessage[] // busy-chat queue — drained automatically at run end
   chatFiles   ChatFile[]           // persistent per-chat uploads (durable copies of consumed staged blobs)
   codingState  ChatCodingState?    // present iff the chat is coding-capable (P5-B: the satellite, never mode, marks coding)
-  codingSchedules CodingSchedule[] // self-scheduled recurring/one-shot runs
+  chatSchedules ChatSchedule[] // self-scheduled recurring/one-shot runs
   runJournalEntries RunJournalEntry[] // append-only cross-run memory (what earlier runs did/decided)
   runToolReceipts  RunToolReceipt[]  // harness-written execution receipts (anti-confabulation evidence)
   contentReports  ContentReport[]   // moderation queue entries (M2-prep store compliance)
@@ -739,6 +739,15 @@ model Activity {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  // LL-1 (owner go oq_8aef3962, built CONCURRENTLY in prod 2026-11-04T01:17Z, elapsedMs 166):
+  // `activities` is the write-hot audit table; the restore-audit read filters
+  // (userId, action, createdAt), so the old 2-column index still walked the owners' 180-day
+  // trail per pass. The index EXISTS IN PROD but was declared nowhere — this line plus the
+  // no-op migration in migrations/20261104020000_activities_user_action_createdat_idx keeps
+  // the shadow DB and drift check in agreement. Do not "fix" the migration into a plain
+  // CREATE INDEX: the prod build must stay CONCURRENTLY (a plain build blocks every audit
+  // insert for its duration).
+  @@index([userId, action, createdAt])
   @@map("activities")
 }
 
@@ -847,7 +856,6 @@ model ChatCodingState {
 
   chat     CrossModelChat    @relation(fields: [id], references: [id], onDelete: Cascade)
   project  CrossModelProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  messages CodingMessage[]
   agentRuns AgentRun[]
 
   @@index([projectId])
@@ -855,33 +863,12 @@ model ChatCodingState {
   @@map("coding_sessions")
 }
 
-/// One turn in a coding chat. `parts` holds the ordered stream of the
-/// assistant's text + tool calls/results + subagent activity for rich rendering.
-/// The `chatId` column is physically named sessionId (pre-merge) — session id ==
-/// chat id, so no data movement was needed.
-model CodingMessage {
-  id        String   @id @default(uuid())
-  chatId    String   @map("sessionId")
-  role      String   // "user" | "assistant" | "system"
-  content   String   @db.Text // final text (assistant) or the user's message
-  parts     Json?    // ordered [{type:'text'|'tool_call'|'tool_result'|'subagent', ...}]
-  /// Additive (P4 CanLaw L5): harness-side attachments — e.g. `guardOriginal`
-  /// (the pre-REPLACE final text, size-capped 20k) when the evidence guard
-  /// removed/replaced convicted lines. Mirrors into crossmodel_messages.metadata.
-  metadata  Json?
-  createdAt DateTime @default(now())
-  // Ticket 68916075: last-write stamp — coding runs INSERT the assistant row at run start
-  // (persistPartial) and rewrite it in place through finalize, so createdAt reads backdated
-  // for long runs; updatedAt ≈ finalization. Nullable on purpose (historical rows read NULL).
-  // createdAt is NEVER restamped — it is the ordering/cursor contract.
-  updatedAt DateTime? @updatedAt
-
-  state ChatCodingState @relation(fields: [chatId], references: [id], onDelete: Cascade)
-
-  @@index([chatId], map: "coding_messages_sessionId_idx")
-  @@index([chatId, createdAt], map: "coding_messages_sessionId_createdAt_idx")
-  @@map("coding_messages")
-}
+// `model CodingMessage` (table `coding_messages`) was RETIRED 2026-11-04 —
+// MERGE-1 step 10. One chat, one transcript: `crossmodel_messages` is the only
+// coding-transcript table. The legacy rows were mirrored 1:1 (same uuid) and the
+// DROP gate proved no legacy message lacks a mirror row before the table went;
+// the seam that could route a read or write to it was deleted in step 9
+// (7231cdb4). Do not reintroduce a second transcript table.
 
 /// Durable record of one coding agent run (durability Phase 1: runs survive
 /// deploys/restarts). `checkpoint` is the write-ahead resume state (full provider
@@ -1431,7 +1418,7 @@ model ConnectedInstance {
 /// lastError means the cloud rejected the token and an admin must re-pair.
 model CloudLink {
   id             String   @id @default(uuid())
-  cloudUrl       String   // e.g. https://digby.example.com (no trailing slash)
+  cloudUrl       String   // e.g. https://digby.ai (no trailing slash)
   tokenEnc       String   @db.Text
   instanceName   String
   pairedByUserId String   // local ADMIN who paired
@@ -1445,7 +1432,7 @@ model CloudLink {
   @@map("cloud_link")
 }
 
-model CodingSchedule {
+model ChatSchedule {
   id          String    @id @default(uuid())
   sessionId   String                          // == crossmodel_chats.id (a coding chat)
   userId      String
@@ -1563,7 +1550,7 @@ model SchedulePromptHistory {
   runId      String?           // soft ref to agent_runs.id when the rewrite came from a run (optional)
   createdAt  DateTime @default(now())
 
-  schedule CodingSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  schedule ChatSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
 
   @@index([scheduleId, createdAt])
   @@map("schedule_prompt_history")

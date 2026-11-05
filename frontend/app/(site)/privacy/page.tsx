@@ -1,13 +1,17 @@
 import { pageMetadata, breadcrumbLd, organizationLd, websiteLd } from '@/lib/site/seo';
 import { Breadcrumbs, JsonLd } from '../_components/SiteChrome';
 import { SiteShell } from '../_components/SiteShell';
+import { brandingFromEnv } from '@/lib/branding';
+
+// Shared branding core (todo d2d32b57): server component, resolved at build.
+const BRANDING = brandingFromEnv();
 
 // Moved from /crossmodel/privacy (2026-10-14 — "crossmodel was the old name");
 // next.config.ts + proxy.ts 308 the legacy URL here. Server component inside
 // the public site shell (header + footer with links back to the chat).
 export const metadata = pageMetadata({
   path: '/privacy',
-  title: 'Privacy Policy · Digby',
+  title: `Privacy Policy · ${BRANDING.name}`,
   description: 'How Digby collects, uses, stores and protects your personal information. Your account, conversations, memory and files are stored in Canada.',
 });
 
@@ -28,7 +32,7 @@ export default function PrivacyPolicyPage() {
 
           <h2 className="text-lg font-semibold mt-6 mb-3">1. Introduction</h2>
           <p className="text-sm leading-relaxed mb-4">
-            Digby (&quot;we&quot;, &quot;our&quot;, or &quot;us&quot;) operates the digby.example.com platform. This Privacy Policy explains how we collect, use, and protect your personal information when you use our multi-model AI chat service.
+            Digby (&quot;we&quot;, &quot;our&quot;, or &quot;us&quot;) operates the digby.ai platform. This Privacy Policy explains how we collect, use, and protect your personal information when you use our multi-model AI chat service.
           </p>
 
           <h2 className="text-lg font-semibold mt-6 mb-3">2. Information We Collect</h2>
@@ -84,8 +88,8 @@ export default function PrivacyPolicyPage() {
           <h2 className="text-lg font-semibold mt-6 mb-3">9. Contact</h2>
           <p className="text-sm leading-relaxed mb-4">
             If you have questions about this Privacy Policy, please contact us at{' '}
-            <a href="mailto:digby@digby.example.com" className="text-primary underline underline-offset-4 hover:opacity-80">
-              digby@digby.example.com
+            <a href="mailto:digby@digby.ai" className="text-primary underline underline-offset-4 hover:opacity-80">
+              digby@digby.ai
             </a>.
           </p>
 

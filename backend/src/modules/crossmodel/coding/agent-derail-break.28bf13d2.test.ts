@@ -18,7 +18,7 @@
  * 9cc62eef hallucinated-path pin read ONE flat path; this ticket read two).
  *
  * WHAT ACTUALLY HAPPENED (adjudicated 2026-10-18, all evidence fresh):
- *  1. BOTH PATHS ARE REAL — on canada-quant/schooltime MAIN (this lane's
+ *  1. BOTH PATHS ARE REAL — on example-org/schooltime MAIN (this lane's
  *     project repo, NOT crossmodel): both introduced by commit
  *     e737907bdfbf0c05cf0443b910c0378d2c6d3001 (PR #58 "Restore
  *     /admin/summaries on r-1: re-import + hourly refresh re-arm + Week-6
@@ -186,7 +186,7 @@ import * as os from 'os';
 
 // ── The incident's two paths (worktree-relative, exactly as the lane's
 //    read_file calls carried them). Both are REAL files on
-//    canada-quant/schooltime main since e737907b (PR #58, 2026-10-16 21:24Z);
+//    example-org/schooltime main since e737907b (PR #58, 2026-10-16 21:24Z);
 //    the failing session's branch diverged 21h earlier and never had them.
 //    They do NOT exist in THIS repo — the schooltime facts live in the header
 //    as the adjudication record; the local replay below reproduces what

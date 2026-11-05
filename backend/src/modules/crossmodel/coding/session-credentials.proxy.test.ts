@@ -27,7 +27,7 @@ beforeEach(() => {
   mockRecord.mockClear();
   __resetCredentialProxyMemoForTest();
   process.env.JWT_SECRET = 'j'.repeat(48);
-  process.env.FRONTEND_URL = 'https://digby.example.com';
+  process.env.FRONTEND_URL = 'https://digby.ai';
   delete process.env.CODING_CREDENTIAL_PROXY;
   delete process.env.CREDENTIAL_PROXY_GH_DISABLED;
   mockGithubToken.mockImplementation(async () => 'gho_RAW_GITHUB');
@@ -54,7 +54,7 @@ it('canary user, healthy proxy: ZERO raw platform credentials in the shell env; 
   expect(JSON.stringify(env)).not.toContain('gho_RAW_GITHUB');
   expect(JSON.stringify(env)).not.toContain('ya29.RAW_GOOGLE');
   expect(env.CLOUDFLARE_API_TOKEN).toBe('cf-user-managed-token'); // user-managed: kept (counted)
-  expect(env.GIT_CONFIG_KEY_0).toBe('url.https://digby.example.com/api/crossmodel/coding/cred-proxy/git/github.com/.insteadOf');
+  expect(env.GIT_CONFIG_KEY_0).toBe('url.https://digby.ai/api/crossmodel/coding/cred-proxy/git/github.com/.insteadOf');
   expect(env.DIGBY_CREDENTIAL_PROXY_APIS).toBe('github,google');
   expect(verifyCapability(env.DIGBY_CREDENTIAL_PROXY_TOKEN)).toMatchObject({ sessionId: 's1', userId: U, githubLabel: 'Work' });
   const note = credentialEnvNote(env);

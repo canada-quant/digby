@@ -15,7 +15,7 @@ jest.mock('../model-endpoints/model-roles.service', () => ({ __esModule: true, r
 // Helper-seat health fallback (owner 2026-09-14): a custom coding_helper seat
 // resolves through the registry; the fallback records seat_fallback telemetry.
 const CQL_REG = {
-  url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql',
+  url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql',
   model: 'qwen3-4b', label: 'cql', supportsVision: false, coding: true, thinkingOff: false,
 };
 jest.mock('../model-endpoints/model-endpoints.service', () => ({

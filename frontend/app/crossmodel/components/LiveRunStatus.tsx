@@ -11,6 +11,7 @@
 import { useEffect, useState } from 'react';
 import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { DigbyLoader } from '@/components/ui/custom/DigbyLoader';
+import { useBranding } from '@/app/branding/BrandingProvider';
 import { fmtElapsed } from './code-transcript';
 
 /** Isolated 1s clock — ticking the elapsed label must not re-render the whole
@@ -32,13 +33,14 @@ export function LiveRunStatus({ stopping, status, since }: {
   /** Run start (ms) — the clock renders only when set. */
   since?: number | null;
 }) {
+  const branding = useBranding();
   return (
     <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1.5 min-w-0">
-      <DigbyLoader size={24} label={stopping ? 'Stopping' : 'Digby is working'} />
+      <DigbyLoader size={24} label={stopping ? 'Stopping' : `${branding.name} is working`} />
       {/* Two spans (audit 2026-09-15): the sentence truncates, the clock never
           does — one truncating span used to swallow the timer on narrow
           viewports. */}
-      <span className="truncate min-w-0">{stopping ? 'Stopping…' : (status || 'Digby is on it')}{since || status ? '' : '…'}</span>
+      <span className="truncate min-w-0">{stopping ? 'Stopping…' : (status || `${branding.name} is on it`)}{since || status ? '' : '…'}</span>
       {since && <span className="shrink-0 tabular-nums">· <ElapsedTimer since={since} /></span>}
     </div>
   );
@@ -138,9 +140,10 @@ export function ThinkingBlock({ steps, status, stopping, since }: {
  *  (owner 2026-10-06 — the animated loader, not a pulsing dot), plus the
  *  current harness status in quiet ink-3 (e.g. the Double Checker reviewing). */
 export function StreamingDot({ status, stopping }: { status?: string; stopping?: boolean }) {
+  const branding = useBranding();
   return (
     <div className="mt-1.5 flex items-center gap-2 font-sans" role="status" aria-live="polite">
-      <DigbyLoader size={20} label={stopping ? 'Stopping' : 'Digby is writing'} />
+      <DigbyLoader size={20} label={stopping ? 'Stopping' : `${branding.name} is writing`} />
       {(stopping || (status && !isHeartbeatStatus(status))) && <span className="min-w-0 truncate text-[12.5px] text-ink-3">{stopping ? 'Stopping…' : status}</span>}
     </div>
   );

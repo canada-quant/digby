@@ -14,11 +14,11 @@ jest.mock('../../../utils/logger', () => ({
   __esModule: true,
   default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
 }));
-jest.mock('../../../config/database', () => ({ __esModule: true, default: { agentRun: { findFirst: jest.fn() }, codingMessage: { findFirst: jest.fn() } } }));
-// MERGE-1 slice 1: read-switch seam, mocked so this suite never drags in
-// coding-data.service -> middleware/error-handler -> config/env (process.exit(1) at
-// import time without env vars). 'legacy' preserves every existing expectation.
-jest.mock('./coding-data.service', () => ({ __esModule: true, pickTranscriptSource: jest.fn(async () => 'legacy') }));
+jest.mock('../../../config/database', () => ({ __esModule: true, default: { agentRun: { findFirst: jest.fn() }, crossModelMessage: { findFirst: jest.fn() } } }));
+// MERGE-1 step 9 (2026-11-04): the `pickTranscriptSource` seam is GONE (transcript-source.ts
+// deleted), and firing-superseded-gate no longer imports coding-data.service at all — it
+// reads prisma.crossModelMessage directly. This suite only exercises the pure
+// `supersededAskEligibleAtSite` ordering rule, so it needs no transcript mock.
 
 const mockRecord: jest.Mock = jest.fn();
 jest.mock('../platform/decision-gate', () => ({

@@ -1,9 +1,13 @@
 /**
  * build 2026-10-08 D — the nightly reconcile of the SHADOW delegation ledger
  * and the tool-intent journal. It MEASURES the ledger against each kind's own
- * source of truth (never edits a task) and writes the readout rows the stage-1
- * bar is read from: delegation_task_reconcile { agreementPct ≥ 99, missingParent
- * 0, missingRows, stale } and tool_intent { phase: 'daily', executedTwiceKeys }.
+ * source of truth and writes the readout rows the stage-1 bar is read from:
+ * delegation_task_reconcile { agreementPct ≥ 99, missingParent 0, missingRows,
+ * stale } and tool_intent { phase: 'daily', executedTwiceKeys }. AFTER the
+ * measurement it runs the background-orphan sweep (ticket d5974d65) — open
+ * background_worker rows whose parent run is long terminal are failed /
+ * canceled instead of sitting 'working' forever (the readout row is written
+ * first, so it always reflects pre-sweep reality).
  */
 
 jest.mock('../../../utils/logger', () => ({
@@ -88,7 +92,12 @@ describe('reconcile — the nightly pass', () => {
       { id: 'o-orph-0007', kind: 'message_ask', state: 'completed', createdAt: at(100), parentChatId: null, childChatId: 'plain-2', childRef: null },
     ];
     db.delegationTask = {
-      findMany: jest.fn(async ({ where }: any) => (where?.kind === 'session' ? tasks.filter((t) => where.childChatId.in.includes(t.childChatId)).map((t) => ({ childChatId: t.childChatId })) : tasks)),
+      findMany: jest.fn(async ({ where }: any) => {
+        if (where?.kind === 'session') return tasks.filter((t) => where.childChatId.in.includes(t.childChatId)).map((t) => ({ childChatId: t.childChatId }));
+        // the orphan sweep's query (d5974d65): open background_worker rows — the only seeded bg row is completed, so the sweep scans 0
+        if (where?.kind === 'background_worker' && where?.state?.in) return tasks.filter((t) => t.kind === 'background_worker' && where.state.in.includes(t.state));
+        return tasks;
+      }),
       count: jest.fn(async () => 2),
       deleteMany: jest.fn(async () => ({ count: 0 })),
     };
@@ -118,7 +127,7 @@ describe('reconcile — the nightly pass', () => {
   it('measures every kind against its source, counts missing parents / missing rows / stale, summarizes the journal', async () => {
     seed();
     const summary = await runDelegationReconcileOnce(NOW);
-    expect(summary).toBe('ledger 7 checked, 57.14% agree, missingParent 1, missingRows 1, stale 2; intents 42, executed twice 1, orphan pending 1');
+    expect(summary).toBe('ledger 7 checked, 57.14% agree, missingParent 1, missingRows 1, stale 2, orphans swept 0/0; intents 42, executed twice 1, orphan pending 1');
     const rec = mockRecordLoopMetric.mock.calls.map((c) => c[0]).find((r: any) => r.kind === 'delegation_task_reconcile');
     expect(rec.meta).toMatchObject({
       checked: 7, agree: 4, mismatch: 0, missedTerminal: 2, falseTerminal: 1, openBoth: 0,

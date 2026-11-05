@@ -39,7 +39,7 @@ const mockChatFindUnique = jest.fn();
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       update: (...a: any[]) => mockScheduleUpdate(...a),
       // fbe65673: fireScheduleTarget's stale-firing guard re-reads the row at
       // fire time — default ENABLED so these fire-path tests proceed.

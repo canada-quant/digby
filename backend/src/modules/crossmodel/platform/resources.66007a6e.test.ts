@@ -27,7 +27,7 @@ jest.mock('../../../utils/logger', () => ({
 }));
 
 const mockObserveResource = jest.fn(async (_u: string, ref: string) => ({
-  id: ref, projectId: null, label: 'example.com uptime', usdPerHour: null, reservationEndsAt: null,
+  id: ref, projectId: null, label: 'cql.ca uptime', usdPerHour: null, reservationEndsAt: null,
   maxUnobservedMinutes: 240, lastObservedAt: new Date().toISOString(), notes: null, createdAt: new Date().toISOString(),
 }));
 jest.mock('./resources.service', () => ({
@@ -74,10 +74,10 @@ beforeEach(() => {
 // (agent.ts: draft = extractReceipt(tc.name, argsPreview, result, new Date())).
 const NOW = new Date('2026-10-20T02:00:00Z');
 const DOWN_RESULT =
-  'Failed to fetch https://example.com/api/health — the page may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don\'t hammer the same URL repeatedly. If it keeps failing, answer from the search results you already have.';
+  'Failed to fetch https://cql.ca/api/health — the page may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don\'t hammer the same URL repeatedly. If it keeps failing, answer from the search results you already have.';
 const downReceipt = () => ({
   id: 'r-down', chatId: 'sess-1', runId: null,
-  ...extractReceipt('scrape_as_markdown', { url: 'https://example.com/api/health' }, DOWN_RESULT, NOW)!,
+  ...extractReceipt('scrape_as_markdown', { url: 'https://cql.ca/api/health' }, DOWN_RESULT, NOW)!,
 });
 const controlReceipt = () => ({
   id: 'r-ctl', chatId: 'sess-1', runId: null,
@@ -92,7 +92,7 @@ describe('observe_resource no_receipt gate — ticket 66007a6e: web-probe receip
     // nothing). Post-fix: the collector holds the ok web-probe receipts.
     const receipts = [downReceipt(), controlReceipt()];
     // Pin the seam's semantics FIRST: both incident shapes extract ok:true.
-    expect(receipts[0]).toMatchObject({ tool: 'scrape_as_markdown', ok: true, ids: { url: 'https://example.com/api/health' } });
+    expect(receipts[0]).toMatchObject({ tool: 'scrape_as_markdown', ok: true, ids: { url: 'https://cql.ca/api/health' } });
     expect(receipts[1]).toMatchObject({ tool: 'scrape_as_markdown', ok: true, ids: { url: 'https://example.com/' } });
 
     const res = JSON.parse(await executeResourceTool(machineCtx(receipts), 'observe_resource', { id: 'wr-1', note: 'probe 02:00Z: DOWN (control up)' }));
@@ -146,7 +146,7 @@ describe('observe_resource no_receipt gate — ticket 66007a6e: web-probe receip
     const degraded = 'Web search is temporarily unavailable (the search gateway is recovering) — this is a transient infrastructure issue, NOT an indication that no results exist. Do not give up on the topic: use other tools (e.g. GitHub/connector tools) or your own knowledge, note that live web results were unavailable, and you may retry web search shortly.';
     const receipts = [
       { id: 'r-d1', chatId: 'sess-1', runId: null, ...extractReceipt('search_engine', { query: 'x' }, degraded, NOW)! },
-      { id: 'r-d2', chatId: 'sess-1', runId: null, ...extractReceipt('scrape_as_markdown', { url: 'https://example.com/api/health' }, degraded, NOW)! },
+      { id: 'r-d2', chatId: 'sess-1', runId: null, ...extractReceipt('scrape_as_markdown', { url: 'https://cql.ca/api/health' }, degraded, NOW)! },
     ];
     expect(receipts.every((r) => !r.ok)).toBe(true);
     const res = JSON.parse(await executeResourceTool(machineCtx(receipts), 'observe_resource', { id: 'wr-1' }));

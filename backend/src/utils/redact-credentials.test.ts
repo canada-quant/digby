@@ -12,14 +12,14 @@ import {
 } from './redact-credentials';
 
 const FAKE_GHO = 'gho_' + 'FAKEfakeFAKEfakeFAKEfakeFAKEfake1234';
-const AUTHED = `https://x-access-token:${FAKE_GHO}@github.com/canada-quant/some-repo.git`;
+const AUTHED = `https://x-access-token:${FAKE_GHO}@github.com/example-org/repo`;
 const GIT_MSG = `Command failed: git remote set-url origin ${AUTHED}\nerror: No such remote 'origin'`;
 
 describe('redactUrlCredentials', () => {
   it('masks x-access-token userinfo in a URL and keeps the host + path', () => {
     const out = redactUrlCredentials(GIT_MSG);
     expect(out).not.toContain(FAKE_GHO);
-    expect(out).toContain(`https://${CREDENTIAL_MASK}@github.com/canada-quant/some-repo.git`);
+    expect(out).toContain(`https://${CREDENTIAL_MASK}@github.com/example-org/repo`);
     expect(out).toContain("error: No such remote 'origin'");
   });
 

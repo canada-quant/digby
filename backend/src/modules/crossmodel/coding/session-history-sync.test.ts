@@ -2,9 +2,11 @@
  * Session history sync (durable cron): deterministic HISTORY.md per session →
  * git plumbing in the bare mirror → push to origin. Default mode (owner
  * 2026-09-14) = ONE consolidated branch per repo (digby/session-history,
- * sessions/<id>/HISTORY.md) with pruning + legacy-branch migration; the
- * legacy per-session branches survive behind
- * SESSION_HISTORY_SINGLE_BRANCH_DISABLED=1. The git mock is programmed
+ * sessions/<id>/HISTORY.md) with pruning + legacy-branch migration. The
+ * single-branch mode is UNCONDITIONAL: the old
+ * SESSION_HISTORY_SINGLE_BRANCH_DISABLED escape hatch was deleted on
+ * 2026-11-04 (cluster 42 — it was NF_INERT, never forwarded by any build).
+ * The git mock is programmed
  * per-args (an implementation switch), so any unexpected call fails the test.
  */
 
@@ -14,14 +16,9 @@ jest.mock('../../../utils/logger', () => ({
 }));
 jest.mock('../../../config/database', () => ({ __esModule: true, default: {
   chatCodingState: { findMany: jest.fn(async () => []) },
-  codingMessage: { findMany: jest.fn(async () => []) },
+  crossModelMessage: { findMany: jest.fn(async () => []) },
   crossModelProject: { findMany: jest.fn(async () => []) },
 } }));
-// MERGE-1 slice 1: the session-history markdown now reads through the read-switch seam.
-// Mocked so this suite never drags in coding-data.service -> middleware/error-handler ->
-// config/env (process.exit(1) at import time without env vars). 'legacy' preserves every
-// existing expectation (they seed codingMessage.findMany).
-jest.mock('./transcript-source', () => ({ __esModule: true, pickTranscriptSource: jest.fn(async () => 'legacy') }));
 jest.mock('./workspace.service', () => ({
   __esModule: true,
   git: jest.fn(async () => ({ stdout: '', stderr: '' })),
@@ -58,7 +55,6 @@ import {
   isMissingRepoError,
   isPermanentPushAuthError,
   runSessionHistorySyncOnce,
-  sessionHistorySingleBranchEnabled,
   sessionHistoryAuthDisableEnabled,
   sessionHistoryPath,
   __resetSessionHistorySyncForTest,
@@ -66,7 +62,6 @@ import {
   SESSION_HISTORY_BRANCH,
   SESSION_HISTORY_REF,
   LEGACY_SESSION_HISTORY_PREFIX,
-  SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV,
   SESSION_HISTORY_AUTH_DISABLE_ENV,
   SESSION_HISTORY_AUTH_DISABLE_THRESHOLD,
   __pushQuarantineRedisTimeoutMs,
@@ -74,7 +69,7 @@ import {
 } from './session-history-sync.service';
 
 const stateFindMany = prisma.chatCodingState.findMany as jest.Mock;
-const messageFindMany = prisma.codingMessage.findMany as jest.Mock;
+const messageFindMany = prisma.crossModelMessage.findMany as jest.Mock;
 const projectFindMany = (prisma as any).crossModelProject.findMany as jest.Mock;
 const gitMock = git as jest.Mock;
 const journalMock = getRecentJournalEntries as jest.Mock;
@@ -137,7 +132,6 @@ function plumbingRoutes(over: Partial<Record<string, (a: string[]) => string>> =
   ];
 }
 
-const savedEnv = process.env[SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV];
 const savedAuthDisableEnv = process.env[SESSION_HISTORY_AUTH_DISABLE_ENV];
 
 // ── Fake Redis (ticket b6477bc7): the push quarantine lives in Redis now, so
@@ -220,7 +214,6 @@ const expireAuthReprobe = (projectId: string) => {
 beforeEach(() => {
   jest.clearAllMocks();
   __resetSessionHistorySyncForTest();
-  delete process.env[SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV];
   stateFindMany.mockResolvedValue([]);
   messageFindMany.mockResolvedValue([]);
   projectFindMany.mockResolvedValue([]);
@@ -235,8 +228,6 @@ beforeEach(() => {
 });
 
 afterAll(() => {
-  if (savedEnv === undefined) delete process.env[SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV];
-  else process.env[SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV] = savedEnv;
   if (savedAuthDisableEnv === undefined) delete process.env[SESSION_HISTORY_AUTH_DISABLE_ENV];
   else process.env[SESSION_HISTORY_AUTH_DISABLE_ENV] = savedAuthDisableEnv;
 });
@@ -248,12 +239,6 @@ describe('runSessionHistorySyncOnce — shared', () => {
     expect(REF).toBe('refs/heads/digby/session-history');
     expect(LEGACY_SESSION_HISTORY_PREFIX).toBe('digby/session-history/');
     expect(sessionHistoryPath('abc')).toBe('sessions/abc/HISTORY.md');
-  });
-
-  it('the single-branch mode is ON by default and OFF under SESSION_HISTORY_SINGLE_BRANCH_DISABLED=1', () => {
-    expect(sessionHistorySingleBranchEnabled()).toBe(true);
-    process.env[SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV] = '1';
-    expect(sessionHistorySingleBranchEnabled()).toBe(false);
   });
 
   it('(a) zero sessions: no git calls, summary says 0, and enumerates LIVE chats only (worktree present, past provisioning, chat not archived)', async () => {
@@ -923,136 +908,6 @@ describe('consolidated single branch (default)', () => {
     expect(pushes[0][1]).toBe('/repos/p2.git');
     expect(gitMock.mock.calls.some(c => c[1] === MIRROR_P1 && (c[0] as string[])[0] === 'hash-object')).toBe(false);
     expect(loggerWarn).toHaveBeenCalledWith(expect.stringContaining('project p1 failed (2 session(s)'));
-  });
-});
-
-describe('legacy per-session branches (SESSION_HISTORY_SINGLE_BRANCH_DISABLED=1)', () => {
-  beforeEach(() => { process.env[SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV] = '1'; });
-
-  it('(b) new branch: blob → tree → commit → update-ref → push, all in the mirror with the exact per-session ref + message format; no migration probes', async () => {
-    stateFindMany.mockResolvedValue([SESSION]);
-    programGit([
-      { match: a => a[0] === 'rev-parse' && a[1] === '--verify', respond: () => { throw new Error('fatal: Needed a single revision'); } },
-      { match: a => a[0] === 'hash-object', respond: () => 'blob1\n' },
-      { match: a => a[0] === 'read-tree', respond: () => '' },
-      { match: a => a[0] === 'update-index', respond: () => '' },
-      { match: a => a[0] === 'write-tree', respond: () => 'tree1\n' },
-      { match: a => a[0] === 'commit-tree', respond: () => 'commit1\n' },
-      { match: a => a[0] === 'update-ref', respond: () => '' },
-      { match: a => a[0] === 'push', respond: () => '' },
-    ]);
-
-    const summary = await runSessionHistorySyncOnce();
-
-    expect(summary).toBe('synced 1, unchanged 0, failed 0 of 1');
-    expect(gitCalls()).toEqual([
-      ['rev-parse', '--verify', REF_S1],
-      ['hash-object', '-w', '--no-filters', '<tmp>'],
-      ['read-tree', '--empty'],
-      ['update-index', '--add', '--cacheinfo', '100644,blob1,HISTORY.md'],
-      ['write-tree'],
-      ['commit-tree', 'tree1', '-m', expect.stringMatching(MSG_RE)],
-      ['update-ref', REF_S1, 'commit1', ''],
-      ['push', AUTHED, REF_S1],
-    ]);
-    for (const c of gitMock.mock.calls) expect(c[1]).toBe(MIRROR_P1);
-  });
-
-  it('(c) unchanged blob at the branch tip: no commit, no update-ref, no push', async () => {
-    stateFindMany.mockResolvedValue([SESSION]);
-    programGit([
-      { match: a => a[0] === 'rev-parse' && a[1] === '--verify' && a[2] === REF_S1, respond: () => 'tip1\n' },
-      { match: a => a[0] === 'hash-object', respond: () => 'blob1\n' },
-      { match: a => a[0] === 'rev-parse' && a[1] === 'tip1:HISTORY.md', respond: () => 'blob1\n' },
-    ]);
-
-    const summary = await runSessionHistorySyncOnce();
-
-    expect(summary).toBe('synced 0, unchanged 1, failed 0 of 1');
-    expect(gitCalls()).toEqual([
-      ['rev-parse', '--verify', REF_S1],
-      ['hash-object', '-w', '--no-filters', '<tmp>'],
-      ['rev-parse', 'tip1:HISTORY.md'],
-    ]);
-  });
-
-  it('(d) push rejected once: fetch + rebuild on the remote tip + update-ref + exactly one retry', async () => {
-    stateFindMany.mockResolvedValue([SESSION]);
-    let pushAttempts = 0;
-    let commits = 0;
-    programGit([
-      { match: a => a[0] === 'rev-parse' && a[1] === '--verify' && a[2] === REF_S1, respond: () => { throw new Error('no such ref'); } },
-      { match: a => a[0] === 'rev-parse' && a[1] === '--verify' && a[2] === 'FETCH_HEAD', respond: () => 'remote1\n' },
-      { match: a => a[0] === 'hash-object', respond: () => 'blob1\n' },
-      { match: a => a[0] === 'read-tree', respond: () => '' },
-      { match: a => a[0] === 'update-index', respond: () => '' },
-      { match: a => a[0] === 'write-tree', respond: () => 'tree1\n' },
-      { match: a => a[0] === 'commit-tree', respond: () => `commit${++commits}\n` },
-      { match: a => a[0] === 'update-ref', respond: () => '' },
-      { match: a => a[0] === 'fetch', respond: () => '' },
-      { match: a => a[0] === 'push', respond: () => {
-        pushAttempts++;
-        if (pushAttempts === 1) throw new Error('! [rejected] non-fast-forward (fetch first)');
-        return '';
-      } },
-    ]);
-
-    const summary = await runSessionHistorySyncOnce();
-
-    expect(summary).toBe('synced 1, unchanged 0, failed 0 of 1');
-    expect(pushAttempts).toBe(2);
-    expect(gitCalls().filter(a => a[0] === 'fetch')).toEqual([['fetch', AUTHED, REF_S1]]);
-    const commitCalls = gitCalls().filter(a => a[0] === 'commit-tree');
-    expect(commitCalls).toHaveLength(2);
-    expect(commitCalls[1].slice(0, 4)).toEqual(['commit-tree', 'tree1', '-p', 'remote1']);
-    expect(gitCalls().filter(a => a[0] === 'update-ref')[1]).toEqual(['update-ref', REF_S1, 'commit2', 'commit1']);
-  });
-
-  it('(d2) push rejected twice: counted failed, the sweep does not throw', async () => {
-    stateFindMany.mockResolvedValue([SESSION]);
-    programGit([
-      { match: a => a[0] === 'rev-parse' && a[1] === '--verify' && a[2] === REF_S1, respond: () => { throw new Error('no such ref'); } },
-      { match: a => a[0] === 'rev-parse' && a[1] === '--verify' && a[2] === 'FETCH_HEAD', respond: () => 'remote1\n' },
-      { match: a => a[0] === 'hash-object', respond: () => 'blob1\n' },
-      { match: a => a[0] === 'read-tree', respond: () => '' },
-      { match: a => a[0] === 'update-index', respond: () => '' },
-      { match: a => a[0] === 'write-tree', respond: () => 'tree1\n' },
-      { match: a => a[0] === 'commit-tree', respond: () => 'commit1\n' },
-      { match: a => a[0] === 'update-ref', respond: () => '' },
-      { match: a => a[0] === 'fetch', respond: () => '' },
-      { match: a => a[0] === 'push', respond: () => { throw new Error('! [rejected] non-fast-forward'); } },
-    ]);
-
-    const summary = await runSessionHistorySyncOnce();
-
-    expect(summary).toBe('synced 0, unchanged 0, failed 1 of 1');
-    expect(gitCalls().filter(a => a[0] === 'push')).toHaveLength(2);
-    expect(loggerWarn).toHaveBeenCalled();
-  });
-
-  it('(f) one session throwing leaves the others processed, each on ITS branch', async () => {
-    stateFindMany.mockResolvedValue([SESSION, { ...SESSION, id: 's2' }]);
-    let hashCalls = 0;
-    programGit([
-      { match: a => a[0] === 'rev-parse' && a[1] === '--verify', respond: () => { throw new Error('no such ref'); } },
-      { match: a => a[0] === 'hash-object', respond: () => {
-        hashCalls++;
-        if (hashCalls === 1) throw new Error('mirror vanished');
-        return 'blob1\n';
-      } },
-      { match: a => a[0] === 'read-tree', respond: () => '' },
-      { match: a => a[0] === 'update-index', respond: () => '' },
-      { match: a => a[0] === 'write-tree', respond: () => 'tree1\n' },
-      { match: a => a[0] === 'commit-tree', respond: () => 'commit1\n' },
-      { match: a => a[0] === 'update-ref', respond: () => '' },
-      { match: a => a[0] === 'push', respond: () => '' },
-    ]);
-
-    const summary = await runSessionHistorySyncOnce();
-
-    expect(summary).toBe('synced 1, unchanged 0, failed 1 of 2');
-    expect(gitCalls().filter(a => a[0] === 'push')).toEqual([['push', AUTHED, `${LEGACY_REF_PREFIX}s2`]]);
-    expect(loggerWarn).toHaveBeenCalledWith(expect.stringContaining('s1'));
   });
 });
 

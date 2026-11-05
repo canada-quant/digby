@@ -259,10 +259,25 @@ export const WEB_PROBE_RECEIPT_TOOLS_SET: ReadonlySet<string> = new Set(WEB_PROB
 //   - `web_pipe found no sources: the search call failed…` / `…: search responded…`
 //       web-pipe.ts:414 (gateway unreachable / circuit open) + :408 (no parseable links)
 //   - `web_pipe could not read any of the …`  web-pipe.ts:517
+//   - `youtube_pipe found no videos: the search backend (answered with an
+//     error|failed)`  youtube-pipe.ts:431 (provider error body) + :438 (SERP
+//     error tier) — WP-1 (backlog 2026-11-03, review 66007a6e A1)
+//   - `youtube_pipe could not get a transcript for any of the …`
+//       youtube-pipe.ts:458 — WP-1
+//   - `[ANSWER-KEY GUARD] <tool> refused before any network access`
+//       answer-key-guard.ts:203-209 answerKeyBlockedMessage phase:'pre' — WP-2
 // The BARE zero-source head `web_pipe found no sources (no urls given and search
 // returned nothing).` (web-pipe.ts:418) is deliberately NOT here: the pipe was
 // called with neither urls nor query — nothing was asked of the outside world,
 // but the call DID execute its resolution path; it rides the ok:true default.
+// Its youtube_pipe TWIN — `youtube_pipe found no videos (no YouTube urls given
+// and search returned none).` (youtube-pipe.ts:448 fallback) — is likewise NOT
+// here, by design, so the ok:true bare head stays pinned.
+// The two INSTANCE-CONFIG heads stay ok:true as well and are recorded as a
+// named residual, not silently widened here: `youtube_pipe found no videos: web
+// search is NOT configured …` (youtube-pipe.ts:444) and web_pipe's
+// WEB_PIPE_UNCONFIGURED_NOTE (instance-setup.ts:270). A missing operator
+// credential is a setup fact the lane must report, not a provider failure.
 // SEMANTICS (decided): a TARGET-side fetch failure ("Failed to fetch <url> — the
 // page may be unavailable…", tool-executor.ts:1113) is ok:true — the fetch was
 // really attempted, and for an uptime watchdog the DOWN observation is exactly
@@ -280,6 +295,17 @@ const WEB_PROBE_NOT_EXECUTED_RES: RegExp[] = [
   /^web_pipe search backend failed/,                     // serpBackendFailedSummary + provider-host variant
   /^web_pipe found no sources: (?:the search call failed|search responded)/, // web-pipe.ts:414 gateway-unreachable + :408 no-parseable-links
   /^web_pipe could not read any of the /,                // web-pipe.ts:517
+  // WP-1 (backlog 2026-11-03, review 66007a6e advisory A1): youtube_pipe's
+  // infrastructure-failure heads ride the ok:true default before this, so a
+  // youtube-only probe lane whose search backend is down could stamp
+  // observe_resource on a nothing-was-retrieved call.
+  /^youtube_pipe found no videos: the search backend (?:answered with an error|failed)/, // youtube-pipe.ts:431 + :438
+  /^youtube_pipe could not get a transcript for any of the /,                           // youtube-pipe.ts:458
+  // WP-2 (advisory A2): answerKeyBlockedMessage's pre-phase refusal. The
+  // run_command family solved this by leading with "[command REFUSED"; the web
+  // head keeps "[ANSWER-KEY GUARD] <tool> refused before any network access".
+  // The post-phase "output withheld" head stays ok:true — that fetch DID run.
+  /^\[ANSWER-KEY GUARD\] \S+ refused before any network access/,
 ];
 
 /**
@@ -330,24 +356,12 @@ export const RECEIPT_TOOLS: ReadonlySet<string> = new Set([
  * commit-only work passed every guard. A local receipt never satisfies a
  * commit_pushed / commit_local claim (receiptMatchesClaim) and never counts
  * as the receipted survivor of a push line (the guard's line-level gate).
- * Kill switch COMMIT_LOCAL_CLAIM_GUARD_DISABLED=1 restores the pre-split
- * behaviour everywhere (matcher + guard).
+ * RSW-1 2026-11-03: the kill switch is GONE — the split is unconditional.
  */
 export const LOCAL_RECEIPT_TOOLS: ReadonlySet<string> = new Set(['git_commit']);
 
 /** True when the receipt's tool proves only a LOCAL state change (never origin). */
 export const isLocalReceiptTool = (tool: string): boolean => LOCAL_RECEIPT_TOOLS.has(tool);
-
-/**
- * Kill switch for the commit≠push receipt split + the commit_local claim
- * kind (finding A1): COMMIT_LOCAL_CLAIM_GUARD_DISABLED=1|true|on restores
- * the pre-2026-09-27 behaviour (git_commit shas exonerate push claims; no
- * commit_local extraction). Read per call — the leaf stays import-free.
- */
-export function commitLocalClaimGuardDisabled(): boolean {
-  const v = String(process.env.COMMIT_LOCAL_CLAIM_GUARD_DISABLED ?? '').trim().toLowerCase();
-  return v === '1' || v === 'true' || v === 'on';
-}
 
 const PLATFORM_RECEIPT_TOOLS: ReadonlySet<string> = new Set([
   'send_chat_message', 'start_coding_session', 'schedule_message',
@@ -464,6 +478,12 @@ const RUN_COMMAND_ABORT_RE = /^Tool "run_command" exceeded \d+s and was aborted\
 // …plus the publish-guard refusal `[command REFUSED — publish guard]` (P5
 // v1#27 — nothing executed at all).
 const RUN_COMMAND_NOT_OK_RE = /^(?:\[command failed\b|\[command REFUSED\b|Tool run_command failed:|\[SELF-STARTED MONITOR\])/i;
+
+// CT-5 (todo 76fd0cce): the exit code, in either shape tools.ts emits — the
+// FAILED banner (`[command FAILED — exit 3]`) or the appended tail (`[exit: 0]`).
+// Captured so a typed probe/benchmark claim can carry the verdict into its ids
+// envelope instead of leaving it implicit in the prose.
+const RUN_COMMAND_EXIT_RE = /\[command FAILED — exit (\d+)\]|\[exit: (\d+)\]/;
 
 // set_chat_autonomy (platform-tools.ts): two prose success shapes — "Autonomy
 // granted for chat <id>: …" / "Autonomy revoked for chat <id> — …". Validation
@@ -716,7 +736,30 @@ export function extractReceipt(
       // a run that ran `ls` was exonerated at this layer). The harness now
       // leads command results with [command FAILED — exit N] / [command OK] —
       // honor it.
-      return { ...base, ok: !RUN_COMMAND_ABORT_RE.test(text) && !RUN_COMMAND_NOT_OK_RE.test(text), ids: {} };
+      // CT-5 (todo 76fd0cce): the verdict now rides the ids envelope too, so a
+      // TYPED probe / benchmark claim can name WHICH command produced it.
+      //   ok          — the existing verdict (below), so ids never disagree with it
+      //   exitCode    — parsed from the banner / [exit: N] tail; null when unknown
+      //   commandHash — sha256 of the command TEXT, the model-facing ref (a lane
+      //                 cites the command, not the harness's args JSON)
+      // The persisted envelope is what verifyClaimsBlock reads back (E8 heads are
+      // in-memory only), so a ref has to be derivable from these two.
+      const rcOk = !RUN_COMMAND_ABORT_RE.test(text) && !RUN_COMMAND_NOT_OK_RE.test(text);
+      const exitMatch = text.match(RUN_COMMAND_EXIT_RE);
+      const cmdText = ((): string | null => {
+        try {
+          const a: any = typeof args === 'string' ? JSON.parse(args) : args;
+          return typeof a?.command === 'string' && a.command ? a.command : null;
+        } catch { return null; }
+      })();
+      return {
+        ...base,
+        ok: rcOk,
+        ids: {
+          ...(exitMatch ? { exitCode: Number(exitMatch[1] ?? exitMatch[2]) } : {}),
+          ...(cmdText ? { commandHash: sha256(cmdText) } : {}),
+        },
+      };
     // ── Coverage-extension platform tools (bespoke formats — the 7 envelope
     // tools are handled above via parseResult; these parse their own shapes) ──
     case 'set_chat_autonomy': {
@@ -898,8 +941,7 @@ const idMatches = (cited: string, actual: string): boolean =>
  *   3. finding A1 (2026-09-27): commit_pushed and the new commit_local kind
  *      ("banked/committed <sha>") never match a LOCAL
  *      receipt (git_commit) in either tier — only git_push carries a sha
- *      that reached origin. COMMIT_LOCAL_CLAIM_GUARD_DISABLED=1 restores
- *      the old behaviour.
+ *      that reached origin. Unconditional since RSW-1 2026-11-03.
  */
 export function receiptMatchesClaim(claim: ReceiptClaimLike, receipts: ToolReceipt[]): boolean {
   const ok = receipts.filter((r) => r.ok);
@@ -925,7 +967,7 @@ export function receiptMatchesClaim(claim: ReceiptClaimLike, receipts: ToolRecei
   // commit/DEPLOY it waits on — a lane that waits on a sha it never pushed
   // must not have its commit_pushed claim exonerated by the wait itself (the
   // exact laundering shape the visibility fix would otherwise have opened).
-  const localSplit = originClaim && !commitLocalClaimGuardDisabled();
+  const localSplit = originClaim;
   if (originClaim && claim.sha) {
     const matched = ok.some(
       (r) => r.ids?.sha !== undefined && r.ids?.sha !== null
@@ -954,7 +996,7 @@ export function receiptMatchesClaim(claim: ReceiptClaimLike, receipts: ToolRecei
     return ok.some((r) => EXTERNAL_ACTION_TOOL_RE.test(r.tool) || (!infraSubject && PLATFORM_OBSERVE_TOOLS.has(r.tool)));
   }
   // F32 (2026-10-22): the deploy-OBSERVATION shape (DEPLOY_ALT: "health
-  // check 200", "prod green", "digby.example.com healthy" — no deploy verb) is also
+  // check 200", "prod green", "digby.ai healthy" — no deploy verb) is also
   // evidenced by the deploy-health observation tools — get_fleet_telemetry
   // receipts (a PLATFORM_OBSERVE_TOOLS member, so it mints one) and the web
   // health reads — the reads the deploy doctrine itself mandates for exactly

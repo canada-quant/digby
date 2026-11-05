@@ -113,7 +113,7 @@ const mockPrisma: any = {
   // cff523e7: the provider-fail threshold flips coding_schedules.lastStatus.
   // fbe65673: the claim-time stale-firing re-check reads the row — default
   // ENABLED so schedule-linked runs proceed; the guard's own tests override.
-  codingSchedule: {
+  chatSchedule: {
     update: jest.fn(async () => ({})),
     findUnique: jest.fn(async (): Promise<any> => ({ enabled: true })),
     // audit #2: the continuation backstop's pending once-schedule dedupe count.
@@ -400,10 +400,9 @@ jest.mock('./coding-data.service', () => ({
   getCodingSessionTitle: (...args: any[]) => mockGetCodingSessionTitle(...args),
   getFirstUserCodingMessage: (...args: any[]) => mockGetFirstUserCodingMessage(...args),
   getCodingSessionTitleSource: (...args: any[]) => mockGetCodingSessionTitleSource(...args),
-  // 954b7910: the digest's ANSWER_MSG_ID guard reads the dual-write switch —
-  // default ON so the c6b line-2 pin (and the rest of the suite) exercises the
-  // mirrored path; the off-mode pin toggles it per test.
-  transcriptDualWriteEnabled: () => !process.env.TRANSCRIPT_DUAL_WRITE_OFF_IN_TESTS,
+  // MERGE-1 step 9 (2026-11-04): the `transcriptDualWriteEnabled` mock key was removed
+  // with the seam. run-executor now stamps ANSWER_MSG_ID unconditionally, because a
+  // crossmodel_messages row always exists for a persisted final message.
 }));
 
 // 7f546b03: the input-consumption seam stages input.images AND input.files via

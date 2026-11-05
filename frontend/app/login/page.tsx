@@ -10,8 +10,9 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
 import { ArrowLeft, Loader2, Zap } from 'lucide-react';
-import Image from 'next/image';
 import { cn } from '@/lib/utils';
+import { BrandLogo } from '@/components/ui/custom/BrandLogo';
+import { useBranding } from '@/app/branding/BrandingProvider';
 import { PasswordToggle } from '@/components/ui/password-toggle';
 import { reportGoogleAdsSignup } from '@/lib/google-ads';
 import { trackVisitEvent } from '@/lib/visitor-analytics';
@@ -40,6 +41,7 @@ const LOGIN_FEATURES: { icon: string; title: string; desc: string; wide?: boolea
 ];
 
 function LoginContent() {
+  const branding = useBranding();
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -126,7 +128,7 @@ function LoginContent() {
       trackVisitEvent('signup_complete', undefined, { flush: true });
       // Meta Pixel CompleteRegistration (owner 2026-10-07, lib/meta-pixel.ts) — never blocks or breaks the sign-up.
       reportMetaSignup(metaEventId);
-      toast.success('Account created! Welcome to Digby 🎉');
+      toast.success(`Account created! Welcome to ${branding.name} 🎉`);
       router.push(redirectTo);
     } catch (error: any) {
       const msg = error.response?.data?.error || error.response?.data?.message || 'Sign up failed. Try a different email.';
@@ -164,12 +166,12 @@ function LoginContent() {
         <div className="max-w-md text-center">
           {/* Logo */}
           <div className="size-24 rounded-3xl overflow-hidden mx-auto mb-8 shadow-2xl border border-white/30">
-            <Image src="/digbyhat.png" alt="Digby" width={96} height={96} className="w-full h-full object-cover" />
+            <BrandLogo size={96} priority className="w-full h-full object-cover" />
           </div>
 
-          <h1 className="font-serif text-[44px] font-normal tracking-[-0.015em] mb-3">Digby</h1>
+          <h1 className="font-serif text-[44px] font-normal tracking-[-0.015em] mb-3">{branding.name}</h1>
           <p className="text-xl text-white/80 mb-2 leading-relaxed">
-            Ask once. Get the best of every AI.
+            {branding.tagline}
           </p>
           <p className="text-sm text-white/60 mb-8 leading-relaxed">
             One question, every frontier model, one blended answer — with long-running coding sessions that ship real PRs.
@@ -196,7 +198,7 @@ function LoginContent() {
           {/* Trust strip — every claim repo-verifiable (live deployment,
               MIT license + docker-compose.selfhost.yml, backend model lineup) */}
           <div className="mt-8 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-xs text-white/50">
-            <span>Live at digby.example.com</span>
+            <span>Live at digby.ai</span>
             <span aria-hidden>·</span>
             <span>Self-hostable — MIT licensed</span>
             <span aria-hidden>·</span>
@@ -225,20 +227,20 @@ function LoginContent() {
             className="inline-flex items-center gap-1.5 min-h-11 px-1 -ml-1 text-sm text-muted-foreground hover:text-foreground transition-colors touch-manipulation"
           >
             <ArrowLeft className="size-3.5" aria-hidden />
-            Back to Digby
+            Back to {branding.name}
           </button>
         </div>
 
         {/* Mobile logo (hidden on lg) */}
         <div className="lg:hidden flex items-center gap-3 mb-8">
           <div className="size-10 rounded-xl overflow-hidden shadow-md flex-shrink-0">
-            <Image src="/digbyhat.png" alt="Digby" width={40} height={40} className="w-full h-full object-cover" />
+            <BrandLogo size={40} className="w-full h-full object-cover" />
           </div>
           <div>
             <h1 className="text-lg font-bold tracking-tight leading-none">
-              Digby
+              {branding.name}
             </h1>
-            <p className="text-[10px] text-muted-foreground">Ask once. Get the best of every AI.</p>
+            <p className="text-[10px] text-muted-foreground">{branding.tagline}</p>
           </div>
         </div>
 
@@ -485,13 +487,13 @@ function LoginContent() {
         className="fixed bottom-0 left-0 right-0 z-10 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-4 py-2 bg-background/90 backdrop-blur-sm border-t text-xs text-muted-foreground"
         style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom, 0.5rem))' }}
       >
-        <span>© {new Date().getFullYear()} Digby</span>
+        <span>© {new Date().getFullYear()} {branding.name}</span>
         <span className="text-muted-foreground/30">·</span>
         <Link href="/terms" className="hover:text-foreground transition-colors min-h-11 inline-flex items-center">Terms</Link>
         <span className="text-muted-foreground/30">·</span>
         <Link href="/privacy" className="hover:text-foreground transition-colors min-h-11 inline-flex items-center">Privacy</Link>
         <span className="hidden sm:inline text-muted-foreground/30">·</span>
-        <a href="mailto:digby@digby.example.com" className="hidden sm:inline-flex hover:text-foreground transition-colors min-h-8 items-center">digby@digby.example.com</a>
+        <a href="mailto:digby@digby.ai" className="hidden sm:inline-flex hover:text-foreground transition-colors min-h-8 items-center">digby@digby.ai</a>
       </footer>
     </div>
   );
@@ -502,7 +504,7 @@ export default function LoginPage() {
     <Suspense fallback={
       <div className="flex min-h-screen items-center justify-center bg-background">
         <div className="size-8 rounded-xl overflow-hidden animate-pulse">
-          <Image src="/digbyhat.png" alt="Digby" width={32} height={32} className="w-full h-full object-cover" />
+          <BrandLogo size={32} className="w-full h-full object-cover" />
         </div>
       </div>
     }>

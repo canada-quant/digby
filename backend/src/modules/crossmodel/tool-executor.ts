@@ -42,6 +42,9 @@ import {
   exhaustedSearchMessage, ROUTE_LABEL, type RouteCluster,
 } from './coding/web-search-route';
 import { runWebPipe } from './coding/web-pipe';
+// BS-1 D4/D5 (2026-11-02): the scrape tool's URL hygiene — the incomplete-URL
+// pre-flight and the resolveDomainUrl retry ladder. PURE leaf + injected I/O.
+import { preflightUrl, scrapeViaDomainResolve } from './coding/url-preflight';
 import { runYoutubePipe } from './coding/youtube-pipe';
 import { generateDocument, fillPdfForm, listPdfFormFields } from './document-generator';
 import { loadAttachment } from './upload.controller';
@@ -1352,18 +1355,48 @@ export class ToolCache {
 
         case 'scrape_as_markdown': {
           const url = args.url || '';
+          // BS-1 D5 (2026-11-02): a truncated URL used to be dispatched verbatim
+          // and come back as a raw gateway `400 "url" must be a valid uri`, which
+          // reads to the model as an infrastructure fault. Fail here instead, in
+          // words it can act on ("this link was cut off — get the whole URL").
+          const verdict = preflightUrl(url);
+          if (!verdict.ok) {
+            logger.info(`ToolExecutor: scrape_as_markdown REFUSED pre-dispatch (${verdict.kind})`);
+            return verdict.reason!;
+          }
           logger.info(`ToolExecutor: scrape_as_markdown("${url.substring(0, 80)}")`);
-          const result = await callMcpTool('scrape_as_markdown', { url });
+          // BS-1 D4 (2026-11-02): an EMPTY scrape used to be reported as "the page
+          // may be unavailable, blocked, or rate-limited" — i.e. the site is down —
+          // which is what a guessed/fabricated path produces. Wire the long-dormant
+          // resolveDomainUrl primitive in: ask the SERP what the real url for this
+          // domain is, retry it once, and say NOT FOUND (never "down") if that
+          // fails too. The ladder is bounded: one search, one retry.
+          const ladder = await scrapeViaDomainResolve(url, {
+            scrape: async (target: string) => {
+              const r = await callMcpTool('scrape_as_markdown', { url: target }).catch(() => null);
+              return typeof r === 'string' && r.trim() ? r : null;
+            },
+            search: async (query: string) => {
+              const serp = await callMcpTool('search_engine', { query: query.slice(0, 200), engine: 'google' }).catch(() => null);
+              if (typeof serp === 'string') return serp;
+              if (serp && typeof serp === 'object') return JSON.stringify(serp);
+              return null;
+            },
+          });
           // Ticket 6f4d42f2: no search credentials anywhere = say so (see the
           // search_engine case above for the rationale).
           {
             const cfg = lastSearchConfigState();
-            if (!result && cfg && !cfg.anyBackendArmed) {
+            if (!ladder.ok && cfg && !cfg.anyBackendArmed) {
               return SEARCH_NOT_CONFIGURED_MSG;
             }
           }
-          if (!result) return webNullResultMsg(`Failed to fetch ${url} — the page may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don't hammer the same URL repeatedly. If it keeps failing, answer from the search results you already have.`);
-          return result;
+          if (ladder.ok) {
+            logger.info(`ToolExecutor: scrape_as_markdown OK via ${ladder.via}${ladder.resolvedUrl ? ` (${ladder.resolvedUrl.substring(0, 80)})` : ''}`);
+            return ladder.markdown;
+          }
+          logger.info(`ToolExecutor: scrape_as_markdown NOT FOUND for ${verdict.host ?? url.slice(0, 60)} (searched=${ladder.searched})`);
+          return ladder.message;
         }
 
         case 'fetch_image': {
@@ -1396,7 +1429,7 @@ export class ToolCache {
           let bytes: Buffer;
           let contentType: string | undefined;
           try {
-            const res = await fetch(parsed, { signal: ctrl.signal, redirect: 'follow', headers: { 'user-agent': 'Digby/1.0 (+https://digby.example.com)' } });
+            const res = await fetch(parsed, { signal: ctrl.signal, redirect: 'follow', headers: { 'user-agent': 'Digby/1.0 (+https://digby.ai)' } });
             if (!res.ok) {
               return `Failed to fetch ${rawUrl}: HTTP ${res.status}. Do not retry this URL — answer from what you already have.`;
             }
@@ -1982,12 +2015,70 @@ export class ToolCache {
         }
 
         case 'scrape_batch': {
-          const urls = Array.isArray(args.urls) ? args.urls.slice(0, 5) : [];
-          logger.info(`ToolExecutor: scrape_batch(${urls.length} URLs)`);
-          if (urls.length === 0) return 'No URLs provided.';
-          const result = await callMcpTool('scrape_batch', { urls });
-          if (!result) return webNullResultMsg(`Failed to fetch the URLs — pages may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don't hammer the same URLs repeatedly. If they keep failing, answer from the search results you already have.`);
-          return result;
+          // Review N6: the cap used to run BEFORE the pre-flight, so five junk
+          // URLs consumed the whole budget and a valid sixth was never fetched
+          // — or even mentioned. Pre-flight FIRST, then cap what is actually
+          // dispatched, so a bad member can never displace a good one.
+          const sentUrls = Array.isArray(args.urls)
+            ? args.urls.map((u: unknown) => String(u ?? '').trim())
+            : [];
+          logger.info(`ToolExecutor: scrape_batch(${sentUrls.length} URLs)`);
+          if (sentUrls.length === 0) return 'No URLs provided.';
+          // Ticket 169d5080: BS-1 D5 wired the URL pre-flight into
+          // scrape_as_markdown but NOT into this sibling, so ONE cut-off URL in a
+          // batch still reached the gateway verbatim and came back as a raw
+          // `400 ... "url" must be a valid uri` — the exact class the ticket is
+          // about.
+          //
+          // THREE-WAY split, because rule 2 ("last query param has no `=`") cannot
+          // tell a truncation (`?acti` cut out of `active_status`) from a COMPLETE
+          // bare-flag URL (`?amp`, `?print`, `?autoplay`) — the two are lexically
+          // identical. Refusing on rule 2 alone silently drops a page the model
+          // asked for AND tells it, falsely, that its link was cut off; putting an
+          // ambiguous member in the shared array lets one bad URL 400 the whole
+          // call. So the ambiguous ones are dispatched ONE AT A TIME: a false
+          // positive then costs only itself, and a real truncation fails alone
+          // instead of poisoning the batch. Rules 1/3/4 (dangling ?/&, half a
+          // percent-escape, no scheme, inner space) can never be a real URL and are
+          // refused outright in both paths.
+          const clean: Array<{ url: string }> = [];
+          const ambiguous: Array<{ url: string }> = [];
+          const refused: Array<{ url: string; reason: string }> = [];
+          for (const candidate of sentUrls) {
+            const strict = preflightUrl(candidate);
+            if (strict.ok) { clean.push({ url: candidate }); continue; }
+            // Still unusable with ONLY rule 2 relaxed ⇒ rule 2 was not the reason.
+            if (preflightUrl(candidate, { allowBareTrailingKey: true }).ok) {
+              ambiguous.push({ url: candidate });
+              continue;
+            }
+            refused.push({ url: candidate, reason: strict.reason || 'incomplete URL' });
+          }
+          if (refused.length) {
+            logger.info(`ToolExecutor: scrape_batch refused ${refused.length}/${sentUrls.length} URL(s) at pre-flight`);
+          }
+          const parts: string[] = [];
+          // The unambiguous majority rides ONE call — the normal path, unchanged.
+          // The 5-URL cap applies to what is DISPATCHED, not to what was sent.
+          if (clean.length) {
+            const r = await callMcpTool('scrape_batch', { urls: clean.slice(0, 5).map((c) => c.url) });
+            parts.push(r || webNullResultMsg(`Failed to fetch the URLs — pages may be unavailable, blocked, or rate-limited (a transient 403/429 often clears after a cooldown). A retry after a short wait, or trying a different official source for the same content, is fine — just don't hammer the same URLs repeatedly. If they keep failing, answer from the search results you already have.`));
+          }
+          // Ambiguous members are isolated so one cannot take down the rest.
+          for (const a of ambiguous.slice(0, 5)) {
+            let r: string | null = null;
+            try {
+              r = await callMcpTool('scrape_batch', { urls: [a.url] });
+            } catch {
+              r = null; // a dispatch failure is this member's alone
+            }
+            parts.push(r || `[could not fetch] ${a.url} — this link may have been cut off, or the page may be unavailable. If it came from a snippet, re-send the whole URL.`);
+          }
+          if (refused.length) {
+            parts.push(`[not fetched] ${refused.length} URL(s) were refused at pre-flight — re-send them in full:\n`
+              + refused.map((r) => `- ${r.reason}`).join('\n'));
+          }
+          return parts.join('\n\n');
         }
 
         default:

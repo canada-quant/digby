@@ -19,6 +19,7 @@ import * as crypto from 'crypto';
 import logger from '../../../utils/logger';
 import type { RepoHooksConfig } from './repo-hooks';
 import { deriveRelatedTestCommand, listChangedFiles, packageScriptReader, RELATED_STAGE_KEY } from './verify-related';
+import { DEFAULT_PER_COMMAND_TIMEOUT_MS, stageTimeoutAdvice, killedAtMsFromTail } from './loop-defaults';
 
 export interface DigbyLoopConfig {
   maxAutoVerifyIterations: number;
@@ -56,7 +57,7 @@ export interface DigbyConfig {
 export const DEFAULT_LOOP: DigbyLoopConfig = {
   maxAutoVerifyIterations: 10,
   resumeStepBudget: 20,
-  perCommandTimeoutMs: 600_000,
+  perCommandTimeoutMs: DEFAULT_PER_COMMAND_TIMEOUT_MS,
   sameFailureStop: 3,
   oscillationWindow: 6,
   gatePullRequest: true, // P4: the agent must get verify green before open_pull_request (human "Open PR" bypasses)
@@ -764,7 +765,26 @@ ${st.outputTail}
     return `${header}
 This failure is ENVIRONMENTAL (OOM/SIGKILL infrastructure death): your code is NOT implicated, and the stage already got one automatic in-chain retry. Do NOT edit code, tests, or verify config in response to this. Retry verify later (the box may be under memory pressure), or proceed with other pending work and re-run verify before finishing.`;
   }
+  // Ticket 91120212: a STAGE TIMEOUT is a FAILURE (T2e) whose one sanctioned
+  // remedy IS a config edit — `loop.perCommandTimeoutMs` in .digby/config.json
+  // (the per-repo override loopConfig merges over DEFAULT_LOOP). The generic
+  // branch below says "Do NOT … edit tests/verify config to force a pass", so a
+  // legitimately slow suite (329 s against a 300 s scaffolded cap) got four
+  // deterministic kills and a notice forbidding the only escape. Name it.
+  if (st.stageTimeout) {
+    return `${header}
+${stageTimeoutAdvice(killedAtMsFromTail(st.outputTail))}
+Earlier stages already passed — only "${st.key}" is in question.`;
+  }
   return `${header}
 The task is NOT complete until this exits 0. Fix the underlying cause above and continue.
 Do NOT disable the check, weaken it, or edit tests/verify config to force a pass. Earlier stages already passed — only fix "${st.key}".`;
+}
+
+/** Pull the numeric cap the death was reported against out of the tail the
+ *  chain already wrote ("...per-command timeout (300000 ms)"), so the advice
+ *  quotes the lane's ACTUAL budget rather than a guess. */
+function timeoutLookingCause(outputTail: string): string {
+  const m = /per-command timeout \((\d+) ms\)/.exec(outputTail || '');
+  return m ? ` (at ${m[1]} ms)` : '';
 }

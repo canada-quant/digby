@@ -55,6 +55,7 @@ import { instanceOwnRepoSlugSoft, isFrameworkProjectRow } from '../platform/fram
 // Supervisor OFF switch (owner 2026-09-26): the Management surfaces carry the
 // switch state + the harness-composed status line.
 import { getSupervisorSwitchState, type SupervisorSwitchState } from '../platform/supervisor-switch';
+import { isChildRelayRow } from '../platform/child-session-relay';
 // Refused self-renewals surface (review-fixer 2026-09-27): never throws, null line when none.
 import { getRenewRefusalSummary } from '../coding/renew-refusal-surface';
 
@@ -86,17 +87,25 @@ export interface FleetSupervisorView {
 async function supervisorViewFor(userId: string, chatId: string): Promise<FleetSupervisorView | null> {
   const chat = await prisma.crossModelChat.findUnique({
     where: { id: chatId },
-    select: { id: true, userId: true, title: true },
+    select: { id: true, userId: true, title: true, projectId: true },
   });
   if (!chat || chat.userId !== userId) return null;
   const state = await prisma.chatCodingState
-    .findUnique({ where: { id: chatId }, select: { status: true } })
+    .findUnique({ where: { id: chatId }, select: { status: true, worktreePath: true } })
     .catch(() => null);
+  // MERGE-1 slice 1: this view used to compute `codeCapable = !!state` with no
+  // folder-chain leg — it DRIFTED from getChatCapability, so a supervisor chat
+  // filed in a workspace folder reported codeCapable=false here while the
+  // sidebar and the folder tree both said true. One chat, two answers. The
+  // predicate now comes from the one place that owns it.
+  const { getChatCapability } = await import('../coding/coding-data.service');
+  const capability = await getChatCapability(chat, state ? { worktreePath: state.worktreePath } : null)
+    .catch(() => ({ codeCapable: false, hasWorkspaceState: false, workspaceReady: false }));
   return {
     id: chat.id,
     title: chat.title,
     running: await isChatBusy(chatId),
-    codeCapable: !!state,
+    codeCapable: capability.codeCapable,
     ...(state ? { codingStatus: state.status } : {}),
   };
 }
@@ -144,6 +153,26 @@ function rowSourceChatId(metadata: unknown): string | null {
   if (!metadata || typeof metadata !== 'object') return null;
   const s = (metadata as Record<string, unknown>).sourceChatId;
   return typeof s === 'string' && s ? s : null;
+}
+
+/** metadata.childResult — the auto-wired child→parent RESULT hook stamped this
+ *  wake (ticket 56d6b204). Defensive JSONB read. */
+function rowChildResult(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') return false;
+  return (metadata as Record<string, unknown>).childResult === true;
+}
+
+/**
+ * Agent CONTROL rows (review finding, ticket 739e8191): the harness's ack /
+ * material-gate fan-out between lanes is `metadata.ackOnly` / `materialGate`.
+ * A suppressed batch ("acked; no turn started") is NOT delivered work — it
+ * must keep its machine classification even from a child chat, or internal
+ * chatter renders as owner-facing content.
+ */
+function rowIsAgentControl(metadata: unknown): boolean {
+  if (!metadata || typeof metadata !== 'object') return false;
+  const m = metadata as Record<string, unknown>;
+  return m.ackOnly === true || m.materialGate === true;
 }
 
 /** metadata.kind of a message row — 'owner_briefing' marks the plain-English
@@ -209,12 +238,39 @@ interface ClassifiedRow extends RawThreadRow {
  *   - assistant + NO own origin → inherits the nearest preceding user row's
  *     noise state; no preceding user row in the fetched window → interactive.
  */
-function classifyThreadRows(rows: RawThreadRow[], schedulePrompts: Set<string>): ClassifiedRow[] {
+function classifyThreadRows(
+  rows: RawThreadRow[],
+  schedulePrompts: Set<string>,
+  /**
+   * The chat's CHILD chat ids (ticket 739e8191) — see childChatIdsFor. A relay
+   * FROM one of them is a sub-session reporting to its parent, i.e. delivered
+   * content the owner is waiting on, not internal machine noise. Null/absent ⇒
+   * today's behaviour exactly (no lineage known, nothing exempted).
+   */
+  childIds?: ReadonlySet<string> | null,
+): ClassifiedRow[] {
   let lastUserNoise: boolean | null = null; // null = no user row seen in the window
   let lastUserOrigin = 'user';
   return rows.map((row) => {
     if (row.role === 'user') {
       const origin = rowOrigin(row.metadata);
+      // Child-session relay (ticket 739e8191, owner report 2026-11-02): the
+      // parent chat's reply to a sub-session that finished and reported back is
+      // how the OWNER learns the work is done — the owner's complaint in chat
+      // 99e63f86 was "you don't seem to communicate … after you get a message
+      // from a sub session". That relay row is origin 'agent', so without this
+      // exemption the noise filter drops the relay AND (via inheritance) the
+      // answering reply, and the owner never sees either. Exempted BEFORE the
+      // origin branch, exactly like owner_briefing/owner_digest; lastUserNoise
+      // is set FALSE so the reply that follows inherits visibility. Lineage
+      // (crossmodel_chats.parentChatId) is the authority — a relay from a
+      // sibling lane or the Fleet Supervisor keeps its noise state.
+      const childRelay = origin === 'agent' && !rowIsAgentControl(row.metadata) && isChildRelayRow(row, childIds);
+      if (childRelay) {
+        lastUserNoise = false;
+        lastUserOrigin = origin;
+        return { ...row, origin, noise: false };
+      }
       const noise = origin != null ? MACHINE_ORIGINS.has(origin) : schedulePrompts.has(row.content);
       lastUserNoise = noise;
       lastUserOrigin = origin ?? (noise ? 'machine' : 'user');
@@ -398,7 +454,7 @@ export async function getFleetOverview(userId: string) {
       where: { userId, status: { in: ['provisioning', 'ready', 'running', 'error'] } },
       select: { id: true, title: true, status: true, branch: true, model: true, updatedAt: true },
     }),
-    prisma.codingSchedule.findMany({
+    prisma.chatSchedule.findMany({
       where: { userId },
       // Enabled rows FIRST (owner bug 2026-09-04): disabled schedules keep
       // stale past nextRunAt values, so a plain nextRunAt-asc sort filled the
@@ -410,9 +466,9 @@ export async function getFleetOverview(userId: string) {
     }),
     // A REAL count — the schedules list above is capped at 100 rows, so
     // filtering it would undercount automation-heavy users' tile.
-    prisma.codingSchedule.count({ where: { userId, enabled: true } }),
+    prisma.chatSchedule.count({ where: { userId, enabled: true } }),
     // REAL total for the same reason (the tile's "N inactive" subline).
-    prisma.codingSchedule.count({ where: { userId } }),
+    prisma.chatSchedule.count({ where: { userId } }),
     // Busy-chat queue depth across ALL of the user's chats (main's
     // pending_chat_messages — no claim states; a row is queued until drained).
     prisma.pendingChatMessage.count({ where: { userId } }),
@@ -534,7 +590,7 @@ export async function dismissFleetSchedule(userId: string, scheduleId: string): 
  * lastFiredAt) and a longer prompt snippet so the tab can stand alone.
  */
 export async function getFleetSchedules(userId: string) {
-  const schedules = await prisma.codingSchedule.findMany({
+  const schedules = await prisma.chatSchedule.findMany({
     where: { userId },
     orderBy: [{ enabled: 'desc' }, { nextRunAt: 'asc' }],
     take: 200,
@@ -618,6 +674,31 @@ async function threadCursor(chatId: string, before: string): Promise<PageCursor>
   });
   if (!cursor || cursor.chatId !== chatId) throw new AppError(400, 'Invalid before cursor for this chat');
   return { at: cursor.createdAt, id: before };
+}
+
+/**
+ * This chat's CHILD chat ids (ticket 739e8191) — the lineage source for
+ * child-session relay exemption in classifyThreadRows. `crossmodel_chats.
+ * parentChatId` is the one lineage authority (pinned in the schema), and the
+ * column is indexed, so this is ONE cheap lookup per thread read (never
+ * per row). A failure degrades to "no lineage known" (today's behaviour) —
+ * a preference for hiding noise must never break the thread.
+ */
+async function childChatIdsFor(chatId: string): Promise<Set<string>> {
+  try {
+    const kids = await prisma.crossModelChat.findMany({
+      where: { parentChatId: chatId },
+      select: { id: true },
+    });
+    return new Set(kids.map((k: { id: string }) => k.id));
+  } catch (err: any) {
+    // Degrade to "no lineage known" (pre-fix behaviour) — but NEVER silently:
+    // a swallowed Prisma error (renamed column, dropped connection) would
+    // disable the exemption permanently with no trace. Every neighbouring
+    // best-effort path in this file logs the same way.
+    logger.warn(`fleet: child-chat lineage lookup failed for ${chatId.slice(0, 8)} (non-fatal): ${err?.message ?? err}`);
+    return new Set();
+  }
 }
 
 export interface FleetThreadPage {
@@ -744,7 +825,7 @@ export async function getLatestSupervisorWakeNote(
 ): Promise<{ chatId: string | null; note: FleetSummaryNote | null }> {
   const chatId = await supervisorChatIdFor(userId);
   if (!chatId) return { chatId: null, note: null };
-  const schedules = await prisma.codingSchedule.findMany({
+  const schedules = await prisma.chatSchedule.findMany({
     where: { sessionId: chatId },
     select: { prompt: true },
   });
@@ -845,11 +926,18 @@ export async function getSupervisorThread(
   const before = opts.before ? await threadCursor(chatId, opts.before) : undefined;
 
   // Retro-classifier source: this chat's schedule prompts, fetched once.
-  const schedules = await prisma.codingSchedule.findMany({
+  const schedules = await prisma.chatSchedule.findMany({
     where: { sessionId: chatId },
     select: { prompt: true },
   });
   const schedulePrompts = new Set(schedules.map((s) => s.prompt));
+
+  // Child-session relays (ticket 739e8191): the parent's reply to a sub-session
+  // that finished and reported back is how the owner learns the work is done.
+  // ONE indexed lineage lookup per read — never per row — threaded into every
+  // classify pass below so the page scan and the final classification agree
+  // (they must: the scan counts interactive rows to decide how far to page).
+  const childIds = await childChatIdsFor(chatId);
 
   // Over-fetch raw pages until we hold enough INTERACTIVE rows (bounded).
   const RAW_PAGE_BUDGET = 5; // the cheap scan every request pays for
@@ -870,7 +958,7 @@ export async function getSupervisorThread(
     // (includeMachine keeps everything, so the raw count IS the kept count.)
     const interactiveSoFar = includeMachine
       ? raw.length
-      : classifyThreadRows([...raw].reverse(), schedulePrompts).filter((r) => !r.noise).length;
+      : classifyThreadRows([...raw].reverse(), schedulePrompts, childIds).filter((r) => !r.noise).length;
     if (interactiveSoFar >= limit) break;
     // Past the cheap budget, only an ALL-NOISE window justifies scanning on —
     // an empty page renders as a fake empty thread, so reach the interactive
@@ -879,7 +967,7 @@ export async function getSupervisorThread(
   }
 
   // Classify chronologically (oldest → newest) so assistant inheritance works.
-  const classified = classifyThreadRows([...raw].reverse(), schedulePrompts);
+  const classified = classifyThreadRows([...raw].reverse(), schedulePrompts, childIds);
   const interactive = includeMachine ? classified : classified.filter((r) => !r.noise);
   const pageRows = interactive.slice(-limit); // newest `limit`, chronological
   const hasMore = interactive.length > limit || rawHasMore;
@@ -924,7 +1012,16 @@ export async function getSupervisorThread(
       // Child-result wake marker (ticket 56d6b204): flattened for the client's
       // grouping probe — a child→parent result-hook wake mounts EXPANDED so
       // the delivered sub-session result never hides behind the accordion.
-      ...((m.metadata as Record<string, unknown> | null)?.childResult === true ? { childResult: true } : {}),
+      //
+      // Child-SESSION relay (ticket 739e8191, owner report 2026-11-02): the
+      // far more common shape is a lane that finishes and REPORTS BACK through
+      // send_chat_message — an [AGENT-SENT MESSAGE] row from a child chat. It
+      // carries no childResult stamp (the result HOOK does), so it used to
+      // flatten as nothing and the client folded the sub-session's result and
+      // its answering reply behind the collapsed accordion. Lineage decides:
+      // a relay whose SENDER is this chat's child is delivered content, and it
+      // rides the SAME marker every consumer already understands.
+      ...(rowChildResult(m.metadata) || isChildRelayRow(m, childIds) ? { childResult: true } : {}),
       // Owner-ask wake marker (fixer 2026-09-27): flattened for the client's
       // grouping probe — the answer to an owner ask mounts EXPANDED.
       ...((m.metadata as Record<string, unknown> | null)?.ownerAskReply === true ? { ownerAskReply: true } : {}),
@@ -1134,7 +1231,7 @@ export async function getFleetLog(userId: string, opts: { before?: string; limit
   const chatId = await supervisorChatIdFor(userId);
   const supervisor = chatId ? await supervisorViewFor(userId, chatId) : null;
   if (chatId && supervisor) {
-    const schedules = await prisma.codingSchedule.findMany({
+    const schedules = await prisma.chatSchedule.findMany({
       where: { sessionId: chatId },
       select: { prompt: true },
     });

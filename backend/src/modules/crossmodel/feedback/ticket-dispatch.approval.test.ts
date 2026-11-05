@@ -47,7 +47,7 @@ const mockPrisma: any = {
   contextStoreEntry: { findUnique: jest.fn(async () => null) },
   // TICKET-LANE ARCHIVE GAPS review (2026-10-21): archiveTicketLane's owner-armed
   // schedule guard reads this (fail-closed without it) — no owner rows here.
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
 

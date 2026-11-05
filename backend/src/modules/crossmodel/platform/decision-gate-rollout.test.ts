@@ -50,6 +50,10 @@ jest.mock('./decision-gate-readiness', () => ({
   __esModule: true,
   readReadinessStamp: (...a: any[]) => mockReadStamp(...a),
   readLatestReadinessReport: (...a: any[]) => mockReadReport(...a),
+  // 2026-11-05: the waiting line names the next readiness firing. The real
+  // export reads DECISION_GATE_READINESS_INTERVAL_MIN (default 360) — kept
+  // here so the pass under test sees the same default cadence.
+  readinessIntervalSec: () => 21_600,
 }));
 const mockFlag = jest.fn();
 jest.mock('./owner-questions', () => ({ __esModule: true, flagOwnerQuestion: (...a: any[]) => mockFlag(...a) }));
@@ -63,6 +67,7 @@ import {
   rolloutEnabled, setRolloutEnabled, invalidateRolloutSettingCache, rolloutBootDefault, rolloutIntervalMin,
   rolloutBriefingLine, rolloutRecentLineSync, parkedPurposesSync, primeRolloutStateCache, clearRolloutStateCache,
   planLifecycle, reviewDueMs, NON_CONVERGING_MIN_OUTCOME_ROWS, NON_CONVERGING_MAX_ACCURACY,
+  readinessNextDueSummary,
 } from './decision-gate-rollout';
 import { DECISION_PURPOSES, purposeActCap } from './decision-gate-modes';
 import { DECISION_ROLE_REGISTRY } from './decision-gate-registry';
@@ -586,5 +591,46 @@ describe('DECISION-GATE-LIFECYCLE', () => {
     mockGetConfig.mockResolvedValue(config());
     mockReadStamp.mockResolvedValue({ claim_evidenced: lstamp(), memory_extract: lstamp({}, { n: 240, days: 12, auroc: 0.45, accuracy: 236 / 240 }) });
     await expect(runDecisionGateRolloutOnce({ now: LNOW })).resolves.toMatch(/lifecycle-off 1 \(2 not retired, logged\),/);
+  });
+});
+
+/**
+ * 2026-11-05 — THE WAITING LINE MUST NOT READ AS A STALL.
+ *
+ * The rollout fires hourly; the readiness job's default cadence is 360 min, so
+ * five passes in six legitimately take the waiting branch. The bare line
+ * ("waiting for a fresher readiness report (last judged …)") has twice been read
+ * as a stalled automaton — FO firing 78 on 2026-10-04 (which added the liveness
+ * stamp) and a supervisor escalation on 2026-11-05 that found the readiness job
+ * healthy, `enabled:true`, lastFiredAt 00:37:39Z, nextRunAt 06:37:39Z. Naming
+ * the next due firing makes a healthy idle legible. These tests pin BOTH halves:
+ * the clause appears on a healthy idle, and it degrades to the ORIGINAL line
+ * (never throws, never breaks the pass) on any nonsense input.
+ */
+describe('readinessNextDueSummary — naming the next readiness firing on the waiting line', () => {
+  it('appends the due time derived from the last judge time + the readiness cadence', () => {
+    // 00:37:36.945Z + 6 h = 06:37:36.945Z — the live pair read off box A
+    // (cron_jobs decision-gate-readiness lastFiredAt 00:37:39.84Z / nextRunAt 06:37:39.84Z).
+    expect(readinessNextDueSummary('2026-11-05T00:37:36.945Z', 21_600))
+      .toBe('; next readiness firing due 2026-11-05T06:37:36.945Z');
+  });
+
+  it('honours a re-tuned cadence (DECISION_GATE_READINESS_INTERVAL_MIN is clamped, not assumed 360)', () => {
+    expect(readinessNextDueSummary('2026-11-05T00:00:00.000Z', 900))
+      .toBe('; next readiness firing due 2026-11-05T00:15:00.000Z');
+  });
+
+  it('FAIL-OPEN: an absent / unparseable stamp or a nonsense interval yields "" so the line is byte-identical to before', () => {
+    for (const args of [
+      [null, 21_600],
+      [undefined, 21_600],
+      ['', 21_600],
+      ['not-a-date', 21_600],
+      ['2026-11-05T00:37:36.945Z', 0],
+      ['2026-11-05T00:37:36.945Z', -60],
+      ['2026-11-05T00:37:36.945Z', Number.NaN],
+    ] as Array<[string | null | undefined, number]>) {
+      expect(readinessNextDueSummary(args[0], args[1])).toBe('');
+    }
   });
 });

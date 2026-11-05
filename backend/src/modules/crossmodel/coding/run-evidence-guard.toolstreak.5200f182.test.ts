@@ -67,7 +67,7 @@ import {
 } from './run-evidence-guard';
 
 const NOW = new Date('2026-10-20T21:25:00.000Z'); // the incident strike window
-const OPTS = { userId: 'u1', repoUrl: 'https://github.com/canada-quant/digby', provider: 'github' };
+const OPTS = { userId: 'u1', repoUrl: 'https://github.com/example-org/crossmodel', provider: 'github' };
 
 // The incident's two fabricated shas (verbatim from the struck final's
 // claims block — prod probe 2026-10-21, run dc96d9c3).

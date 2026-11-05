@@ -27,7 +27,7 @@ import prisma from '../../../config/database';
 import logger from '../../../utils/logger';
 import { embedTexts, rerankTexts } from '../rag.service';
 import { stripNulBytes } from './text-utils';
-import { embedRowsWithRetry, embedFailureKey, type EmbedRowsResult, type EmbedBucket, type EmbedFailureCause } from './embed-failure';
+import { embedRowsWithRetry, embedFailureKey, embedGatewaylessMeta, type EmbedRowsResult, type EmbedBucket, type EmbedFailureCause } from './embed-failure';
 import {
   ARCHIVE_DDL, ARCHIVE_EXISTS_SQL, ARCHIVE_PURGE_REFS_SQL, ARCHIVE_PURGE_REFS_EXCEPT_SQL, ARCHIVE_PURGE_SCOPE_SQL,
   archiveEvictionSql, archiveRefsEvictionSql, memoryArchiveDisabled,
@@ -61,6 +61,11 @@ export function embedFailureMetricMeta(
   const bucket: EmbedBucket = ctx.bucket ?? 'store';
   return {
     bucket, abort: cause.abort, leg: cause.leg,
+    // The POSITIVE gateway fact (goal 4e432dff, supervisor ruling 2026-11-04):
+    // `gwless:'direct'` only when the transport PROVED no LiteLLM hop existed
+    // (see embedGatewaylessMeta). Absent on an operator endpoint, which keeps
+    // requiring its leg — fail-closed, same rule as everywhere else.
+    ...embedGatewaylessMeta(cause.lane),
     kind: cause.kind, status: cause.status, code: cause.code, providerMessage: cause.providerMessage,
     rows: ctx.rows, maxChars: ctx.maxChars, source: ctx.source, scopeType: ctx.scopeType,
     retried: r.retried.attempted, recovered: r.retried.recovered,

@@ -94,12 +94,13 @@ export function corePrecedenceRule(tier: 'fleet' | 'project'): string {
 // supervisor-state directive scope stamps.
 export const CORE_SCOPE_RULE =
   `## Directive scope — applying rule scope.project
-- Fleet-wide needs FLEET-WIDE WORDS ("all projects", "every project", "fleet-wide", "across the fleet"). "Categorical about X as a class" ("all <resource> nodes stay off") is NOT fleet-wide: scope comes from WHERE the owner spoke, not how absolute the words sound.
-- A lane asking whether a directive from ANOTHER project applies to its own work is a SCOPE question — the OWNER's call: the platform routes it to the owner; if one reaches you anyway, LEAVE it (it surfaces after the SLA) — a wrong cross-project ruling parks or tears down work the owner never addressed; an owner card costs one word.
-- Bank every owner directive WITH its scope: ${modelToolName('update_supervisor_state')} takes a per-directive scope field (the project name, or 'fleet') — a scopeless directive is a contamination vector. Cite owner messages as "owner → [project] (date): 'verbatim'".
-- Owner messages in YOUR OWN project's chats bind your project normally — this rule governs only CROSS-project application.
-- (rule hold.blocker-scope) An infra blocker holds only the steps its registered scope names; only a vague or missing scope falls back to holding the whole deploy/merge/publish class — never guess not-me into a wall.
-- (rule secrets.owner-card-delivery) A delivered credential routes to the encrypted question-secret store with a numbered reveal handle on the card; card text never carries the value, and a failed delivery never files a card that looks delivered.`;
+- Fleet-wide needs FLEET-WIDE WORDS ("all/every project", "fleet-wide", "across the fleet"). "Categorical about X as a class" ("all <resource> nodes stay off") is NOT fleet-wide: scope comes from WHERE the owner spoke, not how absolute the words sound.
+- A lane asking whether ANOTHER project's directive applies to its work is a SCOPE question — the OWNER's call: the platform routes it; if one reaches you, LEAVE it (it surfaces after the SLA) — a wrong cross-project ruling parks or tears down work the owner never addressed.
+- Bank every directive WITH its scope: ${modelToolName('update_supervisor_state')} takes a per-directive scope (the project name, or 'fleet') — scopeless is a contamination vector. Cite them as "owner → [project] (date): 'verbatim'".
+- Owner messages in YOUR OWN project's chats bind it normally; this rule covers CROSS-project application only.
+- (rule hold.blocker-scope) An infra blocker holds only the steps its registered scope names; a vague or missing scope holds the whole deploy/merge/publish class — never guess not-me into a wall.
+- (rule secrets.owner-card-delivery) A delivered credential routes to the encrypted question-secret store with a numbered reveal handle; card text never carries the value; a failed delivery never files a card that looks delivered.
+- (rule fleet.supervision-scope) An opted-out project is outside the fleet lane's view: never evaluate, steer, brief or re-list its work; the platform has no off switch.`;
 
 /** The one home of the parked-turn rule (stated once; the facts block names
  *  which purposes act TODAY and their bounds — never this text). */
@@ -153,7 +154,8 @@ export const CORE_EVIDENCE_RULES =
 - AN ANSWER IS NOT AN ACTION (rule asks.act-or-escalate): an owner question that carries an order is answered by acting, verifying and reporting up in the same wake — or escalating to the tier above; an explanation-only reply never retires the order.
 - (rule evidence.condition-wake-visibility) A run ending on a registered condition wake is verified by the wake store or receipts, never the schedule count — wakes are store rows plus delayed backstop hook events, so zero schedules never disproves one; read the chat-status condition-wakes block or the await_condition receipt first.
 - (rule evidence.stand-down-on-closed) A dispatched lane re-reads its ticket's status before its first mutating action and stands down immediately when it is already closed — dispatch and close race by milliseconds, and re-executing closed work can re-apply a live production change.
-- (rule evidence.answering-build) An absent field proves only what the ANSWERING BUILD lacked: a draining server still runs claimed work on old code — name its sha before calling a fix missing.`;
+- (rule evidence.answering-build) An absent field proves only what the ANSWERING BUILD lacked: a draining server still runs claimed work on old code — name its sha before calling a fix missing.
+- READ THE WHOLE OWNER ANSWER BEFORE RELAYING IT (rule relay.truncated-answer): a clipped excerpt of an owner answer must declare itself with a machine-readable flag and a pointer to the full text; never read a clip as the whole answer, and re-read it before relaying it as verbatim or reporting what it lacks.`;
 /** The task-lifecycle contract for a HUMAN ask (rule task.lifecycle): done in
  *  the answer, running with a visible card, or STAGED on a confirmation card
  *  only because the action leaves this chat (the external-effect tools card

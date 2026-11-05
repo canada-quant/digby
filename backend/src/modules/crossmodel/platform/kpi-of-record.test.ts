@@ -15,7 +15,7 @@ import {
 
 const NOW = new Date('2026-09-27T15:22:15Z');
 const KPI: KpiView = {
-  goalId: '226be7b7-0000-4000-8000-000000000000', projectId: 'p1', goalTitle: 'Qwen3.8-Flash-Next serving on QB2',
+  goalId: '226be7b7-0000-4000-8000-000000000000', projectId: 'p1', goalTitle: 'Qwen3.8-Flash-Next serving on node-a',
   key: 'kpi:client_visible_e2e_tok_s', value: 5.08, unit: 'tok/s', kind: 'kpi', bar: 10,
   receiptId: 'f5b42fe6-1111-4000-8000-000000000000', setAt: '2026-09-27T13:22:15Z',
   prev: { value: 2.464, setAt: '2026-09-27T03:34:40Z', receiptId: 'aaaa1111-2222-4000-8000-000000000000' },

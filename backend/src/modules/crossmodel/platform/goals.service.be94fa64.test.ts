@@ -3,7 +3,7 @@
  * guard refused a REAL owner question flagged by a MEMBER lane, blocking the
  * very repair it was deployed to allow. The live incident (verbatim ids from
  * the ticket): the Fleet Supervisor account (076d2832…, an EDITOR member of the
- * jacobpistor-owned "New Hampshire" project b34272d1) tried to re-point todo
+ * example-third-party-owned "New Hampshire" project b34272d1) tried to re-point todo
  * 4501c4b0's gate — stranded on the phantom oq_4694abca… — at the REAL open
  * card oq_1fc19541-1487-441a-a9c2-b7321873061a it had flagged itself, and
  * todo_update 400'd "matches no owner_questions row for this owner" (full id
@@ -30,7 +30,7 @@ jest.mock('../../../utils/logger', () => ({
 }));
 
 // ── Stateful fake DB ─────────────────────────────────────────────────────────
-const OWNER = 'u-owner-jacob'; // project owner (jacobpistor analog)
+const OWNER = 'u-owner-jacob'; // project owner (example-third-party analog)
 const MEMBER = 'u-member-fleet'; // acting member lane (076d2832… analog, EDITOR)
 const THIRD = 'u-third-party'; // unrelated account
 const PROJECT_ID = 'p-nh';

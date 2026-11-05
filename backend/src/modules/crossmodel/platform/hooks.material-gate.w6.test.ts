@@ -35,7 +35,7 @@ const mockPrisma: any = {
     count: jest.fn(async () => 0),
   },
   projectTodo: { findUnique: jest.fn(), count: jest.fn(async () => 0) },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   crossModelProject: { findUnique: jest.fn() },
   crossModelChat: { findUnique: jest.fn(), update: jest.fn(async () => ({})) },
   crossModelMessage: { create: jest.fn(async () => ({})) },
@@ -169,7 +169,7 @@ beforeEach(() => {
   mockPrisma.eventHook.findFirst.mockResolvedValue(null);
   mockPrisma.hookEvent.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.hookEvent.count.mockResolvedValue(0);
-  mockPrisma.codingSchedule.count.mockResolvedValue(1);
+  mockPrisma.chatSchedule.count.mockResolvedValue(1);
   mockPrisma.projectTodo.count.mockResolvedValue(0);
   targetChat = { ...FLEET_SUP };
   mockPrisma.crossModelChat.findUnique.mockImplementation(({ where }: any) =>

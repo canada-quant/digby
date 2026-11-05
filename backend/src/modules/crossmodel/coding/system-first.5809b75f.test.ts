@@ -60,7 +60,7 @@ const mockLogger = logger as unknown as { info: jest.Mock; warn: jest.Mock };
 
 /** The production seat, verbatim from the incident telemetry. */
 const TT_SEAT: ProviderConfig = {
-  url: 'https://llm.example.com/v1/chat/completions',
+  url: 'https://llm.cql.ca/v1/chat/completions',
   apiKey: 'sk-test',
   model: 'tt-qwen3.8-flash-next',
   spec: 'llm-cql:tt-qwen3.8-flash-next',

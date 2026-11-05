@@ -271,7 +271,7 @@ echo "  ✓ Digby runtime: $DIGBY_AGENT_BIN ($([[ "$RUNTIME_SRC" == "$NODE_BIN" 
 #
 # The two paths are emitted SINGLE-QUOTED (review N1): the heredoc below is
 # unquoted, so a bare "$AGENT_DIR/…" interpolates and a path containing a
-# `"` `` ` `` or `$` (a home like /Users/we"ird) would write a shim that is
+# `"` `` ` `` or `$` (a home like /Users/example"ird) would write a shim that is
 # broken from the moment it lands — and, like this ticket, only fails when
 # the owner first runs it.
 digby_sq() {
@@ -389,7 +389,7 @@ launchctl load "$PLIST_DEST"
 # FAIL LOUDLY with the exact next steps instead of printing success.
 # Paths cross into node via $ENV, never string interpolation (the file's own
 # convention above, line ~124) — a quote in the tree path (a home like
-# /Users/O'Brien) breaks the JS literal and turns every install into a false
+# /Users/example'Brien) breaks the JS literal and turns every install into a false
 # "THE AGENT DID NOT COME UP" (post-merge review D-1 of 5e8d73fc).
 AGENT_DIR_REAL="$(AGENT_DIR="$AGENT_DIR" node -e "console.log(require('fs').realpathSync(process.env.AGENT_DIR))" 2>/dev/null || printf '%s' "$AGENT_DIR")"
 EXPECTED_VERSION="$(AGENT_DIR="$AGENT_DIR" node -p "require(process.env.AGENT_DIR + '/package.json').version" 2>/dev/null || true)"

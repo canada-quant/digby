@@ -39,7 +39,21 @@ import { modelToolName } from '../coding/tool-scope';
 import { supervisorLedgerSearchable } from '../coding/supervisor-search-scopes';
 import { annotateStateLineWithKpi, type KpiView } from './kpi-of-record';
 import { loadNeedsYouUnion } from './owner-needs-you';// audit 2026-10-06 T4-9: the shared "is this only a no-op close?" leaf.
+// TICKET dca83b85: the ONE answer to "is this project in the Fleet's scope?".
+// PURE leaf (no prisma/logger/env) so this module's leaf promise holds.
+import { unsupervisedProjectIds } from './supervision-scope';
+// TICKET dca83b85: the framework row is PERMANENTLY supervised — identity comes
+// from the pure leaf (repoUrl resolving to the instance's own repo).
+import { instanceOwnRepoSlugSoft, isFrameworkProjectRow } from './framework-project';
 import { isNoopOnlyReply, ownerAskNoopReplyDisabled } from '../fleet/supervisor-reply-row';
+// SAA-1.3 PHASE 1 (todo 2ef2b254) — the `supervisor_wake` spill surface.
+// STATIC import on purpose, and it keeps this module's "leaf" promise: inline-spill
+// is a PURE leaf (no imports, no I/O, no clock), so it cannot drag config/env or
+// config/redis in behind it — the 2026-09-21 liveness-suite worker crash this file's
+// header warns about is exactly what a heavier import here would re-create. It also
+// has to be static: formatStateForWake is SYNCHRONOUS (it returns a string), so a
+// dynamic `await import` is not available at the injection point.
+import { inlineSpillMode, planInlineSpill, renderSpillPointers } from './inline-spill';
 
 // ── Doc shape ───────────────────────────────────────────────────────────────
 
@@ -1410,8 +1424,33 @@ export function formatStateForWake(
     const line = `- ${p.name}${stamp}: ${p.status}`;
     return kpis ? annotateStateLineWithKpi(line, kpis, now) : line;
   });
+  // ── SAA-1.3 PHASE 1 (todo 2ef2b254) — the `supervisor_wake` spill surface ──
+  // `observe` is the DEFAULT (nothing set on a box) and changes NOTHING here:
+  // renderSpillPointers returns its input BY REFERENCE unless the plan applied, and
+  // spillReserve is 0, so this block's output is byte-identical to Phase 0. Only the
+  // explicit `apply` value adds the pointer block — and the reserve is what buys it
+  // room, because the append happens AFTER every trim: without it the pointer block
+  // would push the result past WAKE_BLOCK_CAP, i.e. the injection would defeat the
+  // very cap it exists to explain. 240 chars is one pointer line
+  // (`… [N chars not inlined — read them: get_supervisor_state({section:"notes"})]`,
+  // ~85) plus the one-line header, with headroom.
+  const spillMode = inlineSpillMode();
+  const spillReserve = spillMode === 'apply' ? 240 : 0;
   const cap = (): number => WAKE_BLOCK_CAP + projectStampLens.reduce((n, x) => n + x, 0);
+  // THE RESERVE IS SCOPED TO THE NOTES TRIM, NOT TO THE WHOLE ASSEMBLER.
+  // The pointer block is appended AFTER every trim, so exactly one trim must
+  // leave room for it — and only that one. Reserving globally (the first cut of
+  // this change, measured 2026-11-04) subtracted 240 from EVERY trim, which (a)
+  // popped a dispatch line 240 chars early and, worse, (b) when the notes trim
+  // never fired, armed a box that had cut NOTHING followable: chat 5c3f302e went
+  // base=5955B → apply=5730B, lost a dispatch row and injected no pointer at all.
+  // Scoping it here means `observe` and `apply` agree on every dispatch /
+  // refutation / directive / ask decision, and diverge only in the notes tail.
+  const notesCap = (): number => cap() - spillReserve;
   let notes = doc.notes;
+  // Chars the NOTES trim below removed — reported through the spill plan so the cut
+  // is followable instead of invisible. Stays 0 unless that one trim fires.
+  let notesElided = 0;
 
   const render = () => {
     const parts = [header];
@@ -1443,8 +1482,13 @@ export function formatStateForWake(
       block = render();
     }
   }
-  if (block.length > cap() && notes) {
-    const keep = notes.length - (block.length - cap()) - 20; // 20 > '\n…[truncated]'.length
+  if (block.length > notesCap() && notes) {
+    const keep = notes.length - (block.length - notesCap()) - 20; // 20 > '\n…[truncated]'.length
+    // SAA-1.3 PHASE 1: record HOW MANY notes chars this trim dropped, measured
+    // against the ORIGINAL notes. The arithmetic above is untouched (observe mode
+    // must stay byte-identical), so this is a pure observation bolted on: keep<=0
+    // means the whole notes body vanished (`notes = ''` below) and elided is all of it.
+    notesElided = keep > 0 ? notes.length - keep : notes.length;
     notes = keep > 0 ? notes.slice(0, keep) + '\n…[truncated]' : '';
     block = render();
   }
@@ -1488,6 +1532,51 @@ export function formatStateForWake(
   while (block.length > cap() && askEntries.length > 1) {
     askEntries.shift();
     block = render();
+  }
+  // ── SAA-1.3 PHASE 1 (todo 2ef2b254): make the NOTES cut FOLLOWABLE ──────────
+  // Runs LAST, after every trim, so `block` here is exactly the string Phase 0
+  // returned. Three deliberate properties:
+  //  1. NO METRIC WRITE. formatStateForWake is SYNCHRONOUS and is on the wake path;
+  //     the only (async) metric channel is a dynamic `await import`, and a
+  //     fire-and-forget IIFE inside a pure renderer would make the function's cost
+  //     depend on telemetry I/O. `supervisor_wake` is therefore observed only as far
+  //     as this plan — the surface stays registered in the closed INLINE_SPILL_SURFACES
+  //     set because the name is passed to planInlineSpill here, in production code.
+  //  2. EXPLICIT mode guard. renderSpillPointers is already a no-op unless the plan
+  //     applied, but the `off` case is short-circuited here too so the kill switch
+  //     costs zero work (and reads as the kill switch at the call site).
+  //  3. observe ⇒ the segment is still computed and DROPPED (nothing reads `plan`),
+  //     which is what keeps the default byte-identical.
+  if (spillMode !== 'off' && notesElided > 0) {
+    const plan = planInlineSpill({
+      surface: 'supervisor_wake',
+      segments: [{ id: 'supervisor-state-notes', elidedChars: notesElided, readCall: 'get_supervisor_state({section:"notes"})' }],
+    });
+    const rendered = renderSpillPointers(block, plan);
+    // HARD POSTCONDITION (review 2026-11-04, defect class measured at 32 of 1124
+    // synthetic doc shapes): the injection must NEVER defeat the cap it explains.
+    // The reserve above is scoped to the notes trim, so when the over-cap excess
+    // comes from a DIRECTIVE (which that trim cannot recover) the block is trimmed
+    // to cap() by the last-resort loops, notes can be emptied outright, and the
+    // ~179-char append then lands OVER WAKE_BLOCK_CAP. Measured band: directive
+    // 5150..5225 with any notes length went observe 5993 (compliant) -> armed
+    // 6016+ (over), losing the whole NOTES section 24 times of 32.
+    // Because the reserve only ever touched the NOTES trim, restoring the full
+    // notes and re-trimming against cap() reproduces the OBSERVE block exactly —
+    // so arming falls back to "no pointer, no loss" instead of paying content for
+    // a cap violation.
+    if (rendered.length <= cap()) {
+      block = rendered;
+    } else {
+      notes = doc.notes;      // undo the reserve trim
+      notesElided = 0;        // nothing is being followed, so nothing is claimed
+      block = render();
+      if (block.length > cap() && notes) {
+        const keep = notes.length - (block.length - cap()) - 20;
+        notes = keep > 0 ? notes.slice(0, keep) + '\n…[truncated]' : '';
+        block = render();
+      }
+    }
   }
   return block;
 }
@@ -1563,6 +1652,55 @@ function readbackCreditDisabled(): boolean {
  *  matches the supervisor's own wake-economy dedupe rule. Exported for tests. */
 export const OWNER_DECISION_VERBATIM_WINDOW_MS = 6 * 60 * 60 * 1000;
 const ATTENTION_MAX_LINES = 6;
+/** Bound on the opted-out project scan (pathology guard, mirrors the fleet views). */
+const SUPERVISION_OUT_OF_SCOPE_MAX = 500;
+
+/**
+ * TICKET dca83b85 — the project ids the owner has taken OUT of fleet
+ * supervision (`supervised === false`). This is the one read every FLEET
+ * composition surface uses to subtract them; a project supervisor keeps
+ * working inside its own project, so nothing here affects it.
+ * TOTAL: any read failure degrades to an EMPTY set (supervised-by-default —
+ * the fail-open posture every other supervision site uses).
+ */
+async function fleetOutOfScopeProjectIds(userId: string): Promise<Set<string>> {
+  try {
+    const rows = await prisma.crossModelProject.findMany({
+      where: { userId, supervised: false },
+      select: { id: true, supervised: true, repoUrl: true },
+      take: SUPERVISION_OUT_OF_SCOPE_MAX,
+    });
+    const ownRepo = instanceOwnRepoSlugSoft();
+    // TICKET dca83b85 (owner ruling): the framework project is PERMANENTLY
+    // supervised — a legacy row flipped before the write guard shipped (or a
+    // direct DB edit) must not drop the platform surface out of the Fleet's
+    // view, so the identity is re-asserted on READ too.
+    return unsupervisedProjectIds(
+      (rows as Array<{ id: string; supervised?: boolean | null; repoUrl?: string | null }>)
+        .filter((p) => !isFrameworkProjectRow(p, ownRepo)),
+    );
+  } catch {
+    return new Set<string>();
+  }
+}
+
+/**
+ * The chats filed in the given projects — the chat-id leg of the supervision
+ * subtraction (owner questions and schedules key on a chat, never a project).
+ * TOTAL: a read failure degrades to an empty set (fail-open).
+ */
+async function chatIdsOfProjects(projectIds: string[]): Promise<Set<string>> {
+  if (!projectIds.length) return new Set<string>();
+  try {
+    const rows = await prisma.crossModelChat.findMany({
+      where: { projectId: { in: projectIds } },
+      select: { id: true },
+    });
+    return new Set((rows as Array<{ id: string }>).map((c) => String(c.id)));
+  } catch {
+    return new Set<string>();
+  }
+}
 // Sizing rework (remediation P2 v1#2): boilerplate is HOISTED into one header
 // per section, each item line is capped, and overflow drops whole ITEMS per
 // section — never a mid-sentence global slice. The global cap survives only
@@ -1788,7 +1926,7 @@ async function filterStalledByArmedReadback<
   try {
     if (readbackCreditDisabled() || !stalled.length) return stalled;
     const todoIds = new Set(stalled.map((t) => t.id));
-    const scheds = await prisma.codingSchedule.findMany({
+    const scheds = await prisma.chatSchedule.findMany({
       where: { enabled: true, OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
       select: { id: true, kind: true, enabled: true, nextRunAt: true, expiresAt: true, prompt: true },
       // Capped on purpose: the exemption is per-todo, and a pathological fleet
@@ -1830,7 +1968,7 @@ async function filterStalledByAssigneeLiveness<T extends { assigneeChatId: strin
       (prisma.agentRun as any)
         .groupBy({ by: ['sessionId'], where: { sessionId: { in: ids } }, _max: { updatedAt: true } })
         .catch(() => [] as any[]),
-      prisma.codingSchedule
+      prisma.chatSchedule
         .findMany({ where: { sessionId: { in: ids }, enabled: true }, select: { sessionId: true, intervalSec: true } })
         .catch(() => [] as any[]),
     ]);
@@ -1890,9 +2028,16 @@ async function filterStalledByAssigneeLiveness<T extends { assigneeChatId: strin
  */
 export async function buildFleetAttentionBlock(userId: string, now: Date = new Date()): Promise<string> {
   try {
+    // TICKET dca83b85: FLEET SCOPE. Every read below is account-wide, so a
+    // project the owner took out of fleet supervision (supervised:false) must be
+    // subtracted BEFORE composition — its stalled todos, machine-written
+    // schedules and open owner decisions belong to its own flow (its project
+    // supervisor still sees them), never to the Fleet's attention block.
+    const outOfScopeProjectIds = await fleetOutOfScopeProjectIds(userId);
+    const outOfScopeChatIds = await chatIdsOfProjects([...outOfScopeProjectIds]);
     const [stalledCandidates, unstartedCandidates, machinePrompts, ownerDecisions, needsYou] = await Promise.all([
       prisma.projectTodo.findMany({
-        where: { userId, status: 'in_progress', updatedAt: { lt: new Date(now.getTime() - STALE_IN_PROGRESS_MS) } },
+        where: { userId, status: 'in_progress', updatedAt: { lt: new Date(now.getTime() - STALE_IN_PROGRESS_MS) }, ...(outOfScopeProjectIds.size ? { projectId: { notIn: [...outOfScopeProjectIds] } } : {}) },
         // id rides the select for the armed-readback credit (09880586): leg B
         // matches the todo's progressNote against a schedule id, and leg A
         // matches the schedule's prompt against this row's own id prefix.
@@ -1903,7 +2048,7 @@ export async function buildFleetAttentionBlock(userId: string, now: Date = new D
         orderBy: { updatedAt: 'asc' }, take: ATTENTION_MAX_LINES * 4,
       }),
       prisma.projectTodo.findMany({
-        where: { userId, status: 'pending', assigneeChatId: { not: null }, updatedAt: { lt: new Date(now.getTime() - STALE_ASSIGNED_MS) } },
+        where: { userId, status: 'pending', assigneeChatId: { not: null }, updatedAt: { lt: new Date(now.getTime() - STALE_ASSIGNED_MS) }, ...(outOfScopeProjectIds.size ? { projectId: { notIn: [...outOfScopeProjectIds] } } : {}) },
         // id rides the select for the standing-role split (ticket d1a7bec2):
         // a row pulled by BOTH probes must be de-duplicated by its own id.
         select: { id: true, title: true, assigneeChatId: true, updatedAt: true, progressNote: true, createdAt: true },
@@ -1912,17 +2057,23 @@ export async function buildFleetAttentionBlock(userId: string, now: Date = new D
         // a page of freshly-annotated queues could hide a genuine non-start.
         orderBy: { updatedAt: 'asc' }, take: ATTENTION_MAX_LINES * 4,
       }),
-      prisma.codingSchedule.findMany({
+      prisma.chatSchedule.findMany({
         // Ticket 03aef0da: still-LIVE rows only — enabled AND not past their
         // lifetime ceiling (an expired row is stopped on the sweeper's next pass).
-        where: fullScheduleIdsDisabled()
-          ? { userId, enabled: true, promptSetBy: 'machine' }
-          : { userId, enabled: true, promptSetBy: 'machine', OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] },
+        where: {
+          ...(fullScheduleIdsDisabled()
+            ? { userId, enabled: true, promptSetBy: 'machine' }
+            : { userId, enabled: true, promptSetBy: 'machine', OR: [{ expiresAt: null }, { expiresAt: { gt: now } }] }),
+          // Supervision scope rides the SESSION (schedules have no projectId).
+          ...(outOfScopeChatIds.size ? { sessionId: { notIn: [...outOfScopeChatIds] } } : {}),
+        },
         select: { id: true, sessionId: true, createdAt: true },
         orderBy: { createdAt: 'desc' }, take: ATTENTION_MAX_LINES,
       }),
       prisma.ownerQuestion.findMany({
-        where: { userId, status: 'open' },
+        // OwnerQuestion keys on chatId (the flagging run's session), never a
+        // projectId — the supervision scope is the opted-out projects' chats.
+        where: { userId, status: 'open', ...(outOfScopeChatIds.size ? { chatId: { notIn: [...outOfScopeChatIds] } } : {}) },
         select: { question: true, chatId: true, createdAt: true },
         orderBy: { createdAt: 'asc' }, take: ATTENTION_MAX_LINES,
       }),
@@ -1933,7 +2084,7 @@ export async function buildFleetAttentionBlock(userId: string, now: Date = new D
       // lane 24f1950e's deploy sat blocked on the owner's approved Tailscale
       // ACL save (specimens 970e4dcb…f561c547). Fail-open: null skips the
       // section, never renders a false zero.
-      loadNeedsYouUnion({ userId }).catch(() => null),
+      loadNeedsYouUnion({ userId, excludeProjectIds: [...outOfScopeProjectIds] }).catch(() => null),
     ]);
     // Ticket 8f5a45f7: drop watch-lane false positives, then re-cap to the
     // render budget (the over-fetch above keeps genuine stalls visible).
@@ -2112,16 +2263,21 @@ const LIVENESS_MAX_CHATS = 500;
  */
 export async function buildFleetLivenessBlock(userId: string, now: Date = new Date()): Promise<string> {
   try {
-    const chats = await prisma.crossModelChat.findMany({
-      where: { userId, archivedAt: null },
+    // TICKET dca83b85: fleet scope — an opted-out project is excluded before
+    // composition (requirement 2: no liveness/evaluation of opted-out work).
+    // Its own project supervisor still sees its lanes.
+    const outOfScopeProjectIds = await fleetOutOfScopeProjectIds(userId);
+    const chats = (await prisma.crossModelChat.findMany({
+      where: { userId, archivedAt: null, ...(outOfScopeProjectIds.size ? { OR: [{ projectId: null }, { projectId: { notIn: [...outOfScopeProjectIds] } }] } : {}) },
       select: { id: true, projectId: true },
       take: LIVENESS_MAX_CHATS,
-    });
+    })).filter((c: any) => !(c.projectId && outOfScopeProjectIds.has(c.projectId)));
     if (!chats.length) return '';
     const chatIds = chats.map((c: any) => c.id);
+    const chatIdSet = new Set<string>(chatIds.map((id: any) => String(id)));
     const projectOfChat = new Map<string, string | null>(chats.map((c: any) => [c.id, c.projectId ?? null]));
     const [schedGroups, runGroups, nearCapRows] = await Promise.all([
-      (prisma.codingSchedule as any).groupBy({
+      (prisma.chatSchedule as any).groupBy({
         by: ['sessionId'],
         where: { sessionId: { in: chatIds }, enabled: true },
         _count: { _all: true },
@@ -2138,7 +2294,7 @@ export async function buildFleetLivenessBlock(userId: string, now: Date = new Da
       // existed). Row scan is bounded by the fleet's enabled-row count; the
       // same predicate the sweeper emits on, so the table never disagrees
       // with the alert.
-      prisma.codingSchedule.findMany({
+      prisma.chatSchedule.findMany({
         where: { sessionId: { in: chatIds }, enabled: true, kind: 'recurring' },
         select: { id: true, sessionId: true, kind: true, runsCount: true, maxRuns: true, expiresAt: true },
         take: 1000,
@@ -2152,12 +2308,14 @@ export async function buildFleetLivenessBlock(userId: string, now: Date = new Da
       return cur;
     };
     for (const g of schedGroups ?? []) {
+      if (!chatIdSet.has(String(g?.sessionId))) continue;
       const agg = aggOf(projectOfChat.get(g.sessionId) ?? null);
       agg.schedules += Number(g?._count?._all) || 0;
       const ms = g?._max?.lastFiredAt ? new Date(g._max.lastFiredAt).getTime() : NaN;
       if (Number.isFinite(ms)) agg.lastFiredMs = Math.max(agg.lastFiredMs ?? 0, ms);
     }
     for (const g of runGroups ?? []) {
+      if (!chatIdSet.has(String(g?.sessionId))) continue;
       aggOf(projectOfChat.get(g.sessionId) ?? null).liveRuns += Number(g?._count?._all) || 0;
     }
     if (!byProject.size) return ''; // no schedules, no live runs anywhere — nothing to table
@@ -2343,7 +2501,7 @@ export const OWN_FOLLOWUP_FIRED_WINDOW_MS = 60 * 60 * 1000;
 export async function supervisorOwnFollowUpChain(supervisorChatIds: string[], now: Date = new Date()): Promise<{ enabled: number; firedRecently: number } | null> {
   try {
     if (!supervisorChatIds.length) return null;
-    const rows: any[] = (await (prisma.codingSchedule as any).findMany({
+    const rows: any[] = (await (prisma.chatSchedule as any).findMany({
       where: {
         sessionId: { in: supervisorChatIds }, kind: 'once',
         OR: [{ enabled: true }, { lastFiredAt: { gte: new Date(now.getTime() - OWN_FOLLOWUP_FIRED_WINDOW_MS) } }],
@@ -2384,7 +2542,7 @@ export async function buildProjectScheduleBlock(projectId: string, now: Date = n
     const supervisorIds = new Set<string>((chats as any[]).filter((c) => c?.isProjectSupervisor === true).map((c) => String(c.id)));
     const [enabledRows, schedGroups, runGroups] = await Promise.all([
       // The id/next-fire render: enabled rows only, next-fire ascending.
-      (prisma.codingSchedule as any).findMany({
+      (prisma.chatSchedule as any).findMany({
         where: { sessionId: { in: chatIds }, enabled: true },
         select: { id: true, sessionId: true, nextRunAt: true, kind: true, promptSetBy: true, runsCount: true, maxRuns: true, expiresAt: true },
         orderBy: { nextRunAt: 'asc' },
@@ -2392,7 +2550,7 @@ export async function buildProjectScheduleBlock(projectId: string, now: Date = n
       }).catch(() => [] as any[]),
       // The counts: UNCAPPED grouped query (same doctrine as the fleet table)
       // — a lane's enabled/stopped numbers can never be truncated into a lie.
-      (prisma.codingSchedule as any).groupBy({
+      (prisma.chatSchedule as any).groupBy({
         by: ['sessionId', 'enabled'],
         where: { sessionId: { in: chatIds } },
         _count: { _all: true },
@@ -2532,15 +2690,19 @@ export interface FleetLivenessSnapshot {
  */
 export async function getFleetLivenessSnapshot(userId: string): Promise<FleetLivenessSnapshot | null> {
   try {
-    const chats = await prisma.crossModelChat.findMany({
-      where: { userId, archivedAt: null },
-      select: { id: true },
+    // TICKET dca83b85: this snapshot grounds the owner BRIEFING (requirement 2
+    // names briefings explicitly), so it is fleet scope — an opted-out
+    // project's schedules/runs are subtracted before the numbers are counted.
+    const outOfScopeProjectIds = await fleetOutOfScopeProjectIds(userId);
+    const chats = (await prisma.crossModelChat.findMany({
+      where: { userId, archivedAt: null, ...(outOfScopeProjectIds.size ? { OR: [{ projectId: null }, { projectId: { notIn: [...outOfScopeProjectIds] } }] } : {}) },
+      select: { id: true, projectId: true },
       take: LIVENESS_MAX_CHATS,
-    });
+    })).filter((c: any) => !(c.projectId && outOfScopeProjectIds.has(c.projectId)));
     const chatIds = chats.map((c: any) => c.id);
     if (!chatIds.length) return { enabledSchedules: 0, liveRuns: 0, lastFiredAt: null };
     const [schedGroups, runGroups] = await Promise.all([
-      (prisma.codingSchedule as any).groupBy({
+      (prisma.chatSchedule as any).groupBy({
         by: ['sessionId'],
         where: { sessionId: { in: chatIds }, enabled: true },
         _count: { _all: true },
@@ -2555,12 +2717,17 @@ export async function getFleetLivenessSnapshot(userId: string): Promise<FleetLiv
     let enabledSchedules = 0;
     let liveRuns = 0;
     let lastFiredAt: Date | null = null;
+    const chatIdSet = new Set<string>(chatIds.map((id: any) => String(id)));
     for (const g of schedGroups ?? []) {
+      if (!chatIdSet.has(String(g?.sessionId))) continue;
       enabledSchedules += Number(g?._count?._all) || 0;
       const d = g?._max?.lastFiredAt ? new Date(g._max.lastFiredAt) : null;
       if (d && Number.isFinite(d.getTime()) && (!lastFiredAt || d.getTime() > lastFiredAt.getTime())) lastFiredAt = d;
     }
-    for (const g of runGroups ?? []) liveRuns += Number(g?._count?._all) || 0;
+    for (const g of runGroups ?? []) {
+      if (!chatIdSet.has(String(g?.sessionId))) continue;
+      liveRuns += Number(g?._count?._all) || 0;
+    }
     return { enabledSchedules, liveRuns, lastFiredAt };
   } catch (err: any) {
     logger.warn(`supervisor-state: fleet liveness snapshot failed: ${err?.message ?? err}`, { source: 'supervisor-state' });

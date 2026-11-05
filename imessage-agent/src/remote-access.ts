@@ -60,9 +60,17 @@
 import { execFile } from 'child_process';
 
 // ── IO seam (injected so tests never touch a real Mac) ───────────────────────
-export interface MacRemoteRunResult { stdout: string; code: number }
+export interface MacRemoteRunResult { stdout: string; code: number; stderr?: string }
 export interface MacRemoteIo {
-  /** Run a command; never throws — a failure is `{stdout:'', code≠0}`. */
+  /** Run a command; never throws — a failure is `{stdout:'', code≠0}`.
+   *
+   *  `stderr` exists for ONE distinction (ticket e530220e): macOS prints
+   *  "The domain/default pair … does not exist" on STDERR, and that sentence is
+   *  the only way to tell "this key was never set" (a POSITIVE fact — see
+   *  parseAllowScreenSharing) apart from "the read failed". Before it, both
+   *  arrived as `{stdout:'', code:1}` and the honest-unknown rule turned a
+   *  stock Mac's default-off Screen Sharing into `unavailable`, which the card
+   *  rendered as "the agent is too old to report a remote channel". */
   run(cmd: string, args: string[], opts?: { stdin?: string }): Promise<MacRemoteRunResult>;
   /** True when a path exists (fire-and-forget stat; never throws). */
   exists(path: string): Promise<boolean>;
@@ -126,8 +134,11 @@ export const PLAN_PF_ENFORCEMENT_SCRIPT = [
 export const realMacRemoteIo: MacRemoteIo = {
   run(cmd, args, opts) {
     return new Promise((resolve) => {
-      const child = execFile(cmd, args, { timeout: 20000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
-        resolve({ stdout: String(stdout || ''), code: err ? 1 : 0 });
+      const child = execFile(cmd, args, { timeout: 20000, maxBuffer: 4 * 1024 * 1024 }, (err, stdout, stderr) => {
+        // stderr is captured (not logged) purely so parseAllowScreenSharing can
+        // tell macOS's "does not exist" — a POSITIVE "never set" — from a read
+        // that genuinely failed (ticket e530220e).
+        resolve({ stdout: String(stdout || ''), code: err ? 1 : 0, stderr: String(stderr || '') });
       });
       if (opts?.stdin) {
         try { child.stdin?.end(opts.stdin); } catch { /* the command may not read stdin */ }
@@ -144,23 +155,49 @@ export const realMacRemoteIo: MacRemoteIo = {
 // ── Parsers (pure; one per probe line) ──────────────────────────────────────
 
 /** `defaults read …Remotemanagement ALLOW_SCREENSHARING` → 1 ⇒ enabled.
- *  Absent key ⇒ null (unknown, NEVER a fabricated false).
+ *  Absent key ⇒ false (POSITIVELY not enabled); a failed read ⇒ null (unknown).
  *
  *  TWO REAL OUTPUT SHAPES, both handled: reading a SPECIFIC key prints the bare
  *  value ("1" / "0"), while the whole-domain form prints `ALLOW_SCREENSHARING =
  *  1`. A bare value that this missed would silently read as UNKNOWN — which
  *  would hide a DISABLED screen-sharing behind "unknown" and, worse, hide an
- *  ENABLED one that lost its firewall scope (the exposure case). */
-export function parseAllowScreenSharing(stdout: string, code = 0): boolean | null {
+ *  ENABLED one that lost its firewall scope (the exposure case).
+ *
+ *  TICKET e530220e — WHY "DOES NOT EXIST" IS `false` AND NOT `null`. A stock
+ *  Mac has never enabled Screen Sharing, so the key is simply absent and macOS
+ *  answers `The domain/default pair … does not exist`. This used to resolve
+ *  `null`, and `null` upstream means "the agent could not tell", so the agent
+ *  emitted NO `remoteaccess` param at all on EVERY poll — and the backend's
+ *  absent-never-clobbers rule then reported `unavailable`, which the card
+ *  renders as "the agent on this Mac is too old to report a remote channel —
+ *  update it". That sentence is false on a current build and it is exactly what
+ *  the owner reported. The `off` state was added to
+ *  remote-access-verdict.ts for this precise case ("honest off read as too old
+ *  to report") but the agent never emitted it, because an absent key never
+ *  reached that branch.
+ *
+ *  The distinction that keeps this honest: macOS SAYING the pair does not exist
+ *  is a measurement — the ARD `ALLOW_SCREENSHARING` enable flag is not set. That
+ *  fact is SCOPED to ARD: it says nothing about a third-party VNC server binding
+ *  port 5900 itself, so `off` here must never be read as "nothing can reach this
+ *  Mac's screen". A read that fails for any OTHER reason (permissions, a missing
+ *  plist domain we cannot interpret) stays `null`, so an unreadable device is
+ *  never silently reported as healthy-off.
+ *  `stderr` carries that sentence: `defaults` prints diagnostics there, not on
+ *  stdout.
+ */
+export function parseAllowScreenSharing(stdout: string, code = 0, stderr = ''): boolean | null {
   const s = String(stdout ?? '').trim();
   // Bare-value form (`defaults read <plist> <key>`).
   const bare = /^([01])$/.exec(s);
   if (bare) return bare[1] === '1';
   const m = /ALLOW_SCREENSHARING\s*=\s*(\d+)/i.exec(s);
   if (m) return m[1] === '1';
-  // No value found: a non-zero exit OR a "does not exist" body is an honest
-  // unknown, never a fabricated false.
-  if (code !== 0 || /does not exist/i.test(s)) return null;
+  // The key was never set — macOS says so on stderr. That is a POSITIVE
+  // "not enabled", not an unknown (ticket e530220e).
+  if (/does not exist/i.test(`${s}\n${String(stderr ?? '')}`)) return false;
+  // Anything else: an honest unknown, never a fabricated false.
+  if (code !== 0) return null;
   return null;
 }
 
@@ -309,7 +346,7 @@ export async function probeMacRemoteAccess(
         ? true
         : null;
   return {
-    screenSharingEnabled: parseAllowScreenSharing(sharing.stdout, sharing.code),
+    screenSharingEnabled: parseAllowScreenSharing(sharing.stdout, sharing.code, sharing.stderr),
     // `exists` is a boolean, never "unknown" — a probe that could not stat
     // resolves false, which is the SAFE direction here: an unreadable
     // credential file reads as missing (a blocker), never as provisioned.
@@ -388,7 +425,7 @@ export function remoteAccessAdvertValue(state: { enabled: boolean; tunnelOnly: b
 export async function probeMacRemoteListener(io: MacRemoteIo): Promise<boolean | null> {
   try {
     const r = await io.run('defaults', ['read', REMOTE_MANAGEMENT_PLIST, 'ALLOW_SCREENSHARING']);
-    return parseAllowScreenSharing(r.stdout, r.code);
+    return parseAllowScreenSharing(r.stdout, r.code, r.stderr);
   } catch {
     return null;
   }
@@ -508,6 +545,30 @@ export function planFirewallRule(tunnelInterface: string): string {
  * Fails CLOSED and names the exact remedy. Pure, so it is unit-tested without a
  * Mac and cannot regress into "the plan was attempted anyway".
  */
+
+/**
+ * The shim path BOTH installers write (`install.sh` and `macos-pkg/scripts/
+ * postinstall`), and the only name for this CLI that is guaranteed to exist.
+ *
+ * WHY A REFUSAL MUST PRINT THIS AND NOT `digby-agent` (ticket 36d1c99f): the
+ * remedy below is the single most-copied line in this file — a user who hit a
+ * refusal pastes it straight into a terminal. `digby-agent` reaches PATH only
+ * through a global install or `npm link`, and NEITHER install shape does
+ * either, so every bare `digby-agent …` we print hands the user
+ * `command not found` on top of the failure they were already reading about.
+ * The same defect was fixed on the fleet side in
+ * `backend/src/modules/crossmodel/imessage/unattended-verdict.ts`
+ * (`MAC_AGENT_CLI_PATH`); this is the agent-side half of the same class.
+ *
+ * Written as `"$HOME/…"` rather than `$HOME/…` because the `sudo` leg expands
+ * in the USER's shell before `sudo` resets the environment — see
+ * docs/UNATTENDED_DEVICES.md §4.
+ */
+export const MAC_AGENT_CLI_PATH = '$HOME/Library/Application Support/Digby/bin/digby-agent';
+
+/** The quoted, always-runnable form of this CLI for copy-paste into a shell. */
+export const MAC_AGENT_CLI_QUOTED = `"${MAC_AGENT_CLI_PATH}"`;
+
 export function privilegedRunRefusal(opts: {
   /** process.getuid() — undefined on Windows, hence optional. */
   uid: number | undefined;
@@ -516,9 +577,9 @@ export function privilegedRunRefusal(opts: {
 }): string | null {
   if (!opts.paired) {
     return (
-      'Not paired — run `digby-agent pair` first (the fleet can only see a paired device). ' +
-      'If this device IS paired, you are probably running under sudo: the pairing lives in the ' +
-      "invoking user's ~/.config/digby-agent, so use `sudo -E` or run as that user."
+      `Not paired — run \`${MAC_AGENT_CLI_QUOTED} pair\` first (the fleet can only see a paired ` +
+      'device). If this device IS paired, you are probably running under sudo: the pairing lives ' +
+      "in the invoking user's ~/.config/digby-agent, so use `sudo -E` or run as that user."
     );
   }
   // undefined uid = a platform without getuid; do not invent a refusal for it.
@@ -526,8 +587,8 @@ export function privilegedRunRefusal(opts: {
   if (opts.uid !== 0) {
     return (
       'Administrator rights are required: this configures ARDAgent (Screen Sharing) and a PF ' +
-      'anchor, which are root-owned. Re-run as: sudo digby-agent remote-access enable <account> ' +
-      '[tunnelInterface]. Nothing was changed.'
+      `anchor, which are root-owned. Re-run as: sudo ${MAC_AGENT_CLI_QUOTED} remote-access enable ` +
+      '<account> [tunnelInterface]. Nothing was changed.'
     );
   }
   return null;

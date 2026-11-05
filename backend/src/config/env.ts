@@ -35,7 +35,7 @@ const envSchema = z.object({
   X_MCP_URL:                    z.string().optional(), // default: http://x-mcp-prod:8000/mcp
   X_BEARER_TOKEN:               z.string().optional(), // app-only token (currently unused)
   // macOS iMessage bridge agent (optional — feature is dark until a Mac is paired)
-  IMESSAGE_AGENT_API_URL:       z.string().optional(), // base URL the Mac agent dials home to (default: https://digby.example.com/api)
+  IMESSAGE_AGENT_API_URL:       z.string().optional(), // base URL the Mac agent dials home to (default: https://digby.ai/api)
   IMESSAGE_AGENT_DOWNLOAD_URL:  z.string().optional(), // where the UI links users to download the agent
 });
 

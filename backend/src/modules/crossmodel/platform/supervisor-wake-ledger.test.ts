@@ -44,7 +44,7 @@ const mockPrisma: any = {
   activity: { findMany: jest.fn(async () => rows.activities) },
   ownerQuestion: { findMany: jest.fn(async () => rows.asks) },
   userFeatureRequest: { findMany: jest.fn(async () => rows.tickets) },
-  codingSchedule: {
+  chatSchedule: {
     findMany: jest.fn(async ({ where }: any) => (where?.enabled ? rows.armed : rows.stopped)),
     count: jest.fn(async () => rows.fired.length),
   },
@@ -567,7 +567,7 @@ describe('FLEET-PS-FIRST — the fleet diff leaves PS-covered projects\' progres
     expect(d.otherLedgerChanges).toBe(0);
     expect(d.runsStarted).toBe(1); // lane-p2 only
     expect(d.psCovered).toEqual({ projects: 1, lanes: 1, runsFinished: 1, artifacts: 1, prs: 1, todosDone: 1, other: 1, alarmsDelayed: true });
-    const fired = mockPrisma.codingSchedule.count.mock.calls.map((c: any[]) => c[0].where.sessionId.in);
+    const fired = mockPrisma.chatSchedule.count.mock.calls.map((c: any[]) => c[0].where.sessionId.in);
     expect(fired[fired.length - 1]).toEqual(['lane-p2']);
     expect(renderWakeLedgerDiff(d)).toContain('Progress in 1 project(s) with their own project supervisor (1 chat(s)) is left to those supervisors and omitted here: 1 run(s) finished · 1 PR(s) · 1 todo(s) done · 1 other ledger row(s). Their alarms reach you only as a delayed [PS ESCALATION]');
   });
@@ -595,7 +595,7 @@ describe('computeWakeLedgerDiff — LANE-IDLE-WAKE widened stalledLanes', () => 
   const now = new Date(NOW_ISO);
   const min = (m: number) => new Date(now.getTime() - m * 60_000);
   afterEach(() => { delete process.env.LANE_IDLE_WAKE_DISABLED; });
-  beforeEach(() => { mockPrisma.projectTodo.findMany.mockClear(); mockPrisma.codingSchedule.findMany.mockClear(); mockPrisma.crossModelChat.findMany.mockClear(); });
+  beforeEach(() => { mockPrisma.projectTodo.findMany.mockClear(); mockPrisma.chatSchedule.findMany.mockClear(); mockPrisma.crossModelChat.findMany.mockClear(); });
   const arrange = () => {
     rows.chats.push({ id: 'lane-new', title: 'New lane', projectId: 'p1', isSupervisor: false, isProjectSupervisor: false, userId: 'u1' });
     rows.inProgress = [
@@ -618,7 +618,7 @@ describe('computeWakeLedgerDiff — LANE-IDLE-WAKE widened stalledLanes', () => 
       { chatId: 'lane-new', title: 'New lane', todoId: 't-new', todoTitle: 'Schema', idleMin: 45, neverStarted: true },
       { chatId: LANE_DRIVE, title: 'Drive watch', todoId: 't-pend', todoTitle: 'Backfill', idleMin: 90, todoStatus: 'pending' },
     ]);
-    const armedQuery = mockPrisma.codingSchedule.findMany.mock.calls.map((c: any[]) => c[0]).find((a: any) => a?.where?.enabled);
+    const armedQuery = mockPrisma.chatSchedule.findMany.mock.calls.map((c: any[]) => c[0]).find((a: any) => a?.where?.enabled);
     expect(armedQuery.where).toEqual({ sessionId: { in: expect.any(Array) }, enabled: true });
     expect(armedQuery.select).toEqual({ sessionId: true, nextRunAt: true, kind: true, intervalSec: true });
     const codingRead = mockPrisma.crossModelChat.findMany.mock.calls.map((c: any[]) => c[0]).find((a: any) => a?.where?.codingState);
@@ -670,7 +670,7 @@ describe('computeWakeLedgerDiff — LANE-IDLE-WAKE widened stalledLanes', () => 
     const todoQuery = mockPrisma.projectTodo.findMany.mock.calls.map((c: any[]) => c[0]).find((a: any) => a?.where?.assigneeChatId?.not === null);
     expect(todoQuery.where.status).toBe('in_progress');
     expect(todoReads()).toEqual([]);
-    const armedQuery = mockPrisma.codingSchedule.findMany.mock.calls.map((c: any[]) => c[0]).find((a: any) => a?.where?.enabled);
+    const armedQuery = mockPrisma.chatSchedule.findMany.mock.calls.map((c: any[]) => c[0]).find((a: any) => a?.where?.enabled);
     expect(armedQuery.where.nextRunAt).toBeUndefined();
     expect(armedQuery.select).toEqual({ sessionId: true });
   });

@@ -16,7 +16,7 @@
  *      9c307167) are pinned at priority 0 with adminNotes" on the strength
  *      of those same failed update_feedback calls — the note text itself is
  *      the unbacked claim (an honest pairing in the same note — "Steered the
- *      ctrl.example.com Supervisor … — receipt 05126597" — is the send-verb +
+ *      ctrl.cql.ca Supervisor … — receipt 05126597" — is the send-verb +
  *      send-tool NEGATIVE control).
  *
  * REPLAYS: the texts as delivered (our own transcripts; the cited ids inside
@@ -69,7 +69,7 @@ ACTIONS TAKEN
 const SPECIMEN_05126597 = `Ticket dedupe: canonical = 1b1c41bc. The fleet's two duplicates (93292353, 9c307167) are pinned at priority 0 with adminNotes pointing at the canonical (machine close-to-done is evidence-gated).`;
 
 /** The honest pairing in the same note family — send verb + send tool. */
-const HONEST_SEND_PAIRING = `Steered the ctrl.example.com Supervisor toward the new verify chain — receipt 05126597`;
+const HONEST_SEND_PAIRING = `Steered the ctrl.cql.ca Supervisor toward the new verify chain — receipt 05126597`;
 
 describe('receiptTripleCandidates — the (verb, noun, id) collector', () => {
   it('collects the ad60c49d ACTIONS TAKEN citations (close-verb + ticket ids)', () => {

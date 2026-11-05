@@ -32,7 +32,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null) },
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
@@ -125,7 +125,7 @@ const FLEET_1714_GUARD_NOW = new Date('2026-09-15T17:16:00Z');
 /** DB: ONLY the real live schedule exists (prefix 26ac0ce7); every other id exists nowhere. */
 function onlyTheLiveScheduleExists() {
   const liveRow = { id: LIVE_SCHEDULE, createdAt: new Date(), lastFiredAt: new Date(), nextRunAt: new Date(Date.now() + 3600_000), enabled: true };
-  mockPrisma.codingSchedule.findFirst.mockImplementation(async (args: any) => {
+  mockPrisma.chatSchedule.findFirst.mockImplementation(async (args: any) => {
     const w = args?.where ?? {};
     const prefix = typeof w.id === 'string' ? w.id : w.id?.startsWith;
     return prefix && LIVE_SCHEDULE.startsWith(String(prefix).toLowerCase()) ? liveRow : null;
@@ -143,7 +143,7 @@ beforeEach(() => {
   mockGetRecentChatReceipts.mockResolvedValue([]);
   for (const m of Object.values(mockPrisma) as any[]) for (const fn of Object.values(m) as any[]) if (typeof fn?.mockReset === 'function') fn.mockReset();
   mockPrisma.crossModelMessage.create.mockResolvedValue({});
-  for (const m of ['crossModelMessage', 'crossModelChat', 'chatCodingState', 'codingSchedule', 'userFeatureRequest', 'projectGoal', 'projectTodo']) {
+  for (const m of ['crossModelMessage', 'crossModelChat', 'chatCodingState', 'chatSchedule', 'userFeatureRequest', 'projectGoal', 'projectTodo']) {
     mockPrisma[m].findFirst.mockResolvedValue(null);
     if (mockPrisma[m].findMany) mockPrisma[m].findMany.mockResolvedValue([]);
   }

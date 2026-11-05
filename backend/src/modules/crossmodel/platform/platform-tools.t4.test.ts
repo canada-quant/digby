@@ -90,7 +90,7 @@ const dbMock = {
   pendingConfirmation: mockConfirmations.api,
   crossModelChat: { findUnique: jest.fn(async ({ where }: any) => chats[where.id] ?? null) },
   crossModelMessage: { create: jest.fn(async () => ({})) },
-  codingSchedule: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'sch-1' ? { id: 'sch-1', sessionId: 'c-own', userId: 'u1' } : null)) },
+  chatSchedule: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'sch-1' ? { id: 'sch-1', sessionId: 'c-own', userId: 'u1' } : null)) },
   agentRun: {
     findUnique: jest.fn(async ({ where }: any) => (where.id === 'run-1' ? { id: 'run-1', sessionId: 'c-own' } : null)),
     findMany: jest.fn(async ({ where }: any) => (where.sessionId === 'c-own' ? [{ id: 'run-1', status: 'completed', attempts: 1, currentStep: 12, error: null, createdAt: new Date(), startedAt: new Date(), finishedAt: new Date() }] : [])),
@@ -277,8 +277,8 @@ const projRows: Record<string, any> = { 'proj-1': { id: 'proj-1', name: 'P' } };
 (dbMock as any).activity = { create: jest.fn(async () => ({})) };
 (dbMock as any).crossModelChat.findFirst = jest.fn(async ({ where }: any) => (chats[where.id] && chats[where.id].userId === where.userId ? chats[where.id] : null));
 (dbMock as any).crossModelChat.findMany = jest.fn(async ({ where }: any) => Object.values(chats).filter((c: any) => c.userId === where.userId && c.id.startsWith(where.id.startsWith)).map((c: any) => ({ id: c.id, title: c.title ?? null })));
-(dbMock as any).codingSchedule.findFirst = jest.fn(async () => null);
-(dbMock as any).codingSchedule.findMany = jest.fn(async () => []);
+(dbMock as any).chatSchedule.findFirst = jest.fn(async () => null);
+(dbMock as any).chatSchedule.findMany = jest.fn(async () => []);
 (dbMock as any).projectGoal = { findMany: jest.fn(async () => []) };
 (dbMock as any).projectTodo = { findMany: jest.fn(async () => []) };
 (dbMock as any).eventHook = { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) };
@@ -436,8 +436,10 @@ describe('fleet / ops', () => {
 });
 
 describe('create_chat_webhook (#32 close-out + ticket 2eef354e: delegated delivery)', () => {
-  it('stages a card even with a grant in auto mode; the OWNER-BROWSER confirm returns the token once; the model re-call never sees it', async () => {
-    autonomySvc.getChatAutonomy.mockResolvedValue({ chatId: 'sup-1', allowedTools: ['create_chat_webhook'], source: 'manual' });
+  it('stages a card when the grant does not NAME it; the OWNER-BROWSER confirm returns the token once; the model re-call never sees it', async () => {
+    // A manual grant exists but does not include create_chat_webhook — the card
+    // is the default (owner ruling oq_d45410a4: only an EXPLICIT naming is card-free).
+    autonomySvc.getChatAutonomy.mockResolvedValue({ chatId: 'sup-1', allowedTools: [...ALL_CONTROL], source: 'manual' });
     const reg = await run('create_chat_webhook', { chatId: 'c-own2', label: 'ci' });
     expect(reg).toMatchObject({ ok: false, needsConfirmation: true });
     expect(webhookSvc.createOrRotateWebhook).not.toHaveBeenCalled();
@@ -493,5 +495,56 @@ describe('create_chat_webhook (#32 close-out + ticket 2eef354e: delegated delive
     const r = await run('create_chat_webhook', { confirmationId: reg.confirmationId }, makeCtx({ userTurnAt: new Date(Date.now() + 60_000), ownerBrowser: true } as any));
     expect(r).toMatchObject({ ok: false, reason: 'exists', tokenPrefix: 'dgw_ab12cd34' });
     expect(webhookSvc.createOrRotateWebhook).not.toHaveBeenCalled();
+  });
+
+  // ── Owner ruling oq_d45410a4 (ticket d53eed71): "Make it autonomy-grantable —
+  //    card-free only where you explicitly granted it". Both halves are pinned:
+  //    an EXPLICIT grant is card-free, and every MODE-DERIVED authority is not.
+  describe('explicit-grant-only (oq_d45410a4 / d53eed71)', () => {
+    it('an EXPLICIT manual grant NAMING it executes card-free (no card, mints directly)', async () => {
+      autonomySvc.getChatAutonomy.mockResolvedValue({ chatId: 'sup-1', allowedTools: ['create_chat_webhook'], source: 'manual' });
+      const r = await run('create_chat_webhook', { chatId: 'c-own2', envKey: 'CI_WAKE_TOKEN' });
+      expect(r).toMatchObject({ ok: true, ids: { chatId: 'c-own2', envKey: 'CI_WAKE_TOKEN' }, tokenPrefix: 'dgw_new12345' });
+      expect(r.needsConfirmation).toBeUndefined();
+      expect(webhookSvc.createOrRotateWebhook).toHaveBeenCalledTimes(1);
+      // the token is vaulted, never echoed to the model
+      expect(credsSvc.upsertCredential).toHaveBeenCalledWith('u1', 'custom', 'CI_WAKE_TOKEN', 'dgw_new12345' + 'f'.repeat(40));
+      expect(JSON.stringify(r)).not.toMatch(/f{40}/);
+      expect(await pendingConfirmationCount()).toBe(0);
+      expect(autonomySvc.auditAutonomousExecution).toHaveBeenCalledWith(expect.objectContaining({ tool: 'create_chat_webhook', note: expect.stringContaining('oq_d45410a4') }));
+    });
+
+    it('an agent_mode_auto row naming it still STAGES — mode-derived authority is not an owner grant', async () => {
+      // This is the exact state both offending lanes were in: Auto mode
+      // materializes the full grantable set, and create_chat_webhook must never
+      // be reachable that way (it is absent from AUTONOMY_GRANTABLE_TOOLS, so a
+      // real row cannot even contain it — a hand-crafted one must not bypass).
+      autonomySvc.getChatAutonomy.mockResolvedValue({ chatId: 'sup-1', allowedTools: ['create_chat_webhook'], source: 'agent_mode_auto' });
+      const reg = await run('create_chat_webhook', { chatId: 'c-own2', envKey: 'CI_WAKE_TOKEN' });
+      expect(reg).toMatchObject({ ok: false, needsConfirmation: true });
+      expect(webhookSvc.createOrRotateWebhook).not.toHaveBeenCalled();
+      expect(credsSvc.upsertCredential).not.toHaveBeenCalled();
+    });
+
+    it('a machine_delegated (supervisor) row naming it still STAGES — a granter cannot launder its own authority into an owner grant', async () => {
+      autonomySvc.getChatAutonomy.mockResolvedValue({ chatId: 'sup-1', allowedTools: ['create_chat_webhook'], source: 'machine_delegated' });
+      const reg = await run('create_chat_webhook', { chatId: 'c-own2', envKey: 'CI_WAKE_TOKEN' });
+      expect(reg).toMatchObject({ ok: false, needsConfirmation: true });
+      expect(webhookSvc.createOrRotateWebhook).not.toHaveBeenCalled();
+    });
+
+    it('an AUTO-mode coding run with NO row still STAGES — the db747817 auto-mode waiver does not reach this tool', async () => {
+      autonomySvc.getChatAutonomy.mockResolvedValue(null);
+      const reg = await run('create_chat_webhook', { chatId: 'c-own2', envKey: 'CI_WAKE_TOKEN' }, makeCtx({ agentSurface: 'coding', permissionMode: 'auto', allowedTools: undefined } as any));
+      expect(reg).toMatchObject({ ok: false, needsConfirmation: true });
+      expect(webhookSvc.createOrRotateWebhook).not.toHaveBeenCalled();
+    });
+
+    it('an unreadable grant row FAILS CLOSED into staging', async () => {
+      autonomySvc.getChatAutonomy.mockRejectedValue(new Error('db down'));
+      const reg = await run('create_chat_webhook', { chatId: 'c-own2', envKey: 'CI_WAKE_TOKEN' });
+      expect(reg).toMatchObject({ ok: false, needsConfirmation: true });
+      expect(webhookSvc.createOrRotateWebhook).not.toHaveBeenCalled();
+    });
   });
 });

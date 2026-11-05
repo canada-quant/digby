@@ -2,7 +2,7 @@
  * REGRESSION PIN (2026-09-27, first prod dry run of the layered-prompt
  * re-scaffold, deploy fb1e584a): `migrateSupervisorPrompts` walked all 15
  * supervisor chats and then the stock-sweep scan threw
- * "Unknown field `chatId` for select statement on model `CodingSchedule`" —
+ * "Unknown field `chatId` for select statement on model `ChatSchedule`" —
  * the schedule row keys its chat as `sessionId` (schema.prisma: `sessionId
  * String // == crossmodel_chats.id`). The whole sweep pass was lost to the
  * catch-all outcome row. Pins: the schedule query selects `sessionId`, never
@@ -17,7 +17,7 @@ jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
     crossModelChat: { findMany: (...a: any[]) => findManyChats(...a) },
-    codingSchedule: { findMany: (...a: any[]) => findManySchedules(...a), update: jest.fn() },
+    chatSchedule: { findMany: (...a: any[]) => findManySchedules(...a), update: jest.fn() },
   },
 }));
 jest.mock('../../../utils/logger', () => ({ __esModule: true, default: { warn: jest.fn(), info: jest.fn(), error: jest.fn(), debug: jest.fn() } }));

@@ -211,13 +211,17 @@ describe('sweepPendingFirstPrompts', () => {
     expect(delivered).toBe(1);
     expect(mockSendChatMessage).toHaveBeenCalledTimes(1);
     expect(mockSendChatMessage).toHaveBeenCalledWith({ userId: USER, chatId: CHAT, content: PROMPT });
-    // selection shape: ready OR provisioning-error (f173), past the grace window, zero coding messages
+    // selection shape: ready OR provisioning-error (f173), past the grace window, zero transcript messages
     const query = mockPrisma.chatCodingState.findMany.mock.calls[0][0];
     expect(query.where.OR).toEqual([
       { status: 'ready' },
       { status: 'error', errorMessage: { startsWith: 'Workspace provisioning failed' } },
     ]);
-    expect(query.where.messages).toEqual({ none: {} });
+    // MERGE-1 step 10: the zero-message predicate moved off the dropped CodingMessage
+    // relation onto the chat's merged transcript (`chatMessages`). Pinned as the JOIN
+    // SHAPE so a future edit cannot silently widen the sweep to sessions WITH a transcript.
+    expect(query.where.chat).toEqual({ chatMessages: { none: {} } });
+    expect(query.where.messages).toBeUndefined();
     expect(query.where.createdAt.lt).toBeInstanceOf(Date);
   });
 

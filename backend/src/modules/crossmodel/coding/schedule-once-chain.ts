@@ -127,7 +127,7 @@ export function chainCadenceSec(requestedIntervalSec: number, verdict: OnceChain
 export async function loadOnceChainRows(sessionId: string, now: Date | number = Date.now()): Promise<OnceChainRow[]> {
   const nowMs = typeof now === 'number' ? now : now.getTime();
   try {
-    const rows = await prisma.codingSchedule.findMany({
+    const rows = await prisma.chatSchedule.findMany({
       where: { sessionId, kind: 'once', createdAt: { gte: new Date(nowMs - ONCE_CHAIN_WINDOW_MS) } },
       select: { id: true, chainedFromScheduleId: true, createdAt: true, intervalSec: true },
       take: ONCE_CHAIN_MAX_WALK,

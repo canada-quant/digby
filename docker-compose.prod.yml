@@ -1,0 +1,275 @@
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        - NEXT_PUBLIC_API_URL=https://digby.ai/api
+    container_name: admin-frontend-prod
+    ports:
+      - "8247:3000"
+    environment:
+      - NODE_ENV=production
+      - HOSTNAME=0.0.0.0
+      - NEXT_PUBLIC_API_URL=https://digby.ai/api
+      - NODE_OPTIONS=--max-old-space-size=640
+    depends_on:
+      - backend
+    networks:
+      - admin-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    container_name: admin-backend-prod
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      - DATABASE_URL=${DATABASE_URL:-postgresql://admin:SecureP%40ssw0rd2026%21@postgres:5432/admin_db?sslmode=disable}
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:-your-super-secret-jwt-key-change-this-in-production-minimum-32-characters}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:-your-super-secret-refresh-key-change-this-in-production-minimum-32-characters}
+      - JWT_EXPIRES_IN=7d
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - FRONTEND_URL=https://digby.ai,http://100.64.0.1:8247,http://example-local-host:8247,http://localhost:8247,http://example-local.test
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - XAI_GROK_API_KEY=${XAI_GROK_API_KEY:-}
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      # Open Source model providers (all direct APIs — Fireworks removed)
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - ZAI_API_KEY=${ZAI_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - MCP_DIGBY_TOKEN=${MCP_DIGBY_TOKEN:-}
+      # Google OAuth + Workspace MCP
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI:-https://digby.ai/api/crossmodel/google/callback}
+      - GOOGLE_TOKEN_ENCRYPTION_KEY=${GOOGLE_TOKEN_ENCRYPTION_KEY:-}
+      - GOOGLE_MCP_API_KEY=${GOOGLE_MCP_API_KEY:-}
+      - GOOGLE_MCP_URL=${GOOGLE_MCP_URL:-http://google-mcp-prod:8000/mcp}
+      # Xero OAuth + Accounting integration
+      - XERO_CLIENT_ID=${XERO_CLIENT_ID:-}
+      - XERO_CLIENT_SECRET=${XERO_CLIENT_SECRET:-}
+      - XERO_OAUTH_REDIRECT_URI=${XERO_OAUTH_REDIRECT_URI:-https://digby.ai/api/crossmodel/xero/callback}
+      # Plaid banking integration
+      - PLAID_CLIENT_ID=${PLAID_CLIENT_ID:-}
+      - PLAID_SECRET=${PLAID_SECRET:-}
+      - PLAID_ENV=${PLAID_ENV:-production}
+      # Slack OAuth + Workspace MCP integration
+      - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
+      - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
+      - SLACK_OAUTH_REDIRECT_URI=${SLACK_OAUTH_REDIRECT_URI:-https://digby.ai/api/crossmodel/slack/callback}
+      - SLACK_TOKEN_ENCRYPTION_KEY=${SLACK_TOKEN_ENCRYPTION_KEY:-}
+      - SLACK_MCP_API_KEY=${SLACK_MCP_API_KEY:-}
+      - SLACK_MCP_URL=${SLACK_MCP_URL:-http://slack-mcp-prod:8000/mcp}
+      # Discord MCP — shared bot (bot token lives only in the discord-mcp container)
+      - DISCORD_MCP_API_KEY=${DISCORD_MCP_API_KEY:-}
+      - DISCORD_MCP_URL=${DISCORD_MCP_URL:-http://discord-mcp-prod:8000/mcp}
+      # Asana OAuth + Tasks MCP integration
+      - ASANA_CLIENT_ID=${ASANA_CLIENT_ID:-}
+      - ASANA_CLIENT_SECRET=${ASANA_CLIENT_SECRET:-}
+      - ASANA_OAUTH_REDIRECT_URI=${ASANA_OAUTH_REDIRECT_URI:-https://digby.ai/api/crossmodel/asana/callback}
+      - ASANA_TOKEN_ENCRYPTION_KEY=${ASANA_TOKEN_ENCRYPTION_KEY:-}
+      - ASANA_MCP_API_KEY=${ASANA_MCP_API_KEY:-}
+      - ASANA_MCP_URL=${ASANA_MCP_URL:-http://asana-mcp-prod:8000/mcp}
+      # Telegram bot integration (single shared "Digby" bot; webhook on the backend)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      # Email as Digby (ticket 54f237bf) — send_email_as_digby SMTP (all optional; unset = not configured)
+      - DIGBY_SMTP_HOST=${DIGBY_SMTP_HOST:-smtp.gmail.com}
+      - DIGBY_SMTP_PORT=${DIGBY_SMTP_PORT:-587}
+      - DIGBY_SMTP_USER=${DIGBY_SMTP_USER:-}
+      - DIGBY_SMTP_PASS=${DIGBY_SMTP_PASS:-}
+      - DIGBY_SMTP_FROM=${DIGBY_SMTP_FROM:-digby@digby.ai}
+      # Memory: cap Node.js heap to prevent OOM. Container limit is 3GB.
+      - NODE_OPTIONS=--max-old-space-size=2560
+      # Machine-close replay-test verification (closure-evidence.ts) — parity
+      # with docker-compose.app.yml: the rsynced repo bind-mounted read-only.
+      - REPLAY_TEST_ROOT=/repo
+    volumes:
+      - /opt/crossmodel:/repo:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - admin-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: admin-postgres-prod
+    ports:
+      - "9384:5432"
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-change-me-local-dev}
+      - POSTGRES_DB=admin_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - admin-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d admin_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    stop_grace_period: 60s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  redis:
+    image: redis:7-alpine
+    container_name: admin-redis-prod
+    ports:
+      - "7856:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - admin-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 320m
+
+  adminer:
+    image: adminer:latest
+    container_name: admin-adminer-prod
+    ports:
+      - "9521:8080"
+    depends_on:
+      - postgres
+    networks:
+      - admin-network
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  # ── Google Workspace MCP server ──────────────────────────────────────────────
+  google-mcp:
+    build:
+      context: ./google-mcp
+      dockerfile: Dockerfile
+    container_name: google-mcp-prod
+    ports:
+      - "8201:8000"
+    environment:
+      - GOOGLE_MCP_API_KEY=${GOOGLE_MCP_API_KEY:-}
+      - NODE_OPTIONS=--max-old-space-size=512
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - admin-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  # ── GitHub MCP server ──────────────────────────────────────────────────────────
+  github-mcp:
+    build:
+      context: ./github-mcp
+      dockerfile: Dockerfile
+    container_name: github-mcp-prod
+    ports:
+      - "8202:8000"
+    environment:
+      - GITHUB_MCP_API_KEY=${GITHUB_MCP_API_KEY:-}
+      - NODE_OPTIONS=--max-old-space-size=512
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - admin-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+  brightdata-mcp:
+    build:
+      context: ./mcp-gateway
+      dockerfile: Dockerfile
+    container_name: mcp-gateway-prod
+    ports:
+      - "8200:8000"
+    environment:
+      - BRIGHTDATA_API_TOKEN=${BRIGHTDATA_API_TOKEN:-}
+      - BRIGHTDATA_WEB_UNLOCKER_ZONE=${BRIGHTDATA_WEB_UNLOCKER_ZONE:-web_unlocker1}
+      - BRIGHTDATA_BROWSER_ZONE=${BRIGHTDATA_BROWSER_ZONE:-scraping_browser1}
+      - MCP_API_KEY=${MCP_DIGBY_TOKEN:-}
+      - NODE_OPTIONS=--max-old-space-size=768
+    healthcheck:
+      test: ["CMD", "node", "-e", "const h=require('http');h.get('http://127.0.0.1:8000/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  admin-network:
+    driver: bridge

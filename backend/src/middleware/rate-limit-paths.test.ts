@@ -70,13 +70,13 @@ describe('the matchers accept exactly what the router routes', () => {
 describe('the client key', () => {
   it('is the hashed hops-anchored client ip — two clients behind one ALB node differ; never the raw ip', () => {
     process.env.QUOTA_TRUSTED_PROXY_HOPS = '2';
-    const a = guestStreamAttachLimiterKey({ ip: '10.0.0.4', headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.4' } });
-    const b = guestStreamAttachLimiterKey({ ip: '10.0.0.4', headers: { 'x-forwarded-for': '198.51.100.7, 10.0.0.4' } });
+    const a = guestStreamAttachLimiterKey({ ip: '10.0.0.14', headers: { 'x-forwarded-for': '203.0.113.9, 10.0.0.14' } });
+    const b = guestStreamAttachLimiterKey({ ip: '10.0.0.14', headers: { 'x-forwarded-for': '198.51.100.7, 10.0.0.14' } });
     expect(a).not.toBe(b);
     expect(a).toMatch(/^c:[0-9a-f]{32}$/);
     expect(a).not.toContain('203.0.113.9');
     // A forged hop PREPENDED by the client cannot move the anchored entry.
-    expect(guestStreamAttachLimiterKey({ ip: '10.0.0.4', headers: { 'x-forwarded-for': '1.2.3.4, 203.0.113.9, 10.0.0.4' } })).toBe(a);
+    expect(guestStreamAttachLimiterKey({ ip: '10.0.0.14', headers: { 'x-forwarded-for': '1.2.3.4, 203.0.113.9, 10.0.0.14' } })).toBe(a);
     expect(hashedClientKey({})).toBeNull();
     expect(guestStreamAttachLimiterKey({})).toBe('c:noip');
   });
@@ -108,7 +108,7 @@ describe('over a real express app', () => {
 
   it('the trailing-slash and upper-case reattach forms reach the handler AND are counted', async () => {
     process.env.QUOTA_TRUSTED_PROXY_HOPS = '2';
-    const xff = '192.0.2.10, 10.0.0.4';
+    const xff = '192.0.2.10, 10.0.0.14';
     expect(await get(`/session/${SID}/stream/`, xff)).toBe(200);
     expect(await get(`/SESSION/${SID}/STREAM`, xff)).toBe(200);
     expect(await get(`/session/${SID}/stream`, xff)).toBe(429);
@@ -117,7 +117,7 @@ describe('over a real express app', () => {
 
   it('two guests behind the same ALB node have separate buckets — one draining its own never blocks the other', async () => {
     process.env.QUOTA_TRUSTED_PROXY_HOPS = '2';
-    const alb = '10.0.0.3';
+    const alb = '10.0.0.17';
     const a = `203.0.113.20, ${alb}`;
     const b = `198.51.100.30, ${alb}`;
     for (let i = 0; i < 2; i++) expect(await get(`/session/${SID}/stream`, a)).toBe(200);

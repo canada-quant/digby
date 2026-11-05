@@ -66,11 +66,14 @@ import { isDefinitiveAuthFailure } from '@/lib/api-client';
 import { childrenApi } from '@/lib/api/children';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useBranding } from '@/app/branding/BrandingProvider';
+import { BrandSpinner } from '@/components/ui/custom/BrandSpinner';
 import AppRail, { useRailOpen, RAIL_BREAKPOINT_PX } from '@/components/ui/custom/app-rail';
 import { useResizable } from '@/lib/use-resizable';
 import { usePolling, isAbortError } from '@/lib/use-polling';
 // Sidebar live refresh (ticket d6b2eef5): delta merge + watermark helpers.
 import { CHAT_LIST_LIVE_ACTIVE_MS, CHAT_LIST_LIVE_IDLE_MS, CHAT_LIST_LIVE_LIMIT, mergeChatRows, newestUpdatedAt, unknownRunningIds } from '@/lib/chat-list-live';
+import { createRetainedCache, CHAT_LIST_CACHE_MAX, CHAT_LIST_CACHE_TTL_MS } from '@/lib/chat-view-cache';
 import { useChatListEvents } from '@/lib/chat-events';
 import { chatFlavorFromRow, chatFlavorFetchFallback } from '@/lib/chat-flavor';
 import Script from 'next/script';
@@ -334,6 +337,94 @@ const DeepSearchDialog = dynamic(() => import('./components/DeepSearchDialog'));
 
 const PANEL_AUTOCOLLAPSE_BELOW_PX = 1280;
 
+/**
+ * Sidebar chat-list retention (ticket b5734922 — owner 2026-11-04: "every
+ * navigation away from chats and back causes a long wait... why are chats not
+ * cached?"). /account, /files and /management are sibling routes, so a round
+ * trip UNMOUNTS this page and every reload is a cold load: the rail paints
+ * "Loading chats…" skeletons until `listChats` settles.
+ *
+ * Module scope survives that unmount (it is the only thing that does), so the
+ * last list seeds the rail's first paint and `fetchChatList` re-fetches on top
+ * as it always did. `railSeeded` is the ONE new gate: while it is true the
+ * retained rows render and the hydration gate is not consulted, which is what
+ * turns the return visit from "skeleton → list" into "list → list (fresh)".
+ *
+ * CORRECTNESS: the seed is replaced wholesale by the fresh list on every
+ * load (`setChats(chatsArr)` in fetchChatList), so a chat deleted on another
+ * device, a rename, or a framework-spawned session all reconcile on the same
+ * round trip. The retained rows can delay the truth by that round trip and can
+ * never overwrite it. Memory-only (see lib/chat-view-cache.ts) so a deploy
+ * never serves pre-deploy rows into a post-deploy bundle.
+ */
+const chatListCache = createRetainedCache<CrossModelChat[]>({
+  ttlMs: CHAT_LIST_CACHE_TTL_MS,
+  max: CHAT_LIST_CACHE_MAX,
+});
+
+/**
+ * Keep the retained sidebar page in step with a LOCAL row change — called from
+ * every path that patches `chats` in place (delete, archive, restore-Undo,
+ * rename, move-to-project) and from every path that APPENDS a row (create,
+ * spawn, load-more).
+ *
+ * WHY a patch and not a drop (review finding 1, 2026-11-04): `archiveChat` does
+ * not remove a row, it sets `archivedAt`; a rename sets `title`; a move sets
+ * `projectId`. Dropping those rows would be wrong (the chat still exists) and
+ * doing nothing would let the PRE-change shape first-paint on the next return
+ * visit — the owner's 2026-10-27 "a deleted chat still sits there" class
+ * reached through the cache. `patch === null` means "this row is gone".
+ *
+ * A no-op when the id is not on the retained page: the retained page is only
+ * ever a first paint, and a row it never held cannot go stale in it.
+ */
+function patchRetainedChat(chatId: string, patch: Partial<CrossModelChat> | null): void {
+  const retained = chatListCache.read('first-page');
+  if (!retained) return;
+  if (patch === null) {
+    const next = retained.value.filter((c) => c.id !== chatId);
+    if (next.length === retained.value.length) return; // not in the retained page
+    // Re-stamp at the ORIGINAL time: a delete must not extend the life of the
+    // rows it leaves behind (review finding, 2026-11-04).
+    if (next.length) chatListCache.write('first-page', next, retained.at);
+    else chatListCache.purge('first-page');
+    return;
+  }
+  const next = retained.value.map((c) => (c.id === chatId ? { ...c, ...patch } : c));
+  chatListCache.write('first-page', next, retained.at);
+}
+
+/** Retain the CURRENT list after a local append (create / spawn / load-more).
+ *  Without this the next return visit first-paints a list missing the chat the
+ *  user just created — with `railReady` true there is no skeleton, and
+ *  `hasMoreChats` starts false so "Load more" is not even offered until the
+ *  refetch lands (review finding 1, 2026-11-04). */
+function retainApiChatRow(chat: CrossModelChat | null | undefined): void {
+  if (!chat?.id) return;
+  const retained = chatListCache.read('first-page');
+  if (!retained) return;
+  if (retained.value.some((c) => c.id === chat.id)) return; // already known
+  chatListCache.write('first-page', [chat, ...retained.value].slice(0, 30));
+}
+
+/**
+ * The fleet-hidden chat ids, mirrored at module scope.
+ *
+ * WHY (review finding, 2026-11-04): `fleetHidden` is React state that starts as
+ * an empty Set and only fills after `fleetApi.getSupervisor()` resolves
+ * (page.tsx, the fleet-hidden effect). `visibleChats` filters with it — so a
+ * retained first paint would show an admin the fleet chats in the CHATS rail
+ * until that probe lands, and indefinitely if the probe fails. The coding
+ * snapshot never had this problem because it is transcript-shaped; the rail is
+ * not. Mirroring the set at module scope lets the SEED filter with the last
+ * known answer instead of an empty one.
+ */
+let retainedFleetHiddenChatIds: ReadonlySet<string> = new Set();
+
+function rememberFleetHidden(chatIds: ReadonlySet<string>): void {
+  retainedFleetHiddenChatIds = chatIds;
+}
+
 /** Starter prompts under the guest home composer (2026-10-16 site review) — a
  *  tap prefills the composer; signed-in users get personalised ones instead. */
 const GUEST_STARTERS = [
@@ -354,6 +445,9 @@ const GUEST_STARTERS = [
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function CrossModelPage() {
+  // Shared branding core (todo d2d32b57): one snapshot resolved on the server
+  // by app/layout.tsx; defaults to Digby when an operator configured nothing.
+  const branding = useBranding();
   const router = useRouter();
   const [user, setUser] = useState<any>(null);
   // Access token for the SSE invalidation stream (6201e0ee): EventSource
@@ -378,7 +472,7 @@ export default function CrossModelPage() {
   // Model-details ("More info") panels are an ADMIN debugging surface — hidden
   // from regular users (owner directive 2026-07-24). Same admin check as the
   // account page.
-  const isAdmin = user?.role === 'ADMIN' || user?.email?.toLowerCase() === 'paul@sunday.market';
+  const isAdmin = user?.role === 'ADMIN' || user?.email?.toLowerCase() === 'example-user@example.com';
   // Connected Google accounts — used by the email draft card's "From" picker so a
   // Draft text now lives inside <ChatComposerTextarea> (composerRef), NOT in this giant component —
   // so typing doesn't re-render the whole page. `hasText` mirrors only empty↔non-empty transitions
@@ -660,6 +754,24 @@ export default function CrossModelPage() {
   // One-shot: never re-arms on refetches (archive restores, Retry), so those
   // paths never flash a skeleton over already-rendered content.
   const [sidebarHydrated, setSidebarHydrated] = useState(false);
+  // Retained first paint (ticket b5734922 — owner 2026-11-04: returning to
+  // chats "causes a long wait"). `sidebarHydrated` is a ONE-SHOT gate that only
+  // flips after the first list/folders/running fetches all settle, so without
+  // this every return visit re-walks the skeleton path. When module scope still
+  // holds this user's last list (a client-side navigation back from /account,
+  // /files or /management — the only way the cache can be non-empty, since it
+  // dies with the document) the rail renders those rows IMMEDIATELY instead of
+  // skeletons. The list fetch still runs on every mount and REPLACES them
+  // wholesale, so nothing stale survives one round trip.
+  //   Seeded in its own mount effect, NOT during render: the server renders an
+  //   empty rail, and seeding during render would hydration-mismatch. It also
+  //   runs before `user` resolves, so the seed does not wait on the auth probe.
+  const [railSeeded, setRailSeeded] = useState(false);
+  // One derived gate for the CHATS list's loading arms: either the first fetches
+  // have settled (the 26edb492 rule) or we have server-confirmed rows on screen.
+  // The FOLDERS section deliberately keeps keying on `sidebarHydrated` alone —
+  // folder rows are not retained, so they must keep their skeletons.
+  const railReady = sidebarHydrated || railSeeded;
   // Resizable left sidebar (desktop) — the SHARED rail controller
   // (lib/use-resizable.ts, owner UI pass 2026-09-07): drag clamps 200–480,
   // double-click resets to 264 (Digby Frontier), width persists per surface ('digby.sidebar.w';
@@ -691,6 +803,10 @@ export default function CrossModelPage() {
 
   const performLogout = () => {
     localStorage.removeItem('accessToken');
+    // Retained chat data is module-scoped and therefore outlives this page
+    // (ticket b5734922) — drop it so a second account in the same tab can never
+    // first-paint rows retained for the first.
+    chatListCache.clear();
     setUser(null);
     setChats([]);
     setCurrentChatId(null);
@@ -1195,6 +1311,12 @@ export default function CrossModelPage() {
         }
         setUser(null);
         setAccessToken(null);
+        // Defensive (review finding, 2026-11-04): the session is definitively
+        // over, so drop the module-scoped chat data now rather than relying on
+        // the follow-up login being a full-document navigation. Makes the
+        // "no cross-account first paint" guarantee local instead of dependent
+        // on routing internals.
+        chatListCache.clear();
         if (hadToken) {
           localStorage.removeItem('accessToken');
           toast.error('Your session expired. Please sign back in.', {
@@ -1580,6 +1702,7 @@ export default function CrossModelPage() {
   // callback so a future edit to either flow keeps them identical.
   const handleChatDeletedNotice = useCallback((chatId: string) => {
     setChats(prev => prev.filter(c => c.id !== chatId));
+    patchRetainedChat(chatId, null); // never first-paint a row deleted in another tab
     dropDeletedChatFromView(chatId);
     refreshFolderLists(); // the folder's count badge must drop with the row
   }, [dropDeletedChatFromView, refreshFolderLists]);
@@ -1786,10 +1909,29 @@ export default function CrossModelPage() {
         // Deploy-skew fallback: an old backend has no `hidden` — hide just the supervisor chat.
         const chatIds = new Set(r.hidden?.chatIds ?? (r.supervisor ? [r.supervisor.id] : []));
         const projectIds = new Set(r.hidden?.projectIds ?? []);
+        // Mirror at module scope so the NEXT mount's retained seed can filter
+        // with a real answer instead of an empty set (review finding, 2026-11-04).
+        rememberFleetHidden(chatIds);
         setFleetHidden({ chatIds, projectIds });
       })
       .catch(() => {});
   }, [user]);
+
+  // Retained first paint (ticket b5734922): seed the rail from module scope
+  // before the auth probe and the list fetch resolve. Runs ONCE on mount —
+  // `railSeeded` is one-shot and never re-arms, exactly like `sidebarHydrated`,
+  // so a later refetch can never flash retained rows over live ones.
+  useEffect(() => {
+    const retained = chatListCache.read('first-page');
+    if (!retained || !retained.value.length) return;
+    // Filter with the LAST KNOWN fleet-hidden set, not the empty one this mount
+    // starts with — an admin must never see fleet chats flash into the rail
+    // before the fleet probe lands (review finding, 2026-11-04).
+    const visible = retained.value.filter((c) => !retainedFleetHiddenChatIds.has(c.id));
+    if (!visible.length) return;
+    setChats(visible);
+    setRailSeeded(true);
+  }, []);
 
   // First sidebar page of chats — shared by the initial load below and the
   // sidebar error state's Retry button (P4). Resolves null on failure so the
@@ -1800,6 +1942,12 @@ export default function CrossModelPage() {
       // (a pending ghost flip outranks a list the server built before its PUT)
       const chatsArr = holdGhostRows<CrossModelChat>(Array.isArray(result?.chats) ? result.chats : Array.isArray(result) ? result : []);
       setChats(chatsArr);
+      // Retain for the next return visit (ticket b5734922). Written from the
+      // FRESH list only, and it REPLACES the seeded rows above — so a chat
+      // deleted/renamed on another device, or a session a framework lane just
+      // spawned, reconciles on this same round trip and always wins.
+      if (chatsArr.length) chatListCache.write('first-page', chatsArr);
+      else chatListCache.purge('first-page');
       // Sidebar live refresh (ticket d6b2eef5): a full list resets the delta
       // watermark to the newest row it carries.
       chatsSinceRef.current = newestUpdatedAt(chatsArr, null);
@@ -1954,9 +2102,10 @@ export default function CrossModelPage() {
   // home and on unmount.
   useEffect(() => {
     const chatTitle = currentChatId ? chats.find(c => c.id === currentChatId)?.title : undefined;
-    document.title = chatTitle?.trim() ? `Digby — ${chatTitle.trim()}` : 'Digby — Multi-Model AI';
-    return () => { document.title = 'Digby — Multi-Model AI'; };
-  }, [currentChatId, chats]);
+    const home = `${branding.name} — Multi-Model AI`;
+    document.title = chatTitle?.trim() ? `${branding.name} — ${chatTitle.trim()}` : home;
+    return () => { document.title = home; };
+  }, [currentChatId, chats, branding.name]);
 
   // Load more chats (pagination)
   const loadMoreChats = useCallback(async () => {
@@ -2423,6 +2572,7 @@ export default function CrossModelPage() {
     try {
       await crossModelApi.deleteChat(chatId);
       setChats(prev => prev.filter(c => c.id !== chatId));
+      patchRetainedChat(chatId, null); // never first-paint a deleted row on the next return
       dropDeletedChatFromView(chatId);
       refreshFolderLists(); // the folder's count badge must drop with the row
       toast.success('Chat deleted');
@@ -2438,7 +2588,14 @@ export default function CrossModelPage() {
   const archiveChat = useCallback(async (chatId: string) => {
     try {
       await crossModelApi.archiveChat(chatId);
-      setChats(prev => prev.map(c => c.id === chatId ? { ...c, archivedAt: new Date().toISOString() } : c));
+      const archivedAt = new Date().toISOString();
+      setChats(prev => prev.map(c => c.id === chatId ? { ...c, archivedAt } : c));
+      // PATCH, not drop (review finding 1, 2026-11-04): archiving does not
+      // remove the row — it sets `archivedAt`, and `visibleChats` hides it. The
+      // retained copy still carried the PRE-archive shape, so the archived chat
+      // first-painted back into the CHATS rail for a whole round trip. The
+      // patch makes the retained row carry the hidden shape instead.
+      patchRetainedChat(chatId, { archivedAt });
       setArchiveVersion(v => v + 1); // an open Archived section refetches
       // An open view of the archived chat leaves with the row (the owner's
       // "still sits in the chat if you have it open" class — archive flavor).
@@ -2554,6 +2711,10 @@ export default function CrossModelPage() {
           const chatData = await createChatWithGhost(crossModelApi.createChat, { title, projectId: currentProjectIdRef.current || undefined }, newChatGhostRef.current);
           newChatId = chatData.data.id;
           setChats(prev => [chatData.data, ...prev]);
+          // Retain it too (review finding 1): otherwise the next return visit
+          // first-paints a rail missing the chat just created, and with
+          // `railReady` true there is no skeleton to explain the gap.
+          retainApiChatRow(chatData.data);
           // The arm is consumed: the chat row now carries the posture (the open
           // chat's toggle + header badge read it); home starts unarmed again.
           setNewChatGhost(false);
@@ -2779,6 +2940,9 @@ export default function CrossModelPage() {
     try {
       await crossModelApi.updateChat(chatId, { title: trimmed });
       setChats(prev => prev.map(c => c.id === chatId ? { ...c, title: trimmed } : c));
+      // Same reason as archive (review finding 1): the retained row must not
+      // first-paint the OLD title on the next return visit.
+      patchRetainedChat(chatId, { title: trimmed });
     } catch {
       toast.error('Failed to rename chat');
     }
@@ -4010,8 +4174,8 @@ export default function CrossModelPage() {
                     chat lives in the rail head; the first label keeps the
                     collapse toggle. */}
                 <div>
-                  {!chatsSectionCollapsed && (!sidebarHydrated || (ungroupedChats.length === 0 && treeProjects.length === 0)) && (
-                    !sidebarHydrated ? (
+                  {!chatsSectionCollapsed && (!railReady || (ungroupedChats.length === 0 && treeProjects.length === 0)) && (
+                    !railReady ? (
                       // Ticket 26edb492: the first chats fetch is still in
                       // flight — the rail used to fall through to "No chats
                       // yet" (or plain blank) here, which reads as "my chats
@@ -4040,7 +4204,7 @@ export default function CrossModelPage() {
                       </Empty>
                     )
                   )}
-                  {sidebarHydrated && ungroupedChats.length > 0 && groupRowsByRecency(
+                  {railReady && ungroupedChats.length > 0 && groupRowsByRecency(
                     flattenChatGroups(groupChatsByParent(ungroupedChats), collapsedChatParents),
                   ).map((section, sectionIdx) => (chatsSectionCollapsed && sectionIdx > 0) ? null : (
                     <div key={section.bucket}>
@@ -4525,8 +4689,7 @@ export default function CrossModelPage() {
                   return (
                     <>
                       <div className="flex items-center justify-center gap-3.5">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src="/digbyspin.gif" alt="Digby" width={40} height={40} draggable={false} onError={(e) => { const img = e.currentTarget; if (!img.src.endsWith('/digbyhat.png')) img.src = '/digbyhat.png'; }} className="dg-float size-10 flex-shrink-0 select-none object-contain" />
+                        <BrandSpinner size={40} alt={branding.name} className="dg-float size-10 flex-shrink-0 select-none object-contain" />
                         <h1 className="m-0 font-serif text-[clamp(30px,7.5vw,40px)] font-normal leading-[1.1] tracking-[-0.015em] text-balance text-ink">
                           {greeting}{firstName ? `, ${firstName}` : ''}
                         </h1>
@@ -4563,16 +4726,15 @@ export default function CrossModelPage() {
               ) : (
                 <>
                   <div className="flex items-center justify-center gap-3.5">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src="/digbyspin.gif" alt="Digby" width={40} height={40} draggable={false} onError={(e) => { const img = e.currentTarget; if (!img.src.endsWith('/digbyhat.png')) img.src = '/digbyhat.png'; }} className="dg-float size-10 flex-shrink-0 select-none object-contain" />
+                    <BrandSpinner size={40} alt={branding.name} className="dg-float size-10 flex-shrink-0 select-none object-contain" />
                     <RotatingTagline />
                   </div>
                   {/* The home page's ONE h1 (2026-10-14 SEO pass): the rotating
                       tagline is decorative, so the page's subject is stated
                       once for search engines and screen readers. */}
-                  <h1 className="sr-only">Digby — a private, Canadian AI assistant</h1>
+                  <h1 className="sr-only">{branding.title}</h1>
                   <p className="mx-auto mt-3.5 max-w-md text-[13.5px] text-ink-3">
-                    Digby is an AI assistant that handles every task — writing, coding, planning, and answers. Hosted and built entirely in Canada.{' '}
+                    {branding.name} is an AI assistant that handles every task — writing, coding, planning, and answers. Hosted and built entirely in Canada.{' '}
                     <Link href="/about" className="underline decoration-line-2 underline-offset-[3px] hover:text-ink">Learn more</Link>
                   </p>
                 </>
@@ -4854,7 +5016,7 @@ export default function CrossModelPage() {
                                   )}
                                   className="flex items-center gap-1.5 rounded-full border border-line bg-raised px-3 py-1.5 text-[12.5px] text-ink-2 transition-colors hover:border-line-2 hover:text-ink"
                                 >
-                                  Ask Digby about this
+                                  Ask {branding.name} about this
                                   <ArrowRight className="size-[13px]" />
                                 </button>
                                 {([
@@ -5146,7 +5308,7 @@ export default function CrossModelPage() {
           <span className="text-muted-foreground/30">·</span>
           <Link href="/privacy" className="py-1.5 hover:text-foreground transition-colors md:py-0">Privacy<span className="max-md:hidden"> Policy</span></Link>
           <span className="md-only text-muted-foreground/30">·</span>
-          <a href="mailto:digby@digby.example.com" className="md-only hover:text-foreground transition-colors">digby@digby.example.com</a>
+          <a href="mailto:digby@digby.ai" className="md-only hover:text-foreground transition-colors">digby@digby.ai</a>
         </footer>
       )}
 

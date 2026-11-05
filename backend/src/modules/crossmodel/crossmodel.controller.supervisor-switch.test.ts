@@ -45,7 +45,7 @@ jest.mock('./guest-location', () => ({ buildGuestLocationBlock: jest.fn(async ()
 jest.mock('./integration-context', () => ({ buildIntegrationContext: jest.fn(async () => ({ additionalContext: '', imessagePairedAgentId: null })), buildIntegrationContextBounded: jest.fn(async (build) => build()) }));
 const mockInvalidateAutoOnly: jest.Mock = jest.fn();
 const mockSetAutoOnly: jest.Mock = jest.fn();
-const AUTO_ONLY_STATE = { key: 'patience_auto_only', enabled: true, since: '2026-09-26T20:35:16.556Z', updatedBy: 'admin@digby.example.com', source: 'setting', bootDefault: false, envVar: 'PATIENCE_AUTO_ONLY' };
+const AUTO_ONLY_STATE = { key: 'patience_auto_only', enabled: true, since: '2026-09-26T20:35:16.556Z', updatedBy: 'admin@digby.ai', source: 'setting', bootDefault: false, envVar: 'PATIENCE_AUTO_ONLY' };
 const mockAutoOnlyState: jest.Mock = jest.fn(async () => AUTO_ONLY_STATE);
 const mockDepthPolicy: jest.Mock = jest.fn(async () => ({ autoOnly: true }));
 jest.mock('./rate-limit.service', () => ({
@@ -78,12 +78,12 @@ jest.mock('./platform/supervisor-switch', () => ({
 import controller from './crossmodel.controller';
 
 const STATE = {
-  fleet: { target: 'fleet', key: 'fleet_supervisor_enabled', enabled: false, since: '2026-09-26T17:30:00.000Z', updatedBy: 'paul@sunday.market', skipped: 3, source: 'setting', bootDefault: true, envVar: 'FLEET_SUPERVISOR_ENABLED' },
+  fleet: { target: 'fleet', key: 'fleet_supervisor_enabled', enabled: false, since: '2026-09-26T17:30:00.000Z', updatedBy: 'example-user@example.com', skipped: 3, source: 'setting', bootDefault: true, envVar: 'FLEET_SUPERVISOR_ENABLED' },
   project: { target: 'project', key: 'project_supervisors_enabled', enabled: true, since: null, updatedBy: null, skipped: 0, source: 'env', bootDefault: true, envVar: 'PROJECT_SUPERVISORS_ENABLED' },
-  line: 'Fleet supervisor: OFF since 2026-09-26 17:30Z by paul@sunday.market — wakes skipped: 3',
+  line: 'Fleet supervisor: OFF since 2026-09-26 17:30Z by example-user@example.com — wakes skipped: 3',
 };
 const ADMIN = { id: 'u-admin', email: 'admin@example.com', role: 'ADMIN' };
-const OWNER = { id: 'u-paul', email: 'paul@sunday.market', role: 'USER' };
+const OWNER = { id: 'u-paul', email: 'example-user@example.com', role: 'USER' };
 const PLEB = { id: 'u-2', email: 'someone@example.com', role: 'USER' };
 
 const mkReq = (over: any = {}): any => ({ params: {}, body: {}, query: {}, headers: {}, ...over });
@@ -129,7 +129,7 @@ describe('PUT /admin/settings/:key — supervisor switches', () => {
     mockSetSwitch.mockResolvedValue({ target: 'project', key: 'project_supervisors_enabled', enabled: true, changed: false, setting: null });
     const res = mkRes();
     await controller.updateAdminSetting(mkReq({ user: OWNER, params: { key: 'project_supervisors_enabled' }, body: { value: true } }), res);
-    expect(mockSetSwitch).toHaveBeenCalledWith('project_supervisors_enabled', true, 'paul@sunday.market');
+    expect(mockSetSwitch).toHaveBeenCalledWith('project_supervisors_enabled', true, 'example-user@example.com');
     expect(res.json).toHaveBeenCalledWith({ success: true, data: { key: 'project_supervisors_enabled', value: '1' }, changed: false, state: STATE });
   });
 
@@ -168,7 +168,7 @@ describe('PUT /admin/settings/:key — supervisor switches', () => {
     mockSetAutoOnly.mockResolvedValue({ key: 'patience_auto_only', enabled: true, changed: false, setting: { key: 'patience_auto_only', value: '1' } });
     const res = mkRes();
     await controller.updateAdminSetting(mkReq({ user: OWNER, params: { key: 'patience_auto_only' }, body: { value: '1' } }), res);
-    expect(mockSetAutoOnly).toHaveBeenCalledWith(true, 'paul@sunday.market');
+    expect(mockSetAutoOnly).toHaveBeenCalledWith(true, 'example-user@example.com');
     expect(res.json).toHaveBeenCalledWith({ success: true, data: { key: 'patience_auto_only', value: '1' }, changed: false, state: AUTO_ONLY_STATE });
   });
 });
@@ -202,7 +202,7 @@ describe('GET /admin/settings/supervisors', () => {
     const res = mkRes();
     await controller.getAdminSupervisorSettings(mkReq({ user: ADMIN }), res);
     expect(res.json).toHaveBeenCalledWith({ success: true, data: STATE });
-    expect(res.json.mock.calls[0][0].data.fleet).toMatchObject({ enabled: false, since: '2026-09-26T17:30:00.000Z', updatedBy: 'paul@sunday.market', skipped: 3 });
+    expect(res.json.mock.calls[0][0].data.fleet).toMatchObject({ enabled: false, since: '2026-09-26T17:30:00.000Z', updatedBy: 'example-user@example.com', skipped: 3 });
   });
 
   it('500s (never throws) when the state read fails', async () => {

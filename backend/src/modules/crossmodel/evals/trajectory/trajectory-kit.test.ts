@@ -288,6 +288,31 @@ describe('case schema + the one-step freeze', () => {
     expect(gradeTrial(c, o).status).toBe('pass'); // ≠ its declared "fail" → the replay suite flags the case until it is filled in
   });
 
+  it('freeze-trajectory-case.js turns a stored incident into a valid draft case', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const freeze = require(path.resolve(__dirname, '../../../../../../scripts/framework-audit/freeze-trajectory-case.js'));
+    const answer = {
+      id: '8c581bc3-0000-4000-8000-000000000001',
+      chatId: '99e63f86-ecd3-4d6d-b5fb-a3e199a1ebfa',
+      content: "I've messaged chat d1d0b346 with the live numbers.",
+      createdAt: new Date('2026-10-08T17:51:37Z'),
+      metadata: { depth: { team: { members: [{ role: 'lead', model: 'cql-litellm:api-optimize-moonshot-kimi-k3' }] } } },
+      parts: [
+        { type: 'tool_call', name: 'list_chats', id: 't1', args: { projectId: '47f9de59' } },
+        { type: 'tool_result', name: 'list_chats', id: 't1', result: '{"chats":[]}' },
+        { type: 'text', text: "I've messaged chat d1d0b346 with the live numbers." },
+      ],
+    };
+    const trigger = { id: 'u1', role: 'user', content: 'well message the tt-rd supervisor', createdAt: new Date('2026-10-08T17:51:14Z'), metadata: { authorId: 'owner' } };
+    const out = freeze.buildCase({ answer, trigger, history: [], chat: { id: answer.chatId, title: 'StAnne Supervisor', isProjectSupervisor: true }, project: { id: 'e8f2eb84-923b-469e-a504-0ceccf963368', name: 'StAnne' }, opts: { id: 'frozen-stanne', tz: 'America/Los_Angeles' } });
+    const c = parseTrajectoryCase(out, 'frozen-stanne.json');
+    expect(c).toMatchObject({ id: 'frozen-stanne', status: 'draft', role: 'project_supervisor', trigger: 'owner_turn', seat: { model: 'cql-litellm:api-optimize-moonshot-kimi-k3' } });
+    expect(c.fixtures).toEqual([{ tool: 'list_chats', args: { projectId: '47f9de59' }, output: '{"chats":[]}' }]);
+    expect(c.recordings[0].turns).toHaveLength(2);
+    expect(c.graders.map((x) => x.kind)).toEqual(expect.arrayContaining(['ids_grounded', 'claim_requires_call']));
+    expect(freeze.parseArgs(['8c581bc3', '--history', '3'])).toMatchObject({ message: '8c581bc3', history: 3 });
+    expect(() => freeze.parseArgs(['not an id'])).toThrow(/usage/);
+  });
 
   it('every shipped case file parses and names its file', () => {
     const dir = path.join(__dirname, 'cases');

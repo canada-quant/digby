@@ -20,7 +20,7 @@ const mockPrisma: any = {
   crossModelMessage: { findMany: jest.fn() },
   agentRun: { findMany: jest.fn(), count: jest.fn() },
   pendingChatMessage: { findMany: jest.fn() },
-  codingSchedule: { findMany: jest.fn() },
+  chatSchedule: { findMany: jest.fn() },
   chatCodingState: { findMany: jest.fn() },
   projectGoal: { findMany: jest.fn() },
   projectTodo: { findMany: jest.fn() },
@@ -177,7 +177,7 @@ function wireMocks() {
   mockPrisma.pendingChatMessage.findMany.mockImplementation((args: any) =>
     Promise.resolve(queued.filter((q) => (args?.where?.chatId?.in ?? []).includes(q.chatId))),
   );
-  mockPrisma.codingSchedule.findMany.mockImplementation((args: any) =>
+  mockPrisma.chatSchedule.findMany.mockImplementation((args: any) =>
     Promise.resolve(schedules.filter((s) => (args?.where?.sessionId?.in ?? []).includes(s.sessionId))),
   );
   mockPrisma.chatCodingState.findMany.mockImplementation((args: any) =>

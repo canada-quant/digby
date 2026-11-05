@@ -31,7 +31,7 @@ const mockPrisma: any = {
   projectGoal: { findMany: jest.fn() },
   projectTodo: { findMany: jest.fn() },
   agentRun: { findMany: jest.fn() },
-  codingSchedule: { findMany: jest.fn() },
+  chatSchedule: { findMany: jest.fn() },
   eventHook: { findFirst: jest.fn() },
   hookEvent: { findMany: jest.fn() },
   ownerQuestion: { count: jest.fn(), findMany: jest.fn(async () => []) },

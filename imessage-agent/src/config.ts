@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync }
 import { randomUUID } from 'crypto';
 
 export interface AgentConfig {
-  apiBaseUrl: string;   // e.g. https://digby.example.com/api
+  apiBaseUrl: string;   // e.g. https://digby.ai/api
   agentId: string;
   agentToken: string;
   /** Stable per-device identity (multi-Mac, 2026-09-24): a uuid generated on
@@ -262,7 +262,7 @@ export interface AgentConfig {
 // 0.9.4 — installer verification HARDENED (post-merge adversarial review of
 // 5e8d73fc / PR #1918): the 0.9.3 wait loop could falsely FAIL (an
 // apostrophe in the tree path broke the interpolated JS literal — a home
-// like /Users/O'Brien made every install "THE AGENT DID NOT COME UP"; a
+// like /Users/example'Brien made every install "THE AGENT DID NOT COME UP"; a
 // symlinked invocation compared a logical path against the agent's
 // realpaths entry) and falsely PASS (a stale same-version stamp from a dead
 // pid verified instantly — the silent-success class this ticket exists to
@@ -312,7 +312,43 @@ export interface AgentConfig {
 // of `remote-access`), and the advert gate is strictly-newer, so no Mac was
 // ever offered an update — and every Mac already AT 0.9.11 stayed there. The
 // command existed in git and on no device. Hence the bump.
-export const AGENT_VERSION = '0.9.19';
+//
+// 0.9.20 (ticket 36d1c99f) — the agent's OWN runtime output was still handing
+// the user a bare `digby-agent` remedy. `privilegedRunRefusal` printed
+// "sudo digby-agent remote-access enable <account>" and four `index.ts` sites
+// printed bare `digby-agent pair|unattended disable|remote-access disable|
+// remote-access status`. Both installers put the shim at
+// ~/Library/Application Support/Digby/bin/digby-agent and NOTHING adds that
+// directory to PATH, so on a stock install every one of those lines answered
+// `command not found` — a refusal message teaching the user a command that does
+// not resolve. They now print the absolute path via MAC_AGENT_CLI_PATH. Bumped
+// (not republished in place) because the advert gate is strictly-newer: a
+// same-version republish reaches no device.
+//
+// 0.9.21 (ticket bcdf5d2f) — the enable could only ever succeed on a Mac where
+// the operator ALREADY knew to run `sudo -v` in that same terminal. The gate was
+// `sudo -n true` and `-n` means NEVER PROMPT, so a stock Mac failed it and the
+// refusal said "run it in a terminal where sudo is already authorised" — while
+// docs/UNATTENDED_DEVICES.md simultaneously forbade the obvious workaround,
+// because prefixing the enable with `sudo` makes $USER root and configures
+// auto-login for root (a machine that then boots to the login window can never
+// complete that login). Two opposite hidden prerequisites, neither on the card:
+// the owner's "still very messy setup flow.. normal users wouldnt know to run
+// sudo prefix to command". `applyMacPreset` now asks for the rights itself via
+// `ensureAdminRights` → `sudo -v` attached to the user's terminal (MacIo
+// .runInteractive, stdio inherit), and the CLI says the prompt is coming before
+// it appears. No second command, no `sudo` prefix, nothing to look up.
+//
+// 0.9.23 (ticket e530220e) — 0.9.22 shipped the three reporting fixes (admin via
+// group membership not `sudo -n`; an absent ARD key reads a measured `off`; the
+// pre-login reason is printed, not a hover-only title). Re-published because the
+// 0.9.22 tarball carried a package-lock.json still stamping 0.9.21 — the lock
+// ships INSIDE the artifact, so the release misstated its own version (caught by
+// adversarial review, not by CI: only package.json was checked). Bumped rather
+// than republished in place because the advert gate is strictly-newer, so a
+// same-version republish would reach no device. publish-agent-tarball.sh now
+// verifies BOTH files' versions before it will publish.
+export const AGENT_VERSION = '0.9.23';
 
 const CONFIG_DIR = join(configHomeDir(), '.config', 'digby-agent');
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json');

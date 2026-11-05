@@ -212,7 +212,7 @@ describe('credential gate vs the oq_211513ed/oq_483730f8 specimen', () => {
     expect(notes.some((n) => n.includes('you are being woken now — answer the owner ON THE CARD'))).toBe(true);
   });
 
-  it('2026-10-20: the ctrl.example.com specimen — "i never got the json policy" wakes the lane with the question context echoed', async () => {
+  it('2026-10-20: the ctrl.cql.ca specimen — "i never got the json policy" wakes the lane with the question context echoed', async () => {
     const q = await flagCredentialGate({
       question: 'Whenever convenient: paste the canlaw-bucket access key you created with the read-only policy I sent, so the corridor snapshot fetch can run.',
       context: 'Policy JSON:\n```json\n{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::cql-canlaw-cpt/*"}]}\n```',
@@ -616,7 +616,7 @@ describe('c1714329 residual: the f3a69ed3 choice-gate wake is replay-safe and ne
   it('the ticket specimen: executable instruction on a yes_no card wakes the lane with the owner\'s words + question id + context', async () => {
     const r = await flagOwnerQuestion({
       chatId: 'chat-1', userId: 'u1',
-      question: 'Should the cql-agx-orin64 lane retry the tailscale join?',
+      question: 'Should the cql-accelerator lane retry the tailscale join?',
       context: 'The tailscale json config is open and logged in on mbp-1.',
       expectedAnswerType: 'yes_no',
     });

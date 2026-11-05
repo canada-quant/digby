@@ -137,8 +137,8 @@ const makeInput = (model: string): AgentRunInput => ({
 });
 
 const registryEntry = (model: string, extra: Record<string, unknown> = {}) => ({
-  url: 'https://llm.example.com/v1/chat/completions',
-  baseUrl: 'https://llm.example.com/v1',
+  url: 'https://llm.cql.ca/v1/chat/completions',
+  baseUrl: 'https://llm.cql.ca/v1',
   apiKey: 'sk-cql',
   model,
   label: 'cql-litellm',

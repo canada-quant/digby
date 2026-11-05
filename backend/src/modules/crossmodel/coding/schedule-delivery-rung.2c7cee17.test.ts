@@ -15,7 +15,7 @@ const mockPromptHistoryFindFirst = jest.fn(async (..._a: any[]): Promise<any> =>
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       findUnique: (...a: any[]) => mockScheduleFindUnique(...a),
       update: (...a: any[]) => mockScheduleUpdate(...a),
       updateMany: (...a: any[]) => mockScheduleUpdateMany(...a),

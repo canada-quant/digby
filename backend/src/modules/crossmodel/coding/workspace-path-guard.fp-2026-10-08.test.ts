@@ -94,7 +94,7 @@ describe('W2-8 — true positives stay refused', () => {
     ['single-word quoted absolute path', `echo "/app/coding-workspaces/worktrees/other-id/secret"`, 'foreign_path'],
     ['multi-word quoted DATA naming another worktree', `echo "see /app/coding-workspaces/worktrees/other-id/secret now"`, 'foreign_path'],
     ['data glob with a root literal prefix', `echo "for d in /app/coding-workspaces/worktrees/*"`, 'glob'],
-    ['find / -maxdepth 4 can name session dirs', 'find / -maxdepth 4 -name "*qb2*"', 'ancestor_traversal'],
+    ['find / -maxdepth 4 can name session dirs', 'find / -maxdepth 4 -name "*node-a*"', 'ancestor_traversal'],
     ['find / without maxdepth', 'find / -name "libnspr4.so*" -o -name "libnss3.so*" 2>/dev/null | head -20', 'ancestor_traversal'],
     ['ln -s absolute target', 'ln -s /app/coding-workspaces/worktrees ./all', 'workspace_root'],
     ['ln -s relative target that climbs out of the worktree from its link dir', 'ln -s ../../other-session/.digby link', 'foreign_path'],

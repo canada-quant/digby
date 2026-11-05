@@ -11,7 +11,7 @@ import { absoluteUrl, pageLanguages, sitePageMetadata, learnArticleMetadata } fr
  * These assert the properties a crawler actually relies on, so a future page or
  * a future refactor cannot silently break indexation:
  *   · every indexable URL in the sitemap corresponds to a real page (and vice versa)
- *   · every page self-canonicals to its own absolute digby.example.com URL
+ *   · every page self-canonicals to its own absolute digby.ai URL
  *   · every hreflang pair is RECIPROCAL and carries x-default
  *   · robots.txt points at the sitemap and never blocks an indexable page
  *   · no duplicate title or description can reach a crawler
@@ -56,7 +56,7 @@ describe('sitemap', () => {
 
   it('all absolute on the canonical origin, no trailing slash, no legacy path', () => {
     for (const e of entries) {
-      expect(e.url, e.url).toMatch(/^https:\/\/digby\.example\.com(\/[a-z0-9-]+)*$/);
+      expect(e.url, e.url).toMatch(/^https:\/\/digby\.ai(\/[a-z0-9-]+)*$/);
       if (e.url !== SITE_URL) expect(e.url.endsWith('/'), e.url).toBe(false);
       expect(e.url, e.url).not.toContain('/crossmodel');
     }

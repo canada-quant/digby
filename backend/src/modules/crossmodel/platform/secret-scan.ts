@@ -406,7 +406,7 @@ const AWS_KEY_ID_SPAN_RE = /^(?:AKIA|ASIA|ABIA|ACCA)[0-9A-Z]{16}$/;
  * Ticket 3b573ce3 (2026-10-30) — a FUSED AWS pair under ONE label.
  *
  * THE INCIDENT: an owner answered a credential card with both halves of a
- * ctrl.example.com S3 pair; the vault stored ONE 60-char value under
+ * ctrl.cql.ca S3 pair; the vault stored ONE 60-char value under
  * $CANLAW_CPT_S3_SECRET_ACCESS_KEY whose first 20 chars are the access-key ID
  * and whose last 40 are the real secret. Every consumer reading the env var
  * got an unusable secret, and the ID ALSO landed under an ordinal

@@ -32,7 +32,7 @@ const mockPrisma: any = {
   projectMember: { findUnique: jest.fn(), findMany: jest.fn() },
   userPreferences: { findUnique: jest.fn() },
   user: { findUnique: jest.fn() },
-  codingSchedule: { count: jest.fn(), create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn(), groupBy: jest.fn() },
+  chatSchedule: { count: jest.fn(), create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn(), groupBy: jest.fn() },
   activity: { create: jest.fn(async () => ({})) },
   $transaction: jest.fn(async (arg: any) => (typeof arg === 'function' ? arg(mockPrisma) : Promise.all(arg))),
 };
@@ -223,9 +223,9 @@ beforeEach(() => {
   mockPrisma.crossModelProject.findUnique.mockResolvedValue(null);
   mockPrisma.agentRun.findMany.mockResolvedValue([]);
   mockPrisma.agentRun.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.groupBy.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.groupBy.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.chatCodingState.count.mockResolvedValue(0);
   mockRedis.scan.mockResolvedValue({ cursor: 0, keys: [] });
   mockRedis.mGet.mockResolvedValue([]);

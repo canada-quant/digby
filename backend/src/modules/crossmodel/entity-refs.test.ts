@@ -21,9 +21,9 @@ describe('entity refs', () => {
   });
 
   it('a session prefix opens the ONE owned chat it names; ambiguous or unknown → null', async () => {
-    db.crossModelChat.findMany.mockResolvedValueOnce([{ id: 'fbb5c9ca-0000-4000-8000-000000000001', title: 'QB2 64K lane' }]);
+    db.crossModelChat.findMany.mockResolvedValueOnce([{ id: 'fbb5c9ca-0000-4000-8000-000000000001', title: 'node-a 64K lane' }]);
     const r = await resolveEntityRef(U, 'session', 'fbb5c9ca');
-    expect(r).toEqual({ kind: 'session', id: 'fbb5c9ca-0000-4000-8000-000000000001', title: 'QB2 64K lane', open: { type: 'chat', chatId: 'fbb5c9ca-0000-4000-8000-000000000001' } });
+    expect(r).toEqual({ kind: 'session', id: 'fbb5c9ca-0000-4000-8000-000000000001', title: 'node-a 64K lane', open: { type: 'chat', chatId: 'fbb5c9ca-0000-4000-8000-000000000001' } });
     expect(db.crossModelChat.findMany.mock.calls[0][0].where).toEqual({ userId: U, id: { startsWith: 'fbb5c9ca' } });
     db.crossModelChat.findMany.mockResolvedValueOnce([{ id: 'a' }, { id: 'b' }]);
     expect(await resolveEntityRef(U, 'chat', 'fbb5c9ca')).toBeNull();
@@ -32,7 +32,7 @@ describe('entity refs', () => {
   });
 
   it('a goal opens its project; a todo opens its assigned lane, else its project', async () => {
-    db.projectGoal.findMany.mockResolvedValueOnce([{ id: 'g1', title: 'QB2 64K', projectId: 'p1' }]);
+    db.projectGoal.findMany.mockResolvedValueOnce([{ id: 'g1', title: 'node-a 64K', projectId: 'p1' }]);
     expect((await resolveEntityRef(U, 'goal', '534c37aa'))?.open).toEqual({ type: 'project', projectId: 'p1' });
     db.projectTodo.findMany.mockResolvedValueOnce([{ id: 't1', title: 'restart', projectId: 'p1', assigneeChatId: 'lane-1' }]);
     db.crossModelChat.findFirst.mockResolvedValueOnce({ id: 'lane-1', title: 'lane' });

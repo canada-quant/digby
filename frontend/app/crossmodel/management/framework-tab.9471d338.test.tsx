@@ -109,7 +109,7 @@ const baseSnapshot = (over: Record<string, unknown> = {}) => ({
       eta: { remaining: 2, pacePerDay: 1.5, etaDays: 1.3, class: 'on_pace' },
     },
   ],
-  workspace: { provider: 'github', repoUrl: 'https://github.com/canada-quant/digby', defaultBranch: 'main', provisioned: true, workspaceAt: '2026-10-01T00:00:00.000Z', knowledgeBranch: 'digby/knowledge' },
+  workspace: { provider: 'github', repoUrl: 'https://github.com/example-org/crossmodel', defaultBranch: 'main', provisioned: true, workspaceAt: '2026-10-01T00:00:00.000Z', knowledgeBranch: 'digby/knowledge' },
   digestGeneratedAt: '2026-10-27T17:00:00.000Z',
   ...over,
 } as any);
@@ -180,7 +180,7 @@ describe('FrameworkSurface — rendered states', () => {
   it('no framework project on the instance → honest empty state naming the repo, not an error', () => {
     const html = renderSurface({ snapshot: baseSnapshot({ project: null, sessions: [], goals: [], workspace: null, digestGeneratedAt: null }) });
     expect(html).toContain('No framework project on this instance');
-    expect(html).toContain('canada-quant/digby');
+    expect(html).toContain('example-org/crossmodel');
     expect(html).toContain('User projects are unaffected');
   });
 
@@ -188,10 +188,10 @@ describe('FrameworkSurface — rendered states', () => {
     const html = renderSurface();
     expect(html).toContain('crossmodel');
     expect(html).toContain('Platform surface');
-    expect(html).toContain('https://github.com/canada-quant/digby');
+    expect(html).toContain('https://github.com/example-org/crossmodel');
     expect(html).toContain('main');
     expect(html).toContain('docs/FRAMEWORK_BACKLOG.md');
-    expect(html).toContain('https://github.com/canada-quant/digby/blob/main/docs/FRAMEWORK_BACKLOG.md');
+    expect(html).toContain('https://github.com/example-org/crossmodel/blob/main/docs/FRAMEWORK_BACKLOG.md');
   });
 
   it('the goal board renders tracked goals with todos + blocked count + ETA', () => {

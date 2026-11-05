@@ -80,9 +80,26 @@ import * as feedback from '../feedback/feedback.service';
 import { PLATFORM_TOOL_NAMES } from './platform-tool-names';
 // Ticket a8d6e514: progressNote storage cap (2,000; 200 under PROGRESS_NOTE_LONG_DISABLED) + the todo_list display clamp. Pure leaf.
 import { progressNoteMax, progressNoteForDisplay, progressNoteClipNotice, PROGRESS_NOTE_DISPLAY_MAX } from './progress-note';
+// Ticket f94e91eb: an owner ANSWER in the list_owner_questions listing is never
+// silently shortened — a clipped preview carries a sentinel naming the missing
+// length + the machine-readable answerChars/answerTruncated the caller branches
+// on. Pure leaf (no imports).
+import { ownerAnswerPreview, ownerAnswerFields } from './owner-answer-preview';
 // Ticket f3e56567: loud refusal for a write that would otherwise silently do
 // nothing (an id-only todo_update / goal_update reporting success).
 import { noOpWriteRefusal } from './tool-write-guards';
+// Ticket d1120ffc: a mutation's free-text payload is proven landed, not assumed
+// (received-vs-stored length + digest on the result) and a non-string value is
+// refused instead of being stringified into a stub row. Pure leaf.
+import { normalizeTextArg, payloadFidelity, payloadFidelityNote } from './payload-fidelity';
+// Ticket d1120ffc: a repeated IDENTICAL spawn from one chat reuses the first
+// lane instead of burning a second worktree/run. Pure leaf (the claim itself is
+// Redis, dynamic-imported at the spawn seam below).
+import { spawnDedupeWindowMs, spawnDedupeKey, isSpawnClaimLaneId, renderSpawnReplay, pendingClaimValue, isAbandonedPendingClaim, isPendingClaim } from './spawn-dedupe';
+// Ticket d1120ffc: the claim STORE is resolved, never imported — config/redis
+// validates the whole env at import and process.exit(1)s in a bare test env.
+// Pure leaf + an in-process fallback (see the file header).
+import { activeSpawnClaimStore, spawnClaimStoreIsShared } from './spawn-claim-store';
 // Secret-scrubbing D4 (2026-09-27): chat-read output redaction on machine runs (leaf, no imports).
 import { redactChatReadSecrets } from './secret-scan';
 // audit 2026-10-06 T2-2: send_chat_message bodies are credential-scrubbed on every turn (leaf).
@@ -97,11 +114,19 @@ import { CONTROL_TOOL_SCHEMA, CONTROL_TOOL_NAMES, executeControlTool, isControlT
 // leaf, no imports: the work-tool / external-effect table + the human-turn test.
 import { isHumanSpawn } from './human-spawn';
 import { describeCallerRole, lookupCharterRow, memberSpawnNote, spawnAccessRefusal, spawnMemberAccessDisabled, type SharedProjectRole } from './shared-project-access';
-import { isWorkTool, isFreshHumanAsk, isHumanTurn, workToolInScope, workToolsNoCardDisabled, appendWorkToolDirectNote, repoUrlBoundToTurn, CREDENTIAL_WORK_TOOLS, workToolDedupeKey, isOkEnvelope, workToolReplayEnvelope, workToolClaimExpired, spawnEnvelopeIsIdle } from './work-tools';
+import { isWorkTool, isFreshHumanAsk, isHumanTurn, workToolInScope, appendWorkToolDirectNote, repoUrlBoundToTurn, CREDENTIAL_WORK_TOOLS, workToolDedupeKey, isOkEnvelope, workToolReplayEnvelope, workToolClaimExpired, spawnEnvelopeIsIdle } from './work-tools';
 // Session/chat settings + spend read (capability gap audit T2, 2026-09-24) — light leaf.
 import { SESSION_TOOL_SCHEMA, executeSessionTool, isSessionTool } from './session-tools';
 // Ops/inbox tools (capability gap audit T3a, 2026-09-24) — light leaf.
 import { OPS_TOOL_SCHEMA, executeOpsTool, isOpsTool, chatReadIsMachine } from './ops-tools';
+import {
+  fleetOutOfScopeProjectIds,
+  fleetToolScopeApplies,
+  fleetToolSeat,
+  outOfScopeProjectRefusal,
+  isOutOfScopeRefusal,
+  dropOutOfScopeProjects,
+} from './fleet-tool-scope';
 import { COORD_TOOL_SCHEMA, executeCoordTool, isCoordTool } from './coord-tools';
 import { HOUSEKEEPING_TOOL_SCHEMA, executeHousekeepingTool, isHousekeepingTool } from './housekeeping-tools';
 import { FLEET_OPS_TOOL_SCHEMA, executeFleetOpsTool, isFleetOpsTool } from './fleet-ops-tools';
@@ -158,6 +183,34 @@ export function isPlatformTool(name: string): boolean {
  */
 function projectScopedRun(ctx: ToolContext): boolean {
   return ctx.agentSurface === 'coding' || (!!ctx.projectId && ctx.projectId !== 'chat');
+}
+
+/**
+ * SUPERVISION SCOPE FOR TOOL READS (ticket 03d14b78 — the follow-up residual of
+ * dca83b85). The Fleet Supervisor's account-wide LIST tools are a supervision
+ * act, so they subtract the owner's opted-out (`supervised:false`) projects
+ * before any model-facing composition.
+ *
+ * `applies` is TRUE only for the FLEET seat on a MACHINE run. A PROJECT
+ * supervisor, an ordinary chat, a coding lane and an owner-held turn all read
+ * `applies:false` and keep today's behaviour byte-for-byte — an opted-out
+ * project's own supervisor must still see its work.
+ *
+ * Failure posture: fail-OPEN on both halves (an unreadable seat reads 'other';
+ * an unreadable opted-out set is empty), so an outage never silently narrows a
+ * lane's view of live work. Never throws.
+ */
+async function fleetReadScope(
+  ctx: ToolContext,
+  _userId: string,
+): Promise<{ applies: boolean; optedOut: Set<string> }> {
+  try {
+    const seat = await fleetToolSeat(ctx?.sessionId);
+    if (!fleetToolScopeApplies(seat, ctx as any)) return { applies: false, optedOut: new Set<string>() };
+    return { applies: true, optedOut: await fleetOutOfScopeProjectIds(_userId) };
+  } catch {
+    return { applies: false, optedOut: new Set<string>() };
+  }
 }
 
 /**
@@ -330,7 +383,7 @@ export function crossProjectAuthorizingTodoStatus(): { not: string } | { in: str
  * Resolve a start_coding_session projectId reference (name / slug / chat id /
  * ≥8-char prefix) to the real project id with the SAME resolver staging and
  * execution use (platform.canonicalizeProjectReference), so a caller naming
- * its OWN project ('crossmodel', 'e5734bd2', 'canada-quant/digby') is not
+ * its OWN project ('crossmodel', 'e5734bd2', 'example-org/crossmodel') is not
  * counted as a cross-project attempt (3 of the 6 cross_project_spawn_corrected
  * strikes 09-23→09-27 were exactly that). Fail-open: an absent resolver (older
  * mocks) or a lookup error returns the raw reference.
@@ -432,9 +485,9 @@ async function projectIdCorrectionForTool(goalsSvc: any, projectId: string, user
 }
 
 /** A spawn prompt that names the Digby framework repo or its backend tree. */
-export const FRAMEWORK_WORK_PROMPT_RE = /canada-quant\/digby|\bbackend\/src\//i;
+export const FRAMEWORK_WORK_PROMPT_RE = /example-org\/crossmodel|\bbackend\/src\//i;
 /** The Digby framework repo, as a project repoUrl. */
-export const CROSSMODEL_REPO_RE = /canada-quant\/digby/i;
+export const CROSSMODEL_REPO_RE = /example-org\/crossmodel/i;
 
 /**
  * misfiled-spawns-5 (review of the tt-rd fix, 2026-09-27): an UNGROUPED
@@ -514,7 +567,7 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
     type: 'function' as const,
     function: {
       name: 'list_chats',
-      description: "List the user's chats (own + shared-project chats), most recently updated first. Every row carries id, title, mode, projectId, codeCapable, running, messageCount, lastMessage. Filters: q (title substring), projectId, running, codeCapable — combine to survey a fleet in one call (e.g. running:true + codeCapable:true = active coding sessions).",
+      description: "List the user's chats (own + shared-project chats), most recently updated first. Every row carries id, title, mode, projectId, codeCapable, running, messageCount, lastMessage. Filters: q (title substring), projectId, running, codeCapable — combine to survey a fleet in one call (e.g. running:true + codeCapable:true = active coding sessions). FLEET SUPERVISION SCOPE: from the Fleet Supervisor's own machine runs this survey is limited to projects under fleet supervision — a project the owner opted out (supervised:false) contributes no rows and is not named, and an explicit projectId naming one is REFUSED with a scope refusal (never a silent empty list). Project supervisors, ordinary chats and owner turns read unrestricted.",
       parameters: {
         type: 'object',
         properties: {
@@ -773,7 +826,7 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
     type: 'function' as const,
     function: {
       name: 'list_projects',
-      description: "List the user's PROJECTS (folders) — owned + shared — including a newly created EMPTY project, which goal_list / todo_list / list_chats never show (they surface only projects that already hold goals or chats). Each row: id, name, description, emoji/color, parentId/depth/path (folder tree), chat/document/member counts, repo/workspace markers, your role, timestamps (systemPrompt omitted — get_project reads one in full). Use it to resolve a project NAME to its id or to survey the whole fleet. isUserSpace:true rows are the hidden personal folder (the sidebar's 'No folder (ungrouped)') — never a move target; move_chat(projectId:null) ungroups.", // provenance: ticket 3521595b
+      description: "List the user's PROJECTS (folders) — owned + shared — including a newly created EMPTY project, which goal_list / todo_list / list_chats never show (they surface only projects that already hold goals or chats). Each row: id, name, description, emoji/color, parentId/depth/path (folder tree), chat/document/member counts, repo/workspace markers, your role, timestamps (systemPrompt omitted — get_project reads one in full). Use it to resolve a project NAME to its id or to survey the whole fleet. FLEET SCOPE: on Fleet machine runs, opted-out projects are omitted from BOTH owned and shared (no name, id, path or count, no 'hidden' note). isUserSpace:true rows are the hidden personal folder (the sidebar's 'No folder (ungrouped)') — never a move target; move_chat(projectId:null) ungroups.", // provenance: ticket 3521595b, 03d14b78
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -935,10 +988,13 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
           chatId: { type: 'string', description: 'The chat whose autonomy is being granted/revoked (often THIS chat).' },
           allowedTools: {
             type: 'array',
-            // Mirror of AUTONOMY_GRANTABLE_TOOLS (platform/autonomy.service.ts —
+            // Mirror of GRANTABLE_TOOL_NAMES (platform/autonomy.service.ts —
             // the runtime validator; hardcoded here so this module keeps its
             // static import graph — see the NOTE at the top of the imports).
-            items: { type: 'string', enum: ['send_chat_message', 'start_coding_session', 'schedule_message', 'cancel_schedule', 'update_schedule', 'dispatch_platform_task', 'send_to_instance', 'stop_run', 'answer_chat_question', 'approve_request', 'pause_schedule', 'resume_schedule'] },
+            // = AUTONOMY_GRANTABLE_TOOLS + the EXPLICIT_GRANT_ONLY_TOOLS
+            // (create_chat_webhook, oq_d45410a4): nameable here, never
+            // auto-provisioned into a grant.
+            items: { type: 'string', enum: ['send_chat_message', 'start_coding_session', 'schedule_message', 'cancel_schedule', 'update_schedule', 'dispatch_platform_task', 'send_to_instance', 'stop_run', 'answer_chat_question', 'approve_request', 'pause_schedule', 'resume_schedule', 'create_chat_webhook'] },
             description: 'Consequential tools the chat may execute autonomously. Empty array = revoke all autonomy.',
           },
           scheduleCap: { type: 'number', description: 'Optional max scheduled firings per day for the chat (1..1440; default 48).' },
@@ -959,7 +1015,7 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
     function: {
       name: 'goal_list',
       // build 2026-10-08 A2-3: description diet — behaviour kept, prose tightened.
-      description: `List GOALS — the plan of record. DEFAULT (no projectId): ACCOUNT-WIDE — every goal in every project the user OWNS, each row tagged with projectName (projects merely shared WITH the user are excluded — pass their projectId).${process.env.GOAL_LIST_COMPACT_DISABLED === '1' ? '' : ' Account-wide rows are COMPACT (todo counts, no description / premises / todo list; open goals first, capped) — scope by projectId for full rows.'} projectId scopes to one project (owner or any member). Each goal: id, projectId, projectName, title, description, status (active|blocked|done|archived), blockedReason, inline todos, dependsOnGoalIds + dependentGoalIds. includeDescendants:true widens a scoped listing to the folder subtree; status filters. Pair with todo_list for the steps; hook_list shows who wakes on goal_blocked.`,
+      description: `List GOALS — the plan of record. DEFAULT (no projectId): ACCOUNT-WIDE — every goal in every project the user OWNS, each row tagged with projectName (projects merely shared WITH the user are excluded — pass their projectId).${process.env.GOAL_LIST_COMPACT_DISABLED === '1' ? '' : ' Account-wide rows are COMPACT (todo counts, no description / premises / todo list; open goals first, capped) — scope by projectId for full rows.'} projectId scopes to one project (owner or any member). Each goal: id, projectId, projectName, title, description, status (active|blocked|done|archived), blockedReason, inline todos, dependsOnGoalIds + dependentGoalIds. includeDescendants:true widens a scoped listing to the folder subtree; status filters. FLEET SCOPE: Fleet runs omit opted-out projects; an explicit one is refused. hook_list shows who wakes on goal_blocked.`,
       parameters: {
         type: 'object',
         properties: {
@@ -1072,7 +1128,7 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
     type: 'function' as const,
     function: {
       name: 'todo_list',
-      description: "List TODOS — the executable steps under goals. DEFAULT: ACCOUNT-WIDE — every todo in every project the user OWNS, rows tagged with projectName (projects merely shared WITH the user and archived folders are excluded — reach them via projectId). Or scope by ONE of goalId or projectId, never both. Row: id, goalId, projectId, projectName, title, status (pending|in_progress|blocked|done|dropped), blockedReason, assigneeChatId, dependsOnTodoIds. Use it to find a worker's next step or to audit open work before dispatching more with todo_create / start_coding_session. An EMPTY account-wide result is NOT proof of data loss — the result names excluded projects that still hold todos; re-check those by projectId.",
+      description: "List TODOS — the executable steps under goals. DEFAULT: ACCOUNT-WIDE — every todo in every project the user OWNS, rows tagged with projectName (projects merely shared WITH the user and archived folders are excluded — reach them via projectId). Or scope by ONE of goalId or projectId, never both. Row: id, goalId, projectId, projectName, title, status (pending|in_progress|blocked|done|dropped), blockedReason, assigneeChatId, dependsOnTodoIds. Use it to find a worker's next step or to audit open work before dispatching more with todo_create / start_coding_session. An EMPTY account-wide result is NOT proof of data loss — the result names excluded projects that still hold todos; re-check those by projectId. FLEET SCOPE: Fleet runs omit opted-out projects and refuse an explicit one.",
       parameters: {
         type: 'object',
         properties: {
@@ -1106,7 +1162,8 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
         properties: {
           goalId: { type: 'string', description: 'The goal this todo breaks down (full id or unique ≥8-char prefix).' },
           title: { type: 'string' },
-          assigneeChatId: { type: 'string', description: 'Optional worker chat responsible for the step (full id or unique ≥8-char prefix of a chat you own — it is stored canonicalized).' },
+          assigneeChatId: { type: 'string', description: 'Optional worker chat responsible for the step (full id or unique ≥8-char prefix of a chat you own — it is stored canonicalized). TD-1: omit it and the caller lane is bound automatically; pass deliberateUnassigned:true if this row is INTENTIONALLY unowned (a backlog item awaiting disposition).' },
+          deliberateUnassigned: { type: 'boolean', description: 'TD-1 escape hatch: set true ONLY when this todo is deliberately unowned (a backlog item awaiting disposition, not work you expect to run). Without it, a todo_create with no assigneeChatId binds the calling lane, and with no calling lane it is REFUSED.' },
           dependsOnTodoIds: { type: 'array', items: { type: 'string' }, description: 'Todo ids (any goal of the same owner) that must be done first.' },
         },
         required: ['goalId', 'title'],
@@ -1374,6 +1431,7 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
         type: 'object',
         properties: {
           ids: { type: 'array', items: { type: 'string' }, description: 'Optional oq_ ids to probe (≤50; full id or unique ≥8-char oq_-prefixed prefix — an ambiguous prefix returns every candidate). Returns exactly those rows; ids matching nothing land in unmatchedIds.' },
+          fullAnswer: { type: 'boolean', description: 'An ANSWERED row normally carries a preview plus answerChars (FULL stored length) and answerTruncated; when truncated the preview ends with a marker naming the omitted chars. Pass true to read answers UNCUT. Never conclude an answer lacks something from a truncated preview — check answerTruncated, then read it whole.' },
           status: { type: 'string', enum: ['open', 'answered', 'dismissed'], description: 'Optional filter. Default: all statuses — a gate check must see answered/dismissed rows.' },
           chatId: { type: 'string', description: 'Optional: only questions flagged from one chat.' },
           limit: { type: 'number', description: 'Max rows (default 25, max 100), newest first.' },
@@ -1430,11 +1488,15 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
     function: {
       name: 'update_feedback',
       // build 2026-10-08 A2-3: the MACHINE-MUTATION GATE is the ticket 18086326 fix; FILER BINDING landed 2026-09-27.
+      // ticket e7e40322 (2026-11-03): an ARCHIVED dispatchedTo lane is a LAPSED stamp — that chat can never write
+      // and nothing re-points it — so the filer binds again and any other machine run annotates/closes through the
+      // ordinary artifact bar. The probe fails CLOSED (only a set archivedAt retires). Kept terse here to hold the
+      // description budget (tool-description-budget.json); the full rationale lives on retiredDispatchLane.
       description:
         'ADMIN-ONLY (enforced at execution): update a ticket\'s status, adminNote (shown to the user) and/or priority — always leave an adminNote. ' +
         'VERIFIED CLOSE (machine runs): status=done REQUIRES evidence — replayTestPath (a committed test, local or on origin/main, naming the ticket id prefix) or commitSha; prUrl/deployRunId/repo/livenessProbe only support (repo = "owner/name"; livenessProbe = {url, expect:[strings]} refetched server-side at close). Tickets of type mishap ALWAYS require replayTestPath. A refused close names what to supply — stay in_progress. ' +
         'POST-DEPLOY DONE-BAR (6665fff6): a machine done close must prove the fix merged ∧ deployed (a metric-carrying ticket is redirected to awaiting_verification — the post-deploy verifier job re-measures its acceptance metric into deployed_verified / reopened; never hand-settable). ' +
-        'MACHINE-MUTATION GATE: a machine run changing a ticket whose context.dispatchedTo names another session meets that bar for ANY change; a ticket dispatched to or filed by (context.filedBy) this session, with no other lane dispatched, is yours to move. Otherwise file a sighting with file_feedback; supervisor / monitor lanes never mutate triage state. In a coding session first call load_tool_group({group:"triage"}). Human-anchored runs need no evidence.',
+        'MACHINE-MUTATION GATE: a machine run changing a ticket whose context.dispatchedTo names a LIVE session needs evidence for ANY change; one dispatched to or filed by (context.filedBy) this session is yours. An ARCHIVED dispatchedTo lane is LAPSED — the filer binds again, others use the normal evidence bar. Otherwise file a sighting with file_feedback; supervisor / monitor lanes never mutate triage state. In a coding session first call load_tool_group({group:"triage"}). Human-anchored runs need no evidence.',
       parameters: {
         type: 'object',
         properties: {
@@ -1773,7 +1835,10 @@ export const CONSEQUENTIAL_PLATFORM_TOOLS = new Set([
   'share_canvas',
   // T5: public project link + cross-user membership — never autonomous.
   'share_project', 'add_project_member', 'remove_project_member',
-  // #32 close-out (2026-09-25): minting a bearer that wakes runs on injected text — never autonomous.
+  // #32 close-out (2026-09-25): minting a bearer that wakes runs on injected text.
+  // Owner ruling oq_d45410a4 (ticket d53eed71): it stays CONSEQUENTIAL (it cards
+  // by default) but is no longer in NEVER_AUTONOMOUS_TOOLS — it is card-free only
+  // on an EXPLICIT 'manual' grant naming it (see EXPLICIT_GRANT_ONLY_TOOLS).
   'create_chat_webhook',
   // control tools (capability gap audit P0, 2026-09-24): stopping a run,
   // answering a run's question, deciding a permission request, pausing or
@@ -1813,7 +1878,27 @@ export const CONSEQUENTIAL_PLATFORM_TOOLS = new Set([
  *     'machine_delegated'; kill switch AUTONOMY_DELEGATION_DISABLED=1).
  * Everything else about set_chat_autonomy still stages.
  */
-const NEVER_AUTONOMOUS_TOOLS = new Set(['set_chat_autonomy', 'create_share_link', 'share_canvas' /* T4a: public exposure */, 'share_project', 'add_project_member', 'remove_project_member' /* T5: public exposure / cross-user access */, 'create_chat_webhook' /* #32: bearer minting */]);
+const NEVER_AUTONOMOUS_TOOLS = new Set(['set_chat_autonomy', 'create_share_link', 'share_canvas' /* T4a: public exposure */, 'share_project', 'add_project_member', 'remove_project_member' /* T5: public exposure / cross-user access */]);
+
+/**
+ * EXPLICIT-GRANT-ONLY tools (owner ruling oq_d45410a4, ticket d53eed71).
+ * MUST mirror autonomy.service EXPLICIT_GRANT_ONLY_TOOLS (kept local for the
+ * same static-import-graph reason as TARGET_SCOPED_CONSEQUENTIAL_TOOLS above).
+ *
+ * These mint a bearer (create_chat_webhook: the token later grants external
+ * POST access to a chat as its owner, #32), so the card stays the credential
+ * boundary UNLESS the owner deliberately named the tool in this chat's grant.
+ *
+ * The bypass here is deliberately the NARROWEST in the gate: one stored grant,
+ * source 'manual' (what the Autonomy dialog and a confirmed set_chat_autonomy
+ * write), whose allowedTools literally contains the tool. NOT the db747817
+ * auto-mode waiver, NOT a mode-materialized 'agent_mode_auto' row, NOT the
+ * implicit parent→child path, NOT a 'machine_delegated' supervisor grant — a
+ * supervisor's own authority over this tool is itself auto-provisioned, so it
+ * is not an explicit owner grant and must not launder into one. Everything
+ * else falls through to staging, exactly as before.
+ */
+const EXPLICIT_GRANT_ONLY_TOOLS = new Set<string>(['create_chat_webhook']);
 
 /**
  * G19 (remediation 2026-09-09): the chat-TARGETED consequential tools whose
@@ -1899,6 +1984,63 @@ export function filerBoundToSession(
   sessionId: string | undefined,
 ): boolean {
   return filerBindingVerdict(context, source, sessionId).bound;
+}
+
+/**
+ * LAPSED-DISPATCH leaf (ticket e7e40322, 2026-11-03) — the "dispatch
+ * binding outlives its lane" lockout the gate's own refusal text pushed lanes
+ * into. The specimen: ticket 5f69fdc4 carries context.dispatchedTo = lane
+ * cc65072f from its 08:41Z dispatch. That lane was ARCHIVED at 10:02Z, the
+ * work moved to lane ef2975d7, and PR #2406 then landed the fix on the
+ * archived lane's behalf — but every annotation/close on the ticket was
+ * refused ("context.dispatchedTo names another session") because the stamp
+ * still names a chat that can never write again. The row froze while its fix
+ * shipped, and no tool re-points dispatchedTo.
+ *
+ * A dispatchedTo naming an ARCHIVED chat is therefore a LAPSED stamp, not a
+ * live owner. Pure: the caller does the one probe; this leaf only classifies
+ * its answer, so the gate's truth table stays unit-testable without a DB.
+ *
+ * FAIL-CLOSED: an UNKNOWN probe (read error / not run) keeps the stamp LIVE —
+ * a transient DB blip must never turn a working lane's ticket into a shared
+ * write target. A stamp naming a LIVE (unarchived, existing) chat keeps the
+ * pre-fix lockout byte-for-byte: that lane owns its triage. A stamp naming a
+ * chat row that is GONE is ALSO kept live by the probe below (a missing row is
+ * not proof of retirement — see retiredDispatchLane); such a ticket is still
+ * reachable through the ordinary artifact-evidence bar.
+ */
+export function dispatchedLaneRetired(laneState: { retired: boolean } | null | undefined): boolean {
+  return !!(laneState && laneState.retired === true);
+}
+
+/**
+ * The ONE read behind the lapsed-dispatch leaf: is `context.dispatchedTo` a
+ * chat that is ARCHIVED? Returns the retired lane id, or '' when the stamp
+ * names this session, names nothing, or cannot be judged.
+ *
+ * Deliberately narrow (ticket e7e40322 review): ONLY a set `archivedAt` reads
+ * as retired. A row that is absent is NOT treated as retired — a partial
+ * Prisma double or an unreadable read is not proof a lane is dead, and the
+ * relaxation must change nothing for the ~every case where the dispatched
+ * lane is live (whose ownership lockout stays byte-identical). A ticket whose
+ * lane chat was cascade-deleted keeps the pre-fix path: the artifact evidence
+ * bar still lets a lane annotate/close it. Any read error fails CLOSED (the
+ * pre-fix lockout).
+ */
+async function retiredDispatchLane(
+  boundCtx: Record<string, unknown> | null | undefined,
+  selfSessionId: string | undefined,
+): Promise<string> {
+  const lane = typeof boundCtx?.dispatchedTo === 'string' ? boundCtx.dispatchedTo.trim() : '';
+  if (!lane || lane === selfSessionId) return '';
+  let row: { archivedAt?: Date | null } | null;
+  try {
+    const { default: prisma } = await import('../../../config/database');
+    row = await prisma.crossModelChat.findUnique({ where: { id: lane }, select: { archivedAt: true } });
+  } catch {
+    return ''; // fail CLOSED — an unreadable probe keeps the stamp live
+  }
+  return dispatchedLaneRetired({ retired: !!(row && row.archivedAt) }) ? lane : '';
 }
 
 /**
@@ -3026,7 +3168,37 @@ async function gateConsequentialPlatformTool(
     // set_chat_autonomy's ONLY exceptions are the two authority-neutral
     // branches immediately above: the authority-non-widening self-request
     // (9341e862) and the scoped supervisor machine-delegation limb (eb4337fe).
-    if (!NEVER_AUTONOMOUS_TOOLS.has(name)) {
+    // EXPLICIT-GRANT-ONLY (owner ruling oq_d45410a4, ticket d53eed71): a
+    // bearer-minting tool is card-free ONLY when a stored EXPLICIT grant names
+    // it — and it then SHORT-CIRCUITS out of the gate, so it never reaches the
+    // mode-inferred limbs below. Both conjuncts fail closed: no row / unreadable
+    // row / any error → stage a card, exactly as before the ruling.
+    if (EXPLICIT_GRANT_ONLY_TOOLS.has(name)) {
+      const autonomyMod: any = await import('./autonomy.service');
+      const row: any = await Promise.resolve((autonomyMod.getChatAutonomy as any)?.(ctx.sessionId) ?? null).catch(() => null);
+      // source must be 'manual' — the only provenance a HUMAN typed (the
+      // Autonomy dialog / a confirmed set_chat_autonomy). Deliberately excluded:
+      //   'agent_mode_auto'  — inferred from the chat's Agent mode, which would
+      //                        make every auto-mode coding lane card-free (the
+      //                        inverse of the ruling, and it is the state both
+      //                        offending lanes were in);
+      //   'machine_delegated'— a supervisor's own auto-provisioned authority;
+      //                        laundered here it would become an owner grant.
+      if (
+        row
+        && row.source === (autonomyMod.AUTONOMY_SOURCE_MANUAL ?? 'manual')
+        && Array.isArray(row.allowedTools)
+        && row.allowedTools.includes(name)
+      ) {
+        try {
+          await autonomyMod.auditAutonomousExecution({
+            chatId: ctx.sessionId, tool: name, userId: ctx.userId,
+            note: 'explicit owner grant covering a bearer-minting tool (oq_d45410a4 / d53eed71)',
+          });
+        } catch { /* audit is best-effort */ }
+        return { denied: null, execArgs: args };
+      }
+    } else if (!NEVER_AUTONOMOUS_TOOLS.has(name)) {
       // Dynamic import: keeps this module's static graph unchanged (see imports NOTE).
       const autonomyMod = await import('./autonomy.service');
       const { getChatAutonomy, auditAutonomousExecution, implicitParentAutonomyAllows } = autonomyMod;
@@ -3299,9 +3471,11 @@ async function gateConsequentialPlatformTool(
     // configure_workspace) run directly only when the repo URL is in the
     // user's OWN message (ctx.userTurnText) — text a tool result carried in
     // the same turn cannot spend the user's GitHub credential card-free.
-    // Kill switch: WORK_TOOLS_NO_CARD_DISABLED=1 restores the card on every
-    // tool; the repo-URL rule is unconditional since 2026-10-30.
-    if (isWorkTool(name) && !workToolsNoCardDisabled() && isFreshHumanAsk(ctx)) {
+    // Kill switch none: the repo-URL rule is unconditional since 2026-10-30,
+    // and this path's own switch (WORK_TOOLS_NO_CARD_DISABLED) was retired in
+    // RSW-1 — a card that a human turn's own message has already authorized
+    // always executes.
+    if (isWorkTool(name) && isFreshHumanAsk(ctx)) {
       const inScope = await workToolInScope(name, args, ctx, async () => {
         const rows = await platform.listSchedules({ userId: ctx.userId });
         return rows.map((r) => ({ id: r.id, sessionId: r.sessionId }));
@@ -3586,7 +3760,6 @@ async function emitSpawnedSessionCard(chatId: string, envelope: string): Promise
     // no run — a "running" card would be the stanne #2 lie on the card.
     if (spawnEnvelopeIsIdle(envelope)) return;
     const te = await import('../chat-agent/task-events');
-    if (te.sessionTaskCardDisabled()) return;
     const [spawned] = te.spawnedSessionsInParts([{ type: 'tool_result', name: 'start_coding_session', result: envelope }]);
     if (!spawned) return;
     te.emitTaskEvent(chatId, te.buildSessionTaskEvent({ chatId, sessionId: spawned.sessionId, title: spawned.title }));
@@ -3756,16 +3929,28 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
     case 'list_chats': {
       const limit = Math.min(50, Math.max(1, Number(args?.limit) || 20));
       const page = Math.max(1, Number(args?.page) || 1);
+      // SUPERVISION SCOPE (ticket 03d14b78): the Fleet Supervisor's machine-run
+      // survey subtracts the owner's opted-out projects BEFORE composition, so
+      // no opted-out chat id/title/lastMessage reaches the envelope. An
+      // explicit projectId naming an opted-out project is REFUSED (never
+      // silently emptied, never echoed). Fail-open: an unreadable scope set
+      // subtractions nothing (the leaf returns empty).
+      const scope = await fleetReadScope(ctx, userId);
+      const scopedProjectId = args?.projectId ? String(args.projectId) : '';
+      if (scope.applies && scopedProjectId && scope.optedOut.has(scopedProjectId)) {
+        return outOfScopeProjectRefusal('list_chats');
+      }
       const result = await platform.listChats({
         userId, page, limit,
         ...(args?.q ? { q: String(args.q) } : {}),
-        ...(args?.projectId ? { projectId: String(args.projectId) } : {}),
+        ...(scopedProjectId ? { projectId: scopedProjectId } : {}),
         ...(args?.running !== undefined && args?.running !== null ? { running: !!args.running } : {}),
         ...(args?.codeCapable !== undefined && args?.codeCapable !== null ? { codeCapable: !!args.codeCapable } : {}),
         // T3a (2026-09-24): the REST filters the tool lacked.
         ...(args?.archived !== undefined && args?.archived !== null ? { archived: !!args.archived } : {}),
         ...(args?.mode ? { mode: String(args.mode) } : {}),
         ...(args?.status ? { status: String(args.status) } : {}),
+        ...(scope.applies && scope.optedOut.size ? { excludeProjectIds: Array.from(scope.optedOut) } : {}),
       });
       // Secret-scrubbing review fix: lastMessage is a 50-char head of the
       // newest message — a Z.ai key is 49 chars, so a pasted key rides a
@@ -4339,7 +4524,7 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       // an UNGROUPED caller (the Fleet Supervisor: projectId 'chat', no parent
       // project) is never corrected above, so a framework fix it spawns can
       // land in a user project with no record. When such a caller's prompt
-      // names the Digby framework repo (canada-quant/digby or a backend/src
+      // names the Digby framework repo (example-org/crossmodel or a backend/src
       // path) and the target project's repo is NOT the crossmodel repo, record
       // a guard_strike row (seam framework_spawn_in_user_project, outcome
       // observed) and append a NOTE — no refusal, no correction. Fail-open on
@@ -4359,7 +4544,7 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
                 sessionId: ctx.sessionId,
                 meta: { seam: 'framework_spawn_in_user_project', tool: 'start_coding_session', targetProjectId: target.id, targetRepoUrl: target.repoUrl ?? null, outcome: 'observed' },
               });
-              spawnObserveNote += ` NOTE (observe-only): the prompt names the Digby framework repo (canada-quant/digby / backend/src) but project ${target.id} ("${target.name}") is ${target.repoUrl ? `the ${target.repoUrl} repo` : 'repo-less'} — framework work belongs in the crossmodel project (list_projects name "crossmodel"), audits of a user project in that project; the session was created where you asked.`;
+              spawnObserveNote += ` NOTE (observe-only): the prompt names the Digby framework repo (example-org/crossmodel / backend/src) but project ${target.id} ("${target.name}") is ${target.repoUrl ? `the ${target.repoUrl} repo` : 'repo-less'} — framework work belongs in the crossmodel project (list_projects name "crossmodel"), audits of a user project in that project; the session was created where you asked.`;
             }
           } catch { /* observe-only: never affects the spawn */ }
         }
@@ -4491,6 +4676,119 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
         topologyEval = null;
       }
 
+      // ── Spawn IDENTITY dedupe (ticket d1120ffc, 2026-11-02) ──────────────
+      // ONE dispatch produced THREE lanes: the chartered lane plus a duplicate
+      // with its own branch, worktree and plan — a whole model run and a share of
+      // the project's spend burned on a lane nobody asked for. Every guard above
+      // is a VOLUME bound (8/h, storm breaker, concurrency ceiling) and none of
+      // them asks "is this the SAME spawn I already made?"; the topology R1 rule
+      // asks something adjacent but ships observe-only.
+      //
+      // So: a deterministic IDENTITY (platform/spawn-dedupe.ts — caller chat +
+      // project + charter + title + a digest of the brief) claims a short Redis
+      // slot BEFORE the spawn and records the lane id on success. A second call
+      // with the same identity returns THAT lane instead of creating one. A
+      // different goal / todo / title / brief is a different key and spawns as
+      // before. Redis (not an in-process map) because the duplicate can arrive on
+      // ANOTHER box after a requeue — the reported shape.
+      //
+      // The identity's brief is the caller's RAW `args.prompt`, never the
+      // enriched `prompt` (which carries a per-run [PARENT SESSION CONTEXT]
+      // digest and would make every spawn look different); the title is the
+      // resolved one, so a charter-derived title still dedupes.
+      //
+      // DIGBY_SPAWN_DEDUPE_WINDOW_SEC=0 turns this off and restores spawn-always
+      // (a duration tunable, like DIGBY_MAX_CHILD_SPAWNS_PER_HOUR — deliberately
+      // not a *_DISABLED release switch). Fail-OPEN on every Redis hiccup: a
+      // dedupe that cannot read the claim must never block a legitimate spawn.
+      let spawnClaimKey: string | null = null;
+      const dedupeWindowMs = spawnDedupeWindowMs();
+      if (dedupeWindowMs > 0) {
+        spawnClaimKey = spawnDedupeKey({
+          callerChatId: parentChatId ?? ctx.sessionId ?? null,
+          projectId: spawnProjectId,
+          goalId: spawnCharter.goalId ?? null,
+          todoId: spawnCharter.todoId ?? null,
+          title: spawnTitle ?? null,
+          prompt: args?.prompt ? String(args.prompt) : null,
+        });
+      }
+      const dedupeWindowSec = Math.max(1, Math.round(dedupeWindowMs / 1000));
+      // Resolved, never imported: config/redis validates the whole env at import
+      // and process.exit(1)s in a bare test env (platform/spawn-claim-store.ts
+      // explains the trap). config/redis registers the Redis store at boot; when
+      // nothing is registered there is exactly ONE fallback behaviour — dedupe is
+      // OFF, and the spawn TELEMETRY says so (review B4: an unobservable dead
+      // guard is worse than an honest off switch). No process-local stand-in: the
+      // twins this ticket reports meet on different boxes, so a local claim would
+      // add nothing in production while silently changing spawn behaviour
+      // wherever the graph runs without Redis (it deduped legitimate same-title
+      // spawns in five hermetic suites).
+      const claimStore = activeSpawnClaimStore();
+      const claimShared = spawnClaimStoreIsShared();
+      const releaseSpawnClaim = async (key: string | null): Promise<void> => {
+        if (!key || !claimStore) return;
+        try { await claimStore.release(key); } catch { /* fail-open: a stale claim expires on its own window */ }
+      };
+      if (spawnClaimKey && claimStore) {
+        try {
+          // The claim VALUE carries its own timestamp, so an abandoned claim is
+          // self-identifying in every store (review B3 — a Redis TTL says how long
+          // is LEFT, never when the claim was taken).
+          const claimed = await claimStore.claim(spawnClaimKey, pendingClaimValue(), dedupeWindowSec);
+          if (!claimed) {
+            // Someone already claimed this identity. Wait — briefly and BOUNDED —
+            // for its lane id: the winner records it right after
+            // startCodingSession returns, so a true retry/duplicate resolves
+            // within a second or two.
+            let existing: string | null = await claimStore.read(spawnClaimKey).catch(() => null);
+            for (let i = 0; i < 10 && !isSpawnClaimLaneId(existing); i++) {
+              await new Promise((r) => setTimeout(r, 250));
+              existing = await claimStore.read(spawnClaimKey).catch(() => null);
+            }
+            // Review B3: a claim left `pending` by a caller that DIED (or whose
+            // lane-id write failed) must not lock every identical spawn out for
+            // the whole window pointing at a lane that never existed. Past the
+            // grace window it is treated as abandoned, RE-CLAIMED, and this call
+            // spawns. An unreadable age keeps refusing (fail-closed).
+            let proceed = false;
+            if (isAbandonedPendingClaim(existing)) {
+              void recordPlatformLoopMetric('GUARD_STRIKE', {
+                sessionId: parentChatId ?? ctx.sessionId,
+                meta: { seam: 'spawn_dedupe_stale_reclaimed', tool: 'start_coding_session', projectId: spawnProjectId },
+              });
+              // claim() is NX: if a live twin won the reclaim race we lose it and
+              // fall back to reading whatever it wrote (a lane id or pending).
+              proceed = await claimStore.reclaim(spawnClaimKey, String(existing ?? ''), pendingClaimValue(), dedupeWindowSec).catch(() => false);
+              if (!proceed) existing = await claimStore.read(spawnClaimKey).catch(() => null);
+            }
+            if (!proceed) {
+              if (isSpawnClaimLaneId(existing)) {
+                const ageSec = await claimStore.ageSec(spawnClaimKey).catch(() => null);
+                if (releaseStormSlot) await releaseStormSlot().catch(() => {});
+                void recordPlatformLoopMetric('GUARD_STRIKE', {
+                  sessionId: parentChatId ?? ctx.sessionId,
+                  meta: { seam: 'spawn_dedupe_reused', tool: 'start_coding_session', existingChatId: existing, projectId: spawnProjectId },
+                });
+                return renderSpawnReplay({ sessionId: existing, projectId: spawnProjectId, title: spawnTitle ?? null, ageSec });
+              }
+              // Still pending (in flight, and recent) — or unreadable, which is
+              // also refused: never mint the duplicate this ticket reports.
+              if (releaseStormSlot) await releaseStormSlot().catch(() => {});
+              void recordPlatformLoopMetric('GUARD_STRIKE', {
+                sessionId: parentChatId ?? ctx.sessionId,
+                meta: { seam: 'spawn_dedupe_in_flight', tool: 'start_coding_session', projectId: spawnProjectId },
+              });
+              return `No new session was created — an IDENTICAL start_coding_session from this chat is ALREADY IN FLIGHT (same caller chat, project, charter goal/todo, title and brief) and its lane id is not minted yet. This is the duplicate that would otherwise burn a second worktree and a second model run. Do NOT re-issue it: poll get_chat_status on your recent chats, or send the steer once the lane reports ready. If you genuinely need a SECOND lane for different work, change the title or the brief (or the charter) and re-issue — a different identity is a different spawn.`;
+            }
+          }
+        } catch (err: any) {
+          // Fail-open: no claim, no dedupe, spawn exactly as before.
+          console.warn(`start_coding_session: spawn dedupe claim unavailable (fail-open): ${err?.message ?? err}`);
+          spawnClaimKey = null;
+        }
+      }
+
       // Human-spawned child (cohesive chat live fixes 2026-09-28, platform/
       // human-spawn.ts): a spawn on a HUMAN turn of a non-supervisor chat is
       // the user's own ask — the service defaults its permissionMode to
@@ -4533,6 +4831,10 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
         // Hardening 2026-09-14: a spawn that never happened is not fan-out —
         // give the storm-window slot back (best-effort) on BOTH exits below.
         if (releaseStormSlot) await releaseStormSlot().catch(() => {});
+        // Ticket d1120ffc: a spawn that FAILED must not hold the identity claim —
+        // otherwise the caller's legitimate retry would be told "already in
+        // flight" by its own dead attempt.
+        await releaseSpawnClaim(spawnClaimKey);
         // Ticket b6acc1e3: an invalid explicit `model` is a clean tool-result
         // refusal (the caller re-stages with a valid pick or omits the param),
         // never an opaque thrown tool error.
@@ -4581,6 +4883,14 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
           recordTopologyDecision(topologyEval, { spawnedChatId: s.id });
         }
       } catch { /* charter / telemetry are best-effort */ }
+      // Ticket d1120ffc: the claim now carries the LANE ID, so a twin that lost
+      // the NX race (or a retry seconds later) reads back the exact session this
+      // spawn created instead of minting a second one.
+      if (spawnClaimKey && claimStore) {
+        try {
+          await claimStore.write(spawnClaimKey, s.id, dedupeWindowSec);
+        } catch { /* fail-open: no recorded id ⇒ the window simply stops deduping */ }
+      }
       // Lineage (piece 1) + auto result-hook (piece 2) — AFTER the spawn
       // succeeded, both best-effort: the session already exists, so a lineage/
       // hook hiccup degrades the result note, never the spawn.
@@ -4692,6 +5002,12 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
           ...(firstPromptSource ? { firstPrompt: firstPromptSource } : {}),
           // audit 2026-10-08 W2-1: where the child's branch was cut from.
           spawnBase: (s as any).startFromBranch ? 'continue' : (s as any).chainedFromSession ? 'prior_session' : 'fresh',
+          // Ticket d1120ffc (review B4): IS the spawn dedupe armed, and does it
+          // cover more than this one process? 'shared' = the Redis store that
+          // catches a twin on another box; 'process' = the in-process fallback
+          // (same-process retries only); 'off' = no identity, or the window is 0.
+          // Without this row a dead dedupe is indistinguishable from a working one.
+          spawnDedupe: !spawnClaimKey ? 'off' : (claimShared ? 'shared' : 'process'),
         },
       });
       // build 2026-10-08 D-1: the delegation ledger's session task (SHADOW — platform/delegation-tasks.ts); an IDLE
@@ -4806,20 +5122,32 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       // goals, no chats) are visible too. systemPrompt stays out of list rows
       // (get_project reads one project back in full); FLEET_LIST_CAP guards
       // loop context like the other fleet lists.
+      //
+      // SUPERVISION SCOPE (ticket 03d14b78): the Fleet Supervisor's machine-run
+      // enumeration subtracts opted-out projects from BOTH arms — owned (an
+      // opted-out project the owner owns) and shared. Rows are dropped whole, so
+      // no name, id, path, emoji, counts or `role` of an opted-out project can
+      // reach the envelope, and no "N hidden" note is emitted (the opt-out is
+      // not a fact to leak back). Ordinary chats, project supervisors and owner
+      // turns read the tree unchanged.
       const tree = await platform.getFolderTree({ userId });
+      const projectScope = await fleetReadScope(ctx, userId);
       const strip = (rows: any[] | undefined, extra: (p: any) => Record<string, any>) =>
         (rows || []).slice(0, FLEET_LIST_CAP).map((p: any) => {
           const row = { ...p };
           delete row.systemPrompt;
           return { ...row, ...extra(p) };
         });
-      const owned = strip(tree?.owned, () => ({ role: 'owner' }));
-      const shared = strip(tree?.shared, (p: any) => ({ role: p.memberRole, ownerName: p.ownerName }));
+      const scopeTree = projectScope.applies && projectScope.optedOut.size
+        ? { owned: dropOutOfScopeProjects(tree?.owned, projectScope.optedOut), shared: dropOutOfScopeProjects(tree?.shared, projectScope.optedOut) }
+        : { owned: tree?.owned, shared: tree?.shared };
+      const owned = strip(scopeTree.owned, () => ({ role: 'owner' }));
+      const shared = strip(scopeTree.shared, (p: any) => ({ role: p.memberRole, ownerName: p.ownerName }));
       if (!owned.length && !shared.length) {
         return 'No projects found — create one with create_project.';
       }
       const truncated =
-        (tree?.owned?.length || 0) > FLEET_LIST_CAP || (tree?.shared?.length || 0) > FLEET_LIST_CAP;
+        (scopeTree.owned?.length || 0) > FLEET_LIST_CAP || (scopeTree.shared?.length || 0) > FLEET_LIST_CAP;
       return JSON.stringify(
         { owned, shared, ...(truncated ? { truncated: true, cap: FLEET_LIST_CAP } : {}) },
         null,
@@ -5220,12 +5548,30 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       // carried forward.
       const projectFix = await projectIdCorrectionForTool(goalsSvc, projectId, userId);
       if (projectFix) projectId = projectFix.to;
-      const rows = await listGoals({
-        userId,
-        ...(projectId ? { projectId } : {}),
-        ...(args?.includeDescendants !== undefined && args?.includeDescendants !== null ? { includeDescendants: !!args.includeDescendants } : {}),
-        ...(args?.status !== undefined && args?.status !== null ? { status: String(args.status) as any } : {}),
-      });
+      // SUPERVISION SCOPE (ticket 03d14b78): the Fleet Supervisor's machine-run
+      // goal read subtracts the owner's opted-out projects. An account-wide pull
+      // (no projectId) is filtered before compaction, so counts and `total` are
+      // honest; an explicit projectId naming an opted-out project is REFUSED by
+      // the service (it sees the resolved id, so an 8-char prefix cannot slip
+      // past the scope check).
+      const goalScope = await fleetReadScope(ctx, userId);
+      // An explicit opted-out projectId throws the 403 scope refusal inside the
+      // service (it sees the resolved id, so an 8-char prefix cannot slip past
+      // the scope check). Convert it to the refusal string — a bare "Tool
+      // failed" would read as breakage, not as a deliberate scope boundary.
+      let rows;
+      try {
+        rows = await listGoals({
+          userId,
+          ...(projectId ? { projectId } : {}),
+          ...(args?.includeDescendants !== undefined && args?.includeDescendants !== null ? { includeDescendants: !!args.includeDescendants } : {}),
+          ...(args?.status !== undefined && args?.status !== null ? { status: String(args.status) as any } : {}),
+          ...(goalScope.applies && goalScope.optedOut.size ? { excludeProjectIds: Array.from(goalScope.optedOut) } : {}),
+        });
+      } catch (err) {
+        if (goalScope.applies && isOutOfScopeRefusal(err)) return outOfScopeProjectRefusal('goal_list');
+        throw err;
+      }
       if (!rows.length) return `${projectFix ? `${projectFix.note} ` : ''}${projectId ? 'No goals found for that project/filter.' : 'No goals found in any of your projects.'}`;
       // audit 2026-10-06 T5-5 (stanne #14): account-wide = compact rows under a hard char cap.
       if (!projectId && typeof goalsSvc.goalListCompactDisabled === 'function' && !goalsSvc.goalListCompactDisabled()) {
@@ -5252,6 +5598,39 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       if (!goalId) return 'goal_get requires goalId.';
       const { getGoal } = await import('./goals.service');
       const g = await getGoal({ userId, goalId });
+      // ── SAA-1.4 PHASE 1 (todo 2ef2b254): the `goal_get` chain surface ──────────
+      // A goal read already carries its child todos, so the NEXT HOP after reading
+      // the brief is one of those todos — the caller should not have to list the
+      // board to act on the thing the brief just named.
+      // ADDITIVE FIELD, never a trailing line: this repo's callers parse these
+      // envelopes from the FIRST BRACE, so a prose suffix would break every one of
+      // them (the reason `withRecallChainField` exists at all). `withRecallChainField`
+      // returns the SAME object reference when nothing applied, so a default box's
+      // JSON.stringify output is byte-identical to before (same key order, same bytes).
+      // Hops use only kinds from RecallHop and only ids present on the returned view:
+      // NOT `projectId` — a project is not a chat and labelling it one would be a lie
+      // a reader acts on (there is no chat read for a project id).
+      try {
+        const recall = await import('./chain-of-recall');
+        const hops: Array<{ kind: 'run' | 'goal' | 'todo' | 'receipt' | 'chat' | 'schedule'; id: string; label?: string }> = [];
+        for (const t of (Array.isArray(g?.todos) ? g.todos : []).slice(0, 3)) {
+          if (!t?.id) continue;
+          hops.push({ kind: 'todo', id: String(t.id), ...(t.title ? { label: String(t.title).slice(0, 40) } : {}) });
+        }
+        const chain = recall.planRecallChain({ surface: 'goal_get', hops });
+        // Telemetry BEFORE the return, in the exact fire-and-forget shape
+        // ops-tools.ts already uses: a dynamic import of loop-metrics.service, a
+        // typeof guard (a partial mock must not throw), and a null meta ⇒ no row
+        // (the leaf returns null when the switch is off or the chain is empty).
+        const meta = recall.recallChainMetricMeta(chain, { tool: 'goal_get' });
+        if (meta) {
+          const m: any = await import('./loop-metrics.service');
+          if (typeof m?.recordLoopMetric === 'function') {
+            m.recordLoopMetric({ kind: m.LOOP_METRIC_KINDS?.CHAIN_OF_RECALL_OBSERVE ?? 'chain_of_recall_observe', sessionId: ctx.sessionId, value: 1, meta });
+          }
+        }
+        return JSON.stringify(recall.withRecallChainField(g as any, chain), null, 1);
+      } catch { /* chain-of-recall: never blocks a read */ }
       return JSON.stringify(g, null, 1);
     }
 
@@ -5264,11 +5643,26 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       // its home project unless explicitly authorized (assigned todo there).
       const goalScopeRefusal = await crossProjectCreateRefusal(ctx, { tool: 'goal_create', targetProjectId: projectId });
       if (goalScopeRefusal) return goalScopeRefusal;
+      // Ticket d1120ffc: a bad SHAPE (an object / array where prose belongs) is
+      // refused BEFORE the write — String({...}) used to store "[object Object]",
+      // a stub written by us rather than by the transport. `null` = the explicit
+      // clear it always meant. Nothing partial can land: this runs first.
+      const goalDesc = normalizeTextArg('description', args?.description);
+      if (!goalDesc.ok) return goalDesc.refusal;
+      // Ticket d1120ffc review B2: the TITLE goes through the same guard. It used
+      // to be raw `String(args.title)`, so an object title became the literal
+      // "[object Object]" AND the fidelity receipt then certified that corrupt
+      // value as byte-identical — a guard that vouches for the bug it exists to
+      // catch. The service stores the TRIMMED title, which the comparison below
+      // mirrors (trim:true) instead of reporting a false failure on a trailing
+      // newline.
+      const goalTitle = normalizeTextArg('title', args?.title);
+      if (!goalTitle.ok) return goalTitle.refusal;
       const { createGoal } = await import('./goals.service');
       const goalCreateMachine = ledgerToolMachineTriggered(ctx);
       const g = await createGoal({
         userId, projectId, title,
-        ...(args?.description !== undefined && args?.description !== null ? { description: String(args.description) } : {}),
+        ...(goalDesc.value !== undefined ? { description: goalDesc.value } : {}),
         createdByChatId: ctx.sessionId, // provenance: blocked-goal hook events fire FROM this chat
         ...(Array.isArray(args?.dependsOnGoalIds) ? { dependsOnGoalIds: args.dependsOnGoalIds.map(String) } : {}),
         machineTriggered: goalCreateMachine, // 2026-10-20: goal_transition actorKind (origin-aware)
@@ -5284,7 +5678,18 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       const note = g.status === 'blocked'
         ? ' It STARTS BLOCKED on unfinished dependencies — it auto-unblocks when they finish.'
         : '';
-      return `Created goal ${g.id} "${g.title}" (status: ${g.status}).${note} Decompose it with todo_create(goalId:"${g.id}", ...).\n${JSON.stringify(g, null, 1)}`;
+      // Ticket d1120ffc: prove the brief actually landed. The row is written, so
+      // this compares SENT vs STORED per supplied payload field. It rides the
+      // PROSE PREFIX (before the JSON body) because goal_create's result has
+      // always been "sentence\n{row}" and callers parse from the first brace —
+      // a trailing line would break every one of them.
+      const fidelity = payloadFidelityNote(payloadFidelity([
+        // The service stores `String(title).trim()` — compare in that unit.
+        { field: 'title', sent: goalTitle.value ?? title, stored: (g as any)?.title, trim: true },
+        { field: 'description', sent: goalDesc.value, stored: (g as any)?.description },
+      ]));
+      const body = `Created goal ${g.id} "${g.title}" (status: ${g.status}).${note} Decompose it with todo_create(goalId:"${g.id}", ...).${fidelity ? `\n${fidelity}` : ''}\n${JSON.stringify(g, null, 1)}`;
+      return body;
     }
 
     case 'goal_update': {
@@ -5296,6 +5701,21 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       // call whose mutating field never reached the handler).
       const noOp = noOpWriteRefusal('goal_update', args);
       if (noOp) return noOp;
+      // Ticket d1120ffc: same shape guard as goal_create — a non-string
+      // description/progressNote/blockedReason is REFUSED before any write
+      // (String({…}) would store "[object Object]"); null stays the explicit
+      // clear. Every field is normalized before the service call so a bad shape
+      // can never half-apply through the other, valid, fields of the same call.
+      const descArg = normalizeTextArg('description', args?.description);
+      if (!descArg.ok) return descArg.refusal;
+      const noteArg = normalizeTextArg('progressNote', args?.progressNote);
+      if (!noteArg.ok) return noteArg.refusal;
+      const blockArg = normalizeTextArg('blockedReason', args?.blockedReason);
+      if (!blockArg.ok) return blockArg.refusal;
+      // Review B2: the TITLE is guarded like the other free-text fields (an object
+      // title used to become "[object Object]" and the receipt certified it).
+      const titleArg = normalizeTextArg('title', args?.title);
+      if (!titleArg.ok) return titleArg.refusal;
       const { updateGoal } = await import('./goals.service');
       // 2026-10-20 (GOAL-OUTCOME-UNMET + transition telemetry), review fix:
       // ORIGIN-aware — an agent-origin / owner-dispatch run carries the owner
@@ -5307,13 +5727,13 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
         userId, goalId,
         actingChatId: ctx.sessionId, // v1#8: goal_blocked emits from the ACTING chat
         actingRunId: ctx.runId ?? undefined, // c286ba91: gate-write authorship trail (row stamp + audit metadata)
-        ...(args?.title !== undefined ? { title: String(args.title) } : {}),
-        ...(args?.description !== undefined ? { description: String(args.description) } : {}),
+        ...(titleArg.value !== undefined ? { title: titleArg.value } : {}),
+        ...(descArg.value !== undefined ? { description: descArg.value } : {}),
         ...(args?.status !== undefined && args?.status !== null ? { status: String(args.status) as any } : {}),
-        ...(args?.blockedReason !== undefined ? { blockedReason: String(args.blockedReason) } : {}),
+        ...(blockArg.value !== undefined ? { blockedReason: blockArg.value } : {}),
         ...(args?.blockKind !== undefined ? { blockKind: args.blockKind === null ? null : String(args.blockKind) } : {}),
         ...(args?.gateQuestionId !== undefined ? { gateQuestionId: args.gateQuestionId === null ? null : String(args.gateQuestionId) } : {}),
-        ...(args?.progressNote !== undefined ? { progressNote: args.progressNote === null ? null : String(args.progressNote) } : {}),
+        ...(noteArg.value !== undefined ? { progressNote: noteArg.value === '' ? null : noteArg.value } : {}),
         ...(Array.isArray(args?.dependsOnGoalIds) ? { dependsOnGoalIds: args.dependsOnGoalIds.map(String) } : {}),
         ...(args?.force !== undefined && args?.force !== null ? { force: !!args.force } : {}),
         machineTriggered: goalWriteMachine,
@@ -5327,8 +5747,39 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       });
       // Ticket f3e56567: same loud-clip contract as todo_update — the storage
       // cap is a8d6e514's, but a vanished tail must never read as plain success.
-      const clip = progressNoteClipNotice(args?.progressNote, (g as any)?.progressNote);
-      return clip ? `${clip}\n${JSON.stringify(g, null, 1)}` : JSON.stringify(g, null, 1);
+      const clip = progressNoteClipNotice(noteArg.value, (g as any)?.progressNote);
+      // Ticket d1120ffc: prove the payload landed. Compared against the row the
+      // service RETURNED (its ground truth), so a description that did not reach
+      // the row — or a value the service reshaped — is called out loudly instead
+      // of riding an ordinary success. The clip notice keeps its own line: a
+      // legal 2,000-char cap on progressNote is a PINNED contract, not a loss.
+      const gFidelity = payloadFidelityNote(payloadFidelity([
+        // The service stores `String(title).trim()` — compare in that unit.
+        { field: 'title', sent: titleArg.value, stored: (g as any)?.title, trim: true },
+        // description is stored VERBATIM (no trim) — byte-for-byte is right.
+        { field: 'description', sent: descArg.value, stored: (g as any)?.description },
+        // Review B1: blockedReason is deliberately ONLY compared on a
+        // no-status call. A status transition REWRITES it by documented design —
+        // status:'blocked' stores the trimmed reason or the 'Blocked manually'
+        // default, and any other status CLEARS it to null — so comparing it
+        // across a transition reports the intended contract as data loss and
+        // tells the caller to "re-issue", which would fire goal_blocked twice.
+        // Off a transition the service still trims/defaults it (that is the
+        // refresh path), so the comparison is made in the trimmed unit.
+        ...(args?.status === undefined
+          ? [{ field: 'blockedReason', sent: blockArg.value, stored: (g as any)?.blockedReason, trim: true }]
+          : []),
+        // progressNote is deliberately NOT compared either: it is stored as a
+        // capped prefix by contract (a8d6e514), so a "mismatch" there is the
+        // intended clip and `clip` above already reports it in its own words.
+      ]));
+      // goal_update's result is PURE JSON (callers do JSON.parse(out) to read the
+      // row), so the receipt rides INSIDE the object instead of as a prose line —
+      // a prefix would break every such caller. `payloadFidelity` is additive and
+      // absent when nothing needed saying.
+      const body = JSON.stringify({ ...(g as any), ...(gFidelity ? { payloadFidelity: gFidelity } : {}) }, null, 1);
+      const notes = [clip].filter(Boolean).join('\n');
+      return notes ? `${notes}\n${body}` : body;
     }
 
     case 'goal_premise_set': {
@@ -5355,14 +5806,33 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       const { listTodos, explainEmptyAccountWideTodoList } = goalsSvc;
       const projectFix = await projectIdCorrectionForTool(goalsSvc, projectId, userId); // audit 2026-10-06 T5-3
       if (projectFix) projectId = projectFix.to;
-      const rows = await listTodos({ userId, ...(goalId ? { goalId } : {}), ...(projectId ? { projectId } : {}) });
+      // SUPERVISION SCOPE (ticket 03d14b78): the Fleet Supervisor's machine-run
+      // todo read subtracts the owner's opted-out projects before the cap and
+      // the count are computed (honest `count`/`total`), and refuses an explicit
+      // projectId (or a goal inside an opted-out project) rather than returning
+      // it. `explainEmptyAccountWideTodoList` is skipped in scope mode: its
+      // prose names EXCLUDED projects, which is exactly the leak this closes.
+      const todoScope = await fleetReadScope(ctx, userId);
+      const todoScopeArgs = todoScope.applies && todoScope.optedOut.size
+        ? { excludeProjectIds: Array.from(todoScope.optedOut) }
+        : {};
+      // Same refusal conversion as goal_list: the service throws the 403 scope
+      // refusal for an explicit opted-out projectId (or a goalId inside one).
+      let rows;
+      try {
+        rows = await listTodos({ userId, ...(goalId ? { goalId } : {}), ...(projectId ? { projectId } : {}), ...todoScopeArgs });
+      } catch (err) {
+        if (todoScope.applies && isOutOfScopeRefusal(err)) return outOfScopeProjectRefusal('todo_list');
+        throw err;
+      }
       if (!rows.length) {
         if (goalId || projectId) return `${projectFix ? `${projectFix.note} ` : ''}No todos found for that filter.`;
         // Feedback 94b8e3a2: a bare zero-row ACCOUNT-WIDE result reads as data
         // loss when the caller's todos live in member-shared or archived
         // projects — both deliberately EXCLUDED from the account-wide list but
         // scoped-readable. Explain the exclusion instead of a flat "no todos".
-        const why = await explainEmptyAccountWideTodoList(userId);
+        // (Skipped under supervision scope: that prose enumerates projects.)
+        const why = todoScope.applies ? null : await explainEmptyAccountWideTodoList(userId);
         return `No todos found in any of your projects.${why ? ` ${why}` : ''}`;
       }
       // Ticket a8d6e514: a note may now be a 2,000-char continuation ledger —
@@ -5390,6 +5860,30 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       if (!todoId) return 'todo_get requires todoId.';
       const { getTodo } = await import('./goals.service');
       const t = await getTodo({ userId, todoId });
+      // ── SAA-1.4 PHASE 1 (todo 2ef2b254): the `todo_get` chain surface ──────────
+      // The natural next hops after reading a todo are its PARENT GOAL (the brief
+      // that says what the todo is FOR — already on the view as `goal`, whose title
+      // is what makes the line useful) and the ASSIGNEE CHAT (the lane that owns the
+      // work — `assigneeChatId`, a real chat id readable via get_chat_messages).
+      // Same ADDITIVE-FIELD rule as goal_get: these envelopes are parsed from the
+      // first brace, so the hop rides `next` inside the JSON, never as a trailing
+      // line; `withRecallChainField` hands back the SAME reference when nothing
+      // applied, so the default output is byte-identical.
+      try {
+        const recall = await import('./chain-of-recall');
+        const hops: Array<{ kind: 'run' | 'goal' | 'todo' | 'receipt' | 'chat' | 'schedule'; id: string; label?: string }> = [];
+        if (t?.goalId) hops.push({ kind: 'goal', id: String(t.goalId), ...((t as any)?.goal?.title ? { label: String((t as any).goal.title).slice(0, 40) } : {}) });
+        if (t?.assigneeChatId) hops.push({ kind: 'chat', id: String(t.assigneeChatId) });
+        const chain = recall.planRecallChain({ surface: 'todo_get', hops });
+        const meta = recall.recallChainMetricMeta(chain, { tool: 'todo_get' });
+        if (meta) {
+          const m: any = await import('./loop-metrics.service');
+          if (typeof m?.recordLoopMetric === 'function') {
+            m.recordLoopMetric({ kind: m.LOOP_METRIC_KINDS?.CHAIN_OF_RECALL_OBSERVE ?? 'chain_of_recall_observe', sessionId: ctx.sessionId, value: 1, meta });
+          }
+        }
+        return JSON.stringify(recall.withRecallChainField(t as any, chain), null, 1);
+      } catch { /* chain-of-recall: never blocks a read */ }
       return JSON.stringify(t, null, 1);
     }
 
@@ -5435,6 +5929,7 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
         ...(assigneeChatId ? { assigneeChatId } : {}),
         ...(ctx.sessionId ? { actingChatId: ctx.sessionId } : {}), // audit 2026-10-08 W5-5: no self-assignment wake; attributed create
         ...(Array.isArray(args?.dependsOnTodoIds) ? { dependsOnTodoIds: args.dependsOnTodoIds.map(String) } : {}),
+        ...(args?.deliberateUnassigned === true ? { deliberateUnassigned: true } : {}), // TD-1 explicit unowned-row escape hatch
         machineTriggered: ledgerToolMachineTriggered(ctx), // 2026-10-20: todo_transition actorKind (origin-aware)
       });
       const note = t.status === 'blocked'
@@ -5828,6 +6323,12 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
     }
 
     case 'flag_owner_question': {
+      // Ticket f94e91eb: the prior-answer refusals below clip an owner ANSWER,
+      // so they take the same fullAnswer escape hatch the listing offers —
+      // otherwise a lane told "the owner already answered" cannot read the
+      // whole answer from the very call that told it.
+      const priorFullAnswerRequested = args?.fullAnswer === true
+        || String(args?.fullAnswer ?? '').trim().toLowerCase() === 'true';
       // "Needs owner" persistent inbox (ticket 7705fec2). ctx.sessionId IS the
       // owning chat id on both surfaces (same as file_feedback above). NOT
       // consequential — it only FILES the question (no account/world change),
@@ -5956,16 +6457,36 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       if (r.refused === 'previously_decided' && 'prior' in r) {
         // OWNER-INTERRUPT-ECONOMY prior-decision recall (owner rule: strict
         // same-decision match only) — act on the owner's decision.
+        // Ticket f94e91eb: `priorAnswer` is the SAME payload as an answered
+        // row's answer, and this refusal is the surface a lane hits immediately
+        // BEFORE it re-asks — so a silent clip here reproduces the exact
+        // incident one tool call earlier (a 3,000-char paste arriving as a bare
+        // 300-char prefix with nothing saying it was cut). Same honest preview,
+        // plus a `fullAnswer`-independent pointer: the prior card's id.
+        const priorPrev = ownerAnswerPreview(r.prior.answer, { full: priorFullAnswerRequested });
         return JSON.stringify({
           ok: false, reason: 'previously_decided', priorQuestionId: r.prior.id, decidedOn: r.decidedOn,
-          priorAnswer: String(r.prior.answer ?? '').slice(0, 300),
+          ...(priorPrev ? { priorAnswer: priorPrev.text } : {}),
+          ...ownerAnswerFields(priorPrev),
+          ...(priorPrev?.truncated
+            ? { priorAnswerNote: 'the above is a TRUNCATED preview of the owner\'s decision — read it in full (list_owner_questions { ids: ["' + r.prior.id + '"], fullAnswer: true }) before basing anything on what it does or does not contain' }
+            : {}),
           message: r.message,
         });
       }
       if (r.refused === 'previously_answered' && 'prior' in r) {
+        // Ticket f94e91eb: same rule — the excerpt must not read as the whole
+        // answer. `priorAnswerTruncated` lets the caller branch; `fullAnswer`
+        // on this call returns it whole.
+        const priorPrev = ownerAnswerPreview(r.prior.answer, { full: priorFullAnswerRequested });
         return JSON.stringify({
           ok: false, reason: 'previously_answered', priorQuestionId: r.prior.id,
-          message: `The owner already answered this topic (${r.prior.id.slice(0, 11)}: "${String(r.prior.question).slice(0, 120)}" → "${String(r.prior.answer ?? '').slice(0, 160)}") and said to proceed / stop asking. Act on that answer instead of re-flagging.`,
+          ...(priorPrev ? { priorAnswer: priorPrev.text } : {}),
+          ...ownerAnswerFields(priorPrev),
+          ...(priorPrev?.truncated
+            ? { priorAnswerNote: 'the above is a TRUNCATED preview of the owner\'s prior answer — read it in full (list_owner_questions { ids: ["' + r.prior.id + '"], fullAnswer: true }) before concluding it lacks something' }
+            : {}),
+          message: `The owner already answered this topic (${r.prior.id.slice(0, 11)}: "${String(r.prior.question).slice(0, 120)}" → "${priorPrev ? priorPrev.text : ''}") and said to proceed / stop asking. Act on that answer instead of re-flagging.`,
         });
       }
       return JSON.stringify({ ok: false, reason: r.refused });
@@ -5988,6 +6509,14 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       // to ZERO service ids, and the branch then lied "the other supplied id(s)
       // DO resolve to real rows".
       const probedIds = Array.isArray(args?.ids) ? args.ids.map((s: any) => String(s).trim()).filter(Boolean) : [];
+      // Ticket f94e91eb: `fullAnswer:true` returns every ANSWERED row's stored
+      // answer uncut — the escape hatch named by the truncation sentinel, so a
+      // caller that hit a clipped preview can read the rest in ONE more call
+      // without guessing a chat/message id. Models routinely emit JSON booleans
+      // as the strings 'true'/'yes', and a silently-ignored escape hatch is how
+      // a caller concludes it already read everything — accept both.
+      const fullAnswerRequested = args?.fullAnswer === true
+        || String(args?.fullAnswer ?? '').trim().toLowerCase() === 'true';
       const { rows, unmatchedIds, sharedRows = [] } = await listOwnerQuestionsForUser(userId, {
         ...(args?.status ? { status: String(args.status) } : {}),
         ...(probedIds.length ? { ids: probedIds } : {}),
@@ -6082,10 +6611,20 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
         // invisible whenever the 300-char question clip ate it.
         const parsedReply = q.status === 'open' && q.answer ? parseOwnerRecordedReply(q.answer) : null;
         const priorFold = q.status === 'open' ? parseReplacedReplyFold(q.question) : null;
+        // Ticket f94e91eb: the ANSWER is the payload of an answered card, so it
+        // is never silently shortened. `fullAnswer` returns the stored text
+        // uncut (the escape hatch the truncation marker itself names); otherwise
+        // a preview clipped at the cap carries a trailing sentinel AND the
+        // machine-readable answerChars/answerTruncated fields, so a supervisor
+        // can never read absence-by-truncation as real absence — the defect
+        // that cost the owner a duplicate decision card (oq_d07d9c44: an Azure
+        // paste ending "…CMD+C to" read as "no client ID or secret").
+        const answerPrev = q.status === 'answered' ? ownerAnswerPreview(q.answer, { full: fullAnswerRequested }) : null;
         return ({
         id: q.id,
         status: q.status,
-        ...(q.status === 'answered' && q.answer ? { answer: String(q.answer).slice(0, 500) } : {}),
+        ...(answerPrev ? { answer: answerPrev.text } : {}),
+        ...(q.status === 'answered' ? ownerAnswerFields(answerPrev) : {}),
         ...(q.status === 'answered' && q.answeredBy ? { answeredBy: q.answeredBy } : {}),
         // abca56ce: who dismissed a dismissed row — 'owner' | 'supervisor' |
         // 'agent' | 'system'; a non-owner dismissal is never the owner's
@@ -6135,7 +6674,12 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
               // FALLBACK for the rows the parser does NOT recognize (an
               // unparseable answer column must stay visible to a lane
               // re-listing the gate), never a duplicate of it.
-              ...(q.answer && !parsedReply ? { recordedReply: String(q.answer).slice(0, 500) } : {}),
+              // Ticket f94e91eb: the fallback clip goes through the same honest
+              // preview — an unparseable long answer must not read as complete.
+              ...(q.answer && !parsedReply ? (() => {
+                const p = ownerAnswerPreview(q.answer, { full: fullAnswerRequested });
+                return p ? { recordedReply: p.text, recordedReplyChars: p.chars, recordedReplyTruncated: p.truncated } : {};
+              })() : {}),
             }
           : {}),
         // Ticket f3a69ed3 (defect 3): a recorded owner reply rides EVERY
@@ -6145,9 +6689,21 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
         ...(() => {
           const rec = parsedReply;
           if (!rec) return {};
+          // Ticket f94e91eb: same rule as the answered rows — the owner's
+          // reply is payload, so a clip declares itself.
+          // `rec.text` can legitimately be '' (parseOwnerRecordedReply's two
+          // legacy branches return an empty text when the quoted pair is
+          // absent — a lost closing quote or an unquoted 'reply was:' record),
+          // and ownerAnswerPreview('') is null. Never assert it away: a throw
+          // here would take down the WHOLE listing (executeCodingTool catches
+          // it as one error string), losing the gate the caller came for.
+          const p = ownerAnswerPreview(rec.text, { full: fullAnswerRequested });
+          const text = p ? p.text : '';
           return {
             ownerRecordedReply: {
-              text: rec.text.slice(0, 500),
+              text,
+              chars: p ? p.chars : 0,
+              truncated: p ? p.truncated : false,
               receivedAt: rec.receivedAt || undefined,
               reason: rec.reason,
               delivered: rec.woken ? 'the asking chat was woken with it' : 'sent into the asking chat as context',
@@ -6168,7 +6724,20 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
         // Supervisor as first responder, hidden from the owner until triageUntil.
         ...(q.triaged ? { triaged: true, triageUntil: q.triageUntil instanceof Date ? q.triageUntil.toISOString() : String(q.triageUntil ?? '') } : {}),
         ...(!q.triaged && q.triage === 'surfaced' ? { triage: 'surfaced' } : {}),
-        question: String(q.question).slice(0, 300),
+        // Ticket 9dff565f: `question` was the LAST silent clip on this surface.
+        // It rendered `String(q.question).slice(0, 300)` — no marker, no length
+        // field — while the column holds QUESTION_MAX (2000) and a
+        // consoleAction card reaches CONSOLE_ACTION_QUESTION_MAX (9000), with
+        // the paste-ready payload and click-by-click steps living in exactly
+        // the dropped tail. Same rule as the answer (ticket f94e91eb): use the
+        // honest preview, so an absence claim can never be built on a cut.
+        // `fullAnswer` lifts it too — otherwise the marker would name a route
+        // that does not exist for this field, which is the defect one call over.
+        ...(() => {
+          const qp = ownerAnswerPreview(q.question, { cap: 300, full: fullAnswerRequested, field: 'question' });
+          if (!qp) return { question: '', questionChars: 0, questionTruncated: false };
+          return { question: qp.text, questionChars: qp.chars, questionTruncated: qp.truncated };
+        })(),
         chatId: q.chatId,
         ...(q.forChatId ? { forChatId: q.forChatId } : {}),
         ...(q.goalId ? { goalId: q.goalId } : {}),
@@ -6178,10 +6747,42 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       });
       const stale = rows.filter((q) => q.status !== 'open');
       const triaged = rows.filter((q) => q.triaged);
+      // Ticket f94e91eb: the truncation note is computed BEFORE the envelope
+      // and emitted FIRST, not last. agent.ts clips a persisted display result
+      // at DISPLAY_RESULT_CAP with a HEAD slice, so anything emitted after
+      // `questions[]` is exactly what a large listing loses — and a large
+      // listing is the ONLY case the note exists for. Preferring it to the rows
+      // is correct anyway: `count` + this note are what let a reader know the
+      // rows themselves are partial.
+      const truncatedRows = brief.filter((b: any) => b.answerTruncated === true || b.ownerRecordedReply?.truncated === true);
+      // Ticket 9dff565f review finding D2: a question-only clip used to emit NO
+      // envelope note at all, because both predicates below read only the answer
+      // flags. `agent.ts` head-slices a persisted display result at
+      // DISPLAY_RESULT_CAP, so the note is the only thing a clipped listing
+      // keeps — a card whose payload rode in the question tail would lose its
+      // warning first. Each column is named with its OWN noun for the same
+      // reason as the per-row markers (finding D1).
+      const questionRows = brief.filter((b: any) => b.questionTruncated === true);
+      const answerPreviewNote = (() => {
+        if (!truncatedRows.length && !questionRows.length) return undefined;
+        const list = (rows: any[]) => {
+          const ids = rows.slice(0, 5).map((b: any) => String(b.id).slice(0, 11));
+          return `${rows.length} row(s) (${ids.join(', ')}${rows.length > ids.length ? `, +${rows.length - ids.length} more` : ''})`;
+        };
+        const parts: string[] = [];
+        if (truncatedRows.length) {
+          parts.push(`a TRUNCATED answer preview in ${list(truncatedRows)} — answerTruncated:true and answerChars give the FULL stored length`);
+        }
+        if (questionRows.length) {
+          parts.push(`a TRUNCATED question preview in ${list(questionRows)} — questionTruncated:true and questionChars give the FULL stored length`);
+        }
+        return `${parts.join('; ')}. The preview ends with an explicit marker. NEVER conclude a card lacks an id/credential/value (or a payload/steps) because you cannot see it in the preview: re-read with list_owner_questions { ids: [...], fullAnswer: true } (or get_chat_messages on the row's chatId) before reporting anything as absent.`;
+      })();
       // Pure-JSON envelope (the stale note rides INSIDE the object — appending
       // prose after JSON.stringify would make the output unparseable).
       return JSON.stringify({
         count: rows.length,
+        ...(answerPreviewNote ? { answerPreviewNote } : {}),
         questions: brief,
         ...(unmatchedIds.length
           ? {
@@ -6489,6 +7090,10 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
       //      'supervisor_filer'); `evidenceReason` keeps the evidence verdict.
       let evidenceSuffix = '';
       let bindingKind: 'dispatch' | 'filer' | null = null;
+      /** ticket e7e40322: the ARCHIVED lane a stale context.dispatchedTo names
+       *  ('' when the stamp is live, names this session, or cannot be judged).
+       *  It stops being a claim on the row — see the lapsed-dispatch block. */
+      let lapsedLane = '';
       if (!ctx.userTurnAt) {
         // ── FILER DUPLICATE-RETIRE RAIL (ticket 76045f4e, 2026-10-16) ──────
         // The 76045f4e specimen: a supervisor (and, before it, any lane) that
@@ -6549,19 +7154,65 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
           dispatchBound = !!(boundCtx && boundCtx.dispatchedTo === ctx.sessionId);
           if (dispatchBound) bindingKind = 'dispatch';
           else {
-            filerVerdict = filerBindingVerdict(boundCtx, boundSource, ctx.sessionId);
-            if (filerVerdict.bound && ctx.sessionId) {
-              // Rail (c): a supervisor chat never self-binds. One DB read,
-              // only when the leaf would otherwise bind; an error here is
-              // treated as "not a supervisor" (the lane's own filing binds).
-              let supervisorFiler = false;
-              try {
-                const { isSupervisorChat } = await import('./supervisor-state.service');
-                supervisorFiler = await isSupervisorChat(ctx.sessionId);
-              } catch { supervisorFiler = false; }
-              if (supervisorFiler) filerVerdict = { bound: false, reason: 'supervisor_filer' };
+            // ── LAPSED DISPATCH (ticket e7e40322, 2026-11-03) ─────────────
+            // The stamp outlived its lane: dispatchedTo names a chat the
+            // dispatcher has since ARCHIVED (specimen: 5f69fdc4 →
+            // cc65072f, archived 10:02Z, while the work moved to
+            // ef2975d7 and PR #2406 landed the fix). A retired lane can
+            // never write again and no tool re-points dispatchedTo, so the
+            // stamp stops being a claim: the FILER's binding is restored
+            // (dispatch_elsewhere, below, is a LIVE lane's right) and a
+            // non-filer falls through to the artifact evidence bar it would
+            // have faced before the dispatch — the close bar is untouched.
+            // Everything else (a LIVE dispatched lane, an unreadable probe,
+            // a deleted chat) keeps the pre-fix lockout byte-for-byte.
+            const retiredLane = await retiredDispatchLane(boundCtx, ctx.sessionId);
+            if (retiredLane) {
+              lapsedLane = retiredLane;
+              const dispatchlessCtx = { ...boundCtx };
+              delete dispatchlessCtx.dispatchedTo;
+              filerVerdict = filerBindingVerdict(dispatchlessCtx, boundSource, ctx.sessionId);
+              if (filerVerdict.bound && ctx.sessionId) {
+                // Rail (c): a supervisor chat never self-binds (same probe as
+                // the normal path) — a supervisor's filing still binds nobody.
+                let supervisorFiler = false;
+                try {
+                  const { isSupervisorChat } = await import('./supervisor-state.service');
+                  supervisorFiler = await isSupervisorChat(ctx.sessionId);
+                } catch { supervisorFiler = false; }
+                if (supervisorFiler) filerVerdict = { bound: false, reason: 'supervisor_filer' };
+              }
+              if (filerVerdict.bound) { dispatchBound = true; bindingKind = 'filer'; }
+              // Review P2-2: this seam is OBSERVE-ONLY telemetry — it records
+              // that a lapsed stamp was SEEN (so the adjudicator can count how
+              // many rows still carry dead stamps), never that a fabrication
+              // was convicted. It therefore mints once per observation and is
+              // listed in ADJUDICATION_SKIPPED_SEAMS so routing telemetry does
+              // not consume the nightly LLM adjudication batch. The enclosing
+              // `if (status !== 'done')` block already excludes closes.
+              void recordPlatformLoopMetric('GUARD_STRIKE', {
+                sessionId: ctx.sessionId,
+                meta: {
+                  seam: 'update_feedback_lapsed_dispatch', tool: 'update_feedback', ticketId: ticketId.slice(0, 8),
+                  status: status ?? 'note_only', retiredLane: retiredLane.slice(0, 8),
+                  filer: filerVerdict.bound === true,
+                },
+              });
+            } else {
+              filerVerdict = filerBindingVerdict(boundCtx, boundSource, ctx.sessionId);
+              if (filerVerdict.bound && ctx.sessionId) {
+                // Rail (c): a supervisor chat never self-binds. One DB read,
+                // only when the leaf would otherwise bind; an error here is
+                // treated as "not a supervisor" (the lane's own filing binds).
+                let supervisorFiler = false;
+                try {
+                  const { isSupervisorChat } = await import('./supervisor-state.service');
+                  supervisorFiler = await isSupervisorChat(ctx.sessionId);
+                } catch { supervisorFiler = false; }
+                if (supervisorFiler) filerVerdict = { bound: false, reason: 'supervisor_filer' };
+              }
+              if (filerVerdict.bound) { dispatchBound = true; bindingKind = 'filer'; }
             }
-            if (filerVerdict.bound) { dispatchBound = true; bindingKind = 'filer'; }
           }
         }
         const bindingRefusal: FilerBindingReason | null = filerVerdict && !filerVerdict.bound
@@ -6593,12 +7244,27 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
             // retrying a path that can never bind.
             const harnessAboutThisSession = bindingRefusal === 'harness_filed'
               && typeof boundCtx?.sessionId === 'string' && boundCtx.sessionId === ctx.sessionId;
+            // ticket e7e40322: when the "other session" is an ARCHIVED lane,
+            // the shipped advice ("leave it to the dispatched lane") is a dead
+            // end — that lane can never write again and nothing re-points
+            // dispatchedTo. Say so, and name the ONE remedy that works: the
+            // normal artifact evidence bar (an unbound machine run annotates /
+            // closes with commitSha / prUrl / deployRunId / replayTestPath).
+            const lapsedRemedy = lapsedLane
+              ? ` The stamp is LAPSED: context.dispatchedTo names lane ${lapsedLane.slice(0, 8)}, which the ticket dispatcher has ARCHIVED — that lane can never annotate this row again, and no tool re-points dispatchedTo. Do NOT wait on it. The lawful path is the artifact evidence bar every unbound machine run faces: re-call with evidence {commitSha | prUrl | deployRunId | replayTestPath} (status=done additionally needs the fix merged AND deployed).`
+              : '';
+            // NOTE (review P1-1): the `dispatched_elsewhere` arm can never
+            // co-occur with `lapsedLane` — the lapsed path strips the stamp
+            // before judging (`delete dispatchlessCtx.dispatchedTo`), and that
+            // stamp is the leaf's ONLY input for `dispatched_elsewhere`. So the
+            // live-lane narration stays flat; the lapsed truth reaches a lane
+            // through the default branch below.
             const bindingNarration = bindingRefusal === 'dispatched_elsewhere'
               ? `this session FILED the ticket (context.filedBy), but it is now dispatched to another session (context.dispatchedTo names another session — that lane owns its triage; a live dispatch supersedes filer binding), so the ticket is not dispatched to this session and no verifiable evidence was supplied. Leave it to the dispatched lane — do not flip its status or replace its adminNote; record a file_feedback sighting if you have new facts.`
               : bindingRefusal === 'harness_filed'
                 ? `${harnessAboutThisSession ? 'this ticket was filed BY THE HARNESS about this session (a verifier / guard / billing filing names the session it concerns — that is not this session\'s own filing and never binds it)' : 'this ticket was filed BY THE HARNESS (a verifier / guard / billing filing — such rows are never filer-bound)'}, the ticket is not dispatched to this session, and no verifiable evidence was supplied. Its adjudication belongs to the lane it is dispatched to; record a file_feedback sighting if you have new facts.`
                 : bindingRefusal === 'supervisor_filer'
-                  ? `supervisor chats are never filer-bound (this chat filed the ticket, but a supervisor files, cites the ticket id and stands down — the lane it is dispatched to works it), the ticket is not dispatched to this session, and no verifiable evidence was supplied. Leave it to the dispatched lane or record a file_feedback sighting instead.`
+                  ? `supervisor chats are never filer-bound (this chat filed the ticket, but a supervisor files, cites the ticket id and stands down — the lane it is dispatched to works it), the ticket is not dispatched to this session, and no verifiable evidence was supplied.${lapsedRemedy || ' Leave it to the dispatched lane or record a file_feedback sighting instead.'}`
                   : null;
             // Structured refusal (same ok:false envelope family as the gate):
             // the model gets the reason code AND the exact evidence to supply.
@@ -6617,18 +7283,23 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
                 ? `This machine-triggered run may NOT mutate feedback ticket ${ticketId.slice(0, 8)}: ${verdict.message} If this id was fabricated or mistyped, re-derive a real one from list_feedback/get_feedback or your dispatch brief before retrying; nothing was mutated. If the ticket needs triage you cannot evidence, record a file_feedback sighting instead.`
                 : bindingNarration
                   ? `This machine-triggered run may NOT mutate feedback ticket ${ticketId.slice(0, 8)}: ${bindingNarration} ${verdict.message}`
-                  // Ticket abc76ebc (breaker trip 2026-10-15, session b92ef13f
-                  // run 9232e15b): a ticket that EXISTS but was NEVER DISPATCHED
-                  // (context null — e.g. a held-for-owner-review row the admin
-                  // approval never stamped, or any row the dispatcher has not
-                  // taken) hit the d2c2744b fabrication in a sibling shape: the
-                  // default branch narrated "(its context.dispatchedTo names
-                  // another session)" for a row whose own guard_strike telemetry
-                  // stamped dispatchedTo:null / binding:no_context. Narrate the
-                  // row's REAL state instead — "never dispatched to any session"
-                  // — so an unbound lane reads the true bar (record a sighting /
-                  // supply evidence) instead of hunting a phantom dispatch.
-                  : boundRowLoaded && !boundCtx?.dispatchedTo
+                  // ticket e7e40322: the "another session" is an ARCHIVED lane
+                  // — narrate the LAPSED truth and the one live route instead
+                  // of sending the lane to wait on a chat that cannot write.
+                  : lapsedRemedy
+                    ? `This machine-triggered run may NOT mutate feedback ticket ${ticketId.slice(0, 8)}: it is not dispatch-bound to this session and was not filed by it (context.filedBy), and no verifiable evidence was supplied.${lapsedRemedy} ${verdict.message}`
+                    // Ticket abc76ebc (breaker trip 2026-10-15, session b92ef13f
+                    // run 9232e15b): a ticket that EXISTS but was NEVER DISPATCHED
+                    // (context null — e.g. a held-for-owner-review row the admin
+                    // approval never stamped, or any row the dispatcher has not
+                    // taken) hit the d2c2744b fabrication in a sibling shape: the
+                    // default branch narrated "(its context.dispatchedTo names
+                    // another session)" for a row whose own guard_strike telemetry
+                    // stamped dispatchedTo:null / binding:no_context. Narrate the
+                    // row's REAL state instead — "never dispatched to any session"
+                    // — so an unbound lane reads the true bar (record a sighting /
+                    // supply evidence) instead of hunting a phantom dispatch.
+                    : boundRowLoaded && !boundCtx?.dispatchedTo
                     ? `This machine-triggered run may NOT mutate feedback ticket ${ticketId.slice(0, 8)}: the ticket is not dispatched to this session (it has never been dispatched to any session — no context.dispatchedTo stamp), was not filed by this session (context.filedBy), and no verifiable evidence was supplied. Dispatch binding is the sanctioned path — a dispatched lane works its OWN tickets (in_progress/adminNote/priority) without the artifact bar, and so does the lane that FILED a ticket (file_feedback stamps context.filedBy) while no other lane is dispatched to it; without binding the evidence bar applies to EVERY status, not just done. ${verdict.message} If the ticket needs triage you cannot evidence, leave it for its dispatched/filer lane or record a file_feedback sighting instead.`
                     : `This machine-triggered run may NOT mutate feedback ticket ${ticketId.slice(0, 8)}: the ticket is not dispatched to this session (its context.dispatchedTo names another session), was not filed by this session (context.filedBy), and no verifiable evidence was supplied. Dispatch binding is the sanctioned path — a dispatched lane works its OWN tickets (in_progress/adminNote/priority) without the artifact bar, and so does the lane that FILED a ticket (file_feedback stamps context.filedBy) while no other lane is dispatched to it; without binding the evidence bar applies to EVERY status, not just done. ${verdict.message} If the ticket needs triage you cannot evidence, leave it for its dispatched/filer lane or record a file_feedback sighting instead.`;
             return JSON.stringify({ ok: false, tool: modelToolName('update_feedback'), reason: verdict.reason, ticketId, message }, null, 1);
@@ -6744,7 +7415,7 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
                   ticketId,
                   message:
                     `Machine close to done REFUSED (post-deploy done-bar, 6665fff6): the fix must be MERGED and DEPLOYED before this ticket reaches done, and that could not be positively proven — ${fixState.reason}. ` +
-                    'Nothing was mutated. If the fix shipped in a DIFFERENT repo than this platform, re-close citing that repo in the evidence (repo: "owner/name", e.g. "canada-quant/example-repo" — ticket cf5f9718). ' +
+                    'Nothing was mutated. If the fix shipped in a DIFFERENT repo than this platform, re-close citing that repo in the evidence (repo: "owner/name", e.g. "example-org/optcg" — ticket cf5f9718). ' +
                     'Wait for the deploy wave to go green and the boxes to report the new main head (get_fleet_telemetry view deploy), then close citing the commit sha. If you cannot prove it, leave the ticket in_progress with an adminNote saying what remains.',
                 }, null, 1);
               }

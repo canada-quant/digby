@@ -2,7 +2,7 @@
  * notify_user guards (audit 2026-10-06 T3-6, fleet F8).
  *
  * Prod: the Fleet Supervisor pushed the SAME news to the owner's Telegram twice
- * (05 06:46 + 06:57, "QB2 42.7 tok/s"; 06 00:02 + 00:54, the AGX "2-minute
+ * (05 06:46 + 06:57, "node-a 42.7 tok/s"; 06 00:02 + 00:54, the AGX "2-minute
  * wizard step"), and the 00:54 push cited "question oq_e5338871 in your Digby
  * inbox" — a question the owner had DISMISSED at 00:28 ("stop raising it").
  * notify_user had rate caps but no content dedupe and no check against the

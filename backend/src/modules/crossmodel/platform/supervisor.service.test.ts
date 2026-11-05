@@ -17,7 +17,7 @@ const mockPrisma: any = {
   user: { findUnique: jest.fn() },
   crossModelChat: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(async () => ({})) },
   chatAutonomy: { findUnique: jest.fn(), upsert: jest.fn(async () => ({})), update: jest.fn(async () => ({})) },
-  codingSchedule: { findMany: jest.fn(), findFirst: jest.fn(async () => null), create: jest.fn(async () => ({})), deleteMany: jest.fn(async () => ({ count: 0 })), update: jest.fn(async () => ({})) },
+  chatSchedule: { findMany: jest.fn(), findFirst: jest.fn(async () => null), create: jest.fn(async () => ({})), deleteMany: jest.fn(async () => ({ count: 0 })), update: jest.fn(async () => ({})) },
   eventHook: { findFirst: jest.fn(), findMany: jest.fn(), create: jest.fn(async () => ({})), update: jest.fn(async () => ({})) },
   activity: { create: jest.fn(async () => ({})) },
   // Supervisor OFF switch (owner 2026-09-26): null = no row = ON (every
@@ -101,7 +101,7 @@ function mockFreshOwner() {
     id: 'sup1', userId: UID, projectId: null, ...data,
   }));
   mockPrisma.chatAutonomy.findUnique.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.eventHook.findFirst.mockResolvedValue(null);
 }
 
@@ -492,7 +492,7 @@ describe('ensureFleetSupervisor — first creation', () => {
     expect(up.update.allowedTools).toEqual([...AUTONOMY_GRANTABLE_TOOLS]);
 
     // ONE recurring sweep schedule (2h, maxRuns 500, mirrors schedule.service's shape).
-    const sched = mockPrisma.codingSchedule.create.mock.calls[0][0].data;
+    const sched = mockPrisma.chatSchedule.create.mock.calls[0][0].data;
     expect(sched.sessionId).toBe('sup1');
     expect(sched.userId).toBe(UID);
     expect(sched.kind).toBe('recurring');
@@ -535,7 +535,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, systemPrompt: buildFleetSupervisorPrompt() });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' }); // grant present
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES] }); // wildcard hook current
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]); // sweep current
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]); // sweep current
 
     const chat = await ensureFleetSupervisor(UID);
 
@@ -545,8 +545,8 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     expect(mockPrisma.chatAutonomy.upsert).not.toHaveBeenCalled(); // a present grant is NEVER clobbered
     expect(mockPrisma.eventHook.create).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.update).not.toHaveBeenCalled(); // current event set → no heal write
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled(); // current sweep prompt → no heal write
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled(); // current sweep prompt → no heal write
   });
 
   it('heals title/project drift on an existing supervisor (fixed label, always ungrouped)', async () => {
@@ -559,7 +559,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1' });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
 
     const chat = await ensureFleetSupervisor(UID);
 
@@ -577,7 +577,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, title: 'Sweep Status Note' });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1' });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
 
     await ensureFleetSupervisor(UID);
 
@@ -591,7 +591,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     mockPrisma.user.findUnique.mockResolvedValue({ isChild: false });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES] });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
     // the wake step written by setSupervisorStep is not drift
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, title: 'Fleet Supervisor · sweep', systemPrompt: buildFleetSupervisorPrompt() });
     await ensureFleetSupervisor(UID);
@@ -610,7 +610,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     mockPrisma.user.findUnique.mockResolvedValue({ isChild: false });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES] });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, title: 'Sweep Notes · draft', systemPrompt: buildFleetSupervisorPrompt() });
     await ensureFleetSupervisor(UID);
     expect(mockPrisma.crossModelChat.update).toHaveBeenCalledWith({ where: { id: 'sup1' }, data: { title: 'Fleet Supervisor' } });
@@ -621,7 +621,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue(SUP);
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue(null); // grant missing → re-granted
     mockPrisma.eventHook.findFirst.mockResolvedValue(null); // hook missing → recreated
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]); // sweep dead → recreated
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]); // sweep dead → recreated
 
     const chat = await ensureFleetSupervisor(UID);
 
@@ -629,7 +629,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     expect(mockPrisma.crossModelChat.create).not.toHaveBeenCalled();
     expect(mockPrisma.chatAutonomy.upsert).toHaveBeenCalledTimes(1);
     expect(mockPrisma.eventHook.create).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.create).toHaveBeenCalledTimes(1);
   });
 
   it('unions a NEWLY_ADDED grantable tool into a pre-2026-08-22 grant (dispatch heal — 7705fec2 deferred / f1cb73ff)', async () => {
@@ -639,7 +639,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
     const OLD_GRANT = ['send_chat_message', 'start_coding_session', 'schedule_message', 'cancel_schedule', 'update_schedule'];
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1', allowedTools: [...OLD_GRANT] });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES] });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
 
     await ensureFleetSupervisor(UID);
 
@@ -670,7 +670,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
       'dispatch_platform_task', 'send_to_instance', 'set_chat_instructions', 'configure_workspace', 'import_repo'];
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1', allowedTools: [...PRE_CONTROL_GRANT] });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES] });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
 
     await ensureFleetSupervisor(UID);
 
@@ -696,7 +696,7 @@ describe('ensureFleetSupervisor — idempotent self-heal', () => {
         'stop_run', 'answer_chat_question', 'approve_request', 'pause_schedule', 'resume_schedule'],
     });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES] });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
 
     await ensureFleetSupervisor(UID);
 
@@ -716,7 +716,7 @@ describe('ensureFleetSupervisor — stock-prompt heal', () => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, systemPrompt });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1' });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
   }
 
   it('rewrites an OLD STOCK prompt (stock opener, no Boundaries) to the current stock prompt', async () => {
@@ -830,7 +830,7 @@ describe('ensureFleetSupervisor — wildcard-hook event-set heal (forensics fix 
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, systemPrompt: buildFleetSupervisorPrompt() });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
   }
 
   it('heals a LEGACY STOCK event set to the current one (schedule_disabled reaches existing supervisors)', async () => {
@@ -897,7 +897,7 @@ describe('ensureFleetSupervisor — wildcard-hook wake-economy debounce (owner 2
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, systemPrompt: buildFleetSupervisorPrompt() });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES], debounceSec });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: buildFleetSweepPrompt() }]);
   }
 
   it('creates the wildcard hook with debounceSec 0 — instant hooks (owner 2026-09-14); coalescing happens only while the chat is busy', async () => {
@@ -956,24 +956,24 @@ describe('ensureFleetSupervisor — stock sweep-prompt heal (forensics fix 3c)',
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, systemPrompt: buildFleetSupervisorPrompt() });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES] });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt }]);
   }
 
   it('rewrites an OLD STOCK sweep prompt to the current one (schedule-health duty reaches existing sweeps)', async () => {
     mockExistingWithSweepPrompt(OLD_SWEEP);
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'sch1' },
       // promptSetBy 'system': the heal is a framework write (drift surfacing, 2026-08-30).
       data: { prompt: buildFleetSweepPrompt(), promptSetBy: 'system' },
     });
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('NEVER touches a customized sweep prompt (no stock opener)', async () => {
     mockExistingWithSweepPrompt('Check on the Acme migration hourly and report.');
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 });
 
@@ -1000,7 +1000,7 @@ describe('ensureFleetSupervisor — guards + races', () => {
       .mockResolvedValueOnce(SUP); // winner re-fetch
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1' });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
 
     const chat = await ensureFleetSupervisor(UID);
     expect(chat.id).toBe('sup1');
@@ -1013,7 +1013,7 @@ describe('ensureFleetSupervisor — guards + races', () => {
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue(null); // hook looks missing…
     mockPrisma.eventHook.create.mockRejectedValue({ code: 'P2002' }); // …but a twin ensure won the create
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1' }]);
 
     const chat = await ensureFleetSupervisor(UID); // must NOT throw — the winner's row is identical
     expect(chat.id).toBe('sup1');
@@ -1029,12 +1029,12 @@ describe('ensureFleetSupervisor — guards + races', () => {
     // from the create race — the dedupe now keys on the stock opener, so the
     // rows must carry it (prompt-less rows are never deleted).
     const stock = buildFleetSweepPrompt();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: stock }, { id: 'sch2', prompt: stock }, { id: 'sch3', prompt: stock }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: stock }, { id: 'sch2', prompt: stock }, { id: 'sch3', prompt: stock }]);
 
     const chat = await ensureFleetSupervisor(UID);
     expect(chat.id).toBe('sup1');
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.deleteMany).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ['sch2', 'sch3'] } },
     });
   });
@@ -1046,7 +1046,7 @@ describe('ensureFleetSupervisor — guards + races', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1' });
     // Fixture updated 2026-09-14 (hardening review): stock duplicates carry the opener.
     const stock = buildFleetSweepPrompt();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       { id: 'sch1', kind: 'recurring', runsCount: 10, prompt: stock },
       { id: 'sch2', kind: 'recurring', runsCount: 4, prompt: stock },
       { id: 'sch3', kind: 'recurring', runsCount: 0, prompt: stock },
@@ -1062,7 +1062,7 @@ describe('ensureFleetSupervisor — guards + races', () => {
     );
     // And the audit precedes the delete: both emissions resolved before deleteMany ran.
     const emitOrder = (emitScheduleDisabled as jest.Mock).mock.invocationCallOrder;
-    const deleteOrder = mockPrisma.codingSchedule.deleteMany.mock.invocationCallOrder;
+    const deleteOrder = mockPrisma.chatSchedule.deleteMany.mock.invocationCallOrder;
     expect(Math.max(...emitOrder)).toBeLessThan(Math.min(...deleteOrder));
     // Finding 2: PLUS a durable, owner-visible Activity audit row per doomed row
     // (the hook event's source is the supervisor chat itself — self-loop
@@ -1105,7 +1105,7 @@ describe('ensureSweepSchedule — stock-partitioned dedupe (hardening review 202
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP, systemPrompt: buildFleetSupervisorPrompt() });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'sup1' });
     mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...HOOK_TYPES] });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue(rows);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue(rows);
   }
   const STOCK = (id: string, over: any = {}) => ({ id, prompt: buildFleetSweepPrompt(), kind: 'recurring', runsCount: 3, promptSetBy: 'system', ...over });
   const MACHINE = (id: string, over: any = {}) => ({ id, prompt: 'poll the Post-CPT lane every 30 min', kind: 'recurring', runsCount: 5, promptSetBy: 'machine', ...over });
@@ -1113,63 +1113,63 @@ describe('ensureSweepSchedule — stock-partitioned dedupe (hardening review 202
   it('THE BUG (prod b96b381e, 2026-09-03): the stock sweep + a machine-armed recurring row → nothing deleted, nothing emitted, nothing created', async () => {
     mockSupervisorWithSweeps([STOCK('sweep1'), MACHINE('mon1')]);
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
     expect(emitScheduleDisabled).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'schedule_hard_deleted' }) });
   });
 
   it('a machine-armed recurring row ALONE does not mask a dead stock sweep → the stock sweep is created; the machine row is untouched', async () => {
     mockSupervisorWithSweeps([MACHINE('mon1')]);
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.create).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.create.mock.calls[0][0].data.prompt).toBe(buildFleetSweepPrompt());
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.create.mock.calls[0][0].data.prompt).toBe(buildFleetSweepPrompt());
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 
   it('the owner\'s CUSTOMIZED sweep (promptSetBy user, no opener — the live c0e22e36 shape) ALONE is the cadence → no create, no update, no delete', async () => {
     mockSupervisorWithSweeps([{ id: '04e2e041', prompt: 'Check on the Acme migration hourly and report.', kind: 'recurring', runsCount: 383, promptSetBy: 'user' }]);
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
   });
 
   it('a legacy prompt-less row (promptSetBy NULL — predates the column) is treated as owner-authored: no create beside it, never deleted', async () => {
     mockSupervisorWithSweeps([{ id: 'legacy1', prompt: 'hourly check', kind: 'recurring', runsCount: 40, promptSetBy: null }]);
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
   });
 
   it('two stock rows + a machine row → ONLY the newer stock duplicate is emitted/audited/deleted', async () => {
     mockSupervisorWithSweeps([STOCK('sweep1', { runsCount: 10 }), MACHINE('mon1'), STOCK('sweep2', { runsCount: 0 })]);
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.deleteMany).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['sweep2'] } } });
+    expect(mockPrisma.chatSchedule.deleteMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['sweep2'] } } });
     expect(emitScheduleDisabled).toHaveBeenCalledTimes(1);
     expect(emitScheduleDisabled).toHaveBeenCalledWith({ id: 'sweep2', sessionId: 'sup1', kind: 'recurring' }, 'obsolete', 0);
     expect(mockPrisma.activity.create).not.toHaveBeenCalledWith({
       data: expect.objectContaining({ metadata: expect.objectContaining({ scheduleId: 'mon1' }) }),
     });
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('a renewOnExhaustion successor (opener, promptSetBy system) NEWER than an older machine row is the keeper — the old predicate deleted the successor and left the lane deaf', async () => {
     mockSupervisorWithSweeps([MACHINE('mon1'), STOCK('successor', { runsCount: 0 })]);
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 
   it('the stale-prompt heal rewrites ONLY the stock keeper — a machine row is never rewritten', async () => {
     mockSupervisorWithSweeps([STOCK('sweep1', { prompt: 'Fleet Supervisor sweep — OLD VERSION' }), MACHINE('mon1')]);
     await ensureFleetSupervisor(UID);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'sweep1' },
       data: { prompt: buildFleetSweepPrompt(), promptSetBy: 'system' },
     });
@@ -1411,48 +1411,48 @@ describe('fleet sweep ACCOUNT dormancy (autonomy loop #18): park while the accou
     mockPrisma.projectGoal = { count: jest.fn(async () => o.goals ?? 0) };
     mockPrisma.projectTodo = { count: jest.fn(async () => 0) };
     mockPrisma.watchedResource = { count: jest.fn(async () => 0) };
-    mockPrisma.codingSchedule.count = jest.fn(async () => o.sched ?? 0);
-    mockPrisma.codingSchedule.findFirst = jest.fn(async () => null);
+    mockPrisma.chatSchedule.count = jest.fn(async () => o.sched ?? 0);
+    mockPrisma.chatSchedule.findFirst = jest.fn(async () => null);
   };
   beforeEach(() => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ ...SUP });
-    mockPrisma.codingSchedule.update.mockClear();
-    mockPrisma.codingSchedule.create.mockClear();
+    mockPrisma.chatSchedule.update.mockClear();
+    mockPrisma.chatSchedule.create.mockClear();
     (emitScheduleDisabled as jest.Mock).mockClear();
   });
 
   it('a DORMANT account (no run in 7 d, nothing live) PARKS the enabled stock sweep: enabled:false + parked:dormant, schedule_disabled(parked_dormant), no create', async () => {
     gate();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([stockRow]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([stockRow]);
     await ensureFleetSupervisor('u-idle');
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'sweep-1' },
       data: expect.objectContaining({ enabled: false, lastStatus: 'parked:dormant', cancelledBy: 'machine' }),
     }));
     expect(emitScheduleDisabled).toHaveBeenCalledWith(expect.objectContaining({ id: 'sweep-1', sessionId: 'sup-idle' }), 'parked_dormant', 88, expect.objectContaining({ detail: expect.stringContaining('dormant') }));
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('a LIVE account with a parked row RESUMES it (enabled:true, lastStatus resumed, fresh nextRunAt/expiresAt, stock prompt) instead of creating a second sweep', async () => {
     gate({ runs: 3 });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]); // nothing enabled
-    mockPrisma.codingSchedule.findFirst = jest.fn(async () => ({ id: 'sweep-1', runsCount: 88 }));
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]); // nothing enabled
+    mockPrisma.chatSchedule.findFirst = jest.fn(async () => ({ id: 'sweep-1', runsCount: 88 }));
     await ensureFleetSupervisor('u-idle');
-    expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { sessionId: 'sup-idle', kind: 'recurring', enabled: false, lastStatus: 'parked:dormant' },
     }));
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'sweep-1' },
       data: expect.objectContaining({ enabled: true, lastStatus: 'resumed', cancelledBy: null, disabledAt: null, promptSetBy: 'system', prompt: stockSweepPrompt() }),
     }));
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('a LIVE account with an enabled stock sweep is untouched by the gate (heal path as before)', async () => {
     gate({ runs: 1 });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([stockRow]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([stockRow]);
     await ensureFleetSupervisor('u-idle');
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ lastStatus: 'parked:dormant' }) }));
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ lastStatus: 'parked:dormant' }) }));
   });
 });
 
@@ -1478,8 +1478,8 @@ describe('supervisor OFF switch × ensureFleetSupervisor', () => {
     expect(chat).toMatchObject({ id: 'sup1' });
     expect(mockPrisma.chatAutonomy.findUnique).not.toHaveBeenCalled(); // no autonomy heal
     expect(mockPrisma.eventHook.findFirst).not.toHaveBeenCalled(); // no wildcard-hook heal
-    expect(mockPrisma.codingSchedule.findMany).not.toHaveBeenCalled(); // no sweep heal/arm
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.findMany).not.toHaveBeenCalled(); // no sweep heal/arm
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
     expect(mockPrisma.crossModelChat.update).not.toHaveBeenCalled(); // not even the prompt heal
     expect(mockRedisIncr).not.toHaveBeenCalled(); // returning an existing chat is not a skipped wake
   });
@@ -1536,7 +1536,7 @@ describe('audit 2026-10-06 T3-10 — stale schedule references in the wildcard h
   const TEMPLATE = 'Fleet event from "{{sourceChatTitle}}": {{summary}} — full text in your sweep schedule 04e2e041; lane watch schedule 77aa66bb stays.';
   const LIVE = 'b8cee3ad-1111-4222-8333-444444444444';
   const route = (referenced: any[]) => {
-    mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) => {
+    mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) => {
       if (args?.where?.OR) return referenced;
       if (args?.where?.kind === 'recurring' && args?.where?.enabled === true) return [{ id: LIVE, prompt: buildFleetSweepPrompt() }];
       return [];

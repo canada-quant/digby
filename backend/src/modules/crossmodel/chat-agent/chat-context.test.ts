@@ -578,7 +578,7 @@ describe('SHARED_AI_RULES / DIGBY_PLATFORM_IDENTITY constants', () => {
     expect(typeof DIGBY_PLATFORM_IDENTITY).toBe('string');
     expect(DIGBY_PLATFORM_IDENTITY.length).toBeGreaterThan(500);
     expect(DIGBY_PLATFORM_IDENTITY).toContain('[DIGBY PLATFORM IDENTITY — YOU ARE DIGBY]');
-    expect(DIGBY_PLATFORM_IDENTITY).toContain('You are Digby, an AI assistant at digby.example.com');
+    expect(DIGBY_PLATFORM_IDENTITY).toContain('You are Digby, an AI assistant at digby.ai');
     for (const name of ['Google Workspace', 'Xero Accounting', 'Plaid Banking', 'Slack', 'Asana', 'Telegram']) {
       expect(DIGBY_PLATFORM_IDENTITY).toContain(name);
     }

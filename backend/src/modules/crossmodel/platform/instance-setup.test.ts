@@ -26,8 +26,8 @@ import {
   HELP_ANCHORS,
 } from './instance-setup';
 
-const SELFHOST = { DIGBY_INSTANCE: 'selfhost', SELFHOST_PUBLIC_URL: 'https://digby.example.com', COOKIE_SECURE: 'true', NODE_ENV: 'production' } as NodeJS.ProcessEnv;
-const PROD = { FRONTEND_URL: 'https://digby.example.com,http://localhost:8247', NODE_ENV: 'production', BRIGHTDATA_API_TOKEN: 'x', MCP_DIGBY_TOKEN: 'y' } as NodeJS.ProcessEnv;
+const SELFHOST = { DIGBY_INSTANCE: 'selfhost', SELFHOST_PUBLIC_URL: 'https://digby.cql.ca', COOKIE_SECURE: 'true', NODE_ENV: 'production' } as NodeJS.ProcessEnv;
+const PROD = { FRONTEND_URL: 'https://digby.ai,http://localhost:8247', NODE_ENV: 'production', BRIGHTDATA_API_TOKEN: 'x', MCP_DIGBY_TOKEN: 'y' } as NodeJS.ProcessEnv;
 
 const feature = (env: NodeJS.ProcessEnv, key: string, enrichment = {}) => {
   const f = computeInstanceSetup(env, enrichment).features.find((x) => x.key === key);
@@ -65,19 +65,19 @@ describe('webSearchStatus', () => {
 
 describe('instance URL helpers', () => {
   it('SELFHOST_PUBLIC_URL wins, else the first FRONTEND_URL entry, trailing slash stripped; null when neither', () => {
-    expect(instancePublicUrl(SELFHOST)).toBe('https://digby.example.com');
-    expect(instancePublicUrl(PROD)).toBe('https://digby.example.com');
+    expect(instancePublicUrl(SELFHOST)).toBe('https://digby.cql.ca');
+    expect(instancePublicUrl(PROD)).toBe('https://digby.ai');
     expect(instancePublicUrl({ FRONTEND_URL: 'http://lan:8080/' } as NodeJS.ProcessEnv)).toBe('http://lan:8080');
     expect(instancePublicUrl({} as NodeJS.ProcessEnv)).toBeNull();
   });
   it('oauthRedirectUri derives the callback from the public URL', () => {
-    expect(oauthRedirectUri('google', SELFHOST)).toBe('https://digby.example.com/api/crossmodel/google/callback');
-    expect(oauthRedirectUri('github', PROD)).toBe('https://digby.example.com/api/crossmodel/github/callback');
+    expect(oauthRedirectUri('google', SELFHOST)).toBe('https://digby.cql.ca/api/crossmodel/google/callback');
+    expect(oauthRedirectUri('github', PROD)).toBe('https://digby.ai/api/crossmodel/github/callback');
     expect(oauthRedirectUri('x', {} as NodeJS.ProcessEnv)).toBeNull();
   });
-  it('instanceSiteLabel is the host users know, digby.example.com when unknown', () => {
-    expect(instanceSiteLabel(SELFHOST)).toBe('digby.example.com');
-    expect(instanceSiteLabel({} as NodeJS.ProcessEnv)).toBe('digby.example.com');
+  it('instanceSiteLabel is the host users know, digby.ai when unknown', () => {
+    expect(instanceSiteLabel(SELFHOST)).toBe('digby.cql.ca');
+    expect(instanceSiteLabel({} as NodeJS.ProcessEnv)).toBe('digby.ai');
     expect(instanceSiteLabel({ FRONTEND_URL: 'http://192.168.1.20:8080' } as NodeJS.ProcessEnv)).toBe('192.168.1.20:8080');
   });
 });
@@ -93,8 +93,8 @@ describe('computeInstanceSetup — integrations', () => {
     const none = feature(SELFHOST, 'google');
     expect(none).toMatchObject({ state: 'missing', configured: false });
     expect(none.missing).toEqual(expect.arrayContaining(['GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'GOOGLE_TOKEN_ENCRYPTION_KEY', 'GOOGLE_MCP_API_KEY']));
-    expect(none.redirectUri).toBe('https://digby.example.com/api/crossmodel/google/callback');
-    expect(none.hint).toContain('Callback URL to register: https://digby.example.com/api/crossmodel/google/callback');
+    expect(none.redirectUri).toBe('https://digby.cql.ca/api/crossmodel/google/callback');
+    expect(none.hint).toContain('Callback URL to register: https://digby.cql.ca/api/crossmodel/google/callback');
   });
   it('GitHub: the pasted-token path needs only the encryption key (partial, configured), an OAuth app makes it ready', () => {
     const pat = feature({ ...SELFHOST, GITHUB_TOKEN_ENCRYPTION_KEY: 'k', GITHUB_MCP_API_KEY: 'm' }, 'github');
@@ -172,19 +172,19 @@ describe('computeInstanceSetup — instance, web, messaging, coding', () => {
   it('Telegram needs the three vars and an https URL; the note carries the webhook command for THIS instance', () => {
     const tg = feature({ ...SELFHOST, TELEGRAM_BOT_TOKEN: 'a', TELEGRAM_BOT_USERNAME: 'b', TELEGRAM_WEBHOOK_SECRET: 'c' }, 'telegram');
     expect(tg.state).toBe('ready');
-    expect(tg.note).toContain('url=https://digby.example.com/api/crossmodel/telegram/webhook');
+    expect(tg.note).toContain('url=https://digby.cql.ca/api/crossmodel/telegram/webhook');
     expect(feature({ ...SELFHOST, SELFHOST_PUBLIC_URL: 'http://lan:8080', COOKIE_SECURE: 'false', TELEGRAM_BOT_TOKEN: 'a', TELEGRAM_BOT_USERNAME: 'b', TELEGRAM_WEBHOOK_SECRET: 'c' }, 'telegram').state).toBe('partial');
     expect(feature(SELFHOST, 'telegram').missing).toEqual(['TELEGRAM_BOT_TOKEN', 'TELEGRAM_BOT_USERNAME', 'TELEGRAM_WEBHOOK_SECRET']);
   });
   it('telegram is only READY once the webhook probe says it is registered; unprobed keeps the pre-probe row', () => {
     const bot = { ...SELFHOST, TELEGRAM_BOT_TOKEN: 'a', TELEGRAM_BOT_USERNAME: 'b', TELEGRAM_WEBHOOK_SECRET: 'c' };
     expect(feature(bot, 'telegram').state).toBe('ready'); // not probed (production path)
-    expect(feature(bot, 'telegram', { telegramWebhook: { registered: true, url: 'https://digby.example.com/api/crossmodel/telegram/webhook' } })).toMatchObject({ state: 'ready', configured: true });
+    expect(feature(bot, 'telegram', { telegramWebhook: { registered: true, url: 'https://digby.cql.ca/api/crossmodel/telegram/webhook' } })).toMatchObject({ state: 'ready', configured: true });
     const unregistered = feature(bot, 'telegram', { telegramWebhook: { registered: false, url: null } });
     expect(unregistered.state).toBe('partial');
     expect(unregistered.configured).toBe(true);
     expect(unregistered.summary).toMatch(/register the webhook once/);
-    expect(feature(bot, 'telegram', { telegramWebhook: { registered: false, url: 'https://digby.example.com/api/crossmodel/telegram/webhook' } }).summary).toContain('currently points at https://digby.example.com/api/crossmodel/telegram/webhook');
+    expect(feature(bot, 'telegram', { telegramWebhook: { registered: false, url: 'https://digby.ai/api/crossmodel/telegram/webhook' } }).summary).toContain('currently points at https://digby.ai/api/crossmodel/telegram/webhook');
     expect(feature(bot, 'telegram', { telegramWebhook: null }).state).toBe('partial');
     expect(feature(bot, 'telegram', { telegramWebhook: null }).summary).toMatch(/could not verify/);
     expect(feature(bot, 'telegram').note).toContain('getWebhookInfo');
@@ -194,7 +194,7 @@ describe('computeInstanceSetup — instance, web, messaging, coding', () => {
     expect(computeInstanceSetup(PROD).features.find((f) => f.key === 'desktop_app')).toBeUndefined();
   });
   it('the Mac agent hint carries this instance\'s API URL for the installer', () => {
-    expect(feature(SELFHOST, 'mac_agent').hint).toContain('https://digby.example.com/api');
+    expect(feature(SELFHOST, 'mac_agent').hint).toContain('https://digby.cql.ca/api');
   });
   it('model providers: any key or a registered endpoint; seats come from the enrichment and name the missing env var', () => {
     expect(feature(SELFHOST, 'model_providers')).toMatchObject({ state: 'missing', required: true });
@@ -213,7 +213,7 @@ describe('computeInstanceSetup — instance, web, messaging, coding', () => {
   });
   it('summary counts required gaps; production with keys has none', () => {
     const s = computeInstanceSetup(SELFHOST);
-    expect(s.instance).toMatchObject({ kind: 'selfhost', selfHosted: true, publicUrl: 'https://digby.example.com', cookieSecure: true });
+    expect(s.instance).toMatchObject({ kind: 'selfhost', selfHosted: true, publicUrl: 'https://digby.cql.ca', cookieSecure: true });
     expect(s.summary.missingRequired).toContain('model_providers');
     const p = computeInstanceSetup({ ...PROD, DEEPSEEK_API_KEY: 'k' });
     expect(p.instance.selfHosted).toBe(false);
@@ -252,7 +252,7 @@ describe('redactSetupForViewer', () => {
     // model ids and the registered webhook are admin-only facts
     const rich = redactSetupForViewer(computeInstanceSetup(
       { ...SELFHOST, TELEGRAM_BOT_TOKEN: 'a', TELEGRAM_BOT_USERNAME: 'b', TELEGRAM_WEBHOOK_SECRET: 'c' },
-      { seats: [{ key: 'chat_orchestrator', persona: 'Digby', effective: 'cql-litellm:api-anthropic-claude-fable-5-1', servable: true }], telegramWebhook: { registered: false, url: 'https://digby.example.com/api/crossmodel/telegram/webhook' } },
+      { seats: [{ key: 'chat_orchestrator', persona: 'Digby', effective: 'cql-litellm:api-anthropic-claude-fable-5-1', servable: true }], telegramWebhook: { registered: false, url: 'https://digby.ai/api/crossmodel/telegram/webhook' } },
     ));
     expect(JSON.stringify(rich)).not.toMatch(/cql-litellm|kimi-k3|points at/);
     // the viewer keeps the OAuth fact (the GitHub card picks the token path from it)

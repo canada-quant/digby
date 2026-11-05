@@ -20,7 +20,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -68,8 +68,8 @@ const CORPUS: Array<[string, string, string, number, string, string]> = [
   ['09-25 18:19', '2da8766f', '19:40Z', 85, 'Nothing needs the owner: 0 open owner questions, serving GREEN through the block end 2026-09-26T11:30Z, and the shifted capacity check 19:40Z.', 'not_observation'], // +rec
   ['09-25 20:50', 'f5c2c1f4', '22:10Z', 83, '- Delta report-up sent to Fleet Supervisor (receipt 5f010ac6): capacity landed, cyan RUNNING, TRAIN_DONE re-anchored ≈21:40–22:10Z', 'not_observation'], // +rec
   ['09-25 21:44', 'c0e22e36', '2:45 PM PDT', 9, '| CanLaw | Final SFT round training, no 5th preemption | TRAIN_DONE ~2:30–2:45 PM PDT |', 'not_observation'],
-  ['09-25 23:06', 'c0e22e36', '4:40 PM PDT', 41, '| CQL Gateway | ✅ Your 4 AGX routes + MiMo rename merged · deploy grid-gated | endpoints live ~4:40 PM PDT |', 'forward'],
-  ['09-26 00:19', 'c0e22e36', '5:45 PM PDT', 34, '| CQL Gateway | ✅ Your 4 AGX routes + engine rename + tag fix all merged · deploy executing with the known-bad MiMo leg | endpoints live ~5:45 PM PDT |', 'forward'], // +rec
+  ['09-25 23:06', 'c0e22e36', '4:40 PM PDT', 41, '| CQL Gateway | ✅ Your 4 AGX routes + node-b rename merged · deploy grid-gated | endpoints live ~4:40 PM PDT |', 'forward'],
+  ['09-26 00:19', 'c0e22e36', '5:45 PM PDT', 34, '| CQL Gateway | ✅ Your 4 AGX routes + engine rename + tag fix all merged · deploy executing with the known-bad node-b leg | endpoints live ~5:45 PM PDT |', 'forward'], // +rec
   ['09-26 10:52', 'c0e22e36', '9:00 AM PDT', 313, '| CanLaw | Smoke run: 1 of 6 rounds banked, round 2 underway, GPU 97–100% | Training done ~8:30–9:00 AM PDT, verdict ~10:30–11:30 AM PDT |', 'not_observation'],
   ['09-26 11:18', 'c0e22e36', '9:00 AM PDT', 285, '| CanLaw | Smoke training healthy into round 2 (reported 10:51Z) | training done ~8:30–9:00 AM PDT, verdict late morning |', 'not_observation'],
   ['09-26 12:14', 'c0e22e36', '10:05 AM PDT', 297, '| CanLaw | Smoke run survived preempt #13 with zero data loss, back training on round 2 | Done ~9:35–10:05 AM PDT, verdict ~11:35 AM–12:05 PM PDT |', 'not_observation'],

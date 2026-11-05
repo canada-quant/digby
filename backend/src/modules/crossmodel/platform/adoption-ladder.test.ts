@@ -95,7 +95,7 @@ describe('adoption-ladder — pure', () => {
       { sessionId: 'other-lane', finishedAt: new Date('2026-09-26T00:00:00Z') }, // not an assignee — not counted
       { sessionId: LANE, finishedAt: null },
     ];
-    const l = computeAdoptionLadder({ goalId: GOAL, projectId: PID, goalTitle: 'Serve Qwen3.8 on QB2', kpi, lanes: [LANE], completedRuns: runs, now: NOW })!;
+    const l = computeAdoptionLadder({ goalId: GOAL, projectId: PID, goalTitle: 'Serve Qwen3.8 on node-a', kpi, lanes: [LANE], completedRuns: runs, now: NOW })!;
     expect(l.experiments).toBe(27);
     expect(l.hours).toBeCloseTo(150.4, 0);
     expect(l.lastMoveAt).toBe('2026-09-21T08:42:00Z');
@@ -103,7 +103,7 @@ describe('adoption-ladder — pure', () => {
     expect(renderAdoptionLadderInline(l)).toBe('KPI 5.08 tok/s unchanged since 09-21 08:42Z · 27 experiments / 6.3 d without adoption');
     expect(renderLaneLadderClause(l)).toBe('27 experiments since the last KPI move (kpi:e2e=5.08 tok/s since 09-21 08:42Z)');
     const wake = renderNoAdoptionWake(l, 'tt-rd', NOW);
-    expect(wake.startsWith(`${ADOPTION_WAKE_PREFIX} goal 226be7b7 "Serve Qwen3.8 on QB2" in tt-rd: KPI kpi:e2e=5.08 tok/s (receipt f5b42fe6), bar ≥10, has not moved toward its bar since 09-21 08:42Z — 27 completed work sessions / 6d on lane(s) ddd26be0 without an adoption`)).toBe(true);
+    expect(wake.startsWith(`${ADOPTION_WAKE_PREFIX} goal 226be7b7 "Serve Qwen3.8 on node-a" in tt-rd: KPI kpi:e2e=5.08 tok/s (receipt f5b42fe6), bar ≥10, has not moved toward its bar since 09-21 08:42Z — 27 completed work sessions / 6d on lane(s) ddd26be0 without an adoption`)).toBe(true);
     for (const s of ['RE-PLAN', 'ADOPTION CRITERION', 'ESCALATE', 'STUCK-SINCE', 'Fold the negative result ONCE', 'Never a card']) expect(wake).toContain(s);
     // Below both thresholds nothing trips; a fresh registration renders no clause yet.
     const quiet = computeAdoptionLadder({ goalId: GOAL, projectId: PID, goalTitle: 't', kpi: { ...kpi, setAt: '2026-09-27T14:30:00Z' }, lanes: [LANE], completedRuns: runs, now: NOW })!;
@@ -120,7 +120,7 @@ describe('adoption-ladder — pure', () => {
 });
 
 describe('adoption-ladder — readers + sweep', () => {
-  const goalRow = { id: GOAL, projectId: PID, title: 'Serve Qwen3.8 on QB2', status: 'active', premises: [{ key: 'host_tail_ms', value: 12 }, { ...KPI, value: 5.08, setAt: '2026-09-21T08:42:00Z', prev: undefined, history: [] }] };
+  const goalRow = { id: GOAL, projectId: PID, title: 'Serve Qwen3.8 on node-a', status: 'active', premises: [{ key: 'host_tail_ms', value: 12 }, { ...KPI, value: 5.08, setAt: '2026-09-21T08:42:00Z', prev: undefined, history: [] }] };
   const wire = () => {
     mockPrisma.projectGoal.findMany.mockResolvedValue([goalRow, { id: 'g-nokpi', projectId: PID, title: 'no kpi', status: 'active', premises: [] }]);
     mockPrisma.projectTodo.findMany.mockResolvedValue([{ goalId: GOAL, assigneeChatId: LANE }, { goalId: GOAL, assigneeChatId: null }]);
@@ -182,7 +182,7 @@ describe('adoption-ladder — readers + sweep', () => {
 // ── Fixer follow-up 2026-09-27 (branch review finding 2): the wake fires only on what the harness measured ──
 describe('adoption-ladder — fixer follow-up: measured states only', () => {
   const kpi = { key: 'kpi:e2e', value: 5.08, unit: 'tok/s', bar: 10, receiptId: RID, setAt: '2026-09-20T08:42:00Z' }; // 7.3 days before NOW
-  const goalRow = { id: GOAL, projectId: PID, title: 'Serve Qwen3.8 on QB2', status: 'active', premises: [{ ...KPI, value: 5.08, setAt: '2026-09-21T08:42:00Z', prev: undefined, history: [] }] };
+  const goalRow = { id: GOAL, projectId: PID, title: 'Serve Qwen3.8 on node-a', status: 'active', premises: [{ ...KPI, value: 5.08, setAt: '2026-09-21T08:42:00Z', prev: undefined, history: [] }] };
   const wire = (runs = 9) => {
     mockPrisma.projectGoal.findMany.mockResolvedValue([goalRow]);
     mockPrisma.projectTodo.findMany.mockResolvedValue([{ goalId: GOAL, assigneeChatId: LANE }]);

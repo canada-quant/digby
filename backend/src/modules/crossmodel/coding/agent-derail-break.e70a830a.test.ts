@@ -1,6 +1,6 @@
 /**
  * Replay pin — ticket e70a830a (mishap, auto-filed at breaker trip
- * 2026-09-21T07:46:46Z): "3× tool-failure streak: verify_durable on 'QB2
+ * 2026-09-21T07:46:46Z): "3× tool-failure streak: verify_durable on 'node-a
  * Qwen3.8 Speed Mission Successor' — framework or model?". Session
  * ddd26be0-723d-4745-8bb5-be3ff4752d52, run efa65398 (the derail-RESCUE-1
  * continuation of firing-105, triggerKind hook, seat kimi-k3); "lane's
@@ -193,7 +193,7 @@ const RESOURCE_ENVELOPE = JSON.stringify(
  *  run's haystack carried one from the earlier refused-placeholder echo),
  *  which is what GROUNDED the two emissions and let them execute. */
 const BRIEF = [
-  '[QB2 durability watch — derail-rescue continuation]',
+  '[node-a durability watch — derail-rescue continuation]',
   'Check the MOE-PREFILL-3 artifact story. The previous run died emitting the placeholder id "noop" — never re-emit it.',
   'Stamp durability only after a real check this run; never invent an artifact id.',
 ].join('\n');

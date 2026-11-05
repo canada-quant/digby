@@ -1,5 +1,5 @@
 /**
- * COMPUTER_TASK CLAIM CHECK — ticket 4c7aebf7 (2026-10-21, chat e03452f4 — the 'cql-agx-orin64 Supervisor'
+ * COMPUTER_TASK CLAIM CHECK — ticket 4c7aebf7 (2026-10-21, chat e03452f4 — the 'cql-accelerator Supervisor'
  * project-supervisor chat). Part (c) IS BUILT HERE: a computer_task ACTION claim must quote the task result's
  * harness counters inline (refusedRepeats / noChangeStrikes / degenerateFrames / displays / probe), mirroring the
  * [SUB-AGENT NARRATION — unverified] rule already applied to capture / permission claims — a full-control result
@@ -39,7 +39,7 @@
  *         setting, never input;
  *       drive (drove): the device itself as the object ("Drove the owner's Mac") or its place.
  *     A DEVICE word (computer_task / computer use, the screen, the desktop, the Mac family — case-sensitive, never
- *     a host name like "home-pauls-mac-mini") counts only as the HEAD of the verb's object or of an on / in / via /
+ *     a host name like "example-tailnet-peer") counts only as the HEAD of the verb's object or of an on / in / via /
  *     using / through / with / from phrase: "the computer_task fix", "a Mac agent ticket", "the Mac mini lane",
  *     "the screen-capture lane" are platform nouns the device word only describes. Platform verbs (opened,
  *     applied, saved, edited, entered, submitted, filed, dispatched …) are NEVER claims — they only carry the
@@ -214,7 +214,7 @@ const IMPLICIT_START_RE = new RegExp(String.raw`^(?:(?:then|and|also|next|finall
 const COORDINATED_VERB_RE = new RegExp(String.raw`(?:,\s*(?:and\s+|then\s+)?|\s+and\s+(?:then\s+)?|\s+then\s+)(${VERB_ALT})\b`, 'gi');
 
 // The DEVICE as a noun-phrase HEAD (round 4). Case-sensitive on purpose: the Mac family needs its capital M (never
-// "MAC address", never a host name like "home-pauls-mac-mini"); the other words allow a capital first letter.
+// "MAC address", never a host name like "example-tailnet-peer"); the other words allow a capital first letter.
 const DETERMINERS = String.raw`(?:(?:[Tt]he|[Aa]n?|[Hh]is|[Hh]er|[Tt]heir|[Mm]y|[Oo]ur|[Yy]our|[A-Za-z][\w-]*['’]s)\s+)*`;
 const DEVICE_NOUN = String.raw`(?:[Cc]omputer[_ -]?(?:task|use)(?:\s+(?:tool|session|call|sub-?agent))?|[Ss]creen|[Dd]esktop|MacBook(?:\s+(?:Pro|Air))?|iMac|Mac(?:\s+(?:mini|Studio|Pro))?)`;
 /** What may follow a device HEAD: the clause end, punctuation, or a function word — never another noun. */

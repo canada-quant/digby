@@ -2,14 +2,14 @@ namespace Digby.Shell;
 
 // Launch update check — the port of main.swift:390-411.
 //
-// Fetches digby.example.com/windows-latest.json (the Windows mirror of the macOS
+// Fetches digby.ai/windows-latest.json (the Windows mirror of the macOS
 // desktop-latest.json feed) and compares dotted-numeric versions. On newer:
 // prompt, and on Yes OPEN THE DOWNLOAD URL IN THE DEFAULT BROWSER — never
 // self-update, never download in-app (the W2 rule; macOS instead loads the
 // .dmg through its in-app downloader). Feed failure is silent, like macOS.
 internal static class UpdateCheck
 {
-    private const string FeedUrl = "https://digby.example.com/windows-latest.json";
+    private const string FeedUrl = "https://digby.ai/windows-latest.json";
 
     public sealed class FeedInfo
     {

@@ -46,7 +46,7 @@ const ACCOUNT = {
   id: 'a1',
   userId: 'u1',
   label: 'Work',
-  email: 'paul@sunday.market',
+  email: 'example-user@example.com',
   scopes: ['gmail.readonly'],
   expiresAt: new Date('2026-09-01T00:00:00Z'),
   createdAt: new Date('2026-01-01T00:00:00Z'),
@@ -119,7 +119,7 @@ describe('updateAccountLabel', () => {
       data: expect.objectContaining({
         id: 'a1',
         label: 'Sunday Market Media',
-        email: 'paul@sunday.market',
+        email: 'example-user@example.com',
         scopes: ['gmail.readonly'],
       }),
     }));

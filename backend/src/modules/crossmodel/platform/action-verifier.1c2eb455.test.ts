@@ -46,7 +46,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -179,7 +179,7 @@ describe('ticket 1c2eb455 — REPLAY: the SWEEP-46 phantom observation clocks', 
       .replace('done at 06:05:31Z', 'done at 06:03:31Z')
       .replace('@06:06:02Z', '@06:03:40Z');
     mockPrisma.crossModelMessage.findFirst.mockResolvedValue({ id: 'msg-235b827e-full' });
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: 'sched-947f12dc-full' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: 'sched-947f12dc-full' });
     const res = await guard({ finalText: cleanNote });
     expect(res.struck ?? false).toBe(false);
     expect(res.finalText).toBe(cleanNote);

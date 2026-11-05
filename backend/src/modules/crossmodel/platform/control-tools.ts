@@ -185,7 +185,7 @@ async function ownedScheduleState(userId: string, raw: string): Promise<{ id: st
   const scheduleId = await resolveScheduleIdForUser(userId, raw).catch(() => null);
   if (!scheduleId) return null;
   const prisma = await db();
-  const row = await prisma.codingSchedule.findUnique({
+  const row = await prisma.chatSchedule.findUnique({
     where: { id: scheduleId },
     select: { id: true, sessionId: true, userId: true, enabled: true, nextRunAt: true, lastStatus: true },
   }).catch(() => null);
@@ -407,7 +407,7 @@ export async function executeControlTool(ctx: Ctx, name: ControlToolName, args: 
       const scheduleId = await resolveScheduleIdForUser(userId, raw).catch(() => null);
       if (!scheduleId) return out({ ok: false, tool: name, ids: { scheduleId: raw }, reason: 'not_found', message: 'No schedule of yours matches that id (full id or a unique ≥8-char prefix).' });
       const prisma = await db();
-      const row = await prisma.codingSchedule.findUnique({ where: { id: scheduleId }, select: { id: true, sessionId: true, userId: true } }).catch(() => null);
+      const row = await prisma.chatSchedule.findUnique({ where: { id: scheduleId }, select: { id: true, sessionId: true, userId: true } }).catch(() => null);
       if (!row || row.userId !== userId) return out({ ok: false, tool: name, ids: { scheduleId }, reason: 'not_found', message: 'No schedule of yours matches that id.' });
       try {
         // audit 2026-10-06 T4-2: the pausing run's chat rides schedule_disabled as actorChatId.

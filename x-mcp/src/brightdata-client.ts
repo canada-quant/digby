@@ -1,5 +1,5 @@
 /**
- * Read X.com content via Bright Data tools, proxied through the mcp.digby.example.com
+ * Read X.com content via Bright Data tools, proxied through the mcp.digby.ai
  * gateway. This is the FALLBACK read path — when the caller's per-user OAuth
  * token is attached, server.ts prefers the authenticated X API v2 reads in
  * x-client.ts (ticket f609ec35, 2026-09-22).
@@ -21,10 +21,10 @@
 
 import axios from 'axios';
 
-// Bright Data MCP gateway lives at /mcp on mcp.digby.example.com. The tools are named
+// Bright Data MCP gateway lives at /mcp on mcp.digby.ai. The tools are named
 // `scrape_as_markdown` / `search_engine` on the gateway (the `brightdata_`
 // prefix is from a different MCP namespace and doesn't exist on this server).
-const BRIGHTDATA_MCP_URL = process.env.BRIGHTDATA_MCP_URL || 'https://mcp.digby.example.com/mcp';
+const BRIGHTDATA_MCP_URL = process.env.BRIGHTDATA_MCP_URL || 'https://mcp.digby.ai/mcp';
 const TOKEN = process.env.MCP_DIGBY_TOKEN || '';
 
 let nextRequestId = 1;
@@ -404,7 +404,7 @@ export interface Trends24Snapshot { region: string; timestamp: string; items: Ar
  * The same URL arrives in TWO shapes (both observed live 2026-09-22, ticket
  * 23c68866 round 2): the platform-side scrape_as_markdown tool returns the
  * RICH shape ('### <date>' headers, '1.'-numbered items), while x-mcp's own
- * JSON-RPC tools/call through mcp.digby.example.com returns the same page with the
+ * JSON-RPC tools/call through mcp.digby.ai returns the same page with the
  * heading markers and list numbering STRIPPED (bare '<date>' line, bare
  * '[name](url)' items). A parser that accepts only one shape makes the
  * mirror leg silently fail on the other path.

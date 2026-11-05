@@ -66,7 +66,7 @@ function sanitizeOauthError(raw: unknown): string {
 function getConfig() {
   const clientId     = process.env.SLACK_CLIENT_ID;
   const clientSecret = process.env.SLACK_CLIENT_SECRET;
-  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
   // Derived from THIS instance's public URL (self-host setup hardening, 2026-10-20); the env overrides.
   const redirectUri  = process.env.SLACK_OAUTH_REDIRECT_URI ||
     `${frontendUrl}/api/crossmodel/slack/callback`;
@@ -138,7 +138,7 @@ export class SlackOAuthController {
   /** GET /api/crossmodel/slack/auth — Start Slack OAuth flow. */
   async startAuth(req: Request, res: Response, next: NextFunction) {
     try {
-      const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+      const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
       if (!req.user) {
         // 2026-09-12 (ticket 8cb3aa34): this endpoint is a BROWSER NAVIGATION
         // target (the integrations card does window.location.href here) — a

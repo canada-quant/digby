@@ -86,7 +86,7 @@ const dbMock = {
   pendingConfirmation: mockConfirmations.api,
   crossModelChat: { findUnique: jest.fn(async ({ where }: any) => chats[where.id] ?? null) },
   crossModelMessage: { create: jest.fn(async () => ({})) },
-  codingSchedule: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'sch-1' ? { ...scheduleRow } : null)) },
+  chatSchedule: { findUnique: jest.fn(async ({ where }: any) => (where.id === 'sch-1' ? { ...scheduleRow } : null)) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: dbMock }));
 

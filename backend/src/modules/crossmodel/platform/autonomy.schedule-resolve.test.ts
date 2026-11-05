@@ -18,7 +18,7 @@ const mockPrisma: any = {
   chatAutonomy: { findUnique: jest.fn(), upsert: jest.fn(), deleteMany: jest.fn(async () => ({ count: 1 })) },
   activity: { create: jest.fn(async () => ({})) },
   crossModelChat: { findUnique: jest.fn(), findMany: jest.fn(async () => []) },
-  codingSchedule: {
+  chatSchedule: {
     findFirst: jest.fn(async () => null),
     findMany: jest.fn(async ({ where }: any) => (where?.sessionId ? callerRows : prefixRows)),
   },
@@ -54,12 +54,12 @@ beforeEach(() => {
   jest.clearAllMocks();
   callerRows = [];
   prefixRows = [];
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
 });
 
 describe('resolveScheduleForCaller', () => {
   it('an exact owner-scoped id resolves; so does a unique ≥8-char prefix (the tool description idiom)', async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValueOnce({ id: 'aaaaaaaa-1111' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValueOnce({ id: 'aaaaaaaa-1111' });
     expect(await resolveScheduleForCaller('u1', OWN_CHAT, 'aaaaaaaa-1111', 'update_schedule')).toEqual({ kind: 'resolved', id: 'aaaaaaaa-1111' });
     prefixRows = [{ id: 'bbbbbbbb-2222' }];
     expect(await resolveScheduleForCaller('u1', OWN_CHAT, 'bbbbbbbb', 'update_schedule')).toEqual({ kind: 'resolved', id: 'bbbbbbbb-2222' });
@@ -69,7 +69,7 @@ describe('resolveScheduleForCaller', () => {
     callerRows = [row('sched-1'), row('sched-old', { enabled: false }), row('sched-sys', { promptSetBy: 'system' })];
     const r = await resolveScheduleForCaller('u1', OWN_CHAT, 'none', 'update_schedule');
     expect(r).toEqual({ kind: 'substituted', id: 'sched-1', passed: 'none' });
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'u1', sessionId: OWN_CHAT } }));
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { userId: 'u1', sessionId: OWN_CHAT } }));
   });
 
   it('never substitutes: two enabled machine schedules (ambiguous), an owner-authored one, or cancel_schedule — candidates listed instead', async () => {
@@ -82,7 +82,7 @@ describe('resolveScheduleForCaller', () => {
   });
 
   it('a lookup error fails toward none with an empty candidate list (never throws into the tool path)', async () => {
-    mockPrisma.codingSchedule.findMany.mockRejectedValueOnce(new Error('db')).mockRejectedValueOnce(new Error('db'));
+    mockPrisma.chatSchedule.findMany.mockRejectedValueOnce(new Error('db')).mockRejectedValueOnce(new Error('db'));
     expect(await resolveScheduleForCaller('u1', OWN_CHAT, 'zzzzzzzz', 'update_schedule')).toEqual({ kind: 'none', passed: 'zzzzzzzz', candidates: [] });
   });
 });
@@ -92,7 +92,7 @@ describe('listCallerSchedules + describeCallerSchedules', () => {
     callerRows = [row('sched-1'), row('sched-once', { kind: 'once', intervalSec: null, enabled: false, lastStatus: 'started', promptSetBy: 'system' })];
     const rows = await listCallerSchedules('u1', OWN_CHAT);
     expect(rows.map((r) => r.id)).toEqual(['sched-1', 'sched-once']);
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 5, orderBy: [{ enabled: 'desc' }, { createdAt: 'desc' }] }));
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 5, orderBy: [{ enabled: 'desc' }, { createdAt: 'desc' }] }));
     const text = describeCallerSchedules(rows);
     expect(text).toBe("THIS chat's schedules — pass one of these full ids: sched-1 (every 30 min, next 08:11Z, skipped:busy, enabled, set by machine); sched-once (once, next 08:11Z, started, disabled, set by system).");
     expect(describeCallerSchedules([])).toBe('');

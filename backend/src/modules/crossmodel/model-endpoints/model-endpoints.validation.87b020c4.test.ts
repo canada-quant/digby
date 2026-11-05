@@ -16,7 +16,7 @@ describe('87b020c4 — imagesUrl survives the zod validation layer (POST/PATCH)'
       body: {
         label: 'llm-cql',
         providerShape: 'openai_chat',
-        baseUrl: 'https://llm.example.com',
+        baseUrl: 'https://llm.cql.ca',
         models: [{ id: 'qwen-image-2.1-turbo', image: true, imageTimeoutMs: 720_000, imagesUrl: 'http://100.64.0.1:4001/v1' }],
       },
     });

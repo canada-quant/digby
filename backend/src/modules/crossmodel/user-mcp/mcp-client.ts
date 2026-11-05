@@ -151,7 +151,7 @@ function sendRequest(url: URL, init: { method: 'GET' | 'POST' | 'DELETE'; header
     if (remaining <= 0) { reject(new McpClientError('timeout', 'the server did not answer in time')); return; }
     const mod = url.protocol === 'https:' ? https : http;
     let settled = false;
-    const headers: Record<string, string> = { 'user-agent': 'Digby-MCP/1.0 (+https://digby.example.com)', ...init.headers };
+    const headers: Record<string, string> = { 'user-agent': 'Digby-MCP/1.0 (+https://digby.ai)', ...init.headers };
     if (init.body !== undefined) headers['content-length'] = String(Buffer.byteLength(init.body));
     let req: http.ClientRequest;
     try {

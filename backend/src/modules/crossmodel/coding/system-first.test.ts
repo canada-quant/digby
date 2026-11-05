@@ -236,7 +236,7 @@ describe('hoistSystemMessages — every system message becomes ONE leading block
 
 // ── The learned latch ────────────────────────────────────────────────────────
 describe('system-first latch — one rejection teaches the process, never paid twice', () => {
-  const SEAT = { url: 'https://llm.example.com/v1/chat/completions', model: 'tt-qwen3.8-flash-next' };
+  const SEAT = { url: 'https://llm.cql.ca/v1/chat/completions', model: 'tt-qwen3.8-flash-next' };
 
   it('starts clean, latches on the first rejection, and is keyed per (endpoint, model)', () => {
     expect(systemFirstLatched(SEAT)).toBe(false);

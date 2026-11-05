@@ -21,7 +21,7 @@ Found 1 event(s):
    End:   Fri, Aug 28, 2026, 05:00 PM PDT
    Organizer: ${organizer}
 
---- Work (paul@sunday.market) ---
+--- Work (example-user@example.com) ---
 Found 1 event(s):
 
 📅 **Felipe Vacation**
@@ -32,36 +32,36 @@ Found 1 event(s):
 
 describe('parseCalendarEventsText — cross-account dedup label preference', () => {
   it('prefers the account whose email EXACTLY matches the organizer', () => {
-    const events = parseCalendarEventsText(twoAccountsSharedEvent('paul@sunday.market'));
+    const events = parseCalendarEventsText(twoAccountsSharedEvent('example-user@example.com'));
     expect(events).toHaveLength(1);
-    expect(events[0].account).toBe('Work (paul@sunday.market)');
+    expect(events[0].account).toBe('Work (example-user@example.com)');
   });
 
   it('prefers the account whose email DOMAIN matches the organizer domain', () => {
-    // Organizer felipe@sunday.market is not either account's email, but the
+    // Organizer example-user@example.com is not either account's email, but the
     // Work account shares the domain — CQL does not.
-    const events = parseCalendarEventsText(twoAccountsSharedEvent('felipe@sunday.market'));
+    const events = parseCalendarEventsText(twoAccountsSharedEvent('example-user@example.com'));
     expect(events).toHaveLength(1);
-    expect(events[0].account).toBe('Work (paul@sunday.market)');
+    expect(events[0].account).toBe('Work (example-user@example.com)');
   });
 
   it('extracts the email from a "Name <email>" organizer line (google-mcp format, ticket 39c0cd3f)', () => {
-    // The MCP now emits Organizer as "Felipe <felipe@sunday.market>" (display
+    // The MCP now emits Organizer as "Felipe <example-user@example.com>" (display
     // name + email) instead of letting the display name WIN and drop the email.
     // The dedup preference must still key off the email inside that format —
     // before the MCP fix, a named-organizer line had no email and silently fell
     // back to first-occurrence (the original mislabel).
-    const events = parseCalendarEventsText(twoAccountsSharedEvent('Felipe <felipe@sunday.market>'));
+    const events = parseCalendarEventsText(twoAccountsSharedEvent('Felipe <example-user@example.com>'));
     expect(events).toHaveLength(1);
-    expect(events[0].account).toBe('Work (paul@sunday.market)');
+    expect(events[0].account).toBe('Work (example-user@example.com)');
   });
 
   it('EXACT-matches the account email from a "Name <email>" organizer line (ticket 39c0cd3f)', () => {
     // Strongest path in the preference chain: the organizer email IS one of the
     // connected accounts' emails (not merely a shared domain).
-    const events = parseCalendarEventsText(twoAccountsSharedEvent('Paul Sunday <paul@sunday.market>'));
+    const events = parseCalendarEventsText(twoAccountsSharedEvent('Paul Sunday <example-user@example.com>'));
     expect(events).toHaveLength(1);
-    expect(events[0].account).toBe('Work (paul@sunday.market)');
+    expect(events[0].account).toBe('Work (example-user@example.com)');
   });
 
   it('falls back to the first occurrence when the organizer matches nothing', () => {
@@ -78,19 +78,19 @@ describe('parseCalendarEventsText — cross-account dedup label preference', () 
   });
 
   it('strips the internal dedup fields from the public shape', () => {
-    const events = parseCalendarEventsText(twoAccountsSharedEvent('paul@sunday.market'));
+    const events = parseCalendarEventsText(twoAccountsSharedEvent('example-user@example.com'));
     expect(events[0]).not.toHaveProperty('organizer');
     expect(events[0]).not.toHaveProperty('accountEmail');
   });
 
   it('matches duplicate keys case-insensitively on title', () => {
-    const text = twoAccountsSharedEvent('paul@sunday.market').replace(
-      '--- Work (paul@sunday.market) ---\nFound 1 event(s):\n\n📅 **Felipe Vacation**',
-      '--- Work (paul@sunday.market) ---\nFound 1 event(s):\n\n📅 **FELIPE VACATION**',
+    const text = twoAccountsSharedEvent('example-user@example.com').replace(
+      '--- Work (example-user@example.com) ---\nFound 1 event(s):\n\n📅 **Felipe Vacation**',
+      '--- Work (example-user@example.com) ---\nFound 1 event(s):\n\n📅 **FELIPE VACATION**',
     );
     const events = parseCalendarEventsText(text);
     expect(events).toHaveLength(1);
-    expect(events[0].account).toBe('Work (paul@sunday.market)');
+    expect(events[0].account).toBe('Work (example-user@example.com)');
   });
 });
 
@@ -128,7 +128,7 @@ Found 1 event(s):
    Start: Fri, Aug 28, 2026, 09:00 AM PDT
    End:   Fri, Aug 28, 2026, 09:15 AM PDT
 
---- Work (paul@sunday.market) ---
+--- Work (example-user@example.com) ---
 Found 1 event(s):
 
 📅 **Dentist**
@@ -139,7 +139,7 @@ Found 1 event(s):
     expect(events).toHaveLength(2);
     expect(events.map(e => e.account)).toEqual([
       'CQL (paul@cql.example.com)',
-      'Work (paul@sunday.market)',
+      'Work (example-user@example.com)',
     ]);
   });
 

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { CHAT_HREF, CONTACT_EMAIL, HEADER_NAV, MENU_PRIMARY, MENU_PRODUCTS, footerColumns } from '@/lib/site/content';
+import { brandingFromEnv } from '@/lib/branding';
 import { siteStrings, two } from '@/lib/site/strings';
 import SiteMenu from './SiteMenu';
 import ReadingProgress from './ReadingProgress';
@@ -25,11 +26,17 @@ export function SiteLink({ href, className, children, ...rest }: { href: string;
 
 const isCurrent = (href: string, path?: string) => !!path && (path === href || (href !== '/' && path.startsWith(`${href}/`)));
 
+// Shared branding core (todo d2d32b57). These are SERVER components in a
+// statically rendered segment, so the operator's values are resolved once at
+// build time — an operator sets DIGBY_BRAND_* before `docker compose up
+// --build` (docs/SELF_HOST.md § Branding).
+const branding = brandingFromEnv();
+
 function Wordmark() {
   return (
-    <Link href={CHAT_HREF} className="flex min-h-11 items-center gap-2 text-ink" aria-label="Digby — start chatting">
-      <Image src="/digbyhat.png" alt="" width={28} height={28} priority />
-      <span className="font-serif text-[23px] leading-none tracking-[-0.01em]">Digby</span>
+    <Link href={CHAT_HREF} className="flex min-h-11 items-center gap-2 text-ink" aria-label={`${branding.name} — start chatting`}>
+      <Image src={branding.assets.logoCompact} alt="" width={28} height={28} priority />
+      <span className="font-serif text-[23px] leading-none tracking-[-0.01em]">{branding.name}</span>
     </Link>
   );
 }
@@ -192,11 +199,11 @@ export function SiteFooter({ lang, cta = false }: { lang?: string; cta?: boolean
         </div>
 
         <div className="mt-8 flex items-end justify-between gap-4 md:mt-14 md:border-t md:border-line md:pt-8">
-          <Link href={CHAT_HREF} className="font-serif text-[46px] leading-[0.8] tracking-[-0.02em] text-ink" aria-label="Digby — start chatting">
-            Digby
+          <Link href={CHAT_HREF} className="font-serif text-[46px] leading-[0.8] tracking-[-0.02em] text-ink" aria-label={`${branding.name} — start chatting`}>
+            {branding.name}
           </Link>
           <div className="text-right font-mono text-[12px] leading-relaxed text-ink-2">
-            <p>© {year} Digby · {t.builtIn} 🇨🇦</p>
+            <p>© {year} {branding.name} · {t.builtIn} 🇨🇦</p>
             <a href={`mailto:${CONTACT_EMAIL}`} className="hover:text-ink">{CONTACT_EMAIL}</a>
           </div>
         </div>
@@ -210,7 +217,7 @@ export function Breadcrumbs({ trail }: { trail: { href: string; label: string }[
   return (
     <nav aria-label="Breadcrumb" className="mb-2 hidden pt-8 text-[12.5px] text-ink-3 md:block">
       <ol className="flex flex-wrap items-center gap-1.5">
-        <li><Link href={CHAT_HREF} className="hover:text-ink">Digby</Link></li>
+        <li><Link href={CHAT_HREF} className="hover:text-ink">{branding.name}</Link></li>
         {trail.map((t, i) => (
           <li key={t.href} className="flex items-center gap-1.5">
             <span aria-hidden="true">/</span>

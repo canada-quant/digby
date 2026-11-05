@@ -100,7 +100,7 @@ jest.mock('./verify-state', () => ({ __esModule: true, recordVerify: jest.fn(asy
 
 const REGISTRY: Record<string, any> = {
   'cql-litellm:api-alibaba-qwen3.8-max': {
-    url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1',
+    url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1',
     apiKey: 'sk-cql', model: 'api-alibaba-qwen3.8-max', label: 'cql-litellm',
     coding: true, chatCapable: true, kind: 'chat', thinkingOff: false, supportsVision: false,
     maxToolsSource: 'none', reasoningEffort: 'auto',
@@ -204,7 +204,7 @@ describe('audit 2026-10-08 W2-4 — a provider content filter is not a transient
     expect(result.modelErrored ?? false).toBe(false);
     expect(result.finalText).toContain('Trackers curated.');
     expect(mockRunModelTurn).toHaveBeenCalledTimes(2); // pre-fix: 5 backoffs + 2 shrinks on the SAME seat
-    expect(mockRunModelTurn.mock.calls[0][0].url).toBe('https://llm.example.com/v1/chat/completions');
+    expect(mockRunModelTurn.mock.calls[0][0].url).toBe('https://llm.cql.ca/v1/chat/completions');
     expect(mockRunModelTurn.mock.calls[1][0].url).toContain('api.z.ai');
     const secondMessages = JSON.stringify(mockRunModelTurn.mock.calls[1][1]);
     expect(secondMessages).toContain('REFUSED the last request with its content filter');
@@ -253,7 +253,7 @@ describe('audit 2026-10-08 W2-4 — a provider content filter is not a transient
     const result = await runCodingAgent(makeInput());
     expect(result.modelErrored ?? false).toBe(false);
     expect(mockRunModelTurn).toHaveBeenCalledTimes(2);
-    expect(mockRunModelTurn.mock.calls[1][0].url).toBe('https://llm.example.com/v1/chat/completions'); // same seat, a backoff retry
+    expect(mockRunModelTurn.mock.calls[1][0].url).toBe('https://llm.cql.ca/v1/chat/completions'); // same seat, a backoff retry
     expect(rows('content_filter')).toEqual([]);
   });
 });

@@ -31,7 +31,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
@@ -74,7 +74,7 @@ beforeEach(() => {
   mockUtilityChat.mockResolvedValue('{"claims":[]}');
   mockPrisma.projectGoal.findFirst.mockResolvedValue({ status: 'active' }); // the REAL ledger status
   mockPrisma.projectTodo.findFirst.mockResolvedValue({ status: 'pending' });
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: 'sched-row' }); // sched 9fd4425a exists
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: 'sched-row' }); // sched 9fd4425a exists
 });
 
 describe('e4138a3d — hyphen compounds are NOUNS, never statuses (the parser half)', () => {

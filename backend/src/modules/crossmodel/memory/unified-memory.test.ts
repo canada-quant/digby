@@ -40,7 +40,7 @@ describe('memQueryText — the embed/rerank query bound (2026-09-19 audit: a 19.
 
   it('keeps the TAIL of a long query — the machine preamble is the head, the event body is the tail', () => {
     const preamble = '[MACHINE-TRIGGERED RUN — no user is on this turn. '.padEnd(15_000, 'boilerplate ');
-    const body = 'HOOK run_completed from lane QB2: gpqa-40 row truncated, waiter still queued.';
+    const body = 'HOOK run_completed from lane node-a: gpqa-40 row truncated, waiter still queued.';
     const out = memQueryText(preamble + body);
     expect(out.length).toBe(MEM_QUERY_MAX_CHARS);
     expect(out.endsWith(body)).toBe(true);

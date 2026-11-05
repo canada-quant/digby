@@ -28,10 +28,10 @@ export const PROD_INSTANCE = 'prod';
 /**
  * The production deployment's own repo — the target a non-prod instance must
  * NEVER resolve. Kept as the single source of truth for the five historical
- * `|| 'canada-quant/digby'` defaults (self-merge SELF_REPO, fleet-pulse,
+ * `|| 'example-org/crossmodel'` defaults (self-merge SELF_REPO, fleet-pulse,
  * infra-watch DEPLOY_REPO, feedback fix-state, closure-evidence).
  */
-export const PROD_REPO = 'canada-quant/digby';
+export const PROD_REPO = 'example-org/crossmodel';
 
 /** Thrown when a non-prod instance resolves a production target. Hard fail. */
 export class IsolationBoundaryError extends Error {
@@ -128,7 +128,7 @@ export type InstanceRepoTarget =
 
 /**
  * Resolve the instance's own GitHub repo slug from ITS environment — the
- * replacement for every historical `process.env.GITHUB_REPO_SLUG || 'canada-quant/digby'`
+ * replacement for every historical `process.env.GITHUB_REPO_SLUG || 'example-org/crossmodel'`
  * default (the silent production fallback this module exists to remove).
  *
  * - production instance: the configured env var, else the production repo

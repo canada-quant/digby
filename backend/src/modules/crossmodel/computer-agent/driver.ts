@@ -165,7 +165,7 @@ export type DeviceMatch<T> =
 // owner's default Mac and the result header named it, so a lane could report
 // "capture is healthy" from the WRONG machine (the live incident: the
 // peruse lane nearly cleared a capture-dead diagnosis off a healthy capture
-// of home-pauls-mac-mini). detectNamedDevices is the PURE half of the guard:
+// of example-tailnet-peer). detectNamedDevices is the PURE half of the guard:
 // find every paired device whose label / deviceName / id / deviceId appears
 // verbatim in the task text (exact or word-boundary, NOT substring —
 // 'mini' must not match inside 'minimal'), via the same normalize/alias

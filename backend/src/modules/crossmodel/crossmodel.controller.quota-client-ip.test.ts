@@ -46,13 +46,13 @@ jest.mock('./platform/loop-metrics.service', () => ({
 
 import { quotaClientIp, getClientIp } from './crossmodel.controller';
 
-const req = (xff: string | string[] | undefined, ip = '10.0.0.22'): any => ({ headers: xff === undefined ? {} : { 'x-forwarded-for': xff }, ip });
+const req = (xff: string | string[] | undefined, ip = '10.0.0.11'): any => ({ headers: xff === undefined ? {} : { 'x-forwarded-for': xff }, ip });
 
 beforeEach(() => { delete process.env.QUOTA_TRUSTED_PROXY_HOPS; });
 
 describe('quotaClientIp', () => {
   it('unset hops: identical to getClientIp (first XFF entry, else req.ip)', () => {
-    const r = req('203.0.113.9, 10.0.0.4');
+    const r = req('203.0.113.9, 10.0.0.14');
     expect(quotaClientIp(r)).toBe(getClientIp(r));
     expect(quotaClientIp(r)).toBe('203.0.113.9');
     expect(quotaClientIp(req(undefined, '::ffff:198.51.100.7'))).toBe('198.51.100.7');
@@ -61,19 +61,19 @@ describe('quotaClientIp', () => {
   it('hops=2 (ALB + nginx): the client is the entry two from the right, and a forged prepended hop cannot move it', () => {
     process.env.QUOTA_TRUSTED_PROXY_HOPS = '2';
     // honest chain written by the ALB then nginx: client, ALB-node
-    expect(quotaClientIp(req('203.0.113.9, 10.0.0.4'))).toBe('203.0.113.9');
+    expect(quotaClientIp(req('203.0.113.9, 10.0.0.14'))).toBe('203.0.113.9');
     // forged: the client sent X-Forwarded-For: 1.2.3.4 — the ALB appended the real client, nginx the ALB node
-    expect(quotaClientIp(req('1.2.3.4, 203.0.113.9, 10.0.0.4'))).toBe('203.0.113.9');
+    expect(quotaClientIp(req('1.2.3.4, 203.0.113.9, 10.0.0.14'))).toBe('203.0.113.9');
     // getClientIp is untouched — it still takes the FIRST hop
-    expect(getClientIp(req('1.2.3.4, 203.0.113.9, 10.0.0.4'))).toBe('1.2.3.4');
+    expect(getClientIp(req('1.2.3.4, 203.0.113.9, 10.0.0.14'))).toBe('1.2.3.4');
   });
 
   it('fewer entries than hops falls back to getClientIp; IPv4-mapped IPv6 is normalized; array headers join', () => {
     process.env.QUOTA_TRUSTED_PROXY_HOPS = '3';
-    expect(quotaClientIp(req('203.0.113.9, 10.0.0.4'))).toBe('203.0.113.9');
+    expect(quotaClientIp(req('203.0.113.9, 10.0.0.14'))).toBe('203.0.113.9');
     process.env.QUOTA_TRUSTED_PROXY_HOPS = '2';
-    expect(quotaClientIp(req('::ffff:203.0.113.9, 10.0.0.4'))).toBe('203.0.113.9');
-    expect(quotaClientIp(req(['203.0.113.9', '10.0.0.4']))).toBe('203.0.113.9');
+    expect(quotaClientIp(req('::ffff:203.0.113.9, 10.0.0.14'))).toBe('203.0.113.9');
+    expect(quotaClientIp(req(['203.0.113.9', '10.0.0.14']))).toBe('203.0.113.9');
   });
 
   it('a non-integer / zero hop count behaves as unset', () => {

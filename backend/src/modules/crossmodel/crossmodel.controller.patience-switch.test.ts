@@ -78,7 +78,7 @@ const STATE = {
   line: 'Always Auto: ON since 2026-09-26 20:35Z by unknown (store row; deleting it reverts to the env boot default = OFF)',
 };
 const ADMIN = { id: 'u-admin', email: 'admin@example.com', role: 'ADMIN' };
-const OWNER = { id: 'u-paul', email: 'paul@sunday.market', role: 'USER' };
+const OWNER = { id: 'u-paul', email: 'example-user@example.com', role: 'USER' };
 const PLEB = { id: 'u-2', email: 'someone@example.com', role: 'USER' };
 
 const mkReq = (over: any = {}): any => ({ params: {}, body: {}, query: {}, headers: {}, ...over });
@@ -125,7 +125,7 @@ describe('PUT /admin/settings/patience_auto_only — audited flip', () => {
     mockSetPatience.mockResolvedValue({ key: 'patience_auto_only', enabled: true, changed: false, setting: { key: 'patience_auto_only', value: '1' } });
     const res = mkRes();
     await controller.updateAdminSetting(mkReq({ user: OWNER, params: { key: 'patience_auto_only' }, body: { value: true } }), res);
-    expect(mockSetPatience).toHaveBeenCalledWith(true, 'paul@sunday.market');
+    expect(mockSetPatience).toHaveBeenCalledWith(true, 'example-user@example.com');
     expect(res.json).toHaveBeenCalledWith({ success: true, data: { key: 'patience_auto_only', value: '1' }, changed: false, state: STATE });
   });
 

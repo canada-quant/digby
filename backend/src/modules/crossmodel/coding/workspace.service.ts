@@ -137,11 +137,11 @@ function gitEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     GIT_CONFIG_KEY_1: 'core.excludesFile',
     GIT_CONFIG_VALUE_1: HARNESS_ADD_IGNORE_FILE,
     // Deterministic identity for commits the agent makes. Avatar on GitHub is
-    // driven by this email via Gravatar (digby@digby.example.com → the Digby icon).
+    // driven by this email via Gravatar (digby@digby.ai → the Digby icon).
     GIT_AUTHOR_NAME: 'Digby',
-    GIT_AUTHOR_EMAIL: 'digby@digby.example.com',
+    GIT_AUTHOR_EMAIL: 'digby@digby.ai',
     GIT_COMMITTER_NAME: 'Digby',
-    GIT_COMMITTER_EMAIL: 'digby@digby.example.com',
+    GIT_COMMITTER_EMAIL: 'digby@digby.ai',
   };
   return { ...base, ...extra };
 }
@@ -356,7 +356,7 @@ export function authedUrl(repoUrl: string, token?: string | null): string {
 }
 
 /**
- * Ticket d6110694 (2026-09-28, prod project 922fd3ad cql-agx-orin64): git
+ * Ticket d6110694 (2026-09-28, prod project 922fd3ad cql-accelerator): git
  * error messages embed the full cmd / stderr text that can carry credential
  * shapes (x-access-token:<live OAuth token>@ in a set-url cmdline, a bare
  * ghp_… PAT in stderr). Redaction is CENTRAL (utils/redact-credentials):
@@ -367,7 +367,7 @@ export function authedUrl(repoUrl: string, token?: string | null): string {
  */
 
 /**
- * Ticket d6110694 (2026-09-28, prod project 922fd3ad cql-agx-orin64): a
+ * Ticket d6110694 (2026-09-28, prod project 922fd3ad cql-accelerator): a
  * mirror born under the 'local' provider (`git init --bare` — no remote) can
  * outlive its provider: persistProjectRepo flips the project row to 'github'
  * after the session's first push creates a real repo, but NOTHING ever adds
@@ -510,7 +510,6 @@ async function demoteMirrorRefspec(mirror: string): Promise<void> {
  * per mirror; afterwards the is-shallow probe is one cheap rev-parse). Runs
  * while the authed URL is set so private repos heal too. Best-effort: on
  * failure the cached (shallow) mirror still works and the next ensure retries.
- * Kill-switch: WORKSPACE_UNSHALLOW_DISABLED=1.
  */
 async function unshallowMirrorIfNeeded(mirror: string): Promise<void> {
   let shallow = false;
@@ -521,34 +520,40 @@ async function unshallowMirrorIfNeeded(mirror: string): Promise<void> {
     return; // probe failed (very old git / odd mirror) — never block provisioning
   }
   if (!shallow) return;
-  // The flag skips ONLY the fetch: the probe + residue verify/prune below still
-  // run, so WORKSPACE_UNSHALLOW_DISABLED=1 isolates the prune logic (and lets
-  // the d6110694-C tests fabricate the post-no-op-unshallow state directly).
-  const skipFetch = process.env.WORKSPACE_UNSHALLOW_DISABLED === '1';
-  if (skipFetch) {
-    logger.warn(`coding workspace: mirror at ${mirror} is SHALLOW — unshallow fetch skipped (WORKSPACE_UNSHALLOW_DISABLED), verifying residue`);
-  } else {
-    logger.warn(`coding workspace: mirror at ${mirror} is SHALLOW — fetching full history (unshallow)`);
-    try {
-      await git(['fetch', '--unshallow', 'origin'], mirror, 600_000);
-      logger.info(`coding workspace: mirror unshallowed OK (${mirror})`);
-    } catch (err: any) {
-      logger.warn(`coding workspace: mirror unshallow failed for ${mirror} (staying shallow): ${redactUrlCredentials(err.message)}`);
-    }
+  logger.warn(`coding workspace: mirror at ${mirror} is SHALLOW — fetching full history (unshallow)`);
+  try {
+    await git(['fetch', '--unshallow', 'origin'], mirror, 600_000);
+    logger.info(`coding workspace: mirror unshallowed OK (${mirror})`);
+  } catch (err: any) {
+    logger.warn(`coding workspace: mirror unshallow failed for ${mirror} (staying shallow): ${redactUrlCredentials(err.message)}`);
   }
-  // d6110694-C (prod 0560b7b8 spark-cluster, 2026-09-28): a mirror can carry a
-  // shallow file entry for a commit UNREACHABLE from every ref (a squashed-PR
-  // lineage whose branch was later deleted on origin: fetch --prune removed
-  // the ref, the dead lineage's boundary entry stayed and its ancestors are
-  // missing, so --unshallow — which only clears entries it actually deepens —
-  // exits 0 as a silent no-op and REWRITES the file keeping the dead entry).
-  // The probe still says true on every provision and the warn/unshallow pair
-  // repeats forever (16 pairs in 26h on box C) while archaeology stays broken.
-  // Verify the heal actually landed; when it did not, prune entries that are
-  // unreachable from every ref — residue by definition, and provably safe:
-  // no ref can walk into a lineage no ref reaches. NOTE: an EMPTY shallow file
-  // still reports is-shallow=true (verified live, git 2.39/2.52) — the file
-  // must be DELETED, never truncated.
+  await pruneUnreachableShallowResidue(mirror);
+}
+
+/**
+ * d6110694-C (prod 0560b7b8 spark-cluster, 2026-09-28): a mirror can carry a
+ * shallow file entry for a commit UNREACHABLE from every ref (a squashed-PR
+ * lineage whose branch was later deleted on origin: fetch --prune removed
+ * the ref, the dead lineage's boundary entry stayed and its ancestors are
+ * missing, so --unshallow — which only clears entries it actually deepens —
+ * exits 0 as a silent no-op and REWRITES the file keeping the dead entry).
+ * The probe still says true on every provision and the warn/unshallow pair
+ * repeats forever (16 pairs in 26h on box C) while archaeology stays broken.
+ * Verify the heal actually landed; when it did not, prune entries that are
+ * unreachable from every ref — residue by definition, and provably safe:
+ * no ref can walk into a lineage no ref reaches. NOTE: an EMPTY shallow file
+ * still reports is-shallow=true (verified live, git 2.39/2.52) — the file
+ * must be DELETED, never truncated.
+ *
+ * EXPORTED so the residue cases in workspace-shared-mirror.d6110694.test.ts can
+ * drive the prune DIRECTLY. They used to reach it by skipping the fetch with a
+ * now-deleted env kill switch, because a real
+ * `fetch --unshallow` in that fixture heals the mirror first and the prune then
+ * early-returns — so those cases asserted an end state any of two paths could
+ * produce. Calling this function with no fetch in the picture is strictly more
+ * discriminating, and it cost the kill switch nothing to keep.
+ */
+export async function pruneUnreachableShallowResidue(mirror: string): Promise<void> {
   try {
     const { stdout } = await git(['rev-parse', '--is-shallow-repository'], mirror);
     if (stdout.trim() !== 'true') return; // healed for real — nothing to do
@@ -597,7 +602,7 @@ async function unshallowMirrorIfNeeded(mirror: string): Promise<void> {
 const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'; // git's built-in empty tree
 async function seedEmptyMirrorBase(mirror: string, baseBranch: string): Promise<void> {
   const { stdout } = await git(
-    ['-c', 'user.name=Digby', '-c', 'user.email=digby@digby.example.com',
+    ['-c', 'user.name=Digby', '-c', 'user.email=digby@digby.ai',
      'commit-tree', EMPTY_TREE_SHA, '-m', 'Initial commit (seeded by Digby — upstream repository was empty)'],
     mirror,
   );
@@ -745,7 +750,7 @@ export async function ensureWorktree(
  */
 async function setWorktreeIdentity(wt: string): Promise<void> {
   await git(['config', 'user.name', 'Digby'], wt).catch(() => {});
-  await git(['config', 'user.email', 'digby@digby.example.com'], wt).catch(() => {});
+  await git(['config', 'user.email', 'digby@digby.ai'], wt).catch(() => {});
   await installWorktreeExcludes(wt);
 }
 

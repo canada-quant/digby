@@ -34,7 +34,7 @@ export const TRACKED_CONSEQUENTIAL_TOOLS = [
   // (ticket 169846b6, 2026-09-27) BOTH email-send tools ride the same lane for
   // the same reason: they mint NO run-receipt, so the parts log is their only
   // execution evidence. While untracked, the action verifier convicted the
-  // TRUE "the test email just went out from your CQL Gmail (paul@example.com)"
+  // TRUE "the test email just went out from your CQL Gmail (example-user@example.com)"
   // claim in chat b9cd2f21 (msg e87286da) even though the run's own parts held
   // {ok:true, tool:'gmail_send_email', account:'CQL', message:'1a0e43973e3cca6c'}
   // — Gmail message id 1a0e43973e3cca6c landed at 18:56:05Z, nine seconds
@@ -210,6 +210,10 @@ export function isTaskDelegationClaimDetail(detail: string): boolean {
  * task run — the same accepted miss the 61b9200a fall-through already makes.
  */
 const TASK_OUTCOME_DEVICE = '\\b(?:screens?|displays?|desktops?|macs?|macbooks?|computers?|browsers?)\\b';
+/** The same device words WITHOUT the outer word boundaries — the task-subject
+ * arm below needs to append a phrase (not start one), so \b on both ends would
+ * fight its own quantifiers. One list, two renderings: they must never drift. */
+const TASK_OUTCOME_DEVICE_SRC = '(?:screens?|displays?|desktops?|macs?|macbooks?|computers?|browsers?)';
 const TASK_OUTCOME_IDIOM = new RegExp(
   [
     // Copula-first: "Discord is now open on its screen", "the app was left
@@ -221,6 +225,25 @@ const TASK_OUTCOME_IDIOM = new RegExp(
     // screen", "started the server on the desktop".
     '\\b(?:open(?:ed|s)?|launch(?:ed|es)?|start(?:ed|s)?)\\b'
     + '[^.;\\n]{0,40}?(?:\\bon\\s+(?:its|the|your|their)\\s+)?' + TASK_OUTCOME_DEVICE,
+    // Task-SUBJECT (ticket f6dbcb66, chat 026682ae): the note makes the
+    // delegated TASK the grammatical subject and reports its COMPLETION —
+    // "The Mac task ran and delivered the link", "the computer task finished
+    // in 7 steps", "the browser task completed". Neither arm above covers it:
+    // the copula arm wants open/running/visible, the verb arm wants
+    // open/launch/start, and "ran"/"finished"/"completed"/"delivered" are in
+    // neither. A REAL 7-step computer_task was on record, both task-budget
+    // arms missed the words, the claim fell to the platform dispatch slot
+    // KIND_TOOLS.dispatch deliberately cannot fill, and the TRUE claim was
+    // convicted (false strike — doctrine 587e9d64: strictly worse than a
+    // miss).
+    //
+    // Laundering guard, same discipline as the arms above: the DEVICE word
+    // must qualify the task (≤2 modifiers between them), so a platform claim
+    // naming a bare task ("the task ran on the board", "the parity task
+    // finished") never routes here — and with no task slot on record a
+    // fabricated "The Mac task ran" still convicts.
+    '\\b' + TASK_OUTCOME_DEVICE_SRC + '\\s+(?:[\\w-]+\\s+){0,2}tasks?\\b'
+    + '[^.;\\n]{0,40}?\\b(?:ran|finished|completed|delivered|executed|succeeded)\\b',
   ].join('|'),
   'i',
 );

@@ -44,7 +44,7 @@ the mobile apps share one typed surface with the web app.
 import { DigbyApiClient, fetchAuth, fetchChats } from '@digby/api';
 
 const api = new DigbyApiClient({
-  baseUrl: 'https://digby.example.com',
+  baseUrl: 'https://digby.ai',
   getRefreshToken: () => secureStoreRead('digby.refreshToken'),
   onAccessToken: (t) => (accessTokenInMemory = t),
 });

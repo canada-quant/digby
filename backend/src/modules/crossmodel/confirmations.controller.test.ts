@@ -498,6 +498,32 @@ describe('postConfirmationConfirm (DB-persisted staged actions)', () => {
       await controller.postConfirmationConfirm(mkReq({ params: { confirmationId: 'cf_1' } }), mkRes());
       expect(mockRecordReceipt).not.toHaveBeenCalled();
     });
+
+    // WP-3 (backlog 2026-11-03, todo 52050bfb; review 66007a6e advisory A5):
+    // the web-probe receipt class is COLLECTOR-ONLY. The agent seam skips
+    // recordRunReceiptAsync for it (agent.ts:6262-6270); this controller is the
+    // ONE other writer, so a hypothetical future stageable web tool must NOT
+    // start writing run_tool_receipts rows from the card path. LATENT seam —
+    // unreachable today (web tools execute read-only, never confirmation-staged).
+    it('WP-3 — a hypothetical stageable WEB tool mints no row (collector-only invariant)', async () => {
+      for (const webTool of ['scrape_as_markdown', 'search_engine', 'web_pipe', 'youtube_pipe', 'scrape_batch']) {
+        mockRecordReceipt.mockClear();
+        mockGetPending.mockResolvedValue(mkRow({ tool: webTool, args: { url: 'https://example.com/' } }));
+        mockExecConfirmed.mockResolvedValue('page body');
+        const res = mkRes();
+        await controller.postConfirmationConfirm(mkReq({ params: { confirmationId: 'cf_1' } }), res);
+        // The card still EXECUTES and answers normally — only the row is skipped.
+        expect(res.body).toEqual({ success: true, result: expect.any(String) });
+        expect(mockRecordReceipt).not.toHaveBeenCalled();
+      }
+      // Control: a real receipt tool on the same path still mints exactly one row
+      // (the skip must be class-scoped, not a blanket regression).
+      mockRecordReceipt.mockClear();
+      mockGetPending.mockResolvedValue(mkRow({ tool: 'pause_schedule', args: { id: 'sch1' } }));
+      mockExecConfirmed.mockResolvedValue(envelope);
+      await controller.postConfirmationConfirm(mkReq({ params: { confirmationId: 'cf_1' } }), mkRes());
+      expect(mockRecordReceipt).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

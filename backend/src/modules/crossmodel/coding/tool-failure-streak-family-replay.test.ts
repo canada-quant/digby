@@ -194,6 +194,87 @@ describe('ticket a39a6b71: edit_file old_string misses — the breaker sees a fa
   });
 });
 
+// ── ticket 53406cc4 — chatId="__all__" sentinel: a FILTER, not a target ────
+describe('ticket 53406cc4: get_fleet_telemetry chatId="__all__" — refused (sentinel is never an id), and the hint now names the OMIT-the-filter path', () => {
+  // The incident (session 1dab917c, run d3e1ec98, 2026-11-03T22:22:49Z): a lane
+  // reading view 'metrics' emitted chatId="__all__" — an ALL-CHATS sentinel it
+  // invented for an argument that is an OPTIONAL FILTER on that tool (the
+  // schema requires only `view`; omitting chatId IS the platform-wide read).
+  // The preflight refused it NOT EXECUTED (correct: "__all__" is placeholder
+  // shaped — tool-scope.ts looksLikePlaceholderId's `^__.*__$` arm — and it
+  // occurs nowhere the model read), the breaker tripped, the lane self-healed
+  // in-run (verify ok at 22:23:27Z, three seconds' worth of calls later).
+  //
+  // The MODEL leg is designed behavior and stays pinned here. The FRAMEWORK leg
+  // was a hint gap of the c5615f58/7b2a0969 class: the chat-hint taught ONLY
+  // the list_chats recovery, which is the wrong remedy for a filter (there is
+  // no chat id to fetch — the call merely needs the arg GONE), so a lane
+  // following the hint literally could never satisfy it. The hint now names the
+  // omit path. Grounding, the refusal and the breaker arithmetic are UNCHANGED:
+  // a sentinel is still refused, never executed.
+  const METRICS_ARGS = { view: 'metrics', kind: 'supervisor_noop', hours: 168, limit: 50, chatId: '__all__' };
+  // What this lane could legitimately have read: its own goal brief and prior
+  // tool results (the run's own goal_premise_set receipt names its goalId) —
+  // never the literal sentinel.
+  const haystack = [
+    'goal 1fbc8614-0132-40b2-b7ee-2ce6a95fad87 — board + wake work',
+    'get_fleet_telemetry view "deploy" → {"runs":[{"id":2431,"conclusion":"success"}]}',
+    'tool_preflight guard_strike seam rows for this run',
+  ].join('\n');
+
+  it('DETECTOR-RECALL REPLAY — the invented "__all__" chatId is still REFUSED (the exact filed envelope), and the real call without it is grounded', () => {
+    const bad = findUngroundedIdArgs(METRICS_ARGS, haystack);
+    expect(bad).toEqual([{ key: 'chatId', value: '__all__' }]);
+    const refusal = JSON.parse(ungroundedIdRefusal('get_fleet_telemetry', bad, 'verify'));
+    expect(refusal).toMatchObject({
+      ok: false,
+      tool: 'get_fleet_telemetry',
+      reason: 'ungrounded_id',
+      rejected: [{ key: 'chatId', value: '__all__' }],
+    });
+    expect(refusal.message).toContain('NOT EXECUTED');
+    expect(refusal.message).toContain('chatId="__all__"');
+    expect(refusal.message).toContain('never from narration');
+    // The exact intent redirect the filed text carries.
+    expect(refusal.message).toContain(
+      'Your reasoning named verify — you evidently meant to call verify; call it now with its real parameters.',
+    );
+    // Still failure-shaped for the derail breaker (the refusal is what the
+    // breaker counted — that arithmetic is designed, not a defect).
+    expect(looksLikeToolFailure(JSON.stringify(refusal))).toBe(true);
+    // The designed other side: DROP the filter and the SAME call is clean —
+    // the platform-wide metrics read is the omit case, needing no id at all.
+    const { chatId: _dropped, ...allChatsArgs } = METRICS_ARGS;
+    expect(findUngroundedIdArgs(allChatsArgs, haystack)).toEqual([]);
+    // And a REAL chat id (read from list_chats this run) is grounded, so the
+    // narrowed read still works.
+    expect(findUngroundedIdArgs({ ...allChatsArgs, chatId: '1dab917c-7bda-4a05-95f8-7451c0757c43' }, haystack)).toEqual([]);
+  });
+
+  it('the chat hint now names the OPTIONAL-FILTER omit path (the 53406cc4 fix), keeping the c5615f58 list_chats path intact', () => {
+    const refusal = JSON.parse(
+      ungroundedIdRefusal('get_fleet_telemetry', [{ key: 'chatId', value: '__all__' }], null),
+    );
+    // The pre-existing recovery path is preserved verbatim (c5615f58).
+    expect(refusal.message).toContain('call list_chats first and use an id from its rows');
+    expect(refusal.message).toContain("your own session's chat id");
+    // The new leg: the omit remedy, named for the filter case.
+    expect(refusal.message).toContain('OPTIONAL FILTER');
+    expect(refusal.message).toContain('OMIT it instead');
+    expect(refusal.message).toContain('omitting a filter means the all-chats read');
+    expect(refusal.message).toContain('a sentinel like "__all__" is never an id');
+  });
+
+  it('the hint leg stays OUT of non-chat refusals (no filter talk on an id/project arg)', () => {
+    const idOnly = JSON.parse(ungroundedIdRefusal('update_feedback', [{ key: 'id', value: 'noop' }], 'run_command'));
+    expect(idOnly.message).not.toContain('OPTIONAL FILTER');
+    expect(idOnly.message).not.toContain('list_chats');
+    const projectOnly = JSON.parse(ungroundedIdRefusal('todo_create', [{ key: 'projectId', value: 'cql-litellm-gateway' }], null));
+    expect(projectOnly.message).not.toContain('OPTIONAL FILTER');
+    expect(projectOnly.message).toContain('list_projects');
+  });
+});
+
 // ── ticket b642d864 — view_image missing file: in-band refusal, no crash ──
 describe('ticket b642d864: view_image on a missing ../crop/*.png — in-band refusal with the relative-path remedy', () => {
   it('DETECTOR-RECALL REPLAY — the exact filed refusal text (no such file + the relative-path remedy), failure-shaped, never an exception', async () => {

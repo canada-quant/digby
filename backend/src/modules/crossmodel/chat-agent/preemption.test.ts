@@ -17,7 +17,7 @@
  *     queued machine row (F1 + F2a + the immediate finalize drain together).
  *
  * Replayability note (asserted by design, not by a table write): preemption
- * only cancels the RUN — it touches no codingSchedule/hook_events state, so
+ * only cancels the RUN — it touches no chatSchedule/hook_events state, so
  * the machine work's own re-fire machinery (schedule cadence, hook outbox
  * retry, orphan-recovery bb2eca92) is untouched.
  *
@@ -51,6 +51,8 @@ const pendingRows: Array<{
   mode: string | null; source: string; createdAt: Date; uploadIds?: string[];
 }> = [];
 let pendingSeq = 0;
+/** Transcript-row ids minted by the buffered $transaction mock (MERGE-1). */
+let msgSeq = 0;
 
 const redisStore = new Map<string, string>();
 const mockRedis = {
@@ -86,8 +88,50 @@ const mockPrisma: any = {
       if (i >= 0) pendingRows.splice(i, 1);
       return {};
     }),
+    // MERGE-1 kill-window fix (2026-11-05): consume-at-persist needs
+    // deleteMany({ id: { in } }) — this fixture was left modelling the pre-fix
+    // API (no deleteMany, no $transaction), so createMessagesConsumingPending
+    // THREW on every persist, the row was never consumed, and the finished
+    // run's finally re-drained the same head row until the worker OOM'd.
+    deleteMany: jest.fn(async ({ where }: any) => {
+      const ids: string[] = where?.id?.in ?? (where?.id ? [where.id] : []);
+      let count = 0;
+      for (const id of ids) {
+        const i = pendingRows.findIndex(r => r.id === id);
+        if (i >= 0) { pendingRows.splice(i, 1); count += 1; }
+      }
+      return { count };
+    }),
   },
   crossModelMessage: { create: jest.fn(async () => ({})) },
+  // Genuinely all-or-nothing, mirroring the real client and the sibling
+  // message-queue suites: the buffered writes apply ONLY when the callback
+  // resolves (a throw leaves the queue row intact — the LOSS half).
+  $transaction: jest.fn(async (fn: any) => {
+    const created: any[] = [];
+    const tx = {
+      crossModelMessage: {
+        create: jest.fn(async (args: any) => {
+          const row = { id: `m${++msgSeq}`, createdAt: new Date(Date.now() + msgSeq), ...args.data };
+          created.push(row);
+          void mockPrisma.crossModelMessage.create(args);
+          return row;
+        }),
+      },
+      pendingChatMessage: {
+        deleteMany: jest.fn(async ({ where }: any) => {
+          const ids: string[] = where?.id?.in ?? (where?.id ? [where.id] : []);
+          let count = 0;
+          for (const id of ids) {
+            const i = pendingRows.findIndex(r => r.id === id);
+            if (i >= 0) { pendingRows.splice(i, 1); count += 1; }
+          }
+          return { count };
+        }),
+      },
+    };
+    return fn(tx);
+  }),
   crossModelChat: {
     update: jest.fn(async () => ({})),
     updateMany: jest.fn(async () => ({ count: 1 })),

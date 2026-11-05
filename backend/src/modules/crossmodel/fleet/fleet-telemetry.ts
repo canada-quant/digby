@@ -134,7 +134,7 @@ export function clampTelemetryArgs(raw: any): TelemetryArgs | { error: string } 
   if (raw?.repo !== undefined && raw?.repo !== null && String(raw.repo).trim() !== '') {
     const candidate = String(raw.repo).trim();
     if (!isGithubRepoSlug(candidate)) {
-      return { error: "get_fleet_telemetry view 'deploy' repo must be a GitHub slug 'owner/name' (letters, digits, '.', '_' and '-'; no traversal, no query), e.g. 'canada-quant/example-repo'." };
+      return { error: "get_fleet_telemetry view 'deploy' repo must be a GitHub slug 'owner/name' (letters, digits, '.', '_' and '-'; no traversal, no query), e.g. 'example-org/optcg'." };
     }
     repo = candidate;
   }

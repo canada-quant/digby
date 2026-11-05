@@ -44,7 +44,7 @@ export interface ViewerLike {
 }
 
 /** The owner's account — the same fallback every inline admin check in this codebase carries. */
-const OWNER_EMAIL = 'paul@sunday.market';
+const OWNER_EMAIL = 'example-user@example.com';
 
 const PREFS_KEY = 'state';
 const prefsNs = (userId: string) => ['user', userId, 'ui-prefs'];
@@ -105,7 +105,7 @@ export async function resolveViewMode(user: ViewerLike | null | undefined): Prom
  * minimal view is testable on the same account. Anyone else asking is ignored. Env VIEW_MODE_DEBUG_EMAILS
  * (comma list) replaces the default; an empty value disables the bypass.
  */
-const DEFAULT_DEBUG_EMAILS = 'claudebot@digby.example.com';
+const DEFAULT_DEBUG_EMAILS = 'claudebot@digby.ai';
 
 export function viewModeDebugEmails(env: Record<string, string | undefined> = process.env): Set<string> {
   const raw = env.VIEW_MODE_DEBUG_EMAILS ?? DEFAULT_DEBUG_EMAILS;

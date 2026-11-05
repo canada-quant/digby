@@ -21,7 +21,8 @@ export const LOOP_METRIC_KINDS = {
   MERGE_SUCCESS: 'merge_success',
   /** self-merge WAIT-ONCE (agent-decisions prerequisite 4, 2026-09-27): the tool
    *  slept once, harness-side, on a timing-class gate failure before re-running
-   *  the gates — meta { kind: 'ci_pending' | 'merge_in_progress' | 'server_5xx',
+   *  the gates — meta { kind: 'ci_pending' | 'merge_in_progress' | 'server_5xx'
+   *  | 'red_window_in_flight',
    *  waitedMs, repo, pullNumber, headSha?, ciP50Ms? }. Every merge_gate_failure
    *  row now also carries meta.headSha (+ waitKind / waitedMs when a wait
    *  preceded it) so red-on-head can be measured. */
@@ -518,6 +519,15 @@ export const LOOP_METRIC_KINDS = {
    *  summary from scripts/framework-audit/migrate-workspace-per-user.js). Read by the integrator's canary
    *  query (AGENTS.md ISO bullet). Switch CODING_WORKSPACE_PER_USER_SUBTREE. */
   WORKSPACE_ISOLATION: 'workspace_isolation',
+  /** ticket c25f8b7e (2026-11-03): a session's container was REPLACED under a
+   *  live lane — the docker id resolved for the session differs from the one on
+   *  record (a deploy/restart wave, a host reprovision, or an operator recycle).
+   *  Everything the lane had running INSIDE the old container is gone. meta {
+   *  container, previousSeenAt, replacedAt }. A burst of these in one minute is
+   *  a wave that killed N lanes' background workers; a lone row is one session
+   *  reprovisioned. Read with the lane-facing notice (the run-start prompt
+   *  carries it) to measure how much work a wave costs. */
+  CONTAINER_REPLACED: 'container_replaced',
   /** build 2026-10-08 ISO — credential proxy (coding/credential-proxy.ts). meta.phase: 'env' (one per
    *  shell-capable run: { mode: direct|proxy|fail_to_direct, rawPlatform, userManaged, reason? } — the
    *  "0 raw credentials in the session shell env" bar) | 'request' (one proxied git pack op / API call:
@@ -1127,6 +1137,21 @@ export const LOOP_METRIC_KINDS = {
    *  per resolved assignment, so adoption of the 8-char idiom on the assignee
    *  seam charts over time */
   TODO_ASSIGNEE_PREFIX_RESOLVED: 'todo_assignee_prefix_resolved',
+  /** TD-1 (Cluster 5, 2026-11-03): one row per todo_create that arrived with
+   *  NO assigneeChatId, recording the decision the assignee policy made —
+   *  meta = { decision: 'auto_assign'|'refuse'|'unassigned', enforced,
+   *  wouldBe (observe-only only: 'auto_assign'|'refuse'), actingChatId?,
+   *  projectId, goalId, todoId? }. Observe-only rows (enforced:false, the
+   *  default) are the audit trail that justifies flipping
+   *  TODO_ASSIGNEE_REQUIRED_ENFORCE — they name exactly which creates would
+   *  have been auto-assigned vs refused. */
+  TODO_CREATE_ASSIGNEE_POLICY: 'todo_create_assignee_policy',
+  /** TD-1 audit pass (observe-only): one row per `in_progress` todo found with
+   *  NO assigneeChatId — an in-progress row nobody owns. meta =
+   *  { todoId, goalId, projectId, ageH, backfillable }. Never mutates; the
+   *  count per pass is the number to drive to zero (or to an explicit
+   *  deliberate-unassigned label) before the enforcement flag is flipped. */
+  TODO_ASSIGNEE_AUDIT: 'todo_assignee_audit',
   GOAL_TODO_NEAR_MATCH_RESOLVED: 'goal_todo_near_match_resolved',
   /** a full-shape (36-char) goal/todo id whose suffix was INVENTED resolved to
    *  the unique caller-visible row sharing its 8-char time prefix (tickets
@@ -1384,6 +1409,14 @@ export const LOOP_METRIC_KINDS = {
    *  (an unlinked successor, or a named-but-wrong link: matched=false), linked=true the healthy
    *  counterpart (a named, same-decision link). Same kill switch. */
   OWNER_CARD_CHAIN_UNLINKED: 'owner_card_chain_unlinked',
+  /** Backlog CA-1 (ticket 1b1c41bc residual, todo 76fd0cce) — a card filed as PLAIN
+   *  FREE TEXT that names a console surface AND tells the owner to act there, with no
+   *  structured `consoleAction` spec (the 12:26:54Z oq_ea52c6ae shape that started the
+   *  ticket): meta { chatId, kind: 'flag', surfaces: string[], verbs: string[],
+   *  questionChars, excerpt }. Observe-only — never a refusal, never a rewrite; the
+   *  7-day baseline gates any future intake enforcement (the 6f8b52b7 / PR #1548
+   *  ladder). Kill switch OWNER_CONSOLE_ASK_DETECT_DISABLED=1. */
+  CONSOLE_ASK_SPECLESS: 'console_ask_specless',
   OWNER_QUESTION_SECRET_DELIVERED: 'owner_question_secret_delivered',
   /** Ticket be06c812 (log-signal family lane, 2026-10-18, PR #1709) — a CLOSED
    *  same-type exact-title row carrying a RECORDED adjudication verdict absorbed
@@ -1649,6 +1682,72 @@ export const LOOP_METRIC_KINDS = {
    *  Kill switch: CHAIN_OF_RECALL_DISABLED=1 (release; =1 stops appending `next:` lines — and
    *  in Phase 0 stops the row). */
   CHAIN_OF_RECALL_OBSERVE: 'chain_of_recall_observe',
+  /** SAA-1.6 (todo e49dfd07, goal d605db05; platform/async-tool-calls.ts): ONE row per
+   *  dispatched call that is eligible to be handed off (a tool class that can legitimately
+   *  run past a minute). PHASE 3a wrote this shadow-only; PHASE 3b keeps the same row and
+   *  the same meaning, but eligibility is now a TOOL-CLASS question measured against an
+   *  ELAPSED threshold (`ASYNC_TOOL_AFTER_MS` = 60 s) rather than a declared-duration guess.
+   *  value = 1; meta { tool, afterMs, declaredMs, reason, mode } — numbers and a tool name,
+   *  never arguments. A call outside the class (or with the kill switch on) writes NOTHING,
+   *  so the rate is "calls that may be handed off / all dispatched calls".
+   *  Kill switch: ASYNC_TOOL_CALLS_DISABLED=1 (release; =1 makes every call blocking as
+   *  today — and stops both this row and the deliver row). */
+  ASYNC_TOOL_CALLS_OBSERVE: 'async_tool_calls_observe',
+  /** SAA-1.6 PHASE 3b (todo e49dfd07, goal d605db05; platform/async-tool-registry.ts): the
+   *  lifecycle of ONE handed-off call, so a deferred result is auditable end to end.
+   *  value = elapsed ms; meta { tool, phase, id, ok? } where phase is one of
+   *  `threshold_crossed` (the call outlived ASYNC_TOOL_AFTER_MS; `apply` rides it so an
+   *  observe-mode crossing is distinguishable from a real hand-off), `delivered` (the result
+   *  reached the model at a step boundary — this is the gate's evidence), `orphaned` (the
+   *  run ended before the call settled: nothing is cancelled; since ticket 9ecabc73 the
+   *  result is still delivered through the `onLateResult` sink, so orphaned records the
+   *  LATENESS, not a loss) or `run_end_post` (a post of the owed results at run end itself
+   *  failed — `ok:false`, `count` owed).
+   *  The id is the correlation id the model cites, so a row and a transcript can be joined.
+   *  Kill switch: ASYNC_TOOL_CALLS_DISABLED=1 (release). */
+  ASYNC_TOOL_CALLS_DELIVER: 'async_tool_calls_deliver',
+  /** SAA-1.1 PHASE 1 (todo eb328629, 2026-11-02; platform/hook-source-policy.ts): ONE row
+   *  per hook batch the deterministic trigger-admission policy had an opinion about that is
+   *  NOT the fail-safe default. OBSERVE-ONLY: nothing is suppressed (the decision type pins
+   *  `applied:false`) and this row is the only production effect.
+   *  value = 1; meta { decision: 'respond' | 'ignore', reason: <closed vocabulary —
+   *  alarm_class | failure_or_block | question_or_request | owner_facing |
+   *  addressed_to_supervisor | routine_completion | routine_multi_source |
+   *  guard_replaced_final | stale_batch | unclassified>, rows, sources, kinds {eventType: n},
+   *  ids (≤3, 8-char screen keys) } — counts and ids only, NEVER the prose it measured.
+   *  A `candidate` batch (the fail-safe, i.e. exactly today's behaviour) writes NOTHING, so
+   *  the denominator is not drowned by admissions that changed no decision.
+   *  THE LATER LABEL: the rows a `ignore` batch names still ride the same wake in Phase 1,
+   *  and that wake is judged by wakeActed() (platform/decision-outcome-labels.ts) — a real
+   *  mutating platform tool, housekeeping and report-ups removed, never the model's own
+   *  claim. attributeSuppression() joins the two: acted ⇒ would_lose, not acted ⇒
+   *  would_hold, never-delivered ⇒ unresolved (excluded, never counted as a success).
+   *  Read it with get_fleet_telemetry view 'metrics' kind 'hook_source_policy_observe'.
+   *  Kill switch: HOOK_SOURCE_POLICY_DISABLED=1 (release; =1 restores today's "every
+   *  admitted emission can be triaged" behaviour AND writes no row). */
+  HOOK_SOURCE_POLICY_OBSERVE: 'hook_source_policy_observe',
+  /** SAA-1.2 (todo c0b8b8cf; platform/hook-thread-passthrough.ts): ONE row per delivered hook
+   *  group that was RE-TARGETED to the lane that owns the thread, instead of firing at the
+   *  target fixed at subscribe time.
+   *  PHASE 2 (APPLIES) since `cb9f6dd7d` / #2447 — the wake actually moves. ⚠ This comment
+   *  said "OBSERVE-ONLY … the wake still fires at hook.targetChatId … applied: false" until
+   *  2026-11-05; that described PHASE 1 and went stale when Phase 2 shipped. It mattered:
+   *  a read-time audit trusted it and reported 190 healthy `applied:true` rows as
+   *  "observe-only VIOLATIONS". Trust the CODE, not this comment: the fire site
+   *  (hooks.service.ts:3224) reassigns deliveryChatId when `applied`, and
+   *  `threadPassthroughMetricMeta` returns null unless `applied` is truthy — so a stored
+   *  row can ONLY exist with applied:true. A row with applied!==true is a pre-flip
+   *  Phase-1 cohort row (deploy boundary), not a live violation.
+   *  value = 1; meta { reason: 'owner_is_other_lane', hookClass: 'wildcard', sourceChatId,
+   *  wouldTargetChatId, applied: true } — ids only, never prose.
+   *  Every other shape writes NOTHING: a specific hook already names a deliberate target, a
+   *  lane target is already the owner, a root chat has no lineage to walk, and a lineage that
+   *  resolves back to the target means the supervisor already IS the owning lane. So the
+   *  denominator is "deliveries with a different owner to name", not every delivery.
+   *  Read it with get_fleet_telemetry view 'metrics' kind 'hook_thread_passthrough_observe'.
+   *  Kill switch: HOOK_THREAD_PASSTHROUGH_DISABLED=1 (release; =1 restores fixed-target
+   *  delivery verbatim AND writes no row). */
+  HOOK_THREAD_PASSTHROUGH_OBSERVE: 'hook_thread_passthrough_observe',
 } as const;
 
 export type LoopMetricKind = (typeof LOOP_METRIC_KINDS)[keyof typeof LOOP_METRIC_KINDS];

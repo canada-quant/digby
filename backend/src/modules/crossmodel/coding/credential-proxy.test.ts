@@ -13,7 +13,7 @@ import {
   __resetCredentialProxyMemoForTest, buildGhKitEnv, ghProxyShellPrefix, ghKitEnabled, GH_KIT_ROOT, type ProxyDeps,
 } from './credential-proxy';
 
-const SECRET_ENV = { JWT_SECRET: 's'.repeat(48), FRONTEND_URL: 'https://digby.example.com,http://localhost:8247' } as any;
+const SECRET_ENV = { JWT_SECRET: 's'.repeat(48), FRONTEND_URL: 'https://digby.ai,http://localhost:8247' } as any;
 const U = '83e4fbf9-e18c-42f1-9bf7-7a99caf9d9c4';
 
 beforeEach(() => { __resetCredentialProxyMemoForTest(); });
@@ -33,7 +33,7 @@ describe('capabilities', () => {
     expect(mintCapability({ sessionId: 's1', userId: U }, now, {} as any)).toBeNull();
   });
   it('the base URL is FRONTEND_URL\'s first https entry + the proxy path (http / unset → null)', () => {
-    expect(credentialProxyBaseUrl(SECRET_ENV)).toBe('https://digby.example.com/api/crossmodel/coding/cred-proxy');
+    expect(credentialProxyBaseUrl(SECRET_ENV)).toBe('https://digby.ai/api/crossmodel/coding/cred-proxy');
     expect(credentialProxyBaseUrl({ FRONTEND_URL: 'http://localhost:8247' } as any)).toBeNull();
     expect(credentialProxyBaseUrl({} as any)).toBeNull();
   });
@@ -62,14 +62,14 @@ describe('decideProxyEnv (fail-to-direct)', () => {
 
 describe('the shell env + the scrubber', () => {
   it('proxy env carries NO raw platform credential; the capability is scrubbed, github.com is not', () => {
-    const env: Record<string, string> = { AWS_SECRET_ACCESS_KEY: 'user-managed-secret-123', ...buildProxyEnv('https://digby.example.com/api/crossmodel/coding/cred-proxy', 'dcp1.payload.sig-long', ['github']) };
+    const env: Record<string, string> = { AWS_SECRET_ACCESS_KEY: 'user-managed-secret-123', ...buildProxyEnv('https://digby.ai/api/crossmodel/coding/cred-proxy', 'dcp1.payload.sig-long', ['github']) };
     expect(countRawPlatformCreds(env)).toBe(0);
-    expect(env.GIT_CONFIG_KEY_0).toBe('url.https://digby.example.com/api/crossmodel/coding/cred-proxy/git/github.com/.insteadOf');
+    expect(env.GIT_CONFIG_KEY_0).toBe('url.https://digby.ai/api/crossmodel/coding/cred-proxy/git/github.com/.insteadOf');
     expect(env.GIT_CONFIG_VALUE_1).toBe('X-Digby-Cap: dcp1.payload.sig-long');
     const scrub = credentialScrubValues(env);
     expect(scrub).toEqual(expect.arrayContaining(['dcp1.payload.sig-long', 'X-Digby-Cap: dcp1.payload.sig-long', 'user-managed-secret-123']));
     expect(scrub).not.toContain('https://github.com/');
-    expect(scrub).not.toContain('https://digby.example.com/api/crossmodel/coding/cred-proxy');
+    expect(scrub).not.toContain('https://digby.ai/api/crossmodel/coding/cred-proxy');
   });
   it('direct mode keeps today\'s rule: every value ≥ 8 chars', () => {
     const env = { GITHUB_TOKEN: 'gho_abcdefgh123', GIT_CONFIG_KEY_0: 'credential.https://github.com.helper', SHORT: 'abc' };
@@ -106,7 +106,7 @@ describe('resolveUpstream — the fixed allowlist', () => {
 
 describe('the gh kit env (build 2026-10-11 ISO-GH)', () => {
   it('code + a short versioned path — no secret, nothing the scrubber masks, socket path far under the 108-byte cap', () => {
-    const base = 'https://digby.example.com/api/crossmodel/coding/cred-proxy';
+    const base = 'https://digby.ai/api/crossmodel/coding/cred-proxy';
     const kit = buildGhKitEnv(base);
     expect(kit.DIGBY_GH_KIT_DIR).toMatch(new RegExp(`^${GH_KIT_ROOT}/[0-9a-f]{12}$`));
     expect(Buffer.byteLength(`${kit.DIGBY_GH_KIT_DIR}/fw.sock`)).toBeLessThan(100);

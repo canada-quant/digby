@@ -160,12 +160,12 @@ describe('state + line', () => {
 
   it('an OFF target carries since (row updatedAt), updatedBy (the _by row) and skipped (the counter) in the line', async () => {
     setRow(FLEET_SUPERVISOR_ENABLED_KEY, '0', new Date('2026-09-26T17:30:00Z'));
-    setRow(`${FLEET_SUPERVISOR_ENABLED_KEY}_by`, 'paul@sunday.market');
+    setRow(`${FLEET_SUPERVISOR_ENABLED_KEY}_by`, 'example-user@example.com');
     redisStore.set(skippedCounterKey('fleet'), '7');
     const st = await getSupervisorSwitchState();
-    expect(st.fleet).toMatchObject({ enabled: false, since: '2026-09-26T17:30:00.000Z', updatedBy: 'paul@sunday.market', skipped: 7, source: 'setting' });
+    expect(st.fleet).toMatchObject({ enabled: false, since: '2026-09-26T17:30:00.000Z', updatedBy: 'example-user@example.com', skipped: 7, source: 'setting' });
     expect(st.project.enabled).toBe(true);
-    expect(st.line).toBe('Fleet supervisor: OFF since 2026-09-26 17:30Z by paul@sunday.market — wakes skipped: 7');
+    expect(st.line).toBe('Fleet supervisor: OFF since 2026-09-26 17:30Z by example-user@example.com — wakes skipped: 7');
   });
 
   it('the line joins both OFF targets; an env-only OFF says boot/env; an unreadable counter says n/a', async () => {
@@ -182,7 +182,7 @@ describe('state + line', () => {
 
 describe('setSupervisorSwitch (the PUT)', () => {
   it('an unchanged value writes nothing (since stays honest) and records no flip', async () => {
-    const r = await setSupervisorSwitch(FLEET_SUPERVISOR_ENABLED_KEY, true, 'paul@sunday.market');
+    const r = await setSupervisorSwitch(FLEET_SUPERVISOR_ENABLED_KEY, true, 'example-user@example.com');
     expect(r).toMatchObject({ target: 'fleet', enabled: true, changed: false, setting: null });
     expect(mockSettingUpsert).not.toHaveBeenCalled();
     expect(flips()).toHaveLength(0);
@@ -191,17 +191,17 @@ describe('setSupervisorSwitch (the PUT)', () => {
   it('a real flip upserts the value + the _by audit row, invalidates the cache, resets the counter and writes the flipped row', async () => {
     expect(await getFleetSupervisorEnabled()).toBe(true); // prime the cache
     redisStore.set(skippedCounterKey('fleet'), '12');
-    const r = await setSupervisorSwitch(FLEET_SUPERVISOR_ENABLED_KEY, false, 'paul@sunday.market');
+    const r = await setSupervisorSwitch(FLEET_SUPERVISOR_ENABLED_KEY, false, 'example-user@example.com');
     expect(r).toMatchObject({ target: 'fleet', enabled: false, changed: true, setting: { key: FLEET_SUPERVISOR_ENABLED_KEY, value: '0' } });
     expect(mockSettingUpsert).toHaveBeenCalledWith({ where: { key: FLEET_SUPERVISOR_ENABLED_KEY }, update: { value: '0' }, create: { key: FLEET_SUPERVISOR_ENABLED_KEY, value: '0' } });
-    expect(mockSettingUpsert).toHaveBeenCalledWith({ where: { key: 'fleet_supervisor_enabled_by' }, update: { value: 'paul@sunday.market' }, create: { key: 'fleet_supervisor_enabled_by', value: 'paul@sunday.market' } });
+    expect(mockSettingUpsert).toHaveBeenCalledWith({ where: { key: 'fleet_supervisor_enabled_by' }, update: { value: 'example-user@example.com' }, create: { key: 'fleet_supervisor_enabled_by', value: 'example-user@example.com' } });
     expect(mockRedis.del).toHaveBeenCalledWith(skippedCounterKey('fleet'));
-    expect(flips()).toEqual([expect.objectContaining({ meta: { target: 'fleet', action: 'flipped', enabled: false, by: 'paul@sunday.market' } })]);
+    expect(flips()).toEqual([expect.objectContaining({ meta: { target: 'fleet', action: 'flipped', enabled: false, by: 'example-user@example.com' } })]);
     expect(await getFleetSupervisorEnabled()).toBe(false); // cache invalidated — the new value is live on this box
     // Back on: idempotent second write is a no-op.
-    await setSupervisorSwitch(FLEET_SUPERVISOR_ENABLED_KEY, true, 'paul@sunday.market');
+    await setSupervisorSwitch(FLEET_SUPERVISOR_ENABLED_KEY, true, 'example-user@example.com');
     expect(await getFleetSupervisorEnabled()).toBe(true);
-    await setSupervisorSwitch(FLEET_SUPERVISOR_ENABLED_KEY, true, 'paul@sunday.market');
+    await setSupervisorSwitch(FLEET_SUPERVISOR_ENABLED_KEY, true, 'example-user@example.com');
     expect(flips()).toHaveLength(2);
   });
 

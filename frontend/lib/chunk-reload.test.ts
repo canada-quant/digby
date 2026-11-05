@@ -6,8 +6,8 @@ const mem = () => { const m = new Map<string, string>(); return { getItem: (k: s
 describe('chunk-reload — deploy-skew self-heal (2026-09-14)', () => {
   it('recognises the chunk-load error class and nothing else', () => {
     expect(isChunkLoadError(Object.assign(new Error('x'), { name: 'ChunkLoadError' }))).toBe(true);
-    expect(isChunkLoadError(new Error('Loading chunk 1kdrjgaaa8mqc failed. (missing: https://digby.example.com/_next/static/chunks/1kdrjgaaa8mqc.js)'))).toBe(true);
-    expect(isChunkLoadError(new Error('Failed to fetch dynamically imported module: https://digby.example.com/_next/static/chunks/app/page.js'))).toBe(true);
+    expect(isChunkLoadError(new Error('Loading chunk 1kdrjgaaa8mqc failed. (missing: https://digby.ai/_next/static/chunks/1kdrjgaaa8mqc.js)'))).toBe(true);
+    expect(isChunkLoadError(new Error('Failed to fetch dynamically imported module: https://digby.ai/_next/static/chunks/app/page.js'))).toBe(true);
     expect(isChunkLoadError(new Error("Cannot read properties of undefined (reading 'map')"))).toBe(false);
     expect(isChunkLoadError(null)).toBe(false);
     expect(isChunkLoadError('string')).toBe(false);

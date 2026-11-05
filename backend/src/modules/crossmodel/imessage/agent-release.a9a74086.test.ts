@@ -26,6 +26,7 @@ import { execFileSync } from 'child_process';
 import { createHash } from 'crypto';
 
 import { AGENT_RELEASE } from './agent-release';
+import { isExportTree } from '../../../utils/export-mode';
 
 // Mocks mirror agent-release.0e4c9601.test.ts (agent-release imports
 // agent-link → config/redis at module load; parseEnv would process.exit(1)
@@ -71,7 +72,27 @@ function readTarEntry(entryPath: string): string {
   return buf.toString('utf8');
 }
 
-describe('served agent tarball ↔ manifest ↔ engines (ticket a9a74086)', () => {
+// WHY THIS IS SKIPPED IN AN EXPORT (todo 13069ce2, 2026-11-05): every pin here
+// reads the COMMITTED release artifact `frontend/public/digby-imessage-agent.tar.gz`,
+// which the public export drops by design — a binary cannot be redacted, only
+// scanned, and the export exists to prove the SOURCE builds. The existence check
+// below runs at COLLECTION time (it throws before a single `it` is declared), so
+// an unconditional throw would abort the whole suite for a tree fact rather than
+// a release regression. The skip is conditioned on a genuine export, so a
+// checkout missing the tarball still fails loudly — which is the failure this
+// suite was written for.
+const IN_EXPORT_TARBALL = isExportTree(ROOT);
+const tarballSuite = IN_EXPORT_TARBALL ? describe.skip : describe;
+
+tarballSuite('served agent tarball ↔ manifest ↔ engines (ticket a9a74086)', () => {
+  // `describe.skip` marks the tests skipped but STILL RUNS this callback to
+  // collect them — measured, 2026-11-05: skipping the describe alone left the
+  // collection-time throw below firing, so the suite still failed. The guard
+  // has to return from the BODY before that throw, not just change the describe.
+  if (IN_EXPORT_TARBALL) {
+    it.skip('committed release tarball pins — not applicable to a scrubbed export', () => {});
+    return;
+  }
   const exists = fs.existsSync(TARBALL);
   // The tarball is a committed artifact — it always exists in a checkout.
   if (!exists) throw new Error(`missing committed tarball: ${TARBALL}`);

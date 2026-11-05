@@ -372,6 +372,12 @@ function makeCtx(overrides: Partial<ToolContext> = {}, approvals: Array<'allow' 
     // Fixtures simulate a REAL USER TURN (userTurnAt set on every user path) —
     // pass userTurnAt: undefined in overrides to simulate a machine-triggered run.
     userTurnAt: new Date(),
+    // These suites pin the STAGING contract (staging-time validation, WYSIWYG
+    // confirm, the card envelope). A requested-work tool executes card-free on a
+    // plain human turn (work-tools.ts), so the stage legs model a Dig-deeper rung
+    // — a human turn that re-runs an EARLIER ask and therefore cards. This is the
+    // same gate WORK_TOOLS_NO_CARD_DISABLED used to hold open (retired in RSW-1).
+    escalation: true,
     requestApproval: async (tool: string, args: any) => { requested.push({ tool, args }); return approvals.shift() ?? 'allow'; },
     execShell: async () => ({ stdout: '', stderr: '' }),
     ...overrides,
@@ -415,10 +421,11 @@ beforeEach(() => {
 // requested-work tools (start_coding_session, create_feed, own-chat schedule
 // tools, …) now execute WITHOUT a card. This suite pins the STAGING contract
 // itself (staging-time validation, WYSIWYG confirm, the card envelope), which
-// still governs machine turns and the kill switch — so it runs with the switch
-// set; the direct path is pinned by work-tools.test.ts.
-beforeAll(() => { process.env.WORK_TOOLS_NO_CARD_DISABLED = '1'; });
-afterAll(() => { delete process.env.WORK_TOOLS_NO_CARD_DISABLED; });
+// still governs machine turns and a Dig-deeper rung (ctx.escalation re-runs an
+// EARLIER ask, so it cards rather than re-running the work) — so its stage legs
+// pass escalation; the direct path is pinned by work-tools.test.ts.
+// (Until RSW-1 this suite reached the card by setting WORK_TOOLS_NO_CARD_DISABLED;
+// that kill switch is gone and escalation is the behaviour that actually stays.)
 
 describe('schema registration', () => {
   // Dynamic label (WI-L 2026-09-25): the literal "128" drifted three tranches
@@ -2342,9 +2349,9 @@ describe('get_platform_network_info (infra introspection — ticket 54e0a7ea)', 
 
   it('returns the live egress IP from the DIRECT IP echo (5s timeout, no proxy) plus the hostname', async () => {
     const { ctx } = makeCtx();
-    mockFetch.mockResolvedValue({ ok: true, text: async () => '18.233.212.22\n' });
+    mockFetch.mockResolvedValue({ ok: true, text: async () => '203.0.113.21\n' });
     const out = JSON.parse(await executePlatformTool(ctx, 'get_platform_network_info', {}));
-    expect(out.egressIp).toBe('18.233.212.22');
+    expect(out.egressIp).toBe('203.0.113.21');
     expect(typeof out.hostname).toBe('string');
     expect(out.hostname.length).toBeGreaterThan(0);
     expect(mockFetch).toHaveBeenCalledWith('https://api.ipify.org', expect.objectContaining({ signal: expect.anything() }));

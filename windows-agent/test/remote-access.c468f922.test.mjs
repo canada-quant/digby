@@ -487,7 +487,7 @@ test('DEFAULT_TUNNEL_CIDR actually ADMITS a tailnet peer (the old default admitt
   const toInt = (ip) => ip.split('.').reduce((a, o) => (a << 8) + Number(o), 0) >>> 0;
   const mask = bits === '0' ? 0 : (0xffffffff << (32 - Number(bits))) >>> 0;
   const inRange = (ip) => (toInt(ip) & mask) === (toInt(base) & mask);
-  assert.equal(inRange('100.99.3.52'), true, 'a real fleet peer must be admitted');
+  assert.equal(inRange('100.64.0.1'), true, 'a real fleet peer must be admitted');
   assert.equal(inRange('10.1.2.3'), false, 'an ordinary LAN host must NOT be admitted');
   assert.equal(inRange('192.168.1.10'), false);
 });

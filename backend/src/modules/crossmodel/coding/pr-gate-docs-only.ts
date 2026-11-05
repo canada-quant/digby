@@ -17,16 +17,14 @@
  *   2. AUTO-VERIFY — otherwise, instead of refusing ("run verify and retry"),
  *      the tool runs the verify chain itself and opens the PR on a green
  *      result (one round instead of three); a red chain still refuses, with
- *      the failing stage's output tail. `PR_GATE_AUTO_VERIFY_DISABLED=1`
- *      restores the plain refusal.
+ *      the failing stage's output tail. (The 2026-09-27 release switch that
+ *      restored the plain refusal was retired by RSW-1 on 2026-11-12 — the
+ *      auto-verify arm is unconditional; a lane that wants the old refusal
+ *      just runs `verify` itself first.)
  *
  * The docs-only classification is a pure function over paths so the rule is
  * testable without git; the diff listing is injectable for the same reason.
  */
-
-export function prGateAutoVerifyDisabled(): boolean {
-  return process.env.PR_GATE_AUTO_VERIFY_DISABLED === '1';
-}
 
 /** Repo-relative path counts as documentation: anywhere under `docs/` or a `.md` file. */
 export function isDocsPath(file: string): boolean {
@@ -102,9 +100,10 @@ export function prHeadMismatchBodyNote(headBranch: string): string {
 // The agent loop races every non-delegation tool against TOOL_HARD_TIMEOUT_MS
 // (15 min, agent.ts) WITHOUT cancelling it — a tool that outlives the timer keeps
 // running and its side effects land AFTER the model was told "aborted, proceed".
-// The in-tool auto-verify (verify-slot queue wait + chain: scaffolded configs
-// allow 3 × 300 s, the default 600 s per stage) must therefore give up safely
-// under that timer and REFUSE without pushing or opening anything.
+// The in-tool auto-verify (verify-slot queue wait + chain: 3 attempts at the
+// per-command cap — 600 s per stage, both from DEFAULT_LOOP and from a
+// scaffolded config since ticket 91120212 aligned them) must therefore give up
+// safely under that timer and REFUSE without pushing or opening anything.
 export const PR_GATE_AUTO_VERIFY_DEADLINE_DEFAULT_MS = 12 * 60 * 1000;
 /** Hard ceiling — one minute under the loop's 15-min hard abort. */
 export const PR_GATE_AUTO_VERIFY_DEADLINE_MAX_MS = 14 * 60 * 1000;

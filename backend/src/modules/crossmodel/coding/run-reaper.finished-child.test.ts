@@ -19,8 +19,8 @@ const mockPrisma: any = {
     update: jest.fn(async () => ({})),
   },
   agentEvent: { deleteMany: jest.fn(async () => ({ count: 0 })) },
-  codingMessage: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  crossModelMessage: { findFirst: jest.fn(async () => null) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   runToolReceipt: { findMany: jest.fn(async () => []), deleteMany: jest.fn(async () => ({ count: 0 })) },
   hookEvent: { findMany: jest.fn(async () => []), deleteMany: jest.fn(async () => ({ count: 0 })) },
   $queryRaw: jest.fn(async () => []),
@@ -38,9 +38,6 @@ jest.mock('./worktree-snapshot.service', () => ({ __esModule: true, sweepSnapsho
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
 jest.mock('./coding-data.service', () => ({
   sweepOrphanedRunningSessions: jest.fn(async () => 0),
-  // MERGE-1 slice 1: the reaper's recent-activity probe resolves through the read-switch
-  // seam. 'legacy' preserves every existing expectation (they seed codingMessage.findFirst).
-  pickTranscriptSource: async () => 'legacy',
 }));
 const mockRecordLoopMetric: jest.Mock = jest.fn();
 jest.mock('../platform/loop-metrics.service', () => ({
@@ -76,7 +73,7 @@ beforeEach(() => {
   __resetReaperCursorsForTests();
   mockPrisma.chatCodingState.findMany.mockResolvedValue([]);
   mockPrisma.agentRun.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockArchiveChat.mockResolvedValue({ archived: true });
   mockGetPlanStrict.mockResolvedValue(null);
   restoreMarkers.clear();
@@ -100,7 +97,7 @@ describe('rule (h) — finished child archive', () => {
     expect(rows[0].meta.idleH).toBeGreaterThanOrEqual(6);
     // The candidate query: ready/error satellites of NON-archived, schedule-free children only, by id (C4 rotation), bounded.
     const q = mockPrisma.chatCodingState.findMany.mock.calls.map((c: any[]) => c[0]).find(isRuleH);
-    expect(q).toMatchObject({ where: { status: { in: ['ready', 'error'] }, chat: { is: { parentChatId: { not: null }, archivedAt: null, codingSchedules: { none: { enabled: true } } } } }, orderBy: { id: 'asc' }, take: FINISHED_CHILD_SCAN_CAP });
+    expect(q).toMatchObject({ where: { status: { in: ['ready', 'error'] }, chat: { is: { parentChatId: { not: null }, archivedAt: null, chatSchedules: { none: { enabled: true } } } } }, orderBy: { id: 'asc' }, take: FINISHED_CHILD_SCAN_CAP });
     expect(q.where.updatedAt.lt.getTime()).toBeLessThanOrEqual(Date.now() - FINISHED_CHILD_ARCHIVE_IDLE_MS);
     // REAPER_CANDIDATE_ROTATION_DISABLED=1: oldest first, the pre-rotation filter.
     process.env.REAPER_CANDIDATE_ROTATION_DISABLED = '1';
@@ -108,13 +105,13 @@ describe('rule (h) — finished child archive', () => {
     await runAgentRunReaper();
     const old = mockPrisma.chatCodingState.findMany.mock.calls.map((c: any[]) => c[0]).find(isRuleH);
     expect(old).toMatchObject({ where: { status: { in: ['ready', 'error'] }, chat: { is: { parentChatId: { not: null }, archivedAt: null } } }, orderBy: { updatedAt: 'asc' }, take: FINISHED_CHILD_SCAN_CAP });
-    expect(old.where.chat.is.codingSchedules).toBeUndefined();
+    expect(old.where.chat.is.chatSchedules).toBeUndefined();
   });
 
   it('vetoes: a live run, an enabled schedule, an OPEN plan step, a run too recent, a plan-less child, a never-ran child, a failed last run', async () => {
     const cases: Array<[string, () => void]> = [
       ['live run', () => { mockPrisma.agentRun.findFirst.mockImplementation(async (a: any) => (a?.where?.status ? { id: 'r-live' } : completedRun(7))); mockGetPlanStrict.mockResolvedValue(donePlan); }],
-      ['enabled schedule', () => { mockPrisma.codingSchedule.count.mockResolvedValue(1); mockPrisma.agentRun.findFirst.mockImplementation(async (a: any) => (a?.where?.status ? null : completedRun(7))); mockGetPlanStrict.mockResolvedValue(donePlan); }],
+      ['enabled schedule', () => { mockPrisma.chatSchedule.count.mockResolvedValue(1); mockPrisma.agentRun.findFirst.mockImplementation(async (a: any) => (a?.where?.status ? null : completedRun(7))); mockGetPlanStrict.mockResolvedValue(donePlan); }],
       ['open step', () => { mockPrisma.agentRun.findFirst.mockImplementation(async (a: any) => (a?.where?.status ? null : completedRun(7))); mockGetPlanStrict.mockResolvedValue({ steps: [{ status: 'done' }, { status: 'pending' }] }); }],
       ['too recent', () => { mockPrisma.agentRun.findFirst.mockImplementation(async (a: any) => (a?.where?.status ? null : completedRun(2))); mockGetPlanStrict.mockResolvedValue(donePlan); }],
       ['no plan', () => { mockPrisma.agentRun.findFirst.mockImplementation(async (a: any) => (a?.where?.status ? null : completedRun(7))); mockGetPlanStrict.mockResolvedValue(null); }],
@@ -123,7 +120,7 @@ describe('rule (h) — finished child archive', () => {
     ];
     for (const [label, arm] of cases) {
       jest.clearAllMocks();
-      mockPrisma.codingSchedule.count.mockResolvedValue(0);
+      mockPrisma.chatSchedule.count.mockResolvedValue(0);
       candidatesForRuleH([{ id: `child-${label}`, userId: 'u1' }]);
       arm();
       await runAgentRunReaper();
@@ -165,7 +162,7 @@ describe('third review (2026-10-22) — rules (e) and (h) honour the restore MAR
     expect(markerReads.some((a: any) => a.where.key.in.includes('child-restored') && a.where.key.in.includes('child-plain'))).toBe(true);
     // rule (e)
     jest.clearAllMocks();
-    mockPrisma.codingSchedule.count.mockResolvedValue(0);
+    mockPrisma.chatSchedule.count.mockResolvedValue(0);
     mockPrisma.agentRun.findFirst.mockResolvedValue(null); // rule (e): no run in 7 d, nothing live
     mockPrisma.chatCodingState.findMany.mockImplementation(async (args: any) => (isRuleH(args) ? [] : [{ id: 'child-restored', userId: 'u2' }, { id: 'idle-plain', userId: 'u2' }]));
     await runAgentRunReaper();

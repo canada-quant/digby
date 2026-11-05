@@ -36,7 +36,7 @@
  * enumeration and its remedy list.
  *
  * Mock discipline mirrors follow-through.be90502f.test.ts. The
- * crossModelChat.findFirst / codingSchedule.findFirst mocks are
+ * crossModelChat.findFirst / chatSchedule.findFirst mocks are
  * implementation-faithful — each enforces the query's OWN startsWith/userId
  * bindings against an in-memory table — so the wrong-target pins bind
  * BEHAVIORALLY, not by a hardcoded null.
@@ -48,7 +48,7 @@ const mockPrisma: any = {
   crossModelMessage: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null), create: jest.fn(async () => ({})) },
   runToolReceipt: { findMany: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null) },
+  chatSchedule: { findFirst: jest.fn(async () => null) },
   ownerQuestion: { findFirst: jest.fn(async () => null) },
 };
 const store = new Map<string, string>();
@@ -106,7 +106,7 @@ beforeEach(() => {
     const idP = w.id?.startsWith ?? '';
     return CHATS.find((c) => c.id.startsWith(idP) && c.userId === w.userId) ?? null;
   });
-  mockPrisma.codingSchedule.findFirst.mockImplementation(async (args: any) => {
+  mockPrisma.chatSchedule.findFirst.mockImplementation(async (args: any) => {
     const w = args?.where ?? {};
     const idP = w.id?.startsWith ?? '';
     const sessP = w.sessionId?.startsWith ?? '';
@@ -143,7 +143,7 @@ describe('ticket 02c0bc79 — doctrine-correct retirement counts as follow-throu
     expect(out.nudges).toBe(0);
     expect(wake).not.toHaveBeenCalled();
     // The receipt resolved through the surviving schedule row, bound to the diagnosed lane + same owner.
-    expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: { startsWith: 'sch4f2b91aa' }, sessionId: { startsWith: LANE }, userId: 'u1' },
       select: { id: true },
     }));
@@ -185,7 +185,7 @@ describe('ticket 02c0bc79 — doctrine-correct retirement counts as follow-throu
     const out = await run();
     expect(out.nudges).toBe(1);
     expect(wake).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalled(); // the cancel WAS resolved — and bound away from this lane
+    expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalled(); // the cancel WAS resolved — and bound away from this lane
   });
 
   it('TEMPORAL BINDING (archive leg): a pre-existing archive PREDATING the note window is no action toward a fresh diagnosis → strike fires', async () => {

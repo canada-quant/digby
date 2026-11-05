@@ -15,7 +15,7 @@ const f = (key: string, over: Partial<InstanceSetupFeature> = {}): InstanceSetup
   key, label: key, group: 'integrations', state: 'ready', configured: true, required: false, summary: '', help: `${SELF_HOST_HELP}#integrations`, ...over,
 });
 const setup = (features: InstanceSetupFeature[], selfHosted = true): InstanceSetup => ({
-  instance: { kind: selfHosted ? 'selfhost' : 'prod', selfHosted, publicUrl: 'https://digby.example.com', cookieSecure: true, nodeEnv: 'production' },
+  instance: { kind: selfHosted ? 'selfhost' : 'prod', selfHosted, publicUrl: 'https://digby.cql.ca', cookieSecure: true, nodeEnv: 'production' },
   summary: { ready: features.filter((x) => x.state === 'ready').length, total: features.length, missingRequired: features.filter((x) => x.required && x.state !== 'ready').map((x) => x.key) },
   features,
   viewer: { admin: true },
@@ -44,7 +44,7 @@ describe('copy', () => {
   });
   it('headline names the instance kind, host and the required gaps', () => {
     const s = setup([f('model_providers', { group: 'models', required: true, configured: false, state: 'missing' }), f('github')]);
-    expect(setupHeadline(s)).toBe('Self-hosted instance at digby.example.com · 1 of 2 ready · 1 required item missing');
+    expect(setupHeadline(s)).toBe('Self-hosted instance at digby.cql.ca · 1 of 2 ready · 1 required item missing');
     expect(setupHeadline(setup([f('github')], false))).toContain('Production instance');
   });
   it('helpHref falls back to the self-host guide', () => {
@@ -70,14 +70,10 @@ describe('grouping + tones', () => {
 });
 
 describe('Mac agent one-liners', () => {
-  it('fetch the script and tarball from THIS origin and pair against THIS api — never digby.example.com', () => {
-    // The input origin MUST differ from the production host the negative
-    // assertion forbids (2026-11-03: a production-token sweep rewrote both
-    // sides to `digby.example.com`, collapsing the discriminator into
-    // `expect(x).not.toContain(x)` — the assertion could never fail again).
-    const cmd = macAgentInstallCommand('https://selfhost.example.org/', 'ABCD-1234');
-    expect(cmd).toBe('curl -fsSL https://selfhost.example.org/install-digby-agent.sh | DIGBY_INSTALL_HOST=https://selfhost.example.org bash -s -- ABCD-1234 https://selfhost.example.org/api');
-    expect(cmd).not.toContain('digby.example.com');
+  it('fetch the script and tarball from THIS origin and pair against THIS api — never digby.ai', () => {
+    const cmd = macAgentInstallCommand('https://digby.cql.ca/', 'ABCD-1234');
+    expect(cmd).toBe('curl -fsSL https://digby.cql.ca/install-digby-agent.sh | DIGBY_INSTALL_HOST=https://digby.cql.ca bash -s -- ABCD-1234 https://digby.cql.ca/api');
+    expect(cmd).not.toContain('digby.ai');
     expect(macAgentUpdateCommand('http://lan:8080')).toBe('curl -fsSL http://lan:8080/install-digby-agent.sh | DIGBY_INSTALL_HOST=http://lan:8080 bash -s -- --update-only');
   });
 });

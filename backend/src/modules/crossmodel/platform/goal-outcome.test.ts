@@ -165,7 +165,7 @@ describe('review fix — WHO accepts an unmet outcome', () => {
     expect(ledgerToolMachineTriggered({ userTurnAt: at, machineTriggered: false, ownerDispatch: false })).toBe(false);
   });
 
-  const G = { id: '226be7b7-0000-4000-8000-000000000000', title: 'Qwen serving ≥10 tok/s on QB2' };
+  const G = { id: '226be7b7-0000-4000-8000-000000000000', title: 'Qwen serving ≥10 tok/s on node-a' };
   it('ownerTextNamesGoalClose: an imperative, un-negated close naming THIS goal (id prefix / title / "goal")', () => {
     for (const t of [
       'Close goal 226be7b7 — 5 tok/s is fine.',
@@ -173,7 +173,7 @@ describe('review fix — WHO accepts an unmet outcome', () => {
       'Mark the serving goal as done.',
       'set the goal to done',
       'Accept the shortfall on goal 226be7b7 and close it.',
-      'Qwen serving ≥10 tok/s on QB2: call it done',
+      'Qwen serving ≥10 tok/s on node-a: call it done',
       'ok. wrap it up — that goal is finished for this quarter',
     ]) expect([t, ownerTextNamesGoalClose(t, G)]).toEqual([t, true]);
     for (const t of [

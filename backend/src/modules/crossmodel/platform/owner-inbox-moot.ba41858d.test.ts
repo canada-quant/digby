@@ -109,7 +109,7 @@ function makeTable() {
 }
 
 const mockConfirmations = createPendingConfirmationTable();
-const schedules = makeTable();   // codingSchedule
+const schedules = makeTable();   // chatSchedule
 const messages = makeTable();    // crossModelMessage
 const chats = makeTable();       // crossModelChat (child-session lineage)
 const mockMessageCreate = jest.fn(async (..._a: any[]) => ({}));
@@ -118,7 +118,7 @@ jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
     pendingConfirmation: mockConfirmations.api,
-    codingSchedule: {
+    chatSchedule: {
       findMany: (...a: any[]) => schedules.findMany(...a),
       findFirst: (...a: any[]) => schedules.findFirst(...a),
     },

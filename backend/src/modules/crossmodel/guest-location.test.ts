@@ -39,7 +39,7 @@ describe('sanitizeClientLocation', () => {
 
 describe('isPrivateIp', () => {
   it('flags private/loopback/unknown, passes public', () => {
-    for (const ip of ['unknown', '', '127.0.0.1', '10.0.0.22', '172.20.0.1', '192.168.1.1', '::1', 'fd00::1', '100.64.0.1']) {
+    for (const ip of ['unknown', '', '127.0.0.1', '10.0.0.11', '172.20.0.1', '192.168.1.1', '::1', 'fd00::1', '100.64.0.1']) {
       expect(isPrivateIp(ip)).toBe(true);
     }
     for (const ip of ['24.68.1.2', '2001:569:7d00::1']) expect(isPrivateIp(ip)).toBe(false);

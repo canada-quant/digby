@@ -351,7 +351,7 @@ describe('ticket 8071c98f — noun-modifier verdict usage (third in-wild instanc
     const full = [
       '## Deliverable',
       '',
-      '**PR #1750 MERGED to main** (squash sha `f6cb7621120c`, merge receipt: "MERGED canada-quant/digby#1750 — confirmed merged:true by follow-up GET").',
+      '**PR #1750 MERGED to main** (squash sha `f6cb7621120c`, merge receipt: "MERGED example-org/crossmodel#1750 — confirmed merged:true by follow-up GET").',
       '',
       SIGHTING,
       '',

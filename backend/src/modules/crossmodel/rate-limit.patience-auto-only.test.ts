@@ -117,18 +117,18 @@ describe('setPatienceAutoOnly (idempotent, audited, telemetered)', () => {
   it('a real flip writes the value + the `_by` audit row, invalidates the cache and records ONE flipped row (previous from the STORED truth)', async () => {
     rows.set(PATIENCE_AUTO_ONLY_KEY, { key: PATIENCE_AUTO_ONLY_KEY, value: '1', updatedAt: new Date('2026-09-26T20:35:16.556Z') });
     expect(await getPatienceAutoOnly()).toBe(true); // primes the cache
-    const flip = await setPatienceAutoOnly(false, 'paul@sunday.market');
+    const flip = await setPatienceAutoOnly(false, 'example-user@example.com');
     expect(flip).toMatchObject({ key: PATIENCE_AUTO_ONLY_KEY, enabled: false, changed: true, setting: { value: '0' } });
     expect(rows.get(PATIENCE_AUTO_ONLY_KEY)?.value).toBe('0');
-    expect(rows.get(PATIENCE_AUTO_ONLY_BY_KEY)?.value).toBe('paul@sunday.market');
+    expect(rows.get(PATIENCE_AUTO_ONLY_BY_KEY)?.value).toBe('example-user@example.com');
     expect(mockRecordMetric).toHaveBeenCalledTimes(1);
-    expect(mockRecordMetric.mock.calls[0][0]).toEqual({ kind: 'patience_switch', meta: { action: 'flipped', enabled: false, by: 'paul@sunday.market', previous: true, previousSource: 'setting' } });
+    expect(mockRecordMetric.mock.calls[0][0]).toEqual({ kind: 'patience_switch', meta: { action: 'flipped', enabled: false, by: 'example-user@example.com', previous: true, previousSource: 'setting' } });
     expect(await getPatienceAutoOnly()).toBe(false); // the cache was invalidated by the flip
   });
 
   it('an unchanged value writes NOTHING (changed:false, no audit row, no telemetry) so `since` stays the real flip time', async () => {
     rows.set(PATIENCE_AUTO_ONLY_KEY, { key: PATIENCE_AUTO_ONLY_KEY, value: '1', updatedAt: new Date('2026-09-26T20:35:16.556Z') });
-    const flip = await setPatienceAutoOnly(true, 'paul@sunday.market');
+    const flip = await setPatienceAutoOnly(true, 'example-user@example.com');
     expect(flip).toMatchObject({ changed: false, setting: { value: '1', updatedAt: new Date('2026-09-26T20:35:16.556Z') } });
     expect(mockSettingUpsert).not.toHaveBeenCalled();
     expect(rows.has(PATIENCE_AUTO_ONLY_BY_KEY)).toBe(false);
@@ -174,8 +174,8 @@ describe('getPatienceAutoOnlyState + patienceSwitchLine', () => {
   it('with an audit row the line names the admin; a DB error reports the cached/boot value without throwing', async () => {
     mockSettingFind.mockImplementation(async ({ where }: any) => (
       where.key === PATIENCE_AUTO_ONLY_KEY ? { key: PATIENCE_AUTO_ONLY_KEY, value: '0', updatedAt: new Date('2026-09-27T01:00:00.000Z') }
-        : where.key === PATIENCE_AUTO_ONLY_BY_KEY ? { key: PATIENCE_AUTO_ONLY_BY_KEY, value: 'paul@sunday.market', updatedAt: new Date() } : null));
-    expect((await getPatienceAutoOnlyState()).line).toBe('Always Auto: OFF since 2026-09-27 01:00Z by paul@sunday.market (store row; deleting it reverts to the env boot default = OFF)');
+        : where.key === PATIENCE_AUTO_ONLY_BY_KEY ? { key: PATIENCE_AUTO_ONLY_BY_KEY, value: 'example-user@example.com', updatedAt: new Date() } : null));
+    expect((await getPatienceAutoOnlyState()).line).toBe('Always Auto: OFF since 2026-09-27 01:00Z by example-user@example.com (store row; deleting it reverts to the env boot default = OFF)');
     mockSettingFind.mockRejectedValue(new Error('db down'));
     expect(await getPatienceAutoOnlyState()).toMatchObject({ enabled: false, source: 'env', since: null });
     expect(patienceSwitchLine({ key: PATIENCE_AUTO_ONLY_KEY, enabled: true, since: null, updatedBy: null, source: 'setting', bootDefault: false, envVar: 'PATIENCE_AUTO_ONLY' })).toContain('since unknown by unknown');
@@ -236,23 +236,23 @@ describe('setPatienceAutoOnly / getPatienceAutoOnlyState / getDepthPolicyPublic'
 
   it('a real flip writes the value + the _by companion, invalidates the cache and reports changed:true', async () => {
     expect(await getPatienceAutoOnly()).toBe(false); // cached OFF
-    const flip = await setPatienceAutoOnly(true, 'admin@digby.example.com');
+    const flip = await setPatienceAutoOnly(true, 'admin@digby.ai');
     expect(flip).toMatchObject({ key: PATIENCE_AUTO_ONLY_KEY, enabled: true, changed: true, setting: { value: '1' } });
     expect(rows.get(PATIENCE_AUTO_ONLY_KEY)?.value).toBe('1');
-    expect(rows.get(PATIENCE_AUTO_ONLY_BY_KEY)?.value).toBe('admin@digby.example.com');
+    expect(rows.get(PATIENCE_AUTO_ONLY_BY_KEY)?.value).toBe('admin@digby.ai');
     expect(await getPatienceAutoOnly()).toBe(true); // cache invalidated on this box
     const state = await getPatienceAutoOnlyState();
-    expect(state).toMatchObject({ key: PATIENCE_AUTO_ONLY_KEY, enabled: true, since: '2026-09-26T21:00:00.000Z', updatedBy: 'admin@digby.example.com', source: 'setting', bootDefault: false, envVar: 'PATIENCE_AUTO_ONLY' });
-    expect(state.line).toContain('by admin@digby.example.com');
+    expect(state).toMatchObject({ key: PATIENCE_AUTO_ONLY_KEY, enabled: true, since: '2026-09-26T21:00:00.000Z', updatedBy: 'admin@digby.ai', source: 'setting', bootDefault: false, envVar: 'PATIENCE_AUTO_ONLY' });
+    expect(state.line).toContain('by admin@digby.ai');
   });
 
   it('an unchanged STORED value writes NOTHING (changed:false) — `since` stays the real flip time; a missing row is always written (the env boot default is not a stored truth)', async () => {
-    const first = await setPatienceAutoOnly(false, 'admin@digby.example.com'); // no row + boot default OFF ⇒ the first write still lands
+    const first = await setPatienceAutoOnly(false, 'admin@digby.ai'); // no row + boot default OFF ⇒ the first write still lands
     expect(first).toMatchObject({ changed: true, setting: { value: '0' } });
     mockSettingUpsert.mockClear();
     rows.delete(PATIENCE_AUTO_ONLY_BY_KEY);
     rows.set(PATIENCE_AUTO_ONLY_KEY, { key: PATIENCE_AUTO_ONLY_KEY, value: '1', updatedAt: new Date('2026-09-26T20:35:16.556Z') });
-    const same = await setPatienceAutoOnly(true, 'later@digby.example.com');
+    const same = await setPatienceAutoOnly(true, 'later@digby.ai');
     expect(same).toMatchObject({ changed: false, setting: { value: '1' } });
     expect(mockSettingUpsert).not.toHaveBeenCalled();
     expect(rows.has(PATIENCE_AUTO_ONLY_BY_KEY)).toBe(false);

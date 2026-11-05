@@ -59,7 +59,7 @@ export const PROVIDER_SHAPE_SYSTEMONE = 'systemone';
  *  <baseUrl>/chat/completions with `{ model, messages:[{role:'user', content:
  *  <state text>}], questions }`; the answer map rides back as a JSON STRING in
  *  `choices[0].message.content` (`{ model, result:{ model, answers, usage } }`).
- *  Live-probed on llm.example.com (`agx-laya`): `/v1/systemone` 404s there and a
+ *  Live-probed on llm.cql.ca (`agx-laya`): `/v1/systemone` 404s there and a
  *  chat call with logprobs 400s ("a typed-decision model, not a chat model").
  *  Assignable ONLY to the Decision gate seat (like 'systemone'); the chat /
  *  coding run path never resolves it. GET <baseUrl>/models is served. */
@@ -121,7 +121,7 @@ export interface EndpointModelEntry {
    *  posts to <imagesUrl>/images/generations (and derives its async job polls
    *  from it) INSTEAD of the endpoint's baseUrl. It is a BASE: it must carry
    *  the SAME path prefix the endpoint's baseUrl carries (llm-cql's baseUrl is
-   *  https://llm.example.com/v1, so its tailnet form is http://100.64.0.1:4001/v1
+   *  https://llm.cql.ca/v1, so its tailnet form is http://100.64.0.1:4001/v1
    *  — the bare host would post to /images/generations and 404). Purpose: send
    *  the LONG-RUNNING image class over a direct private path while chat traffic
    *  keeps baseUrl (Cloudflare). http is allowed on purpose — the override
@@ -151,7 +151,7 @@ export interface EndpointModelEntry {
   usdPerMTokOut?: number;
   /** 2026-09-26 (Laya follow-up): THIS model on an OpenAI-compatible endpoint is
    *  a TYPED-DECISION model served through /chat/completions — LiteLLM fronting
-   *  Laya (llm.example.com `agx-laya`, registered in prod under the `cql-litellm`
+   *  Laya (llm.cql.ca `agx-laya`, registered in prod under the `cql-litellm`
    *  endpoint next to 36 chat / embedding ids). The decision gate then calls it
    *  with the `systemone_chat` transport (the questions map in the body, the
    *  JSON answers envelope in the message content) instead of the logprob
@@ -726,7 +726,7 @@ function completionAuthErrorAll(failures: { model: string; err: any; usageGuide?
 /**
  * Ticket 2df5ed65: a typed-decision server's USAGE-GUIDE 400 — the refusal a
  * decision model gives a plain chat call (the LiteLLM gateway's verbatim
- * shape, live-probed on llm.example.com `agx-laya`: "agx-laya is a typed-decision
+ * shape, live-probed on llm.cql.ca `agx-laya`: "agx-laya is a typed-decision
  * model, not a chat model. Send `\"questions\": {key: {\"instructions\": str,
  * \"type\": \"choice\"|\"noul\"|\"score\", \"criteria\": [..]}}` … in the request
  * body alongside the user message (the state)"). Narrow on purpose: an

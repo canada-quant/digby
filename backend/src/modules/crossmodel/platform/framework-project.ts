@@ -9,7 +9,7 @@
  * surface when EITHER leg holds:
  *   - its workspace repoUrl canonicalizes (instance-targets
  *     .normalizeGithubRepoTarget) to the instance's OWN repo slug (on
- *     production: canada-quant/digby — the same resolution every
+ *     production: example-org/crossmodel — the same resolution every
  *     self-improvement surface already uses, code-search.ts convention); OR
  *   - the row carries an explicitly-true `isFramework` flag (the future
  *     migration column — a repoUrl rename can never forge or lose it; a
@@ -181,7 +181,10 @@ export type FrameworkGuardAction =
   | 'member'
   | 'repoint'
   | 'move-into'
-  | 'move-out';
+  | 'move-out'
+  // TICKET dca83b85 (owner ruling): the framework ALWAYS stays inside fleet
+  // supervision — the platform surface cannot be opted out of the Fleet's view.
+  | 'unsupervise';
 
 const FRAMEWORK_HOME = 'Manager → Framework';
 
@@ -193,6 +196,7 @@ const PROJECT_VERB: Record<Exclude<FrameworkGuardAction, 'move-into' | 'move-out
   share: 'shared with a public link',
   member: 'given members',
   repoint: 're-pointed at another repository',
+  unsupervise: 'taken out of fleet supervision',
 };
 
 /**
@@ -206,6 +210,9 @@ export function frameworkProjectRefusal(action: FrameworkGuardAction): string {
   }
   if (action === 'move-out') {
     return `Framework lanes cannot be moved out of the Digby Framework project — they are platform-managed (reach them from ${FRAMEWORK_HOME}).`;
+  }
+  if (action === 'unsupervise') {
+    return `The Digby Framework project always stays inside Fleet supervision and cannot be taken out of it (manage it from ${FRAMEWORK_HOME}).`;
   }
   return `The Digby Framework project is a platform surface and cannot be ${PROJECT_VERB[action]} like a user project (manage it from ${FRAMEWORK_HOME}).`;
 }

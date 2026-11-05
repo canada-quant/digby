@@ -2,7 +2,7 @@
  * Ticket 8f5989c7 — the write-time half of the scope-statement fix.
  *
  * Specimen oq_81ce2c39: a 792-char self-contained credential ask
- * ("[cql-agx-orin64] One thing only you can supply: the pcozz sudo
+ * ("[cql-accelerator] One thing only you can supply: the pcozz sudo
  * password … Nothing else is needed from you.") whose only admission gap
  * was the options axis — the card enumerates its ENTIRE ask and declares
  * nothing beyond it, an EMPTY decision space. The leaf (owner-card-gaps.ts)
@@ -81,7 +81,7 @@ beforeEach(() => {
 
 /** The specimen's shape (verbatim scope statements, shortened middle). */
 const ENUMERATED_ASK = [
-  '[cql-agx-orin64] One thing only you can supply: the pcozz sudo password on the AGX.',
+  '[cql-accelerator] One thing only you can supply: the pcozz sudo password on the AGX.',
   'The box rebooted 03:58Z and is healthy, but the memory leak is uncontained (it froze twice tonight); the lane tried to apply the fix itself, but sudo on the AGX requires a password — measured twice tonight.',
   'Paste the pcozz password into this card\u2019s credential field; it goes straight to the encrypted vault and the lane applies the containment cap over SSH within minutes, verifies, and rolls back safely if anything fails.',
   'Nothing else is needed from you.',
@@ -96,7 +96,7 @@ describe('scope-statement completion (8f5989c7, write-time)', () => {
 
   it('the exact live specimen (792 chars, verbatim) records NO metric', async () => {
     const ask = [
-      '[cql-agx-orin64] One thing only you can supply: the pcozz sudo password on the AGX. Your Hue power cycle worked — the box rebooted 03:58Z and is healthy (23.6 GiB RAM free, embed + rerank serving) — but the memory leak is uncontained and will re-wedge the box within hours (it froze twice tonight). The lane tried to apply the fix itself per your "you have shell access" reply, but sudo on the AGX requires a password — measured twice tonight: "sudo: a password is required" (01:00Z and 04:03Z). Paste the pcozz password into this card\u2019s credential field; it goes straight to the encrypted vault (never into any chat) and the lane applies the containment cap (44G/48G + auto-restart) over SSH within minutes, verifies, and rolls back safely if anything fails. Nothing else is needed from you.',
+      '[cql-accelerator] One thing only you can supply: the pcozz sudo password on the AGX. Your Hue power cycle worked — the box rebooted 03:58Z and is healthy (23.6 GiB RAM free, embed + rerank serving) — but the memory leak is uncontained and will re-wedge the box within hours (it froze twice tonight). The lane tried to apply the fix itself per your "you have shell access" reply, but sudo on the AGX requires a password — measured twice tonight: "sudo: a password is required" (01:00Z and 04:03Z). Paste the pcozz password into this card\u2019s credential field; it goes straight to the encrypted vault (never into any chat) and the lane applies the containment cap (44G/48G + auto-restart) over SSH within minutes, verifies, and rolls back safely if anything fails. Nothing else is needed from you.',
     ].join('\n');
     const r = await flag({ question: ask });
     expect(r.kind).toBe('created');

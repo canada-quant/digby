@@ -414,6 +414,111 @@ describe('detectSuppressionPromise + parsePromisedWindowMs', () => {
     expect(parsePromisedWindowMs('retry in 30s, full cooldown 10 minutes')).toBe(10 * M);
     expect(parsePromisedWindowMs('no duration here')).toBeNull();
   });
+
+  // ── TICKET 6384c6a7 (2026-11-03): ADJACENCY + SCOPE-QUALIFIED PROMISES ─────
+  // The defect: the parser took the LARGEST duration ANYWHERE in the message, so
+  // the embed line below — whose only duration is the embed CLIENT's timeout
+  // budget — was filed as a "once per 0 min" promise, and the sweep accused a
+  // dedupe that is honoured by construction. Two narrow rules fix it:
+  //   (1) a duration counts only inside the PROMISE TOKEN's own clause
+  //       (±PROMISE_ADJACENCY_CHARS, cut at ; ( ) [ ] — – newline);
+  //   (2) `per process|worker|instance|boot|container|pod` is a SCOPE promise,
+  //       not a time promise, so it is not a rule-2 promise at all.
+  describe('ticket 6384c6a7 — a duration must be ADJACENT to the promise, and a process scope is not a time window', () => {
+    /** The production app_error_logs row, verbatim from ticket 6384c6a7. */
+    const PROD_6384c6a7 = 'unified-memory: embed failed, 10/10 row(s) stored keyword-only — timeout (embed attempt timeout after 8000ms (batch 1/1, 2 attempt(s))); rows=10 maxChars=3500 source=orchestrator scope=session; per-row retry not attempted (logged once per cause per process; counted as unified_memory_embed_failed)';
+
+    it('the production row no longer yields a 8000ms "promised window"', () => {
+      expect(parsePromisedWindowMs(PROD_6384c6a7)).toBeNull();
+    });
+
+    it('the production row\'s promise is scope-qualified — not a rule-2 promise at all', () => {
+      expect(detectSuppressionPromise(PROD_6384c6a7)).toBeNull();
+      // …and rule 2 therefore cannot fire on it however tightly it repeats.
+      const s = classifyRecurringLogSignals([{
+        fingerprint: normalizeLogMessage(PROD_6384c6a7), count: 34, hours: 2, episodes: 2,
+        firstAt: 0, lastAt: 1, minGapMs: 0, levels: ['warn'], sources: [], exampleMessage: PROD_6384c6a7,
+      }]);
+      expect(s.filter((x) => x.rule === 'rule2-suppression')).toHaveLength(0);
+    });
+
+    it('a SCOPE-qualified promise is nulled only when it states NO window', () => {
+      for (const scope of ['process', 'worker', 'instance', 'boot', 'container', 'pod']) {
+        // No stated duration ⇒ not a time promise ⇒ rule 2 must not apply.
+        expect(detectSuppressionPromise(`suppressed once per ${scope} while it cools`)).toBeNull();
+        expect(parsePromisedWindowMs(`suppressed once per ${scope} while it cools`)).toBeNull();
+        // …but a STATED window makes it a time promise again (adversarial review
+        // 2026-11-03, BLOCKER): a scope word must never rescue a promise that
+        // named its own 6 h window from being policed.
+        expect(parsePromisedWindowMs(`suppressed once per ${scope} for 6h`)).toBe(6 * H);
+      }
+    });
+
+    it('REGRESSION (reviewer BLOCKER): an unrelated `per process` retry clause must not null a stated 6h window', () => {
+      // The repo's own session-history quarantine shape with a scope word glued
+      // onto the retry clause. Pre-fix this returned null, silently switching
+      // rule 2 OFF for the sharpest signal class the sweep has.
+      const msg = 'quarantined for 6h, one fresh attempt per process after';
+      expect(detectSuppressionPromise(msg)).toBe('quarantined');
+      expect(parsePromisedWindowMs(msg)).toBe(6 * H);
+      const s = classifyRecurringLogSignals([{
+        fingerprint: normalizeLogMessage(msg), count: 6, hours: 2, episodes: 2,
+        firstAt: 0, lastAt: 1, minGapMs: 40 * M, levels: ['warn'], sources: [], exampleMessage: msg,
+      }]);
+      expect(s.map((x) => x.rule)).toEqual(['rule2-suppression']);
+
+      // Same shape for a cooldown window and for a separate sentence.
+      expect(parsePromisedWindowMs('cooldown 30 minutes before the next attempt per worker')).toBe(30 * M);
+      expect(parsePromisedWindowMs('quarantined for 6h. Restarted once per boot.')).toBe(6 * H);
+    });
+
+    it('a parenthetical timeout budget is NOT harvested (openers terminate the clause)', () => {
+      // The binding constraint: a parenthetical routinely carries an UNRELATED
+      // budget, so `(`/`[`/dashes must end the promise's clause.
+      expect(parsePromisedWindowMs('backing off for 2s (request timeout 600000ms)')).toBe(2_000);
+      // Consequence, accepted deliberately: a window stated INSIDE the parens is
+      // not parsed. That is the CONSERVATIVE direction — the promise still
+      // convicts via the 3-repeat unparsed branch, one repeat later.
+      expect(parsePromisedWindowMs('suppressed (for 30s)')).toBeNull();
+      expect(detectSuppressionPromise('suppressed (for 30s)')).toBe('suppressed');
+      // A window in the promise's OWN clause, before the parenthetical, survives.
+      expect(parsePromisedWindowMs('quarantined for 6h (one fresh attempt)')).toBe(6 * H);
+    });
+
+    it('a slice landing inside a duration token cannot magnify the window (1000x guard)', () => {
+      // `300ms` cut at the 80-char adjacency leaves `300m`, which would read as
+      // 300 MINUTES and convict a gap nothing promised.
+      expect(parsePromisedWindowMs('suppressed' + ' '.repeat(76) + '300ms')).toBeNull();
+    });
+
+    it('a SUBJECT scope is NOT nulled — per session/chat/subject/browser/key stay rule-2 promises (3-repeat branch)', () => {
+      for (const scope of ['session', 'chat', 'subject', 'browser', 'key']) {
+        expect(detectSuppressionPromise(`once per ${scope} alert`)).not.toBeNull();
+        // No adjacent duration ⇒ the unparsed branch (3 repeats), unchanged.
+        expect(parsePromisedWindowMs(`once per ${scope} alert`)).toBeNull();
+        expect(logSignalQuietTarget({ exampleMessage: `once per ${scope} alert` })).toBe(2);
+      }
+    });
+
+    it('a duration in the promise\'s own clause still parses ("cooldown 5m active")', () => {
+      expect(detectSuppressionPromise('cooldown 5m active')).toBe('cooldown');
+      expect(parsePromisedWindowMs('cooldown 5m active')).toBe(5 * M);
+    });
+
+    it('an ADJACENT promise duration wins over a long non-adjacent timeout budget', () => {
+      // Regression for the pre-fix "largest anywhere" rule: 30000ms sits after a
+      // `;`, in the next clause, and must never be read as the 6h quarantine.
+      expect(parsePromisedWindowMs('quarantined for 6h; embed timeout after 30000ms exceeded')).toBe(6 * H);
+      // …same for a parenthetical timeout budget next to a 2s backoff.
+      expect(parsePromisedWindowMs('backing off for 2s (request timeout 600000ms)')).toBe(2_000);
+    });
+
+    it('the promise token\'s clause is bounded, so a far-away duration is ignored', () => {
+      // 80 chars of filler puts 6h outside the adjacency window on both sides.
+      const far = `quarantined${' x'.repeat(60)} then a 6h window was mentioned`;
+      expect(parsePromisedWindowMs(far)).toBeNull();
+    });
+  });
 });
 
 // ── Summarize + classify ──────────────────────────────────────────────────────

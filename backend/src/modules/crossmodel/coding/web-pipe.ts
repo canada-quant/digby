@@ -113,7 +113,21 @@ const SERP_EMPTY_RETRY_TIMEOUT_MS = 30_000;
 // failed". The provider's stated wait is honoured up to this budget; a wait
 // beyond it still fails fast, exactly as before. Absent this opt-in the
 // ca805a61 fail-fast contract is unchanged for every other caller.
-const WEB_PIPE_SERP_RESUME_BUDGET_MS = 45_000;
+//
+// SIZED TO THE CANONICAL THROTTLE (WRP-1 D3-R, 2026-11-03): BrightData's own
+// auto-throttle body states `x-brd-rate-limit-period-ms: 60000`. At the old
+// 45 s budget the canonical shape was arithmetically OUTSIDE the ladder
+// (`resumeWorthIt = Date.now() + 60000 <= resumeDeadline` was false on entry),
+// so it took the fail-fast return and no `web_serp_resume` row could EVER be
+// emitted for it — the defect was in this budget, not in the 8 s
+// SERP_PROVIDER_RETRY_WAIT_CAP_MS. The cap still governs the DEFAULT branch
+// (an interactive caller passes no budget and still fails fast at once); this
+// constant only decides how long the RESEARCH path will wait. 70 s = the 60 s
+// canonical period plus margin for the direct-tier attempt + gateway entry
+// before `resumeDeadline` is stamped, so a 60 s-stated throttle resumes and a
+// second one inside the same call cannot (the deadline is fixed once, at
+// entry).
+export const WEB_PIPE_SERP_RESUME_BUDGET_MS = 70_000;
 export function webPipeSerpEmptyRetryDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.WEB_PIPE_SERP_EMPTY_RETRY_DISABLED === '1';
 }

@@ -1,6 +1,6 @@
 {
   "name": "digby-imessage-agent",
-  "version": "0.9.19",
+  "version": "0.9.23",
   "description": "Digby macOS iMessage bridge agent — reads & sends iMessages locally and relays to Digby over an outbound long-poll link.",
   "private": true,
   "bin": {

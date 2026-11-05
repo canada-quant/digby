@@ -7,7 +7,7 @@ const ANSWER = `One heads-up: brief serving blip.
 
 ACTIONS TAKEN
 
-- goal_create → goal 534c37aa — "QB2 64K serving deploy + validation"
+- goal_create → goal 534c37aa — "node-a 64K serving deploy + validation"
 - todo_create ×3 → todos 536d5d52, 23014278, 63a8404a — restart / gateway PR / validate+bench
 - start_coding_session → receipt b3649334, session fbb5c9ca — lane spawned
 - save_supervisor_state — dispatch ledger + notes updated

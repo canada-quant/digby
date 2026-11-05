@@ -64,7 +64,7 @@ function clearEnv() {
 }
 function configureEnv(overrides: Record<string, string> = {}) {
   clearEnv();
-  process.env.DIGBY_SMTP_USER = 'digby@digby.example.com';
+  process.env.DIGBY_SMTP_USER = 'digby@digby.ai';
   process.env.DIGBY_SMTP_PASS = 'app-password-secret';
   Object.assign(process.env, overrides);
 }
@@ -84,21 +84,21 @@ describe('digby-email.service — configuration', () => {
   });
 
   it('user set but pass missing (or vice versa) is still NOT configured', () => {
-    process.env.DIGBY_SMTP_USER = 'digby@digby.example.com';
+    process.env.DIGBY_SMTP_USER = 'digby@digby.ai';
     expect(isConfigured()).toBe(false);
     clearEnv();
     process.env.DIGBY_SMTP_PASS = 'x';
     expect(isConfigured()).toBe(false);
   });
 
-  it('defaults: host smtp.gmail.com, port 587, from digby@digby.example.com; env overrides win', () => {
+  it('defaults: host smtp.gmail.com, port 587, from digby@digby.ai; env overrides win', () => {
     configureEnv();
     const cfg = digbyEmailConfig()!;
-    expect(cfg).toMatchObject({ host: 'smtp.gmail.com', port: 587, user: 'digby@digby.example.com', from: 'digby@digby.example.com' });
+    expect(cfg).toMatchObject({ host: 'smtp.gmail.com', port: 587, user: 'digby@digby.ai', from: 'digby@digby.ai' });
     expect(cfg.pass).toBe('app-password-secret');
 
-    configureEnv({ DIGBY_SMTP_HOST: 'smtp.example.com', DIGBY_SMTP_PORT: '465', DIGBY_SMTP_FROM: 'bot@digby.example.com' });
-    expect(digbyEmailConfig()).toMatchObject({ host: 'smtp.example.com', port: 465, from: 'bot@digby.example.com' });
+    configureEnv({ DIGBY_SMTP_HOST: 'smtp.example.com', DIGBY_SMTP_PORT: '465', DIGBY_SMTP_FROM: 'bot@digby.ai' });
+    expect(digbyEmailConfig()).toMatchObject({ host: 'smtp.example.com', port: 465, from: 'bot@digby.ai' });
   });
 
   it('a garbage port falls back to 587, never NaN', () => {
@@ -110,7 +110,7 @@ describe('digby-email.service — configuration', () => {
 describe('digby-email.service — validation (never reaches the transport)', () => {
   it('garbage "to" is rejected without a transport call', async () => {
     configureEnv();
-    for (const to of ['', 'not-an-email', 'a b@c.d', 'a@b', 'x@y,z', 'a@b.c,d@e.f', 'user@@digby.example.com']) {
+    for (const to of ['', 'not-an-email', 'a b@c.d', 'a@b', 'x@y,z', 'a@b.c,d@e.f', 'user@@digby.ai']) {
       const r = await sendDigbyEmail({ to, subject: 's', text: 'body' });
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.error).toMatch(/invalid recipient/i);
@@ -186,7 +186,7 @@ describe('digby-email.service — notConfigured path', () => {
   });
 
   it('isValidEmailAddress: true for real shapes, false for garbage', () => {
-    expect(isValidEmailAddress('digby@digby.example.com')).toBe(true);
+    expect(isValidEmailAddress('digby@digby.ai')).toBe(true);
     expect(isValidEmailAddress('first.last+tag@sub.example.co')).toBe(true);
     expect(isValidEmailAddress('nope')).toBe(false);
     expect(isValidEmailAddress('a@nodot')).toBe(false);
@@ -197,8 +197,8 @@ describe('digby-email.service — notConfigured path', () => {
 
 describe('digby-email.service — happy path (mocked nodemailer)', () => {
   it('sends from DIGBY_SMTP_FROM with reply-to = DIGBY_SMTP_USER; returns the messageId', async () => {
-    configureEnv({ DIGBY_SMTP_FROM: 'Digby <digby@digby.example.com>' });
-    sendMail.mockResolvedValueOnce({ messageId: '<abc-123@digby.example.com>' });
+    configureEnv({ DIGBY_SMTP_FROM: 'Digby <digby@digby.ai>' });
+    sendMail.mockResolvedValueOnce({ messageId: '<abc-123@digby.ai>' });
 
     const r = await sendDigbyEmail(
       { to: 'owner@example.com', subject: 'Nightly report', text: 'All green.', cc: 'teammate@example.org' },
@@ -207,14 +207,14 @@ describe('digby-email.service — happy path (mocked nodemailer)', () => {
 
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.messageId).toBe('<abc-123@digby.example.com>');
-      expect(r.from).toBe('Digby <digby@digby.example.com>');
+      expect(r.messageId).toBe('<abc-123@digby.ai>');
+      expect(r.from).toBe('Digby <digby@digby.ai>');
     }
     expect(sendMail).toHaveBeenCalledTimes(1);
     const payload = sendMail.mock.calls[0][0];
     expect(payload).toMatchObject({
-      from: 'Digby <digby@digby.example.com>',
-      replyTo: 'digby@digby.example.com',
+      from: 'Digby <digby@digby.ai>',
+      replyTo: 'digby@digby.ai',
       to: 'owner@example.com',
       cc: 'teammate@example.org',
       subject: 'Nightly report',
@@ -228,7 +228,7 @@ describe('digby-email.service — happy path (mocked nodemailer)', () => {
         outcome: 'sent',
         to: 'owner@example.com',
         cc: 'teammate@example.org',
-        messageId: '<abc-123@digby.example.com>',
+        messageId: '<abc-123@digby.ai>',
         subjectChars: 14, // "Nightly report"
         textChars: 10,
       }),
@@ -237,7 +237,7 @@ describe('digby-email.service — happy path (mocked nodemailer)', () => {
 
   it('long local parts are truncated to the 12-char prefix in telemetry (recipient privacy)', async () => {
     configureEnv();
-    sendMail.mockResolvedValueOnce({ messageId: '<m-1@digby.example.com>' });
+    sendMail.mockResolvedValueOnce({ messageId: '<m-1@digby.ai>' });
     const long = 'averyveryverylonglocalpart'.repeat(2); // 54 chars before @
     await sendDigbyEmail({ to: `${long}@example.com`, subject: 's', text: 't' });
     const call = mockRecordLoopMetric.mock.calls.find((c) => c[0]?.meta?.outcome === 'sent')!;
@@ -247,7 +247,7 @@ describe('digby-email.service — happy path (mocked nodemailer)', () => {
 
   it('the body text NEVER appears in telemetry', async () => {
     configureEnv();
-    sendMail.mockResolvedValueOnce({ messageId: '<m-2@digby.example.com>' });
+    sendMail.mockResolvedValueOnce({ messageId: '<m-2@digby.ai>' });
     const secret = 'TOPSECRETBODYCONTENT';
     await sendDigbyEmail({ to: 'a@b.c', subject: 's', text: secret });
     const recorded = JSON.stringify(mockRecordLoopMetric.mock.calls);
@@ -269,7 +269,7 @@ describe('digby-email.service — happy path (mocked nodemailer)', () => {
 describe('digby-email.service — rate limit', () => {
   it(`${DIGBY_EMAIL_HOURLY_CAP} sends admitted, the ${DIGBY_EMAIL_HOURLY_CAP + 1}th → clean rate_limited error, no transport call`, async () => {
     configureEnv();
-    sendMail.mockResolvedValue({ messageId: '<m@digby.example.com>' });
+    sendMail.mockResolvedValue({ messageId: '<m@digby.ai>' });
     for (let i = 0; i < DIGBY_EMAIL_HOURLY_CAP; i++) {
       const r = await sendDigbyEmail({ to: 'a@b.c', subject: `s${i}`, text: 't' });
       expect(r.ok).toBe(true);
@@ -294,7 +294,7 @@ describe('digby-email.service — rate limit', () => {
     for (let i = 0; i < 5; i++) {
       await sendDigbyEmail({ to: 'garbage', subject: 's', text: 't' });
     }
-    sendMail.mockResolvedValue({ messageId: '<m@digby.example.com>' });
+    sendMail.mockResolvedValue({ messageId: '<m@digby.ai>' });
     const r = await sendDigbyEmail({ to: 'a@b.c', subject: 's', text: 't' });
     expect(r.ok).toBe(true); // still admitted — the 5 garbage calls took no slot
   });

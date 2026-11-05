@@ -61,7 +61,7 @@ const mockPrisma: any = {
   },
   // Delivery-time todo_wake revalidation + the retired-target counts.
   projectTodo: { findUnique: jest.fn(), count: jest.fn(async () => 0) },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   crossModelProject: { findUnique: jest.fn() },
   crossModelChat: { findUnique: jest.fn(), findMany: jest.fn(), update: jest.fn(async () => ({})) },
   crossModelMessage: { create: jest.fn(async () => ({})) },
@@ -197,7 +197,7 @@ beforeEach(() => {
   mockPrisma.hookEvent.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.hookEvent.count.mockResolvedValue(0);
   mockPrisma.projectTodo.findUnique.mockResolvedValue({ status: 'pending', assigneeChatId: 'c-tgt' });
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.projectTodo.count.mockResolvedValue(0);
   // The target is the parent's PLAIN chat (no codingState) — never
   // retired, and the fireScheduleTarget mock owns both delivery branches.

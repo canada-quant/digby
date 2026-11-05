@@ -1272,7 +1272,7 @@ async function digestBucket(opts: {
       where: { chatId: { in: chatIds } },
       select: { id: true, chatId: true, createdAt: true, source: true },
     }),
-    prisma.codingSchedule.findMany({
+    prisma.chatSchedule.findMany({
       where: { sessionId: { in: chatIds } },
       select: { id: true, sessionId: true, lastFiredAt: true, lastStatus: true, prompt: true, enabled: true, kind: true, runsCount: true, cancelledBy: true, disabledAt: true },
     }),

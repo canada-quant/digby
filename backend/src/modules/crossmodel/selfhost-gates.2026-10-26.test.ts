@@ -1,7 +1,7 @@
 /**
- * Self-host / Digby Edge honesty gates (2026-10-26, the digby.example.com outage).
+ * Self-host / Digby Edge honesty gates (2026-10-26, the digby.cql.ca outage).
  *
- * The owner's Edge instance (digby.example.com — a gateway-only self-host: every
+ * The owner's Edge instance (digby.cql.ca — a gateway-only self-host: every
  * model served through custom endpoints, no DEEPSEEK_API_KEY /
  * DASHSCOPE_API_KEY) showed "Personalized news is temporarily unavailable —
  * we'll retry automatically" forever. Root cause: the 2026-10-20 news gate
@@ -123,7 +123,7 @@ describe('utilityChainUnconfigured — the structural gate (2026-10-26)', () => 
     } finally { restore(); }
   });
 
-  it('TRUE when keyless with no seat assignment (the digby.example.com outage shape)', async () => {
+  it('TRUE when keyless with no seat assignment (the digby.cql.ca outage shape)', async () => {
     const restore = keylessModules({});
     try {
       jest.doMock('./model-endpoints/model-roles.service', () => ({

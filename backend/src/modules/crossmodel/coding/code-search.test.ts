@@ -25,7 +25,7 @@ function deps(over: Partial<CodeSearchDeps> = {}): CodeSearchDeps & { search: je
     readState: jest.fn(async () => null),
     isSupervisorChat: jest.fn(async () => false),
     listRepoProjects: jest.fn(async () => []),
-    ownRepoSlug: () => 'canada-quant/digby',
+    ownRepoSlug: () => 'example-org/crossmodel',
     now: () => NOW,
     ...over,
   } as any;
@@ -82,8 +82,8 @@ describe("'chat' scope → an honest no-index answer, nothing searched", () => {
 describe('supervisor chat → the platform repository project index', () => {
   const projects = [
     { id: 'p-app-0000', name: 'app', repoUrl: 'https://github.com/acme/app' },
-    { id: 'p-plat-old', name: 'crossmodel (old)', repoUrl: 'git@github.com:canada-quant/old-copy.git' },
-    { id: 'p-plat-main', name: 'crossmodel', repoUrl: 'https://github.com/canada-quant/digby.git' },
+    { id: 'p-plat-old', name: 'crossmodel (old)', repoUrl: 'git@github.com:example-org/crossmodel.git' },
+    { id: 'p-plat-main', name: 'crossmodel', repoUrl: 'https://github.com/example-org/crossmodel.git' },
   ];
   const states: Record<string, any> = {
     'p-plat-old': { files: { 'a.ts': 'h' }, lastSyncAt: '2026-10-01T00:00:00Z' },
@@ -122,7 +122,7 @@ describe('supervisor chat → the platform repository project index', () => {
 
   it('pickPlatformIndexProject: slug-normalized match, most files first, then freshest', () => {
     const cands = projects.map(p => ({ ...p, state: states[p.id] ?? null }));
-    expect(pickPlatformIndexProject(cands, 'canada-quant/digby')?.id).toBe('p-plat-main');
+    expect(pickPlatformIndexProject(cands, 'example-org/crossmodel')?.id).toBe('p-plat-main');
     expect(pickPlatformIndexProject(cands, 'https://github.com/acme/app')?.id).toBe('p-app-0000');
     expect(pickPlatformIndexProject(cands, 'nobody/nothing')).toBeNull();
     expect(pickPlatformIndexProject(cands, '')).toBeNull();

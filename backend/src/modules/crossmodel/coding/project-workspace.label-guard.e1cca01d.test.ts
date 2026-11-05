@@ -2,7 +2,7 @@
  * e1cca01d write-seam guard (log-signal family lane 65787dde, 2026-10-19).
  *
  * The 2026-10-18 canlegal-bench incident: import_repo landed a project with
- * githubLabel "pasta_paul" at 04:20Z while the only connected labels were
+ * githubLabel "example-org" at 04:20Z while the only connected labels were
  * "pastapaul_canadaquant"/"Pastapaul" — silently. Nothing surfaced until the
  * first git op 05:15Z, when the getValidToken label-miss fallback began
  * hot-looping its warn (73 rows, 6 distinct hours — the RULE 1 recurrence this
@@ -57,7 +57,7 @@ import { configureWorkspace } from './project-workspace.service';
 
 const warn = logger.warn as jest.Mock;
 
-const PROJECT = { id: 'p1', userId: 'u1', name: 'proj', repoProvider: 'github', repoUrl: 'https://github.com/o/r.git', githubLabel: 'pasta_paul', defaultBranch: 'main' };
+const PROJECT = { id: 'p1', userId: 'u1', name: 'proj', repoProvider: 'github', repoUrl: 'https://github.com/o/r.git', githubLabel: 'example-org', defaultBranch: 'main' };
 const LIVE_LABELS = [{ label: 'pastapaul_canadaquant' }, { label: 'Pastapaul' }];
 
 describe('e1cca01d write-seam guard: warnIfPinnedLabelMissing via configureWorkspace', () => {
@@ -83,11 +83,11 @@ describe('e1cca01d write-seam guard: warnIfPinnedLabelMissing via configureWorks
   });
 
   it('idempotent no-write call (same label re-sent) → the guard does not run (review finding 6)', async () => {
-    findUnique.mockResolvedValue({ ...PROJECT, githubLabel: 'pasta_paul' });
+    findUnique.mockResolvedValue({ ...PROJECT, githubLabel: 'example-org' });
     gitHubFindMany.mockClear();
     // p.githubLabel === opts.githubLabel → no write → no guard (a lane
     // retrying the f121 remediation shape must not re-warn per call).
-    await configureWorkspace('p1', 'u1', { githubLabel: 'pasta_paul' });
+    await configureWorkspace('p1', 'u1', { githubLabel: 'example-org' });
     expect(warn).not.toHaveBeenCalled();
     expect(gitHubFindMany).not.toHaveBeenCalled();
   });
@@ -96,11 +96,11 @@ describe('e1cca01d write-seam guard: warnIfPinnedLabelMissing via configureWorks
     // entry findFirst: a not-yet-configured project (repoProvider null)
     findFirst.mockResolvedValueOnce({ id: 'p1', userId: 'u1', name: 'proj', repoProvider: null, repoUrl: null, githubLabel: null, defaultBranch: null });
     // the guard's findUnique: the WRITTEN state (github provider + dead label)
-    findUnique.mockResolvedValue({ ...PROJECT, githubLabel: 'pasta_paul' });
+    findUnique.mockResolvedValue({ ...PROJECT, githubLabel: 'example-org' });
     gitHubFindMany.mockResolvedValue(LIVE_LABELS);
-    await configureWorkspace('p1', 'u1', { repoUrl: 'https://github.com/o/r.git', provider: 'github', githubLabel: 'pasta_paul' });
+    await configureWorkspace('p1', 'u1', { repoUrl: 'https://github.com/o/r.git', provider: 'github', githubLabel: 'example-org' });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect((warn.mock.calls[0][0] as string)).toContain('"pasta_paul"');
+    expect((warn.mock.calls[0][0] as string)).toContain('"example-org"');
   });
 
   it('live pin → silent (no warn)', async () => {

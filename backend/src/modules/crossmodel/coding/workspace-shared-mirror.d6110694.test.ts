@@ -6,7 +6,7 @@
  *
  *  A. Origin-less mirror under a github project: persistProjectRepo flips a
  *     'local' project to 'github' after the first push but never adds `origin`
- *     to the already-existing bare repo (prod 922fd3ad cql-agx-orin64 —
+ *     to the already-existing bare repo (prod 922fd3ad cql-accelerator —
  *     "git remote set-url origin … error: No such remote 'origin'" 3× at
  *     17:47Z; the mirror NEVER refreshed again). ensureRepoMirror must heal
  *     by adding the remote.
@@ -89,11 +89,11 @@ describe('d6110694-A: origin-less mirror heal', () => {
     fs.mkdirSync(mirror, { recursive: true });
     git(['init', '-q', '--bare', '-b', 'main'], mirror);
     git(['config', 'user.name', 'Digby'], mirror);
-    git(['config', 'user.email', 'digby@digby.example.com'], mirror);
+    git(['config', 'user.email', 'digby@digby.ai'], mirror);
     // Seed a commit via a temp clone of the mirror itself (local-provider shape).
     const seed = path.join(ROOT, 'seed-clone');
     git(['clone', '-q', mirror, seed], ROOT);
-    git(['config', 'user.email', 'digby@digby.example.com'], seed);
+    git(['config', 'user.email', 'digby@digby.ai'], seed);
     git(['config', 'user.name', 'Digby'], seed);
     fs.writeFileSync(path.join(seed, 'README.md'), '# local-born\n');
     git(['add', '.'], seed);
@@ -139,13 +139,13 @@ describe('d6110694-B: credential redaction strips the prod failure shapes', () =
   test('redacts the x-access-token URL shape from the prod failure line', () => {
     const leaked = tok('gho', 'Synth3t1cT0kenForTest0nly1234567890');
     const prod = 'Command failed: git remote set-url origin ' +
-      `https://x-access-token:${leaked}@github.com/canada-quant/cql-agx-orin64.git\n` +
+      `https://x-access-token:${leaked}@github.com/example-org/cql-accelerator.git\n` +
       'error: No such remote \'origin\'';
     const red = redact(prod);
     expect(red).not.toContain(leaked);
     // Canonical util output: the userinfo slot (incl. user) is fully masked —
     // `//x-access-token:<token>@` → `//***@` (host + path + stderr kept).
-    expect(red).toContain('https://***@github.com/canada-quant/cql-agx-orin64.git');
+    expect(red).toContain('https://***@github.com/example-org/cql-accelerator.git');
     expect(red).toContain('No such remote');
   });
 
@@ -227,24 +227,18 @@ describe('d6110694-C: unreachable shallow residue is pruned, not looped forever'
     expect(git(['rev-list', '--count', deadTip, '--not', '--all'], mirror)).not.toBe('0');
   }, 60_000);
 
-  test('ensureRepoMirror prunes the unreachable residue: probe false, file gone, history intact', async () => {
-    // RED-DISCRIMINATING setup (M-1): run under WORKSPACE_UNSHALLOW_DISABLED so
-    // the plain `fetch --unshallow` in this environment cannot mask the prod
-    // pathology (the prod upstream advertises no ref reaching the dead
-    // lineage, so a real unshallow is a silent no-op). With the fetch skipped,
-    // only the residue verify/prune can clear the file.
-    const prev = process.env.WORKSPACE_UNSHALLOW_DISABLED;
-    process.env.WORKSPACE_UNSHALLOW_DISABLED = '1';
-    try {
-      await ws.ensureRepoMirror(PROJECT, `file://${path.join(ROOT, 'up-dead')}`, null);
-      expect(git(['rev-parse', '--is-shallow-repository'], mirror)).toBe('false');
-      expect(fs.existsSync(path.join(mirror, 'shallow'))).toBe(false);
-      // Live-ref history is untouched by the prune.
-      expect(git(['rev-list', '--count', 'refs/remotes/origin/main'], mirror)).toBe('4');
-    } finally {
-      if (prev === undefined) delete process.env.WORKSPACE_UNSHALLOW_DISABLED;
-      else process.env.WORKSPACE_UNSHALLOW_DISABLED = prev;
-    }
+  test('pruneUnreachableShallowResidue clears the unreachable residue with NO fetch in play: probe false, file gone, history intact', async () => {
+    // RED-DISCRIMINATING (M-1): drive the prune DIRECTLY, with no fetch in the
+    // picture. A real `fetch --unshallow` against this fixture HEALS the mirror,
+    // after which the prune early-returns on "not shallow" — so reaching the
+    // prune through ensureRepoMirror would leave this case green on an end state
+    // two different paths can produce, asserting nothing about the prune. Only
+    // the prune can clear the file here.
+    await ws.pruneUnreachableShallowResidue(mirror);
+    expect(git(['rev-parse', '--is-shallow-repository'], mirror)).toBe('false');
+    expect(fs.existsSync(path.join(mirror, 'shallow'))).toBe(false);
+    // Live-ref history is untouched by the prune.
+    expect(git(['rev-list', '--count', 'refs/remotes/origin/main'], mirror)).toBe('4');
   }, 60_000);
 
   test('a REACHABLE boundary is never pruned (no over-prune) — and a mixed shallow file is pruned SELECTIVELY', async () => {
@@ -283,23 +277,15 @@ describe('d6110694-C: unreachable shallow residue is pruned, not looped forever'
     fs.appendFileSync(path.join(m2, 'shallow'), `${deadTip}\n`);
     expect(git(['rev-list', '--count', deadTip, '--not', '--all'], m2)).not.toBe('0'); // premise: dead entry is unreachable
 
-    // Run the fix path with unshallow DISABLED (so only the prune logic runs —
-    // this isolates the prune from the genuine deepen).
-    const prev = process.env.WORKSPACE_UNSHALLOW_DISABLED;
-    process.env.WORKSPACE_UNSHALLOW_DISABLED = '1';
-    try {
-      await ws.ensureRepoMirror(p2, `file://${up2}`, null);
-      // The reachable boundary was NOT pruned: the file still lists it.
-      expect(fs.existsSync(path.join(m2, 'shallow'))).toBe(true);
-      expect(fs.readFileSync(path.join(m2, 'shallow'), 'utf8')).toContain(boundary);
-      // The dead entry WAS pruned: it is gone from the file.
-      expect(fs.readFileSync(path.join(m2, 'shallow'), 'utf8')).not.toContain(deadTip);
-      expect(git(['rev-parse', '--is-shallow-repository'], m2)).toBe('true');
-    } finally {
-      if (prev === undefined) delete process.env.WORKSPACE_UNSHALLOW_DISABLED;
-      else process.env.WORKSPACE_UNSHALLOW_DISABLED = prev;
-    }
-    // And with unshallow re-enabled the genuine heal still works (no residue left behind).
+    // Drive the prune DIRECTLY (no fetch in play — see the residue case above).
+    await ws.pruneUnreachableShallowResidue(m2);
+    // The reachable boundary was NOT pruned: the file still lists it.
+    expect(fs.existsSync(path.join(m2, 'shallow'))).toBe(true);
+    expect(fs.readFileSync(path.join(m2, 'shallow'), 'utf8')).toContain(boundary);
+    // The dead entry WAS pruned: it is gone from the file.
+    expect(fs.readFileSync(path.join(m2, 'shallow'), 'utf8')).not.toContain(deadTip);
+    expect(git(['rev-parse', '--is-shallow-repository'], m2)).toBe('true');
+    // And the genuine heal still works end-to-end through ensureRepoMirror (no residue left behind).
     await ws.ensureRepoMirror(p2, `file://${up2}`, null);
     expect(git(['rev-parse', '--is-shallow-repository'], m2)).toBe('false');
     expect(git(['rev-list', '--count', 'refs/remotes/origin/main'], m2)).toBe('6');

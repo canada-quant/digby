@@ -123,7 +123,7 @@ import logger from '../../../utils/logger';
 import { killSwitchOn } from '../../../utils/kill-switch';
 import { recordLoopMetric, LOOP_METRIC_KINDS } from '../platform/loop-metrics.service';
 import { getValidToken } from '../github/token-manager';
-import { sessionHistorySingleBranchEnabled, LEGACY_SESSION_HISTORY_PREFIX, SESSION_HISTORY_BRANCH } from '../coding/session-history-sync.service';
+import { LEGACY_SESSION_HISTORY_PREFIX, SESSION_HISTORY_BRANCH } from '../coding/session-history-sync.service';
 import { repoTargetAllowed, instanceKind, normalizeGithubRepoTarget, resolveInstanceOwnRepoSlug } from '../platform/instance-targets';
 
 // ── Contract constants ───────────────────────────────────────────────────────
@@ -239,7 +239,7 @@ export async function defaultLaneLive(id8: string): Promise<boolean> {
     const ids = chats.map(c => c.id);
     const [runs, schedules] = await Promise.all([
       prisma.agentRun.count({ where: { sessionId: { in: ids }, status: { in: ['queued', 'running', 'interrupted'] } } }),
-      prisma.codingSchedule.count({ where: { sessionId: { in: ids }, enabled: true } }),
+      prisma.chatSchedule.count({ where: { sessionId: { in: ids }, enabled: true } }),
     ]);
     return runs > 0 || schedules > 0;
   } catch {
@@ -408,10 +408,14 @@ export function isFrameworkOwnedRepo(slug: string, env: NodeJS.ProcessEnv = proc
   return !!own && normalizeGithubRepoTarget(own) === norm;
 }
 
-/** A legacy per-session history mirror — only while the consolidated mode is on. */
+/** A legacy per-session history mirror (pre-2026-09-14 shape).
+ *  The consolidated mode is unconditional since the
+ *  SESSION_HISTORY_SINGLE_BRANCH_DISABLED escape hatch was deleted
+ *  (2026-11-04, cluster 42 — it was NF_INERT), so the prefix shape is now
+ *  the ONLY gate: these branches are dead mirrors of live history and get
+ *  deleted as `legacy_session_history`. */
 export function isLegacySessionHistoryBranch(name: string): boolean {
-  return sessionHistorySingleBranchEnabled()
-    && name.startsWith(LEGACY_SESSION_HISTORY_PREFIX)
+  return name.startsWith(LEGACY_SESSION_HISTORY_PREFIX)
     && !name.slice(LEGACY_SESSION_HISTORY_PREFIX.length).includes('/')
     && name.length > LEGACY_SESSION_HISTORY_PREFIX.length;
 }

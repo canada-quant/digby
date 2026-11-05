@@ -29,7 +29,7 @@ const ASANA_TOKEN_URL = 'https://app.asana.com/-/oauth_token';
 function getConfig() {
   const clientId     = process.env.ASANA_CLIENT_ID;
   const clientSecret = process.env.ASANA_CLIENT_SECRET;
-  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
   // Derived from THIS instance's public URL (self-host setup hardening, 2026-10-20); the env overrides.
   const redirectUri  = process.env.ASANA_OAUTH_REDIRECT_URI ||
     `${frontendUrl}/api/crossmodel/asana/callback`;
@@ -68,7 +68,7 @@ export class AsanaOAuthController {
       const clientId     = process.env.ASANA_CLIENT_ID;
       const clientSecret = process.env.ASANA_CLIENT_SECRET;
       if (!clientId || !clientSecret) {
-        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
         logger.warn('Asana OAuth: ASANA_CLIENT_ID / ASANA_CLIENT_SECRET not configured');
         return res.redirect(`${frontendUrl}/account?tab=integrations&asana=not_configured`);
       }

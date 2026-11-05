@@ -310,15 +310,86 @@ export interface CompletedDelegation {
   title: string;
   role: string;
   status: string;
+  /** The clipped orchestrator-facing summary (prose + a [WORKER STATUS] line). */
   summary: string;
+  /**
+   * Worktree-relative path of the DURABLE full report (ticket 95210e7e),
+   * written at completion by coding/worker-report-store.ts. Present only when
+   * the run had a worktree and the write succeeded.
+   */
+  reportPath?: string;
+  /**
+   * The worker's FULL final text. Used as the note's own carrier when there is
+   * no `reportPath` (chat mode, workspace tools off, or a failed write) — the
+   * note is then the only surviving copy, so it carries the report itself
+   * instead of a head fragment.
+   */
+  report?: string;
 }
 
 export const COMPLETED_DELEGATIONS_MARKER = '[COMPLETED DELEGATIONS THIS RUN';
 
-/** Compact harness note listing delegations that finished inside the in-flight turn. */
+/** Chars of a report kept inline when a durable copy exists (the rest is one read_file away). */
+export const NOTE_REPORT_HEAD_CHARS = 600;
+/** Total chars of report text the note carries inline when there is NO durable copy. */
+export const NOTE_REPORT_BUDGET_CHARS = 8_000;
+
+/**
+ * Compact harness note listing delegations that finished inside the in-flight turn.
+ *
+ * TICKET 95210e7e — this note is a RESUME lifeline, not a preview. It used to
+ * collapse each verdict to a single 200-char line (`summary.replace(/\s+/g,' ')
+ * .slice(0,200)`), which on a real reviewer report is exactly its first
+ * sentence; the second half — where an adversarial review puts its findings —
+ * was unrecoverable after a deploy restarted the server mid-turn, and the
+ * review had to be re-derived by hand against the live system.
+ *
+ * Now every entry names the DURABLE full report written at completion
+ * (`.digby/session/worker-reports/…`) so the resumed turn can read_file the
+ * whole thing. When there is no durable copy (no worktree / the write failed),
+ * the note carries the report INLINE inside a bounded budget — a truncated
+ * body that says so beats a lost verdict.
+ */
 export function renderCompletedDelegationsNote(items: CompletedDelegation[]): string {
-  const lines = items.slice(-12).map(d => `- ${d.title} (${d.role}) → ${d.status}: ${d.summary.replace(/\s+/g, ' ').slice(0, 200)}`);
-  return `${COMPLETED_DELEGATIONS_MARKER} — harness note, not typed by the user] The interrupted turn already ran these delegated workers to COMPLETION; the turn is being regenerated, so their tool results are not in the transcript. Build on these results — do NOT re-dispatch the same work:\n${lines.join('\n')}`;
+  const shown = items.slice(-12);
+  // PER-ENTRY FLOOR (ticket 95210e7e review finding 7): a shared budget with no
+  // floor lets the FIRST needy worker spend it all, and every later worker —
+  // possibly the reviewer whose findings matter most — collapses to the very
+  // 200-char head this ticket exists to remove. Reserve a fair share each, then
+  // let an entry that needs less leave its remainder for the rest.
+  const floor = Math.max(200, Math.floor(NOTE_REPORT_BUDGET_CHARS / Math.max(1, shown.length)));
+  let budget = NOTE_REPORT_BUDGET_CHARS;
+  const lines = shown.map(d => {
+    const oneLine = d.summary.replace(/\s+/g, ' ').trim();
+    const label = `- ${d.title} (${d.role}) → ${d.status}`;
+    if (d.reportPath) {
+      // The pointer branch still spends context (ticket 95210e7e review
+      // finding 1): a 600-char head × 12 entries is 7.2 KB injected into every
+      // dispatch checkpoint, so it is charged against the SAME budget as the
+      // inline branch. Pre-fix the budget was decremented only inline, and the
+      // documented bound was optimistic by ~9 KB.
+      const head = oneLine.slice(0, Math.max(0, Math.min(NOTE_REPORT_HEAD_CHARS, budget)));
+      budget -= head.length;
+      const more = oneLine.length > head.length ? ' …' : '';
+      return `${label}: ${head}${more}\n  FULL REPORT (durable): ${d.reportPath} — read_file it for the complete text; do NOT re-derive this work or re-dispatch the worker.`;
+    }
+    // No durable copy but the caller supplied the report text: this note IS
+    // the surviving copy, so it carries the report (bounded by the shared budget).
+    if (!d.report?.trim()) return `${label}: ${oneLine.slice(0, 200)}`; // legacy summary-only shape
+    // Strip the worker's JSON status footer HERE, not only at the call site
+    // (ticket 95210e7e review finding 5): the caller's `workerProse` made the
+    // strip real but UNPINNED — mutating it back to the raw text left every
+    // test green. Stripping in the renderer makes the guarantee a property of
+    // the note, and it is cheap insurance against a future caller that passes
+    // the raw final text. (In the same module, so no new import.)
+    const body = (parseWorkerEnvelope(d.report)?.prose.trim() || d.report.trim());
+    const keep = Math.min(body.length, Math.max(0, budget), Math.max(floor, 0));
+    if (keep <= 0) return `${label}: ${oneLine.slice(0, 200)} …(the rest was not retained — no durable copy existed for this worker)`;
+    budget -= keep;
+    const cut = body.length > keep ? ` …(${body.length - keep} more chars were cut from this note and no durable copy exists — treat the worker's report as PARTIAL)` : '';
+    return `${label}: ${body.slice(0, keep)}${cut}`;
+  });
+  return `${COMPLETED_DELEGATIONS_MARKER} — harness note, not typed by the user] The interrupted turn already ran these delegated workers to COMPLETION; the turn is being regenerated, so their tool results are not in the transcript. Build on these results — do NOT re-dispatch the same work. Entries marked "FULL REPORT (durable)" name a file on disk holding the worker's complete verdict: read_file it before deciding anything the summary does not settle.\n${lines.join('\n')}`;
 }
 
 /**

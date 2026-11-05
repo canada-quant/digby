@@ -252,11 +252,19 @@ export interface SpawnCheckerInput {
   checkerSeatProblem: string | null;
   /** the run is the council (its colleagues are the checkers) */
   isCouncil: boolean;
+  /**
+   * GHOST = ONE LEAD INFERENCE (owner ruling 2026-11-03): a ghost run on a live
+   * designation never spawns a second model. Structural, not a plan flag — the
+   * run seam already collapses the plan (`ghost-runtime ghostSingleModelPlan`),
+   * and this belt-and-braces input means a future seam that hands a
+   * checker-bearing plan to a ghost run STILL cannot spawn one.
+   */
+  ghost?: boolean;
 }
 
 /** Spawn the Level 2 Double Checker iff the PLAN says so and nothing structural forbids it (pure). */
 export function shouldSpawnChecker(i: SpawnCheckerInput): boolean {
-  if (i.isCouncil || i.machineTurnSkipsChecker || i.checkerSeatProblem) return false;
+  if (i.ghost || i.isCouncil || i.machineTurnSkipsChecker || i.checkerSeatProblem) return false;
   return i.plan.spawnChecker === true;
 }
 

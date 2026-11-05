@@ -142,7 +142,7 @@ export interface NeedsYouUnionView extends NeedsYouUnion {
  * "nothing needs the owner" (the render surfaces keep their existing
  * sections; only the union section is skipped).
  */
-export async function loadNeedsYouUnion(input: { userId?: string; projectId?: string | null }): Promise<NeedsYouUnionView | null> {
+export async function loadNeedsYouUnion(input: { userId?: string; projectId?: string | null; excludeProjectIds?: string[] | null }): Promise<NeedsYouUnionView | null> {
   // Per-leg fail-soft (the owner-status loader's shape): every read is its own
   // IIFE with an internal catch, so a partial prisma surface can never mint an
   // orphaned rejection (a sibling throwing synchronously mid-array-build).
@@ -156,10 +156,27 @@ export async function loadNeedsYouUnion(input: { userId?: string; projectId?: st
     })();
   try {
     if (!input.projectId && !input.userId) return null;
-    const scope = input.projectId ? { projectId: input.projectId } : { userId: input.userId as string };
+    // TICKET dca83b85: the ACCOUNT-wide union is fleet scope, so projects the
+    // owner took out of fleet supervision are subtracted here — their cards and
+    // owner-gated rows belong to their own project flow (a project supervisor
+    // still sees them). Never applied to a PROJECT-scoped call.
+    const excludeProjectIds = input.projectId ? [] : (input.excludeProjectIds ?? []).filter(Boolean);
+    const exclude = excludeProjectIds.length ? { projectId: { notIn: excludeProjectIds } } : {};
+    const scope = input.projectId ? { projectId: input.projectId } : { userId: input.userId as string, ...exclude };
     const [openCards, gatedTodos, gatedGoals] = await Promise.all([
       leg(async () => {
-        if (!input.projectId) return prisma.ownerQuestion.count({ where: { userId: input.userId as string, status: 'open' } });
+        if (!input.projectId) {
+          if (!excludeProjectIds.length) return prisma.ownerQuestion.count({ where: { userId: input.userId as string, status: 'open' } });
+          // OwnerQuestion has no projectId — subtract by the opted-out projects'
+          // chats (the flagging run's session id).
+          const [ownedChats, excludedChats] = await Promise.all([
+            prisma.crossModelChat.findMany({ where: { userId: input.userId as string }, select: { id: true } }),
+            prisma.crossModelChat.findMany({ where: { projectId: { in: excludeProjectIds } }, select: { id: true } }),
+          ]);
+          const excluded = new Set((excludedChats as any[]).map((c) => String(c.id)));
+          const keep = ((ownedChats as any[]).map((c) => String(c.id))).filter((id) => !excluded.has(id));
+          return keep.length ? prisma.ownerQuestion.count({ where: { status: 'open', chatId: { in: keep } } }) : 0;
+        }
         const chats = await prisma.crossModelChat.findMany({ where: { projectId: input.projectId }, select: { id: true } });
         return chats.length ? prisma.ownerQuestion.count({ where: { status: 'open', chatId: { in: chats.map((c: any) => c.id) } } }) : 0;
       }, 0),

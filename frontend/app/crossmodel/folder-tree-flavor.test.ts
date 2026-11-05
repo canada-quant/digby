@@ -92,13 +92,16 @@ describe('project-detail endpoint populates capability (backend source pin — n
   it('getProject floors hasWorkspaceState/codeCapable on every chat row, batched', () => {
     // Anchor with the paren — getProjectBreadcrumbs sits above getProject.
     const block = region(PROJECTS_CONTROLLER, 'export async function getProject(', '// ── Update project');
-    // ONE satellite query for the whole list (the listChats P5-B pattern)…
-    expect(block).toContain('chatCodingState');
-    expect(block).toContain('where: { id: { in: projectChats.map((c) => c.id) } }');
-    // …ONE folder-inheritance lookup (every row shares this project)…
-    expect(block).toContain('getNearestWorkspaceFolder(id)');
-    // …and both capability fields land on the rows the folder tree merges.
-    expect(block).toContain('hasWorkspaceState: satelliteIds.has(chat.id)');
-    expect(block).toContain('codeCapable: satelliteIds.has(chat.id) || folderCodeCapable');
+    // MERGE-1 slice 1 (2026-11-03): the endpoint no longer restates the
+    // capability predicate inline — it calls the canonical batched reader, so
+    // the folder tree cannot drift from the sidebar / fleet view (they DID
+    // drift: fleet's supervisor view had no folder-chain leg).
+    expect(block).toContain('getChatCapabilities(');
+    // Both capability fields still land on the rows the folder tree merges.
+    expect(block).toContain('hasWorkspaceState: cap?.hasWorkspaceState ?? false');
+    expect(block).toContain('codeCapable: cap?.codeCapable ?? false');
+    // …and the inline duplicate of the rule must never come back.
+    expect(block).not.toContain('satelliteIds.has(chat.id)');
+    expect(block).not.toContain('getNearestWorkspaceFolder(');
   });
 });

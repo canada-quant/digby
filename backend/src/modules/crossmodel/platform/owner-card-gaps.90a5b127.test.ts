@@ -112,7 +112,7 @@ describe('owner-card-gaps options axis (90a5b127)', () => {
   // started this family; it must keep skipping.
   it('the cea10fa4 specimen (optional credential ask with stated decline path) still skips', () => {
     const ask = [
-      '[ctrl.example.com] Lab gateway is LIVE and public - 5 provider keys are missing on amd-1, so their routes return 401 until you paste them',
+      '[ctrl.cql.ca] Lab gateway is LIVE and public - 5 provider keys are missing on amd-1, so their routes return 401 until you paste them',
       '',
       "The r-2 replacement is live: the LiteLLM gateway now runs on amd-server-1 in the StAnnes lab behind Cloudflare tunnel stanne-lab-amd1, in the CQL Cloudflare account. Public health checks pass from off-box, and the flagship routes answer end-to-end through the public edge.",
       '',
@@ -270,9 +270,9 @@ describe('owner-card-gaps options axis (90a5b127)', () => {
   // ticket was a vocabulary-chase class on one axis or the other.
   it('typed options complete the BACKGROUND axis — the a3a7dd88 specimen gaps nowhere', () => {
     const ask = [
-      "[ctrl.example.com] CanLaw is LIVE on r-0, tailnet-only — verified 23:31Z from amd-2 (V2_LOCAL_VERIFIED: site, v2 board, bench UI all green) and all 5 provider keys placed (zai legs 200 exact-echo). Four finishing items, one card:",
+      "[ctrl.cql.ca] CanLaw is LIVE on r-0, tailnet-only — verified 23:31Z from amd-2 (V2_LOCAL_VERIFIED: site, v2 board, bench UI all green) and all 5 provider keys placed (zai legs 200 exact-echo). Four finishing items, one card:",
       '',
-      '1. NEW floating IP for r-0 — Hyperstack console → rutherford-0 → attach/buy a floating IP (the account hit $0 and released ALL public IPs; the old ones incl. 203.0.113.12 now belong to strangers, so nothing old can be reused). Without one, canlegalbench.com cannot come back publicly. Once it exists I do DNS (the CQL Cloudflare token holds the zone), SSL Full(strict) and the /api/notify* rate-limit rule myself.',
+      '1. NEW floating IP for r-0 — Hyperstack console → rutherford-0 → attach/buy a floating IP (the account hit $0 and released ALL public IPs; the old ones incl. 69.19.140.59 now belong to strangers, so nothing old can be reused). Without one, canlegalbench.com cannot come back publicly. Once it exists I do DNS (the CQL Cloudflare token holds the zone), SSL Full(strict) and the /api/notify* rate-limit rule myself.',
       '',
       '2. Read-only S3 key for the CanLaw bucket (~0.48TB checkpoints/packs) — unfreezes corpus recovery. Paste it here; it vaults automatically.',
       '',

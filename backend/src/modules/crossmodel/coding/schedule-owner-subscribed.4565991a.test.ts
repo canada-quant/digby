@@ -72,7 +72,7 @@ const mockScheduleUpdateMany = jest.fn(async (..._a: any[]): Promise<any> => ({ 
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       findUnique: (...a: any[]) => mockScheduleFindUnique(...a),
       findFirst: (...a: any[]) => mockScheduleFindFirst(...a),
       findMany: jest.fn(async (..._a: any[]): Promise<any[]> => []),

@@ -208,7 +208,7 @@ export const PLATFORM_MUTATING_TOOLS = [
   'remember_fact', 'forget_fact', 'add_knowledge_url', 'add_knowledge_note', 'update_canvas',
   'revoke_share_link', 'notify_user', 'set_chat_instructions',
   // email AS Digby (ticket 54f237bf): sends from the instance's OWN identity
-  // (digby@digby.example.com) via SMTP — machine-capable (a scheduled digest must be
+  // (digby@digby.ai) via SMTP — machine-capable (a scheduled digest must be
   // able to send one), NON-consequential like notify_user but outbound to ANY
   // address, so it carries its own instance rate cap (30/hour) +
   // recipient-prefix-only telemetry (email/digby-email.service.ts).
@@ -262,7 +262,9 @@ export const PLATFORM_MUTATING_TOOLS = [
   'archive_project', 'set_preferences', 'remove_knowledge_document', 'delete_canvas',
   // fleet / ops mutations (T4b): digest inbox acks (own account), webhook revoke (owner).
   'ack_digest_item', 'unack_digest_item', 'revoke_chat_webhook',
-  // #32 close-out (2026-09-25): CONSEQUENTIAL + NEVER-AUTONOMOUS; the token reaches only the owner's browser.
+  // #32 close-out (2026-09-25): CONSEQUENTIAL; the token reaches only the owner's browser.
+  // Owner ruling oq_d45410a4 (d53eed71): card-free only on an EXPLICIT 'manual' grant —
+  // Agent-mode-Auto never enables it (autonomy EXECUTIVE_GRANT_ONLY_TOOLS).
   'create_chat_webhook',
   // set_decision_gate_mode (rollout self-governance, 2026-09-27): the admin PUT's
   // twin for the Fleet Supervisor seat (admin owner + supervisor chat or a

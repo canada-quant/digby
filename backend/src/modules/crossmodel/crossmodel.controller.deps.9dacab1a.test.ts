@@ -147,8 +147,8 @@ import controller from './crossmodel.controller';
 
 const SELF = '9dacab1a-0000-4000-8000-000000000001';
 const DEP = 'bbbbbbbb-0000-4000-8000-000000000002';
-const ADMIN = { id: 'u-admin', role: 'ADMIN', email: 'admin@digby.example.com' };
-const MORTAL = { id: 'u-user', role: 'USER', email: 'user@digby.example.com' };
+const ADMIN = { id: 'u-admin', role: 'ADMIN', email: 'admin@digby.ai' };
+const MORTAL = { id: 'u-user', role: 'USER', email: 'user@digby.ai' };
 
 const mkReq = (user: any, id: string, body: any): any => ({ user, params: { id }, body });
 const mkRes = (): any => {

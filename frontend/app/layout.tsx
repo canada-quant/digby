@@ -3,11 +3,13 @@ import { preload } from 'react-dom';
 import './fonts.css';
 import './globals.css';
 import { Providers } from './providers';
+import { BrandingProvider } from './branding/BrandingProvider';
 import { PWAInstallPrompt } from '../src/components/PWAInstallPrompt';
 import { UpdateNotification } from '../src/components/UpdateNotification';
 import { GoogleAdsTag } from './GoogleAdsTag';
 import { VisitorAnalytics } from './VisitorAnalytics';
 import { MetaPixel } from './MetaPixel';
+import { brandingFromEnv } from '@/lib/branding';
 
 // Digby Frontier type system (2026-10-06 redesign): Geist is the UI sans,
 // Newsreader the serif for headings + assistant answers, Geist Mono for model
@@ -25,14 +27,19 @@ const PRELOADED_FONTS = [
   '/fonts/797e433ab948586e.woff2',
 ];
 
+// Branding is resolved ONCE per build (the root layout is a static route) from
+// DIGBY_BRAND_* (lib/branding — the shared branding core, todo d2d32b57). With
+// nothing set every value below is byte-identical to the shipped Digby
+// identity, which is why the P7 pins (app/p7-pwa-pins.test.ts) still hold.
+const branding = brandingFromEnv();
+
 export const viewport: Viewport = {
   // Browser-chrome color per scheme, matching the real app backgrounds
   // (globals.css: light --bg = white, dark --bg = oklch(0.205 0 0)).
-  // The manifest carries the light value (#ffffff) — it only supports one.
+  // The manifest carries the light value — it only supports one.
   themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
-    // Frontier dark --bg = oklch(0.205 0 0) ≈ #171717.
-    { media: '(prefers-color-scheme: dark)', color: '#171717' },
+    { media: '(prefers-color-scheme: light)', color: branding.theme.light },
+    { media: '(prefers-color-scheme: dark)', color: branding.theme.dark },
   ],
   width: 'device-width',
   initialScale: 1,
@@ -49,14 +56,19 @@ export const viewport: Viewport = {
   interactiveWidget: 'resizes-content',
 };
 
+/** A rebranded instance links the DYNAMIC manifest (identical base document,
+ *  operator name/icons/colours on top). The shipped identity keeps the static
+ *  file — its installed-app id and P7 pins must never move. */
+const MANIFEST_HREF = branding.isDefault ? '/manifest.json' : '/branding/manifest';
+
 export const metadata: Metadata = {
   // metadataBase: every relative canonical / Open Graph URL resolves on the
   // production domain (2026-10-14 SEO pass — lib/site/seo.ts).
-  metadataBase: new URL('https://digby.example.com'),
-  title: { default: 'Digby — Private, Canadian AI Assistant', template: '%s' },
-  description: 'Digby is a Canadian AI assistant: open-weight AI models running on Canadian hardware, your chats, memory and files stored in Canada, live web search, and double-checked answers.',
-  applicationName: 'Digby',
-  manifest: '/manifest.json',
+  metadataBase: new URL('https://digby.ai'),
+  title: { default: branding.title, template: '%s' },
+  description: branding.description,
+  applicationName: branding.name,
+  manifest: MANIFEST_HREF,
   appleWebApp: {
     capable: true,
     // 'default' (owner 2026-09-16, iPhone 15 Pro Max on iOS 26): with
@@ -68,31 +80,31 @@ export const metadata: Metadata = {
     // status bar, so the same 873pt viewport ends flush at the screen edge;
     // the status-bar band takes the per-scheme theme-color above.
     statusBarStyle: 'default',
-    title: 'Digby',
+    title: branding.shortName,
     startupImage: [
-      '/apple-touch-icon.png',
+      branding.assets.appleTouchIcon,
     ],
   },
   icons: {
     icon: [
-      { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
-      { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
-      { url: '/icon-192x192.png', sizes: '192x192', type: 'image/png' },
-      { url: '/icon-512x512.png', sizes: '512x512', type: 'image/png' },
+      { url: branding.assets.favicon16, sizes: '16x16', type: 'image/png' },
+      { url: branding.assets.favicon32, sizes: '32x32', type: 'image/png' },
+      { url: branding.assets.icon192, sizes: '192x192', type: 'image/png' },
+      { url: branding.assets.icon512, sizes: '512x512', type: 'image/png' },
     ],
     apple: [
-      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+      { url: branding.assets.appleTouchIcon, sizes: '180x180', type: 'image/png' },
     ],
-    shortcut: '/favicon-32x32.png',
+    shortcut: branding.assets.favicon32,
   },
   other: {
     'mobile-web-app-capable': 'yes',
     'apple-mobile-web-app-capable': 'yes',
     'apple-mobile-web-app-status-bar-style': 'default',
-    'apple-mobile-web-app-title': 'Digby',
-    'application-name': 'Digby',
-    'msapplication-TileColor': '#171717',
-    'msapplication-TileImage': '/icon-192x192.png',
+    'apple-mobile-web-app-title': branding.shortName,
+    'application-name': branding.name,
+    'msapplication-TileColor': branding.theme.dark,
+    'msapplication-TileImage': branding.assets.icon192,
   },
 };
 
@@ -110,18 +122,18 @@ export default function RootLayout({
       className="dg-font-vars"
     >
       <head>
-        <link rel="manifest" href="/manifest.json" />
-        <link rel="apple-touch-icon" href="/icon-192x192.png" />
+        <link rel="manifest" href={MANIFEST_HREF} />
+        <link rel="apple-touch-icon" href={branding.assets.icon192} />
         <link rel="apple-touch-icon" sizes="152x152" href="/icons/icon-152x152.png" />
-        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href={branding.assets.appleTouchIcon} />
         <link rel="apple-touch-icon" sizes="167x167" href="/icons/icon-167x167.png" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+        <link rel="icon" type="image/png" sizes="32x32" href={branding.assets.favicon32} />
+        <link rel="icon" type="image/png" sizes="16x16" href={branding.assets.favicon16} />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <meta name="apple-mobile-web-app-title" content="Digby" />
+        <meta name="apple-mobile-web-app-title" content={branding.shortName} />
         <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="application-name" content="Digby" />
+        <meta name="application-name" content={branding.name} />
         {/* theme-color meta comes from `viewport.themeColor` above — do not
             add a raw theme-color meta tag here (a second, unqualified tag
             overrides the media-queried pair in some browsers). */}
@@ -137,10 +149,17 @@ export default function RootLayout({
       </head>
       <body className="dg-font-text font-sans text-[14px] antialiased">
         <a href="#main" className="skip-link">Skip to content</a>
-        <Providers>{children}</Providers>
-        <PWAInstallPrompt />
+        <BrandingProvider value={branding}>
+          <Providers>{children}</Providers>
+          {/* EVERY branding consumer must sit INSIDE the provider (review
+              2026-11-05): the context default is the shipped Digby identity,
+              so a consumer rendered outside it silently misbrands on a
+              rebranded instance instead of crashing — the failure mode a test
+              cannot catch. Keep new overlays inside this element. */}
+          <PWAInstallPrompt />
+        </BrandingProvider>
         <UpdateNotification />
-        {/* The site's ONE Google tag (GA4 G-NK7XPHC7FE + Google Ads AW-00000000000 and its Page view / Sign-up
+        {/* The site's ONE Google tag (GA4 G-NK7XPHC7FE + Google Ads AW-16512038948 and its Page view / Sign-up
             conversions) — every page, never a Digby Kids session (app/GoogleAdsTag.tsx, lib/google-ads.ts). */}
         <GoogleAdsTag />
         {/* First-party visitor analytics (owner 2026-10-07): visitor id + first / last-touch traffic source + page views

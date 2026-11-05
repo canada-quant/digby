@@ -1,7 +1,7 @@
 /**
  * In-run NO-PROGRESS brake (audit 2026-10-06 T1-7, litellm.md F5).
  *
- * The litellm MiMo lane ran 340 + 416 minutes (a8d408d5 / 01fcfe2a: 471 and
+ * The litellm node-b lane ran 340 + 416 minutes (a8d408d5 / 01fcfe2a: 471 and
  * 290 run_command calls, 126 search_memory calls) with ZERO file edits while
  * its plan step "add the two routes" sat in_progress — "Recon is nearly
  * complete. Before editing I need four remaining facts…" every ~2 min for

@@ -51,27 +51,27 @@ describe('instanceKind / isProdInstance — DIGBY_INSTANCE is the identity', () 
   it('reads the canonical env var name from the exported constant', () => {
     expect(DIGBY_INSTANCE_ENV).toBe('DIGBY_INSTANCE');
     expect(PROD_INSTANCE).toBe('prod');
-    expect(PROD_REPO).toBe('canada-quant/digby');
+    expect(PROD_REPO).toBe('example-org/crossmodel');
   });
 });
 
 describe('normalizeGithubRepoTarget — slug/URL canonicalization, never a guess', () => {
   it.each([
-    ['canada-quant/digby', 'canada-quant/digby'],
-    ['Acme-Corp/Gadgets', 'acme-corp/gadgets'],
-    ['https://github.com/canada-quant/digby', 'canada-quant/digby'],
-    ['https://github.com/canada-quant/digby.git', 'canada-quant/digby'],
-    ['https://github.com/canada-quant/digby/', 'canada-quant/digby'],
-    ['git@github.com:canada-quant/digby.git', 'canada-quant/digby'],
+    ['example-org/crossmodel', 'example-org/crossmodel'],
+    ['example-org/crossmodel', 'example-org/crossmodel'],
+    ['https://github.com/example-org/crossmodel', 'example-org/crossmodel'],
+    ['https://github.com/example-org/crossmodel.git', 'example-org/crossmodel'],
+    ['https://github.com/example-org/crossmodel/', 'example-org/crossmodel'],
+    ['git@github.com:example-org/crossmodel.git', 'example-org/crossmodel'],
     // c75b5f34 follow-up (cross-family review finding 1): the spellings that
     // used to fall out as null = FAIL-OPEN. new URL() drops the default
     // port and validateRepoUrl accepts it (port 443 carve-out), git pushes
     // to it — the guard MUST see through it.
-    ['https://github.com:443/canada-quant/digby', 'canada-quant/digby'],
-    ['https://github.com:443/canada-quant/digby.git', 'canada-quant/digby'],
-    ['https://GITHUB.COM:443/Acme-Corp/Gadgets', 'acme-corp/gadgets'],
-    ['https://github.com./canada-quant/digby', 'canada-quant/digby'],
-    ['https://user@github.com/canada-quant/digby', 'canada-quant/digby'],
+    ['https://github.com:443/example-org/crossmodel', 'example-org/crossmodel'],
+    ['https://github.com:443/example-org/crossmodel.git', 'example-org/crossmodel'],
+    ['https://GITHUB.COM:443/example-org/crossmodel', 'example-org/crossmodel'],
+    ['https://github.com./example-org/crossmodel', 'example-org/crossmodel'],
+    ['https://user@github.com/example-org/crossmodel', 'example-org/crossmodel'],
     ['acme/edge-digby', 'acme/edge-digby'],
     ['acme/edge-digby.git', 'acme/edge-digby'],
     ['https://github.com:443/acme/edge-digby', 'acme/edge-digby'],
@@ -95,38 +95,38 @@ describe('normalizeGithubRepoTarget — slug/URL canonicalization, never a guess
   });
 
   it('isProdRepoTarget matches the prod repo in every spelling; other repos do not match', () => {
-    expect(isProdRepoTarget('canada-quant/digby')).toBe(true);
-    expect(isProdRepoTarget('https://github.com/Canada-Quant/DIGBY.git')).toBe(true);
-    expect(isProdRepoTarget('canada-quant/digby ')).toBe(true);
+    expect(isProdRepoTarget('example-org/crossmodel')).toBe(true);
+    expect(isProdRepoTarget('https://github.com/example-org/crossmodel.git')).toBe(true);
+    expect(isProdRepoTarget('example-org/crossmodel ')).toBe(true);
     // the review's fail-open spellings are PROD targets now
-    expect(isProdRepoTarget('https://github.com:443/canada-quant/digby')).toBe(true);
-    expect(isProdRepoTarget('https://github.com./canada-quant/digby')).toBe(true);
+    expect(isProdRepoTarget('https://github.com:443/example-org/crossmodel')).toBe(true);
+    expect(isProdRepoTarget('https://github.com./example-org/crossmodel')).toBe(true);
     expect(isProdRepoTarget('acme/edge-digby')).toBe(false);
-    expect(isProdRepoTarget('canada-quant/digby-2')).toBe(false);
+    expect(isProdRepoTarget('example-org/crossmodel-2')).toBe(false);
     expect(isProdRepoTarget('')).toBe(false);
   });
 });
 
 describe('assertRepoTargetAllowed / repoTargetAllowed — the hard fail', () => {
   it('PROD instance: every target allowed (unchanged behavior)', () => {
-    expect(() => assertRepoTargetAllowed('canada-quant/digby', env())).not.toThrow();
+    expect(() => assertRepoTargetAllowed('example-org/crossmodel', env())).not.toThrow();
     expect(() => assertRepoTargetAllowed('acme/edge-digby', env())).not.toThrow();
-    expect(repoTargetAllowed('canada-quant/digby', env())).toBe(true);
+    expect(repoTargetAllowed('example-org/crossmodel', env())).toBe(true);
   });
 
   it('NON-prod instance: the production repo REFUSES (hard fail, IsolationBoundaryError, clear error)', () => {
     const e = env({ DIGBY_INSTANCE: 'selfhost' });
-    expect(repoTargetAllowed('canada-quant/digby', e)).toBe(false);
-    expect(() => assertRepoTargetAllowed('canada-quant/digby', e)).toThrow(IsolationBoundaryError);
+    expect(repoTargetAllowed('example-org/crossmodel', e)).toBe(false);
+    expect(() => assertRepoTargetAllowed('example-org/crossmodel', e)).toThrow(IsolationBoundaryError);
     try {
-      assertRepoTargetAllowed('canada-quant/digby', e);
+      assertRepoTargetAllowed('example-org/crossmodel', e);
       throw new Error('unreachable');
     } catch (err: any) {
       expect(err).toBeInstanceOf(IsolationBoundaryError);
       expect(err.name).toBe('IsolationBoundaryError');
       expect(err.message).toContain('ISOLATION BOUNDARY');
       expect(err.message).toContain('DIGBY_INSTANCE=selfhost');
-      expect(err.message).toContain('canada-quant/digby');
+      expect(err.message).toContain('example-org/crossmodel');
       expect(err.message).toContain('PRODUCTION');
     }
   });
@@ -140,12 +140,12 @@ describe('assertRepoTargetAllowed / repoTargetAllowed — the hard fail', () => 
 
   it('a prod URL spelling is refused too (not just the bare slug)', () => {
     const e = env({ DIGBY_INSTANCE: 'edge' });
-    expect(repoTargetAllowed('https://github.com/canada-quant/digby.git', e)).toBe(false);
-    expect(() => assertRepoTargetAllowed('https://github.com/canada-quant/digby', e)).toThrow(IsolationBoundaryError);
+    expect(repoTargetAllowed('https://github.com/example-org/crossmodel.git', e)).toBe(false);
+    expect(() => assertRepoTargetAllowed('https://github.com/example-org/crossmodel', e)).toThrow(IsolationBoundaryError);
   });
 
   it('isolationRefusal names the operator fix (own repo env), not just the refusal', () => {
-    const msg = isolationRefusal('canada-quant/digby', env({ DIGBY_INSTANCE: 'selfhost' }));
+    const msg = isolationRefusal('example-org/crossmodel', env({ DIGBY_INSTANCE: 'selfhost' }));
     expect(msg).toContain('SELF_REPO');
     expect(msg).toContain('GITHUB_REPO_SLUG');
   });
@@ -153,8 +153,8 @@ describe('assertRepoTargetAllowed / repoTargetAllowed — the hard fail', () => 
 
 describe('resolveInstanceRepoTarget — the env-resolved own-repo resolver (no silent prod fallback)', () => {
   it('PROD instance, env unset ⇒ the production repo (the historical default, CORRECT on prod)', () => {
-    expect(resolveInstanceRepoTarget(env())).toEqual({ ok: true, slug: 'canada-quant/digby' });
-    expect(resolveInstanceRepoTarget(env({ INFRA_WATCH_REPO: '' }))).toEqual({ ok: true, slug: 'canada-quant/digby' });
+    expect(resolveInstanceRepoTarget(env())).toEqual({ ok: true, slug: 'example-org/crossmodel' });
+    expect(resolveInstanceRepoTarget(env({ INFRA_WATCH_REPO: '' }))).toEqual({ ok: true, slug: 'example-org/crossmodel' });
   });
 
   it('PROD instance, env set ⇒ the configured repo (an operator fork on prod would be honored)', () => {
@@ -168,7 +168,7 @@ describe('resolveInstanceRepoTarget — the env-resolved own-repo resolver (no s
     if (!r.ok) {
       expect(r.refusal).toContain('ISOLATION BOUNDARY');
       expect(r.refusal).toContain('GITHUB_REPO_SLUG is not configured');
-      expect(r.refusal).toContain('canada-quant/digby');
+      expect(r.refusal).toContain('example-org/crossmodel');
       expect(r.refusal).toContain('refusing to fall back');
     }
   });
@@ -179,7 +179,7 @@ describe('resolveInstanceRepoTarget — the env-resolved own-repo resolver (no s
   });
 
   it('NON-prod instance, env set to the PRODUCTION repo ⇒ REFUSAL naming the boundary (hard fail, never a prod read)', () => {
-    for (const v of ['canada-quant/digby', 'https://github.com/canada-quant/digby.git']) {
+    for (const v of ['example-org/crossmodel', 'https://github.com/example-org/crossmodel.git']) {
       const r = resolveInstanceRepoTarget(env({ DIGBY_INSTANCE: 'selfhost', GITHUB_REPO_SLUG: v }));
       expect(r.ok).toBe(false);
       if (!r.ok) {
@@ -198,7 +198,7 @@ describe('resolveInstanceRepoTarget — the env-resolved own-repo resolver (no s
 
 describe('resolveInstanceOwnRepoSlug — the ownRepoSlug() shape (self-merge)', () => {
   it('PROD instance ⇒ the production repo (self-merge own-repo behavior unchanged)', () => {
-    expect(resolveInstanceOwnRepoSlug('SELF_REPO', env())).toBe('canada-quant/digby');
+    expect(resolveInstanceOwnRepoSlug('SELF_REPO', env())).toBe('example-org/crossmodel');
     expect(resolveInstanceOwnRepoSlug('SELF_REPO', env({ SELF_REPO: 'acme/edge-digby' }))).toBe('acme/edge-digby');
   });
 
@@ -211,19 +211,19 @@ describe('resolveInstanceOwnRepoSlug — the ownRepoSlug() shape (self-merge)', 
   });
 
   it('NON-prod instance, SELF_REPO = PRODUCTION repo ⇒ IsolationBoundaryError (hard fail at the resolver)', () => {
-    expect(() => resolveInstanceOwnRepoSlug('SELF_REPO', env({ DIGBY_INSTANCE: 'selfhost', SELF_REPO: 'canada-quant/digby' }))).toThrow(IsolationBoundaryError);
+    expect(() => resolveInstanceOwnRepoSlug('SELF_REPO', env({ DIGBY_INSTANCE: 'selfhost', SELF_REPO: 'example-org/crossmodel' }))).toThrow(IsolationBoundaryError);
   });
 });
 
 describe('the wired surfaces keep their prod behavior with DIGBY_INSTANCE unset (backward-compat pin)', () => {
   it('repoTargetAllowed and resolveInstanceRepoTarget read process.env when no env is passed (the deployed call shape)', () => {
     // unset ⇒ prod ⇒ allowed (today's production behavior)
-    expect(repoTargetAllowed('canada-quant/digby')).toBe(true);
+    expect(repoTargetAllowed('example-org/crossmodel')).toBe(true);
     const prodResolved = resolveInstanceRepoTarget();
-    expect(prodResolved.ok && prodResolved.slug).toBe('canada-quant/digby');
+    expect(prodResolved.ok && prodResolved.slug).toBe('example-org/crossmodel');
     // non-prod via the REAL process.env path
     process.env.DIGBY_INSTANCE = 'selfhost';
-    expect(repoTargetAllowed('canada-quant/digby')).toBe(false);
-    expect(() => assertRepoTargetAllowed('canada-quant/digby')).toThrow(IsolationBoundaryError);
+    expect(repoTargetAllowed('example-org/crossmodel')).toBe(false);
+    expect(() => assertRepoTargetAllowed('example-org/crossmodel')).toThrow(IsolationBoundaryError);
   });
 });

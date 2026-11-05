@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect } from 'react';
-import Image from 'next/image';
 import { Button } from '@/components/ui/button';
+import { BrandLogo } from '@/components/ui/custom/BrandLogo';
+import { useBranding } from '@/app/branding/BrandingProvider';
 import { shouldReloadForChunkError } from '@/lib/chunk-reload';
 
 // App-root error boundary (added with the Next.js 16.3.3 upgrade — 16.2 swapped
@@ -14,6 +15,7 @@ export default function AppError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  const branding = useBranding();
   useEffect(() => {
     console.error('[app-error-boundary]', error);
     // Deploy skew (2026-09-14): the blue-green deploy lands box A before box B
@@ -28,7 +30,7 @@ export default function AppError({
   return (
     <div className="flex min-h-dvh flex-col items-center justify-center bg-background px-6 text-center">
       <div className="size-12 rounded-2xl overflow-hidden shadow-lg mb-4">
-        <Image src="/digbyhat.png" alt="Digby" width={48} height={48} className="w-full h-full object-cover" />
+        <BrandLogo size={48} className="w-full h-full object-cover" />
       </div>
       <h2 className="font-bold text-lg mb-1">Something went wrong</h2>
       <p className="text-sm text-muted-foreground mb-4">

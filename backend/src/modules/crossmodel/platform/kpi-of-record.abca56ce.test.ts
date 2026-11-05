@@ -50,7 +50,7 @@ describe('kpiAnnouncedBy — does a push ANNOUNCE this KPI?', () => {
 
   it('a rate in the same UNIT from a different KPI does NOT announce (unit alone is not identity)', () => {
     expect(kpiAnnouncedBy('Spark bench hit 101.2 clips/hr today.', SCHOOLTIME)).toBe(false);
-    expect(kpiAnnouncedBy('QB2 reached 42.7 tok/s — new best.', SCHOOLTIME)).toBe(false);
+    expect(kpiAnnouncedBy('node-a reached 42.7 tok/s — new best.', SCHOOLTIME)).toBe(false);
     expect(kpiAnnouncedBy('All lanes green; nothing to report.', SCHOOLTIME)).toBe(false);
   });
 });

@@ -632,7 +632,7 @@ describe('project supervision opt-out (ticket c992d730)', () => {
   });
 
   it('a stopped cadence on a chat in an UNSUPERVISED project does not alert', async () => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([{ id: 'sch1', sessionId: 'chat1', runsCount: 73, lastFiredAt: new Date(Date.now() - 3600_000) }])
         .mockResolvedValueOnce([]), // no enabled rows left on chat1
@@ -826,7 +826,7 @@ describe('digest readability reformat (ticket 45a570e0)', () => {
 // ── cadence_stopped (owner report 2026-08-24: TT-RD went dormant overnight) ──
 describe('cadence-stopped detection', () => {
   it('a recently-disabled recurring schedule with history on a chat with no enabled rows surfaces as cadence_stopped', async () => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([{ id: 'sch1', sessionId: 'chat1', runsCount: 73, lastFiredAt: new Date(Date.now() - 3600_000) }])
         .mockResolvedValueOnce([]), // no enabled rows left on chat1
@@ -839,7 +839,7 @@ describe('cadence-stopped detection', () => {
   });
 
   it('suppressed when ANOTHER enabled schedule still runs the chat', async () => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([{ id: 'sch1', sessionId: 'chat1', runsCount: 73, lastFiredAt: new Date(Date.now() - 3600_000) }])
         .mockResolvedValueOnce([{ sessionId: 'chat1' }]), // still one enabled
@@ -862,7 +862,7 @@ describe('cadence-stopped supervisor credit (ticket 7503189b)', () => {
   // Realistic UUID — the credit check matches the fleet's ≥8-char citation idiom.
   const SCH = '851410b7-0000-4000-8000-000000000000';
   const stubStoppedLane = () => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([{ id: SCH, sessionId: LANE, runsCount: 12, lastFiredAt: new Date(T0.getTime() - 40 * 60000) }])
         .mockResolvedValueOnce([]), // no enabled rows left on the lane
@@ -954,7 +954,7 @@ describe('cadence-stopped dormancy-park suppression (ticket b101ad89)', () => {
 
   it('replay b101ad89: a goal-gate auto-parked row (parked:dormant, 284 runs) surfaces NO "intentional?" card', async () => {
     stubLane();
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([parkedRow()])
         .mockResolvedValueOnce([]), // no enabled rows left on the lane
@@ -979,7 +979,7 @@ describe('cadence-stopped dormancy-park suppression (ticket b101ad89)', () => {
         detail: 'recurring schedule stopped after 284 runs — intentional?',
       }),
     };
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([parkedRow()])
         .mockResolvedValueOnce([]),
@@ -991,7 +991,7 @@ describe('cadence-stopped dormancy-park suppression (ticket b101ad89)', () => {
 
   it('a GENUINE stop on a chat that also carries a park still surfaces — the non-parked row wins the per-chat pick', async () => {
     stubLane();
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         // parked row first — first-wins would have masked the real stop
         .mockResolvedValueOnce([parkedRow({ id: PARKED, runsCount: 284 }), parkedRow({ id: 'sched-real-stop', runsCount: 123, lastStatus: 'cancelled' })])
@@ -1005,7 +1005,7 @@ describe('cadence-stopped dormancy-park suppression (ticket b101ad89)', () => {
 
   it('a legacy NULL lastStatus keeps the card (fail-open — the SQL {not:} three-valued-logic trap this fix avoids)', async () => {
     stubLane();
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([parkedRow({ lastStatus: undefined })])
         .mockResolvedValueOnce([]),
@@ -1047,12 +1047,12 @@ describe('cadence-stopped healthy-lane suppression (ticket 2dc398fe)', () => {
       return [{ id: LANE, title: 'Schooltime Hue-backlog' }, { id: SUP, title: 'Fleet Supervisor' }];
     });
   };
-  /** Query-routing mock: the sweep issues THREE codingSchedule.findMany calls
+  /** Query-routing mock: the sweep issues THREE chatSchedule.findMany calls
    *  (per-user stopped rows / per-chat enabled rows / per-chat stopped history)
    *  plus the deaf-scan interval probe — route on the WHERE shape, never on
    *  call order. */
   const stubSchedules = (stopped: any[], enabled: any[], allStoppedBySession: Record<string, any[]> = {}) => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn(async (args: any) => {
         const w = args?.where ?? {};
         if (w.userId && w.kind === 'recurring' && w.enabled === false) return stopped; // (c) stopped-cadence scan
@@ -1174,7 +1174,7 @@ describe('cadence-stopped healthy-lane suppression (ticket 2dc398fe)', () => {
     };
     // The liveness probe stays healthy (idle lane); ONLY the exhaustion read fails.
     stubAgentRun({ sessions: [] });
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn(async (args: any) => {
         const w = args?.where ?? {};
         if (w.userId && w.kind === 'recurring' && w.enabled === false) return [deadRow]; // (c) scan
@@ -1236,10 +1236,10 @@ describe('deaf-assignee detection', () => {
     assigneeChatId: DEAF_CHAT, updatedAt: new Date(T0.getTime() - 30 * 3600_000),
     goal: { status: 'active' }, ...over,
   });
-  // Sections (c)/(d)/(e) share codingSchedule.findMany with the (f) enabled-rows
+  // Sections (c)/(d)/(e) share chatSchedule.findMany with the (f) enabled-rows
   // probe — only (f) filters by sessionId-in + enabled.
   const stubScheduleScans = (assigneeEnabledRows: any[]) => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn().mockImplementation(async (args: any) =>
         args?.where?.sessionId?.in ? assigneeEnabledRows : []),
     };
@@ -1297,7 +1297,7 @@ describe('cadence-vanished detection', () => {
   const baseline = (rows: Array<[string, number, string, boolean]>) =>
     JSON.stringify(Object.fromEntries(rows.map(([id, r, s, e]) => [id, { r, s, e }])));
   const stubScans = (currentRows: any[]) => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([]) // cadence-stopped scan: nothing recently disabled
         .mockResolvedValueOnce([]) // overdue scan: nothing overdue
@@ -1368,7 +1368,7 @@ describe('cadence-vanished detection', () => {
       return 'OK';
     });
     // sch1 absent from the DB on every scan of every sweep below.
-    mockPrisma.codingSchedule = { findMany: jest.fn().mockResolvedValue([]) };
+    mockPrisma.chatSchedule = { findMany: jest.fn().mockResolvedValue([]) };
 
     // 1. Night sweep (23:30 PDT — quiet): detects the vanish but HOLDS it…
     await runAttentionWatchdogOnce({ now: T_QUIET });
@@ -1394,7 +1394,7 @@ describe('cadence-vanished detection', () => {
 //    class — ENABLED recurring rows whose nextRunAt is stuck far in the past. ──
 describe('overdue-cadence detection', () => {
   it('an ENABLED recurring schedule overdue past 2× its interval surfaces as overdue_cadence', async () => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([]) // (c) cadence-stopped scan: nothing recently disabled
         .mockResolvedValueOnce([{ // (d) overdue scan: 3h past due on a 1h cadence (grace = 2h)
@@ -1411,7 +1411,7 @@ describe('overdue-cadence detection', () => {
   });
 
   it('stays quiet while the overdue-ness is within the grace window (max(2×interval, 30min))', async () => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn()
         .mockResolvedValueOnce([]) // (c) scan
         .mockResolvedValueOnce([{ // 90min past due on a 1h cadence — under the 2h grace
@@ -1733,7 +1733,7 @@ describe('v1#15 — outage class bypasses quiet hours + owner Telegram push', ()
     nextRunAt: new Date(QUIET_NOW.getTime() - 2 * 3600_000), runsCount: 40,
   };
   const stubScans = () => {
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn(async (args: any) => {
         const w = args?.where ?? {};
         if (w.enabled === true && w.nextRunAt?.lte) return [overdueRow]; // (d) overdue scan
@@ -1775,7 +1775,7 @@ describe('v1#15 — outage class bypasses quiet hours + owner Telegram push', ()
   });
 
   it('non-outage items alone still hold during quiet hours (the bypass is outage-scoped)', async () => {
-    mockPrisma.codingSchedule = { findMany: jest.fn(async () => []) }; // nothing overdue
+    mockPrisma.chatSchedule = { findMany: jest.fn(async () => []) }; // nothing overdue
     mockPrisma.projectGoal.findMany.mockResolvedValue([
       { id: 'g1', title: 'Blocked goal', blockedReason: 'x', updatedAt: new Date(QUIET_NOW.getTime() - 2 * 3600_000), project: null },
     ]);
@@ -1798,7 +1798,7 @@ describe('v1#15 + pin 14d — per-lane deaf floor on MACHINE activity', () => {
         ? [{ id: SUP, userId: OWNER }]
         : [{ id: DEAF, title: 'Deaf Lane', updatedAt: new Date(NOW.getTime() - opts.chatUpdatedAgoMs) }]);
     mockPrisma.projectTodo.findMany.mockResolvedValue([todo]);
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn(async (args: any) => {
         const w = args?.where ?? {};
         if (w.sessionId?.in && w.intervalSec) {
@@ -1837,7 +1837,7 @@ describe('v1#15 + pin 14d — per-lane deaf floor on MACHINE activity', () => {
   // 30-min deaf floor; only RECURRING history defines the lane's cadence.
   const stubOnceOnly = () => {
     stub({ lastRunAgoMs: 2 * 3600_000, chatUpdatedAgoMs: 2 * 3600_000 });
-    mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) => {
+    mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) => {
       const w = args?.where ?? {};
       if (w.sessionId?.in && w.intervalSec) {
         const rows = [{ sessionId: DEAF, intervalSec: 900, kind: 'once' }];
@@ -1878,7 +1878,7 @@ describe('audit 2026-10-06 T3-9 — deaf lanes: running check + one item per lan
     mockPrisma.crossModelChat.findMany.mockImplementation(async (args: any) =>
       args?.where?.isSupervisor === true ? [{ id: SUP, userId: OWNER }] : [{ id: LANE, title: 'StAnne Lane', updatedAt: new Date(NOW.getTime() - 5 * 60_000) }]);
     mockPrisma.projectTodo.findMany.mockResolvedValue(todos);
-    mockPrisma.codingSchedule = {
+    mockPrisma.chatSchedule = {
       findMany: jest.fn(async (args: any) => {
         const w = args?.where ?? {};
         if (w.sessionId?.in && w.intervalSec) return [{ sessionId: LANE, intervalSec: 900 }];
@@ -1940,7 +1940,7 @@ describe('ARCHIVED-TARGET-RETIRE (e) — archived assignees are reported as orph
       return opts.visible ?? [];
     });
     mockPrisma.projectTodo.findMany.mockResolvedValue(todos(opts.assignee));
-    mockPrisma.codingSchedule = { findMany: jest.fn(async () => []) };
+    mockPrisma.chatSchedule = { findMany: jest.fn(async () => []) };
     mockPrisma.agentRun = { groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []) };
     mockPrisma.chatCodingState = { findMany: jest.fn(async () => opts.parked ?? []) };
   };
@@ -2025,7 +2025,7 @@ describe('zombie machine-run stop (live incident 2026-09-10)', () => {
     mockRedis.del.mockImplementation(async (k: string) => { delete plain[String(k)]; return 1; });
     mockRedis.mGet.mockImplementation(async (keys: string[]) => keys.map((k) => liveValues[String(k)] ?? null));
     mockPrisma.runJournalEntry = { findFirst: jest.fn(async () => null) };
-    mockPrisma.codingSchedule = { findMany: jest.fn(async () => []) }; // no cadences → the 3h fallback governs
+    mockPrisma.chatSchedule = { findMany: jest.fn(async () => []) }; // no cadences → the 3h fallback governs
     // The zombie chat IS the supervisor chat — the incident's exact shape.
     mockPrisma.crossModelChat.findMany.mockImplementation(async (args: any) =>
       args?.where?.isSupervisor === true ? [{ id: SUP, userId: OWNER }] : [{ id: SUP, title: 'Fleet Supervisor' }]);
@@ -2120,7 +2120,7 @@ describe('zombie machine-run stop (live incident 2026-09-10)', () => {
 
   it('the silence floor is 3× the lane\'s SHORTEST enabled cadence: a 2h-cadence lane is a zombie past 6h, not before', async () => {
     liveValues[`cm:liverun:${SUP}`] = '4242:machine';
-    mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) => {
+    mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) => {
       const w = args?.where ?? {};
       if (w.sessionId?.in && w.enabled === true) {
         return [{ sessionId: SUP, intervalSec: 14400 }, { sessionId: SUP, intervalSec: 7200 }]; // shortest = 2h → floor 6h
@@ -2144,7 +2144,7 @@ describe('zombie machine-run stop (live incident 2026-09-10)', () => {
   it('T4-1: a ONE-SHOT row\'s intervalSec is not a cadence — a 180 s once retry beside a 2h recurring sweep keeps the 6h floor', async () => {
     liveValues[`cm:liverun:${SUP}`] = '4242:machine';
     const whereSeen: any[] = [];
-    mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) => {
+    mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) => {
       const w = args?.where ?? {};
       if (w.sessionId?.in && w.enabled === true) {
         whereSeen.push(w);
@@ -2168,7 +2168,7 @@ describe('zombie machine-run stop (live incident 2026-09-10)', () => {
     process.env.WATCHDOG_RECURRING_CADENCE_DISABLED = '1';
     try {
       liveValues[`cm:liverun:${SUP}`] = '4242:machine';
-      mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) => {
+      mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) => {
         const w = args?.where ?? {};
         if (w.sessionId?.in && w.enabled === true) {
           expect(w.kind).toBeUndefined();
@@ -2186,7 +2186,7 @@ describe('zombie machine-run stop (live incident 2026-09-10)', () => {
 
   it('busy-skip candidacy: a NON-supervisor machine-locked lane with busySkips ≥ 10 on an enabled schedule is checked and stopped', async () => {
     const LANE = 'c-lane';
-    mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) => {
+    mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) => {
       const w = args?.where ?? {};
       if (w.busySkips?.gte === ZOMBIE_BUSY_SKIPS_MIN) return [{ sessionId: LANE }]; // candidate scan
       if (w.sessionId?.in && w.enabled === true) return [{ sessionId: LANE, intervalSec: 900 }]; // 15m → floor 45m

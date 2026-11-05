@@ -34,7 +34,7 @@ services:
     environment:
       - NODE_ENV=development
       - PORT=4000
-      - DATABASE_URL=postgresql://admin:password@postgres:5432/digby_db?sslmode=disable
+      - DATABASE_URL=postgresql://admin:password@postgres:5432/admin_db?sslmode=disable
       - REDIS_URL=redis://redis:6379
       - JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
       - JWT_REFRESH_SECRET=your-super-secret-refresh-key-change-this-in-production
@@ -65,13 +65,13 @@ services:
     environment:
       - POSTGRES_USER=admin
       - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=digby_db
+      - POSTGRES_DB=admin_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - admin-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U admin -d digby_db"]
+      test: ["CMD-SHELL", "pg_isready -U admin -d admin_db"]
       interval: 10s
       timeout: 5s
       retries: 5

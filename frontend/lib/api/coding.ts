@@ -514,7 +514,7 @@ export const codingApi = {
 };
 
 /**
- * Optional dedicated preview origin (e.g. "preview.digby.example.com"). When set, the app
+ * Optional dedicated preview origin (e.g. "preview.digby.ai"). When set, the app
  * frames previews cross-origin, so a previewed dev server's JS can't reach the
  * app's localStorage — which is why the iframe may safely use allow-same-origin
  * (full SPA support). Unset → same-origin preview with a locked-down sandbox.

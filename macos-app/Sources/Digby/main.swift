@@ -3,13 +3,13 @@ import WebKit
 
 // The app opens here. Hosts in `keepInApp` load INSIDE the window; anything else
 // the user clicks opens in their default browser.
-private let homeURL = URL(string: "https://digby.example.com/")!  // the chat lives at the root (2026-10-14; /crossmodel 308s here)
-private let updateFeedURL = URL(string: "https://digby.example.com/desktop-latest.json")!
+private let homeURL = URL(string: "https://digby.ai/")!  // the chat lives at the root (2026-10-14; /crossmodel 308s here)
+private let updateFeedURL = URL(string: "https://digby.ai/desktop-latest.json")!
 private let downloadExtensions: Set<String> = ["pkg", "dmg", "zip", "exe", "msi"]
 
 private func keepInApp(_ host: String) -> Bool {
-    return host == "digby.example.com"
-        || host.hasSuffix(".digby.example.com")
+    return host == "digby.ai"
+        || host.hasSuffix(".digby.ai")
         || host.contains("google.com")            // sign-in / Workspace OAuth
         || host.contains("github.com")             // sign-in OAuth
         || host.contains("githubusercontent.com")
@@ -173,13 +173,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     // keeps its suffix on the Digby host only — off-host the host wins.
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard let host = webView.url?.host, !host.isEmpty else { window.title = "Digby"; return }
-        let isDigby = host == "digby.example.com" || host.hasSuffix(".digby.example.com")
+        let isDigby = host == "digby.ai" || host.hasSuffix(".digby.ai")
         window.title = isDigby ? "Digby" : "Digby — \(host)"
     }
 
     // Downloads (.pkg/.dmg/the iMessage helper) are handled by WKWebView's OWN native
     // downloader — NOT by handing the URL to the system browser. Handing an https
-    // download URL to NSWorkspace routes it to whatever app claims digby.example.com (e.g. a
+    // download URL to NSWorkspace routes it to whatever app claims digby.ai (e.g. a
     // leftover Chrome PWA), which renders the raw binary as garbled text. Downloading
     // in-app writes the real bytes to ~/Downloads and opens the installer directly,
     // bypassing the browser and its service worker entirely.
@@ -275,7 +275,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         switch type {
         case "setupIMessage":
             let code = (body["pairingCode"] as? String) ?? ""
-            let apiBase = (body["apiBase"] as? String) ?? "https://digby.example.com/api"
+            let apiBase = (body["apiBase"] as? String) ?? "https://digby.ai/api"
             setupIMessageAgent(pairingCode: code, apiBase: apiBase)
         case "disconnectIMessage":
             disconnectIMessageAgent()
@@ -305,12 +305,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             if fm.fileExists(atPath: pairedConfig) {
                 showAlert(
                     "Digby's background agent is already installed",
-                    "This Mac already runs the self-updating Digby agent, so there's nothing to set up — it connects on its own. If the Integrations page still shows this Mac offline, the agent may be paired to a different Digby account; run its update command from the iMessage card, or remove ~/Library/LaunchAgents/com.digby.agent.plist and try again."
+                    "This Mac already runs the self-updating Digby agent, so there's nothing to set up here — it connects on its own. If Digby still shows this Mac offline, the agent is most likely paired to a different Digby account. Fix it on the iMessage card (Account → Integrations): open Connect your Mac and paste the one-line command it shows into Terminal — that card also tells you how to clear the old pairing first. Removing ~/Library/LaunchAgents/com.digby.agent.plist, quitting Digby and using this button again is the other way."
                 )
             } else {
                 showAlert(
                     "A self-managed Digby agent is installed but not paired",
-                    "This Mac already has the self-updating Digby agent, but it hasn't been paired. Use the one-line command shown on the iMessage card in your browser (it pairs the existing agent) instead of the bundled setup."
+                    "This Mac already has the self-updating Digby agent, but it has never been paired. Use the one-line command shown on the iMessage card (Account → Integrations → Connect your Mac → the command under the setup button) — it pairs the existing agent. Paste it into Terminal on this Mac."
                 )
             }
             return
@@ -445,7 +445,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     // ── Lightweight self-update check ──────────────────────────────────────────
-    // Fetches digby.example.com/desktop-latest.json; if it advertises a newer version than
+    // Fetches digby.ai/desktop-latest.json; if it advertises a newer version than
     // this build, offers to download the new .dmg. (Web-app content always updates
     // live — this only covers the native shell, which changes rarely.)
     private func checkForUpdate() {
@@ -482,7 +482,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             // loading it triggers decidePolicyFor → .download (the .dmg extension / octet
             // MIME), so it saves to ~/Downloads and opens — the page does NOT navigate.
             // We must NOT use NSWorkspace.open here: that hands the URL to whatever app
-            // claims digby.example.com (e.g. a Chrome PWA), which renders the raw bytes as garbled text.
+            // claims digby.ai (e.g. a Chrome PWA), which renders the raw bytes as garbled text.
             webView.load(URLRequest(url: u))
         }
     }

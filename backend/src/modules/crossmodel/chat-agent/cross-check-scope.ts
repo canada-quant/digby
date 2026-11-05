@@ -102,7 +102,7 @@ export function crossCheckArtifactGroundingRule(): string {
  * Platform-scope rule (peer verification 2026-09-25, false-gap ticket
  * cbe682c0): the Double Checker filed "no way to stop runs in another chat"
  * while the main assistant was staging stop_run — and web-searched
- * "digby.example.com docs how to stop a run" / "digby.example.com pricing" on two probe turns
+ * "digby.ai docs how to stop a run" / "digby.ai pricing" on two probe turns
  * (317 s / 88 s). Digby's own platform/account tools (run control,
  * schedules, tickets, memory, integrations, sharing) live on the MAIN lane;
  * the checker never has them and must never treat their absence in its own
@@ -110,7 +110,7 @@ export function crossCheckArtifactGroundingRule(): string {
  */
 export function crossCheckPlatformScopeRule(): string {
   return (
-    `[PLATFORM SCOPE — hard rule: Digby's own platform and account tools (stopping/steering runs, schedules, hooks, tickets, memory, knowledge, integrations, sharing, spend) belong to the MAIN assistant, not to you — your tool list is web + retrieval only, by design. NEVER report a Digby capability as missing, never file a ticket about a Digby capability gap, and never web-search digby.example.com for docs, pricing, or how-tos — the main assistant's own context is the source of truth for what Digby can do; answer the user's actual question. file_feedback is ONLY for a harness malfunction you hit yourself in this lane (a tool that errored), never for a capability you do not have.]`
+    `[PLATFORM SCOPE — hard rule: Digby's own platform and account tools (stopping/steering runs, schedules, hooks, tickets, memory, knowledge, integrations, sharing, spend) belong to the MAIN assistant, not to you — your tool list is web + retrieval only, by design. NEVER report a Digby capability as missing, never file a ticket about a Digby capability gap, and never web-search digby.ai for docs, pricing, or how-tos — the main assistant's own context is the source of truth for what Digby can do; answer the user's actual question. file_feedback is ONLY for a harness malfunction you hit yourself in this lane (a tool that errored), never for a capability you do not have.]`
   );
 }
 

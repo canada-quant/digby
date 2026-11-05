@@ -1,0 +1,123 @@
+# Trajectory evals (build 2026-10-08 E; simplify.md step 3 — "the safety net that makes every future guard
+# retirement safe"). Frozen REAL incidents (backend/src/modules/crossmodel/evals/trajectory/cases) run through the
+# REAL agent loop with mutating tools captured, never executed, and are graded on OUTCOMES (a claimed send has a send,
+# an id was seen, a dismissed question is not re-raised …), never on the path.
+#
+#   1. Offline replay — free, deterministic; the same suite runs in CI on every push (backend jest).
+#   2. Live trials — k runs per case on the real seats, pass^k per case, cost-capped (EVAL_MAX_USD, default $25 a night — simplify.md budgets ≈ $0.4–0.9k a month).
+#      Gateway seats (cql-litellm:*) run on the gateway when EVAL_GATEWAY_BASE_URL / EVAL_GATEWAY_API_KEY secrets are
+#      set, else on their family's built-in model. The run fails only when baseline.json lists measured passing cases
+#      and more than its noiseCases of them lose pass^k.
+#
+# COSTS REAL MONEY (≈ 22 cases × 3 trials + one cheap judge call per judged check). Turn it off with the repository
+# variable TRAJECTORY_EVALS_DISABLED=1 or `gh workflow disable trajectory-evals.yml`. Report + recordings + (with
+# judge_labels) judge verdicts for the calibration set are on the run summary and the artifact.
+name: Trajectory evals
+
+on:
+  schedule:
+    - cron: '41 9 * * *'   # 09:41 UTC — before the nightly query suite (10:17)
+  workflow_dispatch:
+    inputs:
+      k:
+        description: 'trials per case (pass^k)'
+        default: '3'
+      max_usd:
+        description: 'cost cap for the whole run (USD)'
+        default: '25'
+      cases:
+        description: 'case ids, comma-separated (blank = all; "none" = judge labels only)'
+        default: ''
+      seats:
+        description: 'seat overrides, e.g. fleet_supervisor=glm-5.3,project_supervisor=kimi-k3,chat=glm-5.3-flash'
+        default: ''
+      model:
+        description: 'one model for every case (overrides seats; blank = per-case seat)'
+        default: ''
+      effort:
+        description: 'high (default, cost/time) or max (prod machine-wake effort)'
+        default: 'high'
+      judge_model:
+        description: 'judge model (off = no judge)'
+        default: 'deepseek-flash'
+      judge_labels:
+        description: 'also judge the 50 calibration items (1 = yes)'
+        default: '0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trajectory-evals
+  cancel-in-progress: false
+
+jobs:
+  evals:
+    if: ${{ vars.TRAJECTORY_EVALS_DISABLED != '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 160
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma@7 generate
+
+      - name: Offline replay (free — the CI suite)
+        env:
+          EVAL_REPORT_DIR: ${{ github.workspace }}/eval-out
+        run: npm run eval:trajectory
+
+      - name: Live trials (real seats, cost-capped)
+        env:
+          ZAI_API_KEY: ${{ secrets.ZAI_API_KEY }}
+          MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          EVAL_GATEWAY_BASE_URL: ${{ secrets.EVAL_GATEWAY_BASE_URL }}
+          EVAL_GATEWAY_API_KEY: ${{ secrets.EVAL_GATEWAY_API_KEY }}
+          EVAL_REPORT_DIR: ${{ github.workspace }}/eval-out
+          EVAL_K: ${{ github.event.inputs.k || '3' }}
+          EVAL_MAX_USD: ${{ github.event.inputs.max_usd || '25' }}
+          EVAL_CASES: ${{ github.event.inputs.cases || '' }}
+          EVAL_SEATS: ${{ github.event.inputs.seats || '' }}
+          EVAL_MODEL: ${{ github.event.inputs.model || '' }}
+          EVAL_EFFORT: ${{ github.event.inputs.effort || 'high' }}
+          EVAL_JUDGE_MODEL: ${{ github.event.inputs.judge_model || 'deepseek-flash' }}
+          EVAL_JUDGE_LABELS: ${{ github.event.inputs.judge_labels || '0' }}
+        run: |
+          if [ -z "$ZAI_API_KEY" ] && [ -z "$MOONSHOT_API_KEY" ] && [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "::warning::no provider keys in the repository secrets — live trajectory trials skipped"
+            exit 0
+          fi
+          npm run eval:trajectory:live
+
+      - name: Report to the run summary
+        if: always()
+        run: |
+          for f in "$GITHUB_WORKSPACE"/eval-out/live-report.md "$GITHUB_WORKSPACE"/eval-out/replay-report.md; do
+            [ -f "$f" ] && { cat "$f" >> "$GITHUB_STEP_SUMMARY"; echo >> "$GITHUB_STEP_SUMMARY"; }
+          done
+          [ -f "$GITHUB_WORKSPACE/eval-out/live-report.md" ] || echo "no live report (skipped or crashed — see the log)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trajectory-evals-${{ github.run_id }}
+          path: eval-out
+          if-no-files-found: ignore
+          retention-days: 30

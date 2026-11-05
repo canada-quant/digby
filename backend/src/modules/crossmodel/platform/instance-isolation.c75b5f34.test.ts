@@ -4,7 +4,7 @@
  *
  * The leaf's contract is pinned in instance-targets.test.ts. THIS suite pins
  * the WIRED surfaces — the call sites that historically defaulted to the
- * production repo (`|| 'canada-quant/digby'`) and now resolve from the
+ * production repo (`|| 'example-org/crossmodel'`) and now resolve from the
  * instance's OWN environment, hard-failing when a NON-prod instance
  * (DIGBY_INSTANCE != prod) would resolve a production target:
  *
@@ -48,7 +48,7 @@ afterEach(() => {
 describe('c75b5f34 — self-merge ownRepoSlug() resolves from the instance env', () => {
   it('DIGBY_INSTANCE unset ⇒ prod ⇒ the production repo (self-merge behavior unchanged)', () => {
     const { ownRepoSlug } = require('../coding/self-merge.service');
-    expect(ownRepoSlug()).toBe('canada-quant/digby');
+    expect(ownRepoSlug()).toBe('example-org/crossmodel');
   });
 
   it('non-prod instance, SELF_REPO unset ⇒ empty (no own repo — never a silent prod fallback)', () => {
@@ -66,17 +66,17 @@ describe('c75b5f34 — self-merge ownRepoSlug() resolves from the instance env',
 
   it('non-prod instance, SELF_REPO = PRODUCTION repo ⇒ hard fail (IsolationBoundaryError)', () => {
     process.env.DIGBY_INSTANCE = 'edge';
-    process.env.SELF_REPO = 'canada-quant/digby';
+    process.env.SELF_REPO = 'example-org/crossmodel';
     const { ownRepoSlug } = require('../coding/self-merge.service');
     expect(() => ownRepoSlug()).toThrow(/ISOLATION BOUNDARY/);
-    expect(() => ownRepoSlug()).toThrow(/canada-quant\/digby/);
+    expect(() => ownRepoSlug()).toThrow(/example-org\/crossmodel/);
   });
 });
 
 describe('c75b5f34 — infra-watch DEPLOY_REPO (module-load resolution)', () => {
   it('DIGBY_INSTANCE unset ⇒ prod ⇒ the production repo (deploy telemetry unchanged)', () => {
     const { DEPLOY_REPO } = require('../fleet/infra-watch.service');
-    expect(DEPLOY_REPO).toBe('canada-quant/digby');
+    expect(DEPLOY_REPO).toBe('example-org/crossmodel');
   });
 
   it('non-prod instance, INFRA_WATCH_REPO unset ⇒ empty string (nothing watched — fetchers short-circuit to no facts)', () => {
@@ -96,15 +96,15 @@ describe('c75b5f34 — infra-watch DEPLOY_REPO (module-load resolution)', () => 
 
   it('non-prod instance, INFRA_WATCH_REPO = PRODUCTION repo ⇒ module load HARD-FAILS (boot refuses to start watching prod)', () => {
     process.env.DIGBY_INSTANCE = 'selfhost';
-    process.env.INFRA_WATCH_REPO = 'canada-quant/digby';
+    process.env.INFRA_WATCH_REPO = 'example-org/crossmodel';
     expect(() => require('../fleet/infra-watch.service')).toThrow(/ISOLATION BOUNDARY/);
   });
 });
 
 describe('c75b5f34 — deploy-health never probes the production site from a non-prod instance', () => {
-  it('DIGBY_INSTANCE unset ⇒ prod ⇒ the production default https://digby.example.com (unchanged)', () => {
+  it('DIGBY_INSTANCE unset ⇒ prod ⇒ the production default https://digby.ai (unchanged)', () => {
     const { deployHealthBaseUrl } = require('../fleet/deploy-health');
-    expect(deployHealthBaseUrl()).toBe('https://digby.example.com');
+    expect(deployHealthBaseUrl()).toBe('https://digby.ai');
   });
 
   it('non-prod instance ⇒ the instance OWN public URL (SELFHOST_PUBLIC_URL)', () => {

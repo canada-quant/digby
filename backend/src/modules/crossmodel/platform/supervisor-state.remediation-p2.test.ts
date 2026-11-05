@@ -20,7 +20,7 @@ const mockPrisma: any = {
   supervisorState: { findUnique: jest.fn(), upsert: jest.fn(), findMany: jest.fn(async () => []) },
   crossModelChat: { findUnique: jest.fn(), findFirst: jest.fn(async () => null) },
   projectTodo: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null) },
   userFeatureRequest: { findFirst: jest.fn(async () => null) },
   // Ticket 8f5a45f7: stalled-todo liveness suppression reads run activity.
@@ -86,7 +86,7 @@ beforeEach(() => {
   mockPrisma.crossModelChat.findUnique.mockResolvedValue({ isSupervisor: true });
   mockPrisma.crossModelChat.findFirst.mockResolvedValue(null);
   mockPrisma.projectTodo.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.ownerQuestion.findMany.mockResolvedValue([]);
   mockPrisma.ownerQuestion.findFirst.mockResolvedValue(null);
   mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null);
@@ -306,7 +306,7 @@ describe('v1#2 — fleet-attention block sizing', () => {
     mockPrisma.projectTodo.findMany
       .mockResolvedValueOnce([{ title: 'Bench run', assigneeChatId: 'chat-eeee0005', updatedAt: new Date(Date.now() - 5 * 3600e3) }])
       .mockResolvedValueOnce([]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       { id: 'f0160206-rest', sessionId: 'chat-ffff0006', createdAt: new Date(Date.now() - 86400e3) },
     ]);
     const block = await buildFleetAttentionBlock(UID);

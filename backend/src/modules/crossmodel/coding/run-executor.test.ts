@@ -58,19 +58,28 @@ jest.mock('../../../config/redis', () => ({
 }));
 
 const mockPrisma: any = {
-  codingMessage: {
+  crossModelMessage: {
     create: jest.fn(async () => ({ id: 'msg-new' })),
     update: jest.fn(async () => ({})),
     count: jest.fn(async () => 1), // never the opening turn unless a case overrides
     findMany: jest.fn(async () => []),
   },
   crossModelChat: { findUnique: jest.fn(async () => ({ userId: 'u1' })) },
-  agentRun: { update: jest.fn(async () => ({})), updateMany: jest.fn(async () => ({ count: 1 })), count: jest.fn(async () => 0) },
+  agentRun: {
+    update: jest.fn(async () => ({})),
+    updateMany: jest.fn(async () => ({ count: 1 })),
+    count: jest.fn(async () => 0),
+    // Ticket 65af5656: the lease guard reads the row back before releasing a
+    // run on a 0-row heartbeat. Default: the row still EXISTS (a racing status
+    // flip) → stand down, never cancel. A test that really wants the zombie
+    // path overrides this with null (the row is genuinely gone).
+    findUnique: jest.fn(async (): Promise<any> => ({ status: 'running' })),
+  },
   agentEvent: { create: jest.fn(async () => ({})), aggregate: jest.fn(async () => ({ _max: { seq: 0 } })) },
   // cff523e7: the provider-fail threshold flips coding_schedules.lastStatus.
   // fbe65673: the claim-time stale-firing re-check reads the row — default
   // ENABLED so schedule-linked runs proceed; the guard's own tests override.
-  codingSchedule: {
+  chatSchedule: {
     update: jest.fn(async () => ({})),
     findUnique: jest.fn(async (): Promise<any> => ({ enabled: true })),
     // audit #2: the continuation backstop's pending once-schedule dedupe count.
@@ -368,13 +377,6 @@ jest.mock('./coding-data.service', () => ({
   getCodingSessionTitle: (...args: any[]) => mockGetCodingSessionTitle(...args),
   getFirstUserCodingMessage: (...args: any[]) => mockGetFirstUserCodingMessage(...args),
   getCodingSessionTitleSource: (...args: any[]) => mockGetCodingSessionTitleSource(...args),
-  // 954b7910: the digest's ANSWER_MSG_ID guard reads the dual-write switch —
-  // default ON so the c6b line-2 pin (and the rest of the suite) exercises the
-  // mirrored path; the off-mode pin toggles it per test.
-  transcriptDualWriteEnabled: () => !process.env.TRANSCRIPT_DUAL_WRITE_OFF_IN_TESTS,
-  // MERGE-1 slice 1: the steer-adoption idempotency guard resolves its table through the
-  // read-switch seam. 'legacy' keeps every existing expectation (they seed codingMessage).
-  pickTranscriptSource: async () => 'legacy',
 }));
 
 // 7f546b03: the input-consumption seam stages input.images AND input.files via
@@ -675,13 +677,13 @@ describe('executeClaimedRun', () => {
     // The recovered stranded steer: the controller already persisted the triage
     // note as user row msg-eager-1 (the sighting's msg 133f6923); the run-start
     // persist must NOT insert the sighting's second copy (msg 4e9a91e8).
-    mockPrisma.codingMessage.count.mockResolvedValueOnce(1); // the adopt lookup: 1 of 1 ids exist
+    mockPrisma.crossModelMessage.count.mockResolvedValueOnce(1); // the adopt lookup: 1 of 1 ids exist
     await executeClaimedRun(makeClaim({
       input: { message: 'triage note body', userId: 'u1', origin: 'schedule', existingUserMessageIds: ['msg-eager-1'] },
     }));
 
     // The adopt lookup probed exactly the listed ids, scoped to this chat + role.
-    expect(mockPrisma.codingMessage.count).toHaveBeenCalledWith({
+    expect(mockPrisma.crossModelMessage.count).toHaveBeenCalledWith({
       where: { id: { in: ['msg-eager-1'] }, chatId: 's1', role: 'user' },
     });
     // NO user-row insert (assistant placeholder/final rows are unaffected).
@@ -696,7 +698,7 @@ describe('executeClaimedRun', () => {
   });
 
   it('(b3) fc7b2ca7: a PARTIALLY-missing adopt set inserts as before — never trade content loss for tidiness', async () => {
-    mockPrisma.codingMessage.count.mockResolvedValueOnce(1); // only 1 of 2 eager rows found
+    mockPrisma.crossModelMessage.count.mockResolvedValueOnce(1); // only 1 of 2 eager rows found
     await executeClaimedRun(makeClaim({
       input: { message: 'merged steer batch', userId: 'u1', origin: 'schedule', existingUserMessageIds: ['msg-eager-1', 'msg-gone-2'] },
     }));
@@ -706,7 +708,7 @@ describe('executeClaimedRun', () => {
   });
 
   it('(b4) fc7b2ca7: adopt lookup FAILURE (db blip) inserts as before — duplicate-over-loss doctrine', async () => {
-    mockPrisma.codingMessage.count.mockRejectedValueOnce(new Error('db blip'));
+    mockPrisma.crossModelMessage.count.mockRejectedValueOnce(new Error('db blip'));
     await executeClaimedRun(makeClaim({
       input: { message: 'triage note body', userId: 'u1', origin: 'schedule', existingUserMessageIds: ['msg-eager-1'] },
     }));
@@ -1127,7 +1129,7 @@ describe('executeClaimedRun', () => {
   });
 
   it('(stale-firing) a run queued by an explicitly-CANCELLED schedule finalizes cancelled WITHOUT executing (fbe65673)', async () => {
-    mockPrisma.codingSchedule.findUnique.mockResolvedValueOnce({ enabled: false, lastStatus: 'cancelled' });
+    mockPrisma.chatSchedule.findUnique.mockResolvedValueOnce({ enabled: false, lastStatus: 'cancelled' });
     await executeClaimedRun(makeClaim({ input: { message: 'loop prompt', userId: 'u1', origin: 'schedule', scheduleId: 'sch_gone' } }));
     expect(mockRunCodingAgent).not.toHaveBeenCalled();
     expect(mockGetSessionForUser).not.toHaveBeenCalled(); // skipped before session load
@@ -1142,7 +1144,7 @@ describe('executeClaimedRun', () => {
     // The sweeper sets enabled:false with lastStatus 'started' when a firing
     // consumes the final allowed run (reachedCap) — and for EVERY once-schedule
     // right after queueing it. A blanket disabled-check would cancel those.
-    mockPrisma.codingSchedule.findUnique.mockResolvedValueOnce({ enabled: false, lastStatus: 'started' });
+    mockPrisma.chatSchedule.findUnique.mockResolvedValueOnce({ enabled: false, lastStatus: 'started' });
     await executeClaimedRun(makeClaim({ input: { message: '[HARNESS CONTINUATION r1/6] …', userId: 'u1', origin: 'schedule', scheduleId: 'sch_once' } }));
     expect(mockRunCodingAgent).toHaveBeenCalled();
     expect(finalizeCall()?.[0].data.status).not.toBe('cancelled');
@@ -1152,7 +1154,7 @@ describe('executeClaimedRun', () => {
     // When the fire-time guard rejects a post-cancel fire, the sweeper writes
     // lastStatus 'skipped:cancelled' OVER 'cancelled' — the guard must catch
     // that string too or it goes toothless for its core incident class.
-    mockPrisma.codingSchedule.findUnique.mockResolvedValueOnce({ enabled: false, lastStatus: 'skipped:cancelled' });
+    mockPrisma.chatSchedule.findUnique.mockResolvedValueOnce({ enabled: false, lastStatus: 'skipped:cancelled' });
     await executeClaimedRun(makeClaim({ input: { message: 'loop prompt', userId: 'u1', origin: 'schedule', scheduleId: 'sch_gone' } }));
     expect(mockRunCodingAgent).not.toHaveBeenCalled();
     expect(finalizeCall()?.[0].data.status).toBe('cancelled');
@@ -1224,13 +1226,13 @@ describe('executeClaimedRun', () => {
   });
 
   it('(stale-firing) an expired schedule keeps its already-queued run (fired legitimately pre-expiry)', async () => {
-    mockPrisma.codingSchedule.findUnique.mockResolvedValueOnce({ enabled: false, lastStatus: 'expired' });
+    mockPrisma.chatSchedule.findUnique.mockResolvedValueOnce({ enabled: false, lastStatus: 'expired' });
     await executeClaimedRun(makeClaim({ input: { message: 'loop prompt', userId: 'u1', origin: 'schedule', scheduleId: 'sch_old' } }));
     expect(mockRunCodingAgent).toHaveBeenCalled();
   });
 
   it('(stale-firing) a deleted schedule row (findUnique → null) also cancels the stale firing', async () => {
-    mockPrisma.codingSchedule.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.chatSchedule.findUnique.mockResolvedValueOnce(null);
     await executeClaimedRun(makeClaim({ input: { message: 'loop prompt', userId: 'u1', origin: 'schedule', scheduleId: 'sch_gone' } }));
     expect(mockRunCodingAgent).not.toHaveBeenCalled();
     expect(finalizeCall()?.[0].data.status).toBe('cancelled');
@@ -1243,14 +1245,14 @@ describe('executeClaimedRun', () => {
   });
 
   it('(stale-firing) a schedule-read ERROR never skips — uncertainty must not drop a real run', async () => {
-    mockPrisma.codingSchedule.findUnique.mockRejectedValueOnce(new Error('db blip'));
+    mockPrisma.chatSchedule.findUnique.mockRejectedValueOnce(new Error('db blip'));
     await executeClaimedRun(makeClaim({ input: { message: 'loop prompt', userId: 'u1', origin: 'schedule', scheduleId: 'sch_1' } }));
     expect(mockRunCodingAgent).toHaveBeenCalled();
   });
 
   it('(stale-firing) runs WITHOUT a scheduleId (user turns, agent sends) never touch the schedule table', async () => {
     await executeClaimedRun(makeClaim());
-    expect(mockPrisma.codingSchedule.findUnique).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.findUnique).not.toHaveBeenCalled();
     expect(mockRunCodingAgent).toHaveBeenCalled();
   });
 
@@ -1408,26 +1410,6 @@ describe('executeClaimedRun', () => {
     expect(images[0]).toMatchObject({ mediaType: 'image/png', url, source: 'generated', fileId: 'f1', prompt: 'a fox' });
     expect(images[0]).not.toHaveProperty('data');
     expect(images[1]).toMatchObject({ data: 'BBBB', source: 'browser' });
-  });
-
-  it('(954b7910 review obs. 1) TRANSCRIPT_DUAL_WRITE=off suppresses ANSWER_MSG_ID — a codingMessage-only row id must never ride the digest (a true citation would convict as phantom)', async () => {
-    mockRunCodingAgent.mockImplementationOnce(async () => ({
-      finalText: 'Quiet lane check — nothing moved.',
-      parts: [{ type: 'text', text: 'Quiet lane check — nothing moved.' }],
-    }));
-    process.env.TRANSCRIPT_DUAL_WRITE_OFF_IN_TESTS = '1';
-    try {
-      await executeClaimedRun(makeClaim());
-      const completed = mockEmitHookEventSafe.mock.calls.find((c) => c[1] === 'run_completed');
-      expect(completed).toBeDefined();
-      // The answer is still quoted…
-      expect(completed![2]).toContain('Final answer: Quiet lane check');
-      // …but NO ANSWER_MSG_ID line: the row has no crossModelMessage mirror,
-      // so citedMessageRowExists could not probe it.
-      expect(completed![2]).not.toContain('ANSWER_MSG_ID:');
-    } finally {
-      delete process.env.TRANSCRIPT_DUAL_WRITE_OFF_IN_TESTS;
-    }
   });
 
   it('(c6) the run_completed hook digest quotes the ACCEPTED final, never the head of the streamed text (a struck draft streamed first) (2026-09-08)', async () => {
@@ -1778,6 +1760,12 @@ describe('executeClaimedRun', () => {
     // heartbeat updateMany count, so a cascade-deleted agent_runs row kept
     // executing ~90 min of tools with every receipt/journal write failing the
     // chat FK. Pin the zombie-stop release path: cancel + parked-wait release.
+    //
+    // Ticket 65af5656 (2026-11-03): the count is now CONFIRMED before it is
+    // acted on — the row is read back (findUnique → null = genuinely gone) and
+    // absence must hold across zombieConfirmMisses() beats, so this test
+    // advances TWO lease ticks. A row that merely flipped status stands down
+    // (see the sibling cases below and run-row-liveness.65af5656.test.ts).
     jest.useFakeTimers();
     try {
       let decision: string | undefined;
@@ -1785,9 +1773,14 @@ describe('executeClaimedRun', () => {
       mockRunCodingAgent.mockImplementationOnce(async () => {
         const dP = awaitApproval('a3', 's1');
         const qP = awaitAnswer('q3', 's1');
-        // The chat was deleted mid-run: the heartbeat touches 0 rows.
-        mockPrisma.agentRun.updateMany.mockResolvedValueOnce({ count: 0 });
-        await jest.advanceTimersByTimeAsync(2.5 * 60 * 1000); // the lease tick fires
+        // The chat was deleted mid-run: the heartbeat touches 0 rows AND the
+        // row really is absent. One-shot mocks only — a permanent
+        // mockResolvedValue would leak into every later case in this file
+        // (review finding N2, 65af5656).
+        mockPrisma.agentRun.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+        mockPrisma.agentRun.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 0 });
+        await jest.advanceTimersByTimeAsync(2.5 * 60 * 1000); // tick 1: absence recorded, no cancel yet
+        await jest.advanceTimersByTimeAsync(2.5 * 60 * 1000); // tick 2: confirmed → release
         decision = await dP; // released NOW by the zombie-stop, not the 14-min auto-deny
         answer = await qP;   // released NOW, not the 60-min timeout
         return { finalText: 'partial', parts: [] };
@@ -1799,6 +1792,37 @@ describe('executeClaimedRun', () => {
       expect(mockStore.has('coding:approval:pending:a3')).toBe(false);
       expect(mockStore.has('coding:question:pending:q3')).toBe(false);
       expect(finalizeCall()?.[0].data.status).toBe('cancelled'); // the cooperative flag finalizes cancelled
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('(65af5656) a 0-row heartbeat whose row was flipped OFF running is NOT a deleted chat — the lane survives', async () => {
+    // The reproduction: a deploy/drain wave marked live rows 'interrupted'
+    // (and/or a racing finalize moved them), so updateMany touched 0 rows
+    // while the chat and its work were completely intact. The old guard
+    // cancelled every such run — 64 zombie_run_stopped rows across 8 lanes in
+    // ~50 ms at 09:15:44.96–45.03Z, and two Schooltime lanes finalized
+    // "(Stopped.)" 250 ms apart.
+    jest.useFakeTimers();
+    try {
+      let answer: string | null | undefined = 'unset';
+      let stillParked = false;
+      mockRunCodingAgent.mockImplementationOnce(async () => {
+        const qP = awaitAnswer('q4', 's1');
+        // Exists, but no longer 'running' (a racing finalize / re-queue).
+        // One-shot: a permanent mock would leak into later cases (N2).
+        mockPrisma.agentRun.findUnique.mockResolvedValueOnce({ status: 'completed' });
+        mockPrisma.agentRun.updateMany.mockResolvedValueOnce({ count: 0 });
+        await jest.advanceTimersByTimeAsync(2.5 * 60 * 1000);
+        stillParked = mockStore.has('coding:question:pending:q4');
+        // Release the wait ourselves so the run can finish this test cleanly.
+        mockPrisma.agentRun.updateMany.mockResolvedValue({ count: 1 });
+        answer = null;
+        return { finalText: 'done', parts: [] };
+      });
+      await executeClaimedRun(makeClaim());
+      expect(stillParked).toBe(true);  // the guard stood down — the park was never released
     } finally {
       jest.useRealTimers();
     }
@@ -2735,7 +2759,7 @@ describe('executeClaimedRun', () => {
     // the filing carried no containment marker → each sighting reopened the
     // ticket as "the fix did not hold" → dispatch churn. The marker wires the
     // guard lane into the aac649ba discrimination (feedback.service.ts:367).
-    const PROBE_CLAIM = 'Production is healthy — digby.example.com returned 200 at 03:10Z.';
+    const PROBE_CLAIM = 'Production is healthy — digby.ai returned 200 at 03:10Z.';
     const ORIGINAL = `Sweep complete.\n${PROBE_CLAIM}\nAll quiet otherwise.`;
     mockRunCodingAgent.mockImplementationOnce(async () => ({
       finalText: ORIGINAL,
@@ -2989,7 +3013,7 @@ describe('provider-killed scheduled runs (cff523e7)', () => {
     // …and the schedule's streak is counted in Redis.
     expect(mockStore.get(KEY('sch_1'))).toBe('1');
     // Below the threshold: no digest-visible status flip, no attention event.
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(mockEmitHookEvent).not.toHaveBeenCalled();
   });
 
@@ -2999,7 +3023,7 @@ describe('provider-killed scheduled runs (cff523e7)', () => {
     providerKilled(); await executeClaimedRun(schedClaim({ id: 'run3' }));
 
     expect(mockStore.get(KEY('sch_1'))).toBe('3');
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'sch_1' }, data: { lastStatus: 'error:provider_429' },
     });
     expect(mockEmitHookEvent).toHaveBeenCalledTimes(1);
@@ -3026,7 +3050,7 @@ describe('provider-killed scheduled runs (cff523e7)', () => {
     // Default mockRunCodingAgent = clean finish (no modelErrored) → reset.
     await executeClaimedRun(schedClaim({ id: 'run3' }));
     expect(mockStore.has(KEY('sch_1'))).toBe(false);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
 
     // A fresh streak starts from 1 again (and could re-cross later — helper-level
     // re-alert covered in sched-provider-fail.test.ts).
@@ -3039,7 +3063,7 @@ describe('provider-killed scheduled runs (cff523e7)', () => {
     providerKilled();
     await executeClaimedRun(makeClaim({ input: { message: 'do it', userId: 'u1' } }));
     expect([...mockStore.keys()].filter((k) => k.startsWith('coding:sched:provfail:'))).toEqual([]);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(mockEmitHookEvent).not.toHaveBeenCalled();
   });
 
@@ -3275,7 +3299,7 @@ describe('continuation fast-lane backstop (audit #2)', () => {
   });
 
   it('dedupe stall guard: a pending legacy once-schedule also suppresses both lanes (preserved exactly)', async () => {
-    mockPrisma.codingSchedule.count.mockResolvedValueOnce(1);
+    mockPrisma.chatSchedule.count.mockResolvedValueOnce(1);
     await executeClaimedRun(machineClaim());
     expect(mockQueueContinuationRun).not.toHaveBeenCalled();
     expect(mockCreateScheduleFallback).not.toHaveBeenCalled();
@@ -3652,7 +3676,7 @@ describe('required-probe gate (P7 G13)', () => {
   const schedClaim = (over: Partial<ClaimedRun> = {}) =>
     makeClaim({ input: { message: 'run the monitor', userId: 'u1', origin: 'schedule', scheduleId: 'sch_1' }, ...over });
   const withProbes = () =>
-    mockPrisma.codingSchedule.findUnique.mockResolvedValue({
+    mockPrisma.chatSchedule.findUnique.mockResolvedValue({
       enabled: true, lastStatus: null,
       requiredProbes: [{ tool: 'run_command' }],
     });
@@ -3660,7 +3684,7 @@ describe('required-probe gate (P7 G13)', () => {
   afterEach(() => {
     // withProbes() sets a persistent implementation — restore the suite default
     // (clearAllMocks clears calls, not implementations).
-    mockPrisma.codingSchedule.findUnique.mockImplementation(async () => ({ enabled: true }));
+    mockPrisma.chatSchedule.findUnique.mockImplementation(async () => ({ enabled: true }));
   });
 
   it('a machine firing that completes WITHOUT the required receipt: journal annotation + next-firing notice + streak count', async () => {

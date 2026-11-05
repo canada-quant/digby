@@ -72,16 +72,16 @@ const mkRes = (): any => {
   res.json = jest.fn((b: any) => { res.body = b; return res; });
   return res;
 };
-const ADMIN = { id: 'u-admin', role: 'ADMIN', email: 'admin@digby.example.com' };
-const MORTAL = { id: 'u-user', role: 'USER', email: 'user@digby.example.com' };
-const target = (over: Record<string, unknown> = {}) => ({ id: 'u-t', email: 't@digby.example.com', role: 'USER', isChild: false, ...over });
+const ADMIN = { id: 'u-admin', role: 'ADMIN', email: 'admin@digby.ai' };
+const MORTAL = { id: 'u-user', role: 'USER', email: 'user@digby.ai' };
+const target = (over: Record<string, unknown> = {}) => ({ id: 'u-t', email: 't@digby.ai', role: 'USER', isChild: false, ...over });
 
 describe('adminSetUserRole', () => {
   beforeEach(() => { mockFindUnique.mockReset(); mockUpdate.mockReset(); });
 
   it('promotes a user to admin', async () => {
     mockFindUnique.mockResolvedValue(target());
-    mockUpdate.mockResolvedValue({ id: 'u-t', email: 't@digby.example.com', role: 'ADMIN' });
+    mockUpdate.mockResolvedValue({ id: 'u-t', email: 't@digby.ai', role: 'ADMIN' });
     const res = mkRes();
     await controller.adminSetUserRole(mkReq(ADMIN, 'u-t', 'admin'), res);
     expect(res.statusCode).toBe(200);
@@ -91,7 +91,7 @@ describe('adminSetUserRole', () => {
 
   it('demotes an admin back to user', async () => {
     mockFindUnique.mockResolvedValue(target({ role: 'ADMIN' }));
-    mockUpdate.mockResolvedValue({ id: 'u-t', email: 't@digby.example.com', role: 'USER' });
+    mockUpdate.mockResolvedValue({ id: 'u-t', email: 't@digby.ai', role: 'USER' });
     const res = mkRes();
     await controller.adminSetUserRole(mkReq(ADMIN, 'u-t', 'USER'), res);
     expect(res.statusCode).toBe(200);
@@ -109,7 +109,7 @@ describe('adminSetUserRole', () => {
     for (const [req, setup, code] of [
       [mkReq(ADMIN, 'u-t', 'ROOT'), () => mockFindUnique.mockResolvedValue(target()), 400],
       [mkReq(ADMIN, 'u-admin', 'USER'), () => mockFindUnique.mockResolvedValue(target({ id: 'u-admin' })), 400],
-      [mkReq(ADMIN, 'u-p', 'USER'), () => mockFindUnique.mockResolvedValue(target({ id: 'u-p', email: 'Paul@Sunday.Market', role: 'ADMIN' })), 400],
+      [mkReq(ADMIN, 'u-p', 'USER'), () => mockFindUnique.mockResolvedValue(target({ id: 'u-p', email: 'example-user@example.com', role: 'ADMIN' })), 400],
       [mkReq(ADMIN, 'u-k', 'ADMIN'), () => mockFindUnique.mockResolvedValue(target({ id: 'u-k', isChild: true })), 400],
       [mkReq(ADMIN, 'u-x', 'ADMIN'), () => mockFindUnique.mockResolvedValue(null), 404],
     ] as Array<[any, () => void, number]>) {
@@ -127,7 +127,7 @@ describe('adminDeleteUser (review 2026-10-23)', () => {
   beforeEach(() => { mockFindUnique.mockReset(); mockPurgeUserAccount.mockClear(); });
 
   it('goes through the shared FK-less cleanup (cold supervisor archive, thread rows, memory mirror) — never a bare FK cascade', async () => {
-    mockFindUnique.mockResolvedValue({ id: 'u-t', email: 't@digby.example.com' });
+    mockFindUnique.mockResolvedValue({ id: 'u-t', email: 't@digby.ai' });
     const res = mkRes();
     await controller.adminDeleteUser({ user: ADMIN, params: { id: 'u-t' }, body: {} } as any, res);
     expect(res.statusCode).toBe(200);
@@ -136,7 +136,7 @@ describe('adminDeleteUser (review 2026-10-23)', () => {
 
   it('still refuses a non-admin, your own account and an unknown user (nothing purged)', async () => {
     for (const [user, id, found, code] of [[MORTAL, 'u-t', true, 403], [ADMIN, 'u-admin', true, 400], [ADMIN, 'u-x', false, 404]] as Array<[any, string, boolean, number]>) {
-      mockFindUnique.mockResolvedValue(found ? { id, email: 'x@digby.example.com' } : null);
+      mockFindUnique.mockResolvedValue(found ? { id, email: 'x@digby.ai' } : null);
       const res = mkRes();
       await controller.adminDeleteUser({ user, params: { id }, body: {} } as any, res);
       expect(res.statusCode).toBe(code);
@@ -157,7 +157,7 @@ describe('adminDeleteUser (review 2026-10-23)', () => {
 
     it('refuses the canonical smoke account (default protected list) and purges nothing', async () => {
       delete process.env.ADMIN_DELETE_PROTECTED_EMAILS;
-      mockFindUnique.mockResolvedValue({ id: 'u-smoke', email: 'claudebot@digby.example.com' });
+      mockFindUnique.mockResolvedValue({ id: 'u-smoke', email: 'claudebot@digby.ai' });
       const res = mkRes();
       await controller.adminDeleteUser({ user: ADMIN, params: { id: 'u-smoke' }, body: {} } as any, res);
       expect(res.statusCode).toBe(400);
@@ -166,8 +166,8 @@ describe('adminDeleteUser (review 2026-10-23)', () => {
     });
 
     it('protects case-insensitively and honors a custom ADMIN_DELETE_PROTECTED_EMAILS list', async () => {
-      process.env.ADMIN_DELETE_PROTECTED_EMAILS = 'Smoke-One@digby.example.com, smoke-two@digby.example.com';
-      for (const email of ['smoke-one@digby.example.com', 'Smoke-Two@digby.example.com']) {
+      process.env.ADMIN_DELETE_PROTECTED_EMAILS = 'Smoke-One@digby.ai, smoke-two@digby.ai';
+      for (const email of ['smoke-one@digby.ai', 'Smoke-Two@digby.ai']) {
         mockFindUnique.mockResolvedValue({ id: 'u-x', email });
         const res = mkRes();
         await controller.adminDeleteUser({ user: ADMIN, params: { id: 'u-x' }, body: {} } as any, res);
@@ -178,7 +178,7 @@ describe('adminDeleteUser (review 2026-10-23)', () => {
 
     it('an explicitly emptied list is the documented override (owner can still delete)', async () => {
       process.env.ADMIN_DELETE_PROTECTED_EMAILS = '';
-      mockFindUnique.mockResolvedValue({ id: 'u-smoke', email: 'claudebot@digby.example.com' });
+      mockFindUnique.mockResolvedValue({ id: 'u-smoke', email: 'claudebot@digby.ai' });
       const res = mkRes();
       await controller.adminDeleteUser({ user: ADMIN, params: { id: 'u-smoke' }, body: {} } as any, res);
       expect(res.statusCode).toBe(200);
@@ -187,7 +187,7 @@ describe('adminDeleteUser (review 2026-10-23)', () => {
 
     it('an ordinary account is untouched by the guard (delete still works)', async () => {
       delete process.env.ADMIN_DELETE_PROTECTED_EMAILS;
-      mockFindUnique.mockResolvedValue({ id: 'u-t', email: 'someone-else@digby.example.com' });
+      mockFindUnique.mockResolvedValue({ id: 'u-t', email: 'someone-else@digby.ai' });
       const res = mkRes();
       await controller.adminDeleteUser({ user: ADMIN, params: { id: 'u-t' }, body: {} } as any, res);
       expect(res.statusCode).toBe(200);

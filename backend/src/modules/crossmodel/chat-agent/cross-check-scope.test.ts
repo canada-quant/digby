@@ -136,7 +136,7 @@ describe('lane wiring — the exemption reaches both affected cross_checker lane
     const rule = crossCheckPlatformScopeRule();
     expect(rule).toMatch(/belong to the MAIN assistant/);
     expect(rule).toMatch(/NEVER report a Digby capability as missing/);
-    expect(rule).toMatch(/never web-search digby\.example\.com/);
+    expect(rule).toMatch(/never web-search digby\.ai/);
     expect(rule).toMatch(/file_feedback is ONLY for a harness malfunction/);
   });
 
@@ -153,7 +153,7 @@ describe('lane wiring — the exemption reaches both affected cross_checker lane
     // wake (machineGateSpawnsChecker — source 'gate_act' only, post machine
     // rails; it runs BEHIND the answer, never waited on). A preset / shadow
     // plan on a machine turn still never spawns.
-    expect(SERVICE_SOURCE).toContain('shouldSpawnChecker({ plan, machineTurnSkipsChecker: machineTurnSkipsChecker && !gateSpawnedOnMachine, checkerSeatProblem: null, isCouncil: isCouncilMode })');
+    expect(SERVICE_SOURCE).toContain('shouldSpawnChecker({ plan, machineTurnSkipsChecker: machineTurnSkipsChecker && !gateSpawnedOnMachine, checkerSeatProblem: null, isCouncil: isCouncilMode, ghost: ghostSingleModel })');
     expect(SERVICE_SOURCE).toContain('const gateSpawnedOnMachine = machineGateSpawnsChecker(plan, usesMachineRails);');
     expect(SERVICE_SOURCE).toContain('const usesMachineRails = runIsMachineTriggered && machineTurnSkipsChecker;');
     expect(SERVICE_SOURCE).toContain('const spawnChecker = wantsChecker && !checkerSeatProblem;');

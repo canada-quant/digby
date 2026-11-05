@@ -1,0 +1,71 @@
+# red-window-guard.yml — PR check: block merges to main while main's latest
+# deploy run is red (feedback ticket 1df1fe00; 2026-09-24 incident: three
+# consecutive failed deploys while merges kept landing, boxes stuck on an old
+# sha while main advanced).
+#
+# GATING REALITY (PR #1035 adversarial review B1): the check run lands on the
+# PR head sha and the platform's merge gate (self-merge.service.ts G2) refuses
+# any non-success check run — so for LANE merges (merge_pull_request) this
+# check is HARD once this workflow reaches main (the ticket's "binds ALL
+# merge authors"). Owner merges via the GitHub UI see it advisory (branch
+# protection is unavailable on the current GitHub plan). Override for the
+# legitimate merge-while-red case (deploy-repair PRs iterating toward green):
+# the PR label `deploy-fix`.
+#
+# JOB-LEVEL FAIL-OPEN: the wrapper below blocks ONLY on a genuine red verdict
+# (script exit 1 + the RWGDECISION=red sentinel). Any other outcome — script
+# crash, checkout flake, timeout, fail-open arm — leaves the check green with
+# a warning, because a broken guard JOB must never wedge the fleet's merges.
+name: Red window guard
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+concurrency:
+  group: red-window-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Red window guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run red-window guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || 'false' }}
+        run: |
+          set +e
+          OUT="$(bash scripts/deploy/red-window-guard.sh check 2>&1)"
+          RC=$?
+          set -e
+          echo "$OUT"
+          # Block ONLY on a genuine RED verdict: exit 1 AND the sentinel line.
+          if [ "$RC" -eq 1 ] && printf '%s\n' "$OUT" | grep -qx 'RWGDECISION=red'; then
+            echo "::error::RED WINDOW — merging now would stack this PR's deploy onto a failed deploy run. Fix main's deploy first, or add the 'deploy-fix' label to this PR."
+            exit 1
+          fi
+          # Isolation boundary (ticket c75b5f34, review F5 item 1): exit 3 is
+          # the boundary's own HARD FAIL (non-prod instance with no repo, or
+          # pointed at the production repo). A misconfigured self-hosted/Edge
+          # runner must not sail through with a green check: surface it as an
+          # error. (Fork PRs cannot get secrets, so this arm stays advisory
+          # there — the platform's own merge gate refuses any non-success
+          # check run, which makes this check hard for LANE merges.)
+          if [ "$RC" -eq 3 ]; then
+            echo "::error::ISOLATION BOUNDARY — red-window-guard refuses this instance's repo configuration (DIGBY_INSTANCE / GITHUB_REPO_SLUG). Fix the instance env before merging."
+            exit 3
+          fi
+          if [ "$RC" -ne 0 ]; then
+            echo "::warning::red-window-guard exited $RC without a red verdict — failing OPEN (merge allowed)."
+          fi
+          exit 0

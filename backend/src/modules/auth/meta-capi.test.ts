@@ -8,7 +8,7 @@ import {
 } from './meta-capi';
 
 const input = {
-  email: ' Person@Example.com ', userId: 'u1', eventId: 'abcd1234-ef', eventSourceUrl: 'https://digby.example.com/login?signup=true',
+  email: ' Person@Example.com ', userId: 'u1', eventId: 'abcd1234-ef', eventSourceUrl: 'https://digby.ai/login?signup=true',
   clientUserAgent: 'UA/1', clientIpAddress: '1.2.3.4', fbp: 'fb.1.1.2', nowMs: 1_791_400_000_000,
 };
 
@@ -25,7 +25,7 @@ describe('meta-capi (Conversions API CompleteRegistration)', () => {
     expect(e.event_time).toBe(1_791_400_000);
     expect(e.event_id).toBe('abcd1234-ef');
     expect(e.action_source).toBe('website');
-    expect(e.event_source_url).toBe('https://digby.example.com/login?signup=true');
+    expect(e.event_source_url).toBe('https://digby.ai/login?signup=true');
     expect(e.user_data.em).toEqual([sha256Normalized('person@example.com')]);
     expect(e.user_data.em[0]).toMatch(/^[0-9a-f]{64}$/);
     expect(e.user_data.client_user_agent).toBe('UA/1');
@@ -42,9 +42,9 @@ describe('meta-capi (Conversions API CompleteRegistration)', () => {
   });
 
   it('event_source_url is a digby page or the sign-up page', () => {
-    expect(eventSourceUrlFrom('https://digby.example.com/login?signup=true')).toBe('https://digby.example.com/login?signup=true');
-    expect(eventSourceUrlFrom('https://evil.example/digby.example.com')).toBe('https://digby.example.com/login?signup=true');
-    expect(eventSourceUrlFrom(undefined)).toBe('https://digby.example.com/login?signup=true');
+    expect(eventSourceUrlFrom('https://digby.ai/login?signup=true')).toBe('https://digby.ai/login?signup=true');
+    expect(eventSourceUrlFrom('https://evil.example/digby.ai')).toBe('https://digby.ai/login?signup=true');
+    expect(eventSourceUrlFrom(undefined)).toBe('https://digby.ai/login?signup=true');
   });
 
   it('posts to the pixel events edge with the token in the BODY, never the URL; never throws', async () => {

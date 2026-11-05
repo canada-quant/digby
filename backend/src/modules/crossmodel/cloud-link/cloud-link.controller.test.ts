@@ -11,7 +11,7 @@ jest.mock('../../../utils/logger', () => ({
 
 const mockService = {
   getCloudLinkStatus: jest.fn(async () => ({ state: 'unlinked', cloudUrl: null, instanceName: null, connected: false, lastError: null })),
-  pairToCloud: jest.fn(async () => ({ state: 'linked', cloudUrl: 'https://digby.example.com', instanceName: 'x', connected: false, lastError: null })),
+  pairToCloud: jest.fn(async () => ({ state: 'linked', cloudUrl: 'https://digby.ai', instanceName: 'x', connected: false, lastError: null })),
   unlinkFromCloud: jest.fn(async () => ({ state: 'unlinked', cloudUrl: null, instanceName: null, connected: false, lastError: null })),
   receiveCloudMessage: jest.fn(async (): Promise<any> => ({ delivery: 'started' })),
   startEdgePairingCode: jest.fn(async () => ({ code: 'ABCD-2345', expiresAt: new Date() })),
@@ -22,7 +22,7 @@ import controller from './cloud-link.controller';
 
 const mkReq = (role?: string): any => ({
   user: role ? { id: 'u1', userId: 'u1', email: 'a@b.c', role } : undefined,
-  body: { cloudUrl: 'https://digby.example.com', pairingCode: 'ABCD-2345' },
+  body: { cloudUrl: 'https://digby.ai', pairingCode: 'ABCD-2345' },
 });
 
 const mkRes = () => {
@@ -72,14 +72,14 @@ describe('ADMIN passes through', () => {
   it('pair passes the body + caller id to the service', async () => {
     const res = mkRes();
     await controller.pair(mkReq('ADMIN'), res, next);
-    expect(mockService.pairToCloud).toHaveBeenCalledWith('u1', 'https://digby.example.com', 'ABCD-2345', undefined);
+    expect(mockService.pairToCloud).toHaveBeenCalledWith('u1', 'https://digby.ai', 'ABCD-2345', undefined);
     expect(res.json).toHaveBeenCalledWith({ success: true, data: expect.objectContaining({ state: 'linked' }) });
   });
 
   it('startCode mints the device code + starts the pending dial', async () => {
     const res = mkRes();
     await controller.startCode(mkReq('ADMIN'), res, next);
-    expect(mockService.startEdgePairingCode).toHaveBeenCalledWith('u1', 'https://digby.example.com', undefined);
+    expect(mockService.startEdgePairingCode).toHaveBeenCalledWith('u1', 'https://digby.ai', undefined);
     expect(res.json).toHaveBeenCalledWith({
       success: true,
       data: { code: 'ABCD-2345', expiresAt: expect.any(Date) },

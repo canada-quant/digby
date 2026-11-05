@@ -1,5 +1,5 @@
 {
   "version": "1.0.2",
-  "url": "https://digby.example.com/Digby-Setup.exe",
+  "url": "https://digby.ai/Digby-Setup.exe",
   "notes": "Digby for Windows 1.0.2 — computer use fix (agent 0.9.1): the agent now locates digby-win-helper.exe at the agent bundle root, where the installer actually places it. Fresh installs previously paired and looked healthy but failed every computer task with 'helper executable not found' — that is fixed, so a new install can drive the computer immediately. Devices already on 1.0.1/0.9.0 should update and will then have working computer use."
 }

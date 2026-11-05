@@ -32,7 +32,7 @@ import {
 } from './telegram.service';
 import { instanceSiteLabel } from '../platform/instance-setup';
 
-/** The hostname users know THIS instance by — "digby.example.com" on production, the self-host's own host elsewhere (2026-10-20). */
+/** The hostname users know THIS instance by — "digby.ai" on production, the self-host's own host elsewhere (2026-10-20). */
 const SITE = instanceSiteLabel();
 
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET;

@@ -318,9 +318,12 @@ export const platformSubscribeHookSchema = z.object({
 export const platformPutAutonomySchema = z.object({
   params: idParam,
   body: z.object({
-    // Mirror of AUTONOMY_GRANTABLE_TOOLS (see the note above). An EMPTY array
-    // revokes all autonomy for the chat (setChatAutonomy deletes the row).
-    allowedTools: z.array(z.enum(['send_chat_message', 'start_coding_session', 'schedule_message', 'cancel_schedule', 'update_schedule', 'dispatch_platform_task', 'send_to_instance'])),
+    // Mirror of GRANTABLE_TOOL_NAMES (autonomy.service.ts) — see the note
+    // above. = AUTONOMY_GRANTABLE_TOOLS + EXPLICIT_GRANT_ONLY_TOOLS
+    // (create_chat_webhook: nameable in a grant, never auto-provisioned —
+    // owner ruling oq_d45410a4 / ticket d53eed71). An EMPTY array revokes all
+    // autonomy for the chat (setChatAutonomy deletes the row).
+    allowedTools: z.array(z.enum(['send_chat_message', 'start_coding_session', 'schedule_message', 'cancel_schedule', 'update_schedule', 'dispatch_platform_task', 'send_to_instance', 'create_chat_webhook'])),
     // Max mirrors MAX_SCHEDULE_CAP in autonomy.service.ts (1440 as of
     // 2026-08-08 — effectively uncapped; see the constant's comment).
     scheduleCap: z.number().int().min(1).max(1440).optional(),

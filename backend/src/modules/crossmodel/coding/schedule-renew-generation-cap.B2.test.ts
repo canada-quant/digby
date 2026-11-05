@@ -66,7 +66,7 @@ const mockArtifactCount = jest.fn(async (..._a: any[]): Promise<number> => 0);
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       create: (...a: any[]) => mockCreate(...a),
       count: (...a: any[]) => mockCount(...a),
       findMany: (...a: any[]) => mockFindMany(...a),

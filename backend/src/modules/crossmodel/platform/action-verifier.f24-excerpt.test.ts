@@ -45,7 +45,7 @@ describe('FO firing 24 — token-anchored clockHits excerpts (findFutureObserved
   });
 
   it('keeps the struck TOKEN visible when the line far exceeds the window (00:19Z CQL shape)', () => {
-    const line = '| CQL Gateway | ✅ Your 4 AGX routes + engine rename + tag fix all merged · deploy executing with the known-bad MiMo leg still serving the legacy spark route through the 2:45 PM PDT cutover';
+    const line = '| CQL Gateway | ✅ Your 4 AGX routes + engine rename + tag fix all merged · deploy executing with the known-bad node-b leg still serving the legacy spark route through the 2:45 PM PDT cutover';
     expect(line.length).toBeGreaterThan(160); // the old excerpt cut off before the token
     const hits = findFutureObservedTimestamps(line + '\n', NOW, {});
     expect(hits.length).toBeGreaterThanOrEqual(1);

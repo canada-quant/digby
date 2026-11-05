@@ -440,6 +440,9 @@ describe('durable cron wiring (Phase 3)', () => {
     ['compute-policy-window-closer', 600],
     // Session topology (2026-09-27): the +24 h placement labels + the observe-only R6 retire scan.
     ['session-topology-outcomes', 21600],
+    // TD-1 (Cluster 5, 2026-11-03): the observe-only scan of in_progress todos with NO assignee —
+    // the measurement that must precede the TODO_ASSIGNEE_REQUIRED_ENFORCE flip.
+    ['todo-assignee-audit', 21600],
     // INTERVENTION-OUTCOMES (2026-10-20): the +6h/+24h labels of supervisor lane interventions.
     ['supervisor-intervention-outcomes', 3600],
     // (feed-refresh 120 s was retired with the topic-feeds subsystem, 43c24152.)

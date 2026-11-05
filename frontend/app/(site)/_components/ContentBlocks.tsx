@@ -98,7 +98,7 @@ function Bullets({ items, inverse, article }: { items: string[]; inverse: boolea
 }
 
 function SectionLinks({ links: allLinks, inverse }: { links: ContentLink[]; inverse: boolean }) {
-  // A self-host serves production installers that would sign into digby.example.com — drop their links.
+  // A self-host serves production installers that would sign into digby.ai — drop their links.
   const links = isSelfHostedBuild() ? allLinks.filter((l) => !isInstallerHref(l.href)) : allLinks;
   if (links.length === 0) return null;
   if (inverse) {
@@ -124,7 +124,7 @@ function SectionLinks({ links: allLinks, inverse }: { links: ContentLink[]; inve
 }
 
 /**
- * A self-host build serves no native apps and is not digby.example.com: drop the
+ * A self-host build serves no native apps and is not digby.ai: drop the
  * macOS / Windows "native app" bullets and name this Digby instead of the
  * production host (the installer links are filtered in SectionLinks).
  */
@@ -132,7 +132,7 @@ function selfHostBullets(items: string[]): string[] {
   if (!isSelfHostedBuild()) return items;
   return items
     .filter((b) => !/^(macOS|Windows) — native app/.test(b))
-    .map((b) => b.replace(/open digby\.example\.com in/g, 'open this Digby in'));
+    .map((b) => b.replace(/open digby\.ai in/g, 'open this Digby in'));
 }
 
 function SectionBody({ s, inverse, article }: { s: ContentSection; inverse: boolean; article?: boolean }) {

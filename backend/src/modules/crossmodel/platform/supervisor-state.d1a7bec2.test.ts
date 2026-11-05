@@ -39,7 +39,7 @@ const mockPrisma: any = {
   supervisorState: { findUnique: jest.fn(), upsert: jest.fn() },
   crossModelChat: { findUnique: jest.fn() },
   projectTodo: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []) },
   agentRun: { groupBy: jest.fn(async () => []) },
 };
@@ -100,7 +100,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.FLEET_ATTENTION_STANDING_ROLE_CREDIT_DISABLED;
   mockPrisma.projectTodo.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.ownerQuestion.findMany.mockResolvedValue([]);
   mockPrisma.agentRun.groupBy.mockResolvedValue([]);
 });

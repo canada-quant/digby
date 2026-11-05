@@ -1,5 +1,5 @@
 /**
- * Public marketing / SEO site content for digby.example.com (owner 2026-10-14: "build
+ * Public marketing / SEO site content for digby.ai (owner 2026-10-14: "build
  * out a full SEO plan and execute … so we can start getting organic users
  * searching for private canada ai, sovereign canada ai models, canada ai
  * chatbot … make sure everything is always interlinking and there is a way to
@@ -46,9 +46,11 @@
 import { cityPages } from './cities';
 import { PRICING_FAQ_QUESTION, PRICING_FAQ_QUESTION_FR, PRICING_ROW_VALUE, pricingAnswer, pricingAnswerFr } from './pricing';
 
-export const SITE_URL = 'https://digby.example.com';
+export const SITE_URL = 'https://digby.ai';
 export const SITE_NAME = 'Digby';
-export const CONTACT_EMAIL = 'digby@digby.example.com';
+export const CONTACT_EMAIL = 'digby@digby.ai';
+/** The public open-source repository (canada-quant/digby), linked from the footer. */
+export const OPEN_SOURCE_REPO_URL = 'https://github.com/canada-quant/digby';
 /** Where every "Start chatting" CTA goes — the chat lives at the root domain. */
 export const CHAT_HREF = '/';
 
@@ -288,7 +290,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       {
         heading: 'Everywhere you are',
         bullets: [
-          'Web — digby.example.com, installable on iPhone, iPad and Android.',
+          'Web — digby.ai, installable on iPhone, iPad and Android.',
           'Desktop — native apps for macOS and Windows.',
           'Voice — talk to Digby and have answers read aloud.',
           'Kids — a separate, safe Socratic tutor for children.',
@@ -530,7 +532,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       },
       {
         heading: 'No account needed to start',
-        paragraphs: ['Open digby.example.com and ask. An account keeps your history, memory and projects across devices; heavier features such as deep research have daily limits.'],
+        paragraphs: ['Open digby.ai and ask. An account keeps your history, memory and projects across devices; heavier features such as deep research have daily limits.'],
         links: [{ href: '/digby-vs-chatgpt', label: 'Digby vs ChatGPT' }],
       },
       {
@@ -554,7 +556,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       { q: 'Is Digby a Canadian company?', a: 'Digby is built in Canada and stores its users’ accounts, conversations and files in Canada.' },
       { q: 'Does Digby speak French?', a: 'Yes. Ask in French and Digby answers in French.' },
       { q: PRICING_FAQ_QUESTION, a: pricingAnswer() },
-      { q: 'Is Digby on my phone?', a: 'Yes. Open digby.example.com and add it to your home screen on iPhone or Android; there are also desktop apps for macOS and Windows.' },
+      { q: 'Is Digby on my phone?', a: 'Yes. Open digby.ai and add it to your home screen on iPhone or Android; there are also desktop apps for macOS and Windows.' },
     ],
     related: ['industries', 'private-ai', 'digby-vs-chatgpt', 'learn/choosing-a-private-ai-chatbot'],
   },
@@ -604,7 +606,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       {
         heading: 'Switching is easy',
         tone: 'inverse',
-        paragraphs: ['There is nothing to install and no account required. Open digby.example.com, ask your first question, and create an account when you want to keep your history. Tell Digby what to remember about you and it will.'],
+        paragraphs: ['There is nothing to install and no account required. Open digby.ai, ask your first question, and create an account when you want to keep your history. Tell Digby what to remember about you and it will.'],
         links: [{ href: '/canadian-ai-chatbot', label: 'The Canadian AI chatbot' }],
       },
       {
@@ -820,7 +822,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       {
         heading: 'Hosted today, self-hosted when you need it',
         paragraphs: [
-          'Almost every sector starts hosted: open digby.example.com, create a project, upload the documents and invite the team. No deployment project, no procurement cycle.',
+          'Almost every sector starts hosted: open digby.ai, create a project, upload the documents and invite the team. No deployment project, no procurement cycle.',
           'When the requirement is genuinely “nothing leaves our building”, the same product runs on your own server with Docker Compose and any OpenAI-compatible model endpoint — vLLM, Ollama or LM Studio on your own GPUs.',
         ],
         links: [
@@ -1255,7 +1257,7 @@ const CORE_SITE_PAGES: SitePage[] = [
         heading: 'Data sovereignty comes first',
         paragraphs: [
           'Many First Nations have made a clear decision that community data belongs under community control — who holds it, where it sits, who may use it and what happens to it afterwards. Any tool that touches community information should be able to answer those questions before it is adopted.',
-          'Digby’s answer has two parts. Hosted, the data is stored in Canada and processed by models served on Canadian hardware, with visible and deletable memory and revocable sharing. Self-hosted, the whole stack runs on infrastructure the Nation operates, and nothing reaches digby.example.com unless it is configured to.',
+          'Digby’s answer has two parts. Hosted, the data is stored in Canada and processed by models served on Canadian hardware, with visible and deletable memory and revocable sharing. Self-hosted, the whole stack runs on infrastructure the Nation operates, and nothing reaches digby.ai unless it is configured to.',
         ],
       },
       {
@@ -1319,7 +1321,7 @@ const CORE_SITE_PAGES: SitePage[] = [
   {
     slug: 'compliance',
     group: 'canada',
-    updated: '2026-10-28',
+    updated: '2026-11-05',
     nav: 'Compliance',
     title: 'AI compliance in Canada — what Digby does, and does not',
     description: 'PIPEDA, Quebec Law 25, PHIPA and OSFI E-23 in plain language, plus exactly what Digby does about them — and the certification claims we do not make.',
@@ -1427,7 +1429,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       },
     ],
     faqs: [
-      { q: 'Is there an AI that names PIPEDA and Law 25 and also publishes throughput numbers?', a: 'Not that we can find — and the honest answer includes us. Discreetly names PIPEDA and Law 25 but publishes no performance figure. Micrologic publishes cost figures but names no framework. Augure publishes CAD pricing but sells time saved, not throughput. Digby names the frameworks (this page) and states its hardware: data-centre NVIDIA GPU servers of the B300 class for production inference, plus NVIDIA DGX Spark nodes for development and tuning in a lab in Victoria, British Columbia — all located in Canada. What we do NOT publish is a throughput benchmark on this site, so we are not going to claim that row either. If a number matters to your evaluation, ask us and you will get the real measurement, including its conditions.' },
+      { q: 'Is there an AI that names PIPEDA and Law 25 and also publishes throughput numbers?', a: 'Discreetly names PIPEDA and Law 25 but publishes no performance figure. Micrologic publishes cost figures and names security certifications (ISO 27001, ISO 27017, ISO 27018, SOC 2 Type 2, STAR Level 1) plus HIPAA, but names no privacy statute. Augure publishes CAD pricing, names Law 25 and PIPEDA, and now publishes model benchmarks with sample sizes and confidence intervals and a per-token API price — but not a throughput number either. Digby names the frameworks (this page) and states its hardware: data-centre NVIDIA GPU servers of the B300 class for production inference, plus NVIDIA DGX Spark nodes for development and tuning in a lab in Victoria, British Columbia — all located in Canada. What we do NOT publish is a throughput benchmark on this site, so we are not going to claim that row either. If a number matters to your evaluation, ask us and you will get the real measurement, including its conditions.' },
       { q: 'Is Digby PIPEDA or Law 25 compliant?', a: 'We do not claim compliance or certification under either — PIPEDA and Law 25 compliance are properties of an organisation’s own practices, not a badge a vendor holds. Digby is designed to support your obligations: Canadian storage, Canadian inference, no training on your content, visible and deletable memory, and revocable sharing. Storage and processing inside Canada keep a Quebec deployment on the domestic side of the transfer assessment, but consent, retention and transparency obligations still belong to your organisation.' },
       { q: 'Where is our data stored and where is it processed?', a: 'Stored in the Canada Central region (Montréal) and processed by models served on Canadian-located GPU hardware operated in Canada. A web search sends the query to a search service, and a connected app such as Gmail talks to that app.' },
       { q: 'Do you train on our content?', a: 'No. Your conversations, memory and uploaded files are never used to train or fine-tune AI models.' },
@@ -1489,7 +1491,7 @@ const CORE_SITE_PAGES: SitePage[] = [
         heading: 'Run it on your own GPUs',
         paragraphs: [
           'If inference should happen on hardware you own, self-hosted Digby runs the full stack — database, interface, integrations and coding workspace — on your servers, pointed at any OpenAI-compatible model endpoint: vLLM on your own GPUs, Ollama, LM Studio, or a managed GPU service you already operate.',
-          'That is the same product, not a cut-down edition: projects, knowledge base, scheduled work and the coding agent all run locally, and nothing reaches digby.example.com unless you configure it to.',
+          'That is the same product, not a cut-down edition: projects, knowledge base, scheduled work and the coding agent all run locally, and nothing reaches digby.ai unless you configure it to.',
         ],
         code: 'cp selfhost.env.example .env\ndocker compose -f docker-compose.selfhost.yml up -d --build',
         links: [{ href: '/self-hosted-ai', label: 'Self-hosted Digby' }],
@@ -1698,7 +1700,7 @@ const CORE_SITE_PAGES: SitePage[] = [
         bullets: [
           'The full stack — database, interface, integrations and the coding workspace.',
           'Your models — any OpenAI-compatible endpoint: vLLM, Ollama, LM Studio and more.',
-          'Your rules — data, models and infrastructure under your control; nothing talks to digby.example.com unless you configure it to.',
+          'Your rules — data, models and infrastructure under your control; nothing talks to digby.ai unless you configure it to.',
         ],
         links: [{ href: '/digby-vs-discreetly-ai', label: 'Digby vs an on-premises-only vendor' }, { href: '/industries-manufacturing', label: 'Self-hosting on a plant floor' }, { href: '/industries-first-nations', label: 'Community-controlled hosting' }],
       
@@ -1770,7 +1772,7 @@ const CORE_SITE_PAGES: SitePage[] = [
     platformCta: true,
     nav: 'Download',
     title: 'Download Digby for Mac, Windows, iPhone and Android',
-    description: 'Get Digby on every screen: native desktop apps for macOS and Windows, or install digby.example.com on your iPhone, iPad or Android phone in two taps.',
+    description: 'Get Digby on every screen: native desktop apps for macOS and Windows, or install digby.ai on your iPhone, iPad or Android phone in two taps.',
     eyebrow: 'Download',
     h1: 'Digby on every screen',
     lede: 'Use it in the browser, add it to your home screen, or install the desktop apps.',
@@ -1783,8 +1785,8 @@ const CORE_SITE_PAGES: SitePage[] = [
       {
         heading: 'Get Digby',
         bullets: [
-          'iPhone & iPad — open digby.example.com in Safari, tap Share, then Add to Home Screen.',
-          'Android — open digby.example.com in Chrome and tap Install app.',
+          'iPhone & iPad — open digby.ai in Safari, tap Share, then Add to Home Screen.',
+          'Android — open digby.ai in Chrome and tap Install app.',
           'macOS — native app, with iMessage support.',
           'Windows — native app.',
         ],
@@ -2049,7 +2051,7 @@ const CORE_SITE_PAGES: SitePage[] = [
           rows: [
             { label: 'Company', cells: ['Built in Canada', 'Cohere, Toronto'] },
             { label: 'Who it is for', cells: ['Individuals, families, teams and organisations', 'Large enterprises, regulated industries and the public sector'] },
-            { label: 'Getting started', cells: ['Open digby.example.com — no account needed', 'Enterprise sales and deployment'] },
+            { label: 'Getting started', cells: ['Open digby.ai — no account needed', 'Enterprise sales and deployment'] },
             { label: 'Deployment', cells: ['Hosted in Canada, or self-hosted on your servers', 'Private: on-premises, VPC, hybrid or air-gapped'] },
             { label: 'Models', cells: ['Custom-tuned open-weight models from several labs', 'Cohere’s Command models, or the customer’s own'] },
             { label: 'Price', cells: [PRICING_ROW_VALUE, 'Contact sales'] },
@@ -2081,7 +2083,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       {
         heading: 'Start in a minute',
         tone: 'inverse',
-        paragraphs: ['No procurement, no install: open digby.example.com and ask. If your organisation needs Digby on its own infrastructure, email us.'],
+        paragraphs: ['No procurement, no install: open digby.ai and ask. If your organisation needs Digby on its own infrastructure, email us.'],
         links: [
           { href: '/', label: 'Try Digby' },
           { href: `mailto:${CONTACT_EMAIL}`, label: 'Ask about self-hosting' },
@@ -2101,7 +2103,7 @@ const CORE_SITE_PAGES: SitePage[] = [
     ],
     faqs: [
       { q: 'Is Cohere Canadian?', a: 'Yes. Cohere is headquartered in Toronto. Digby is also built in Canada.' },
-      { q: 'Can I try Cohere North myself?', a: 'North is sold to organisations through Cohere’s sales team. Digby can be tried at digby.example.com without an account.' },
+      { q: 'Can I try Cohere North myself?', a: 'North is sold to organisations through Cohere’s sales team. Digby can be tried at digby.ai without an account.' },
       { q: 'Which is more private?', a: 'Both can keep data under your control: North through private deployment inside your own environment, Digby through Canadian hosting by default and self-hosting for organisations that need it. The better fit depends on who will use it and how much infrastructure you want to run.' },
     ],
     related: ['self-hosted-ai', 'sovereign-ai', 'digby-vs-microsoft-copilot', 'learn/what-is-sovereign-ai'],
@@ -2109,7 +2111,7 @@ const CORE_SITE_PAGES: SitePage[] = [
   {
     slug: 'digby-vs-augure-ai',
     group: 'compare',
-    updated: '2026-10-28',
+    updated: '2026-11-05',
     nav: 'Digby vs Augure AI',
     title: 'Digby vs Augure AI — two sovereign Canadian options',
     description: 'Digby vs Augure AI: two Canadian sovereign-AI options compared — their named models, deployment, data control, getting started, price and self-hosting.',
@@ -2128,26 +2130,29 @@ const CORE_SITE_PAGES: SitePage[] = [
           columns: ['Digby', 'Augure AI'],
           rows: [
             { label: 'Company', cells: ['Built in Canada', 'Toronto (The Altercation Company)'] },
-            { label: 'Models', cells: ['Custom-tuned open-weight models', 'Their own named Canadian models'] },
+            { label: 'Models', cells: ['Custom-tuned open-weight models', 'Named Canadian models on an open foundation'] },
             { label: 'Sovereignty', cells: ['Canadian storage + Canadian inference', 'Canadian storage + Canadian inference'] },
-            { label: 'Getting started', cells: ['No account needed to start', 'Free tier, CAD plans from $20/mo'] },
-            { label: 'Openness', cells: ['Open-weight, swappable', 'Proprietary, trained in-house'] },
+            { label: 'Getting started', cells: ['No account needed to start', 'Free tier, then paid CAD plans'] },
+            { label: 'Published numbers', cells: ['Hardware class and locations; no benchmark', '$6 CAD / 1M output tokens; 3 benchmarks with n + CI'] },
+            { label: 'Openness', cells: ['Open-weight, swappable', 'Open foundation; served on their own gateway'] },
             { label: 'Self-hosting', cells: ['Full stack, any compatible endpoint', 'Enterprise VPC, on-prem or GPU'] },
-            { label: 'Price', cells: [PRICING_ROW_VALUE, 'Free tier, Pro $20, Max $80 CAD a month'] },
+            { label: 'Price', cells: [PRICING_ROW_VALUE, 'Free $0, or Pro $200 / Max $800 CAD a year'] },
           ],
-          note: 'Augure AI details from their published pages as of October 2026.',
+          note: 'Augure AI details from their published pages as of November 2026.',
         },
       },
       {
         heading: 'What Augure AI actually is',
         paragraphs: [
           'Augure AI — operating as The Altercation Company in Toronto — offers models it has trained itself and named for Canadian places: Rosedale One for frontier reasoning, Ossington 5 as a Canadian-tuned model for law, tax and Quebec French, and Tofino 3 for fast everyday work. Their pages state storage in Canada and inference in Canada under zero-retention agreements, never through US providers.',
-          'They make their ownership explicit in a way that matters to Canadian buyers: no US corporate parent and no US investors. Pricing is published in CAD — a free tier, Pro at $20 a month and Max at $80 a month — with enterprise options for custom VPC, on-premises and GPU deployments, and a public trust centre on Vanta.',
-          'That is a real sovereign Canadian product, not a rebadged foreign API. They also ship more than chat: a knowledge product, contract review for Canadian law, and a coding agent of their own. If your requirement is “a Canadian model, from a Canadian company, with Canadian inference”, they satisfy it honestly.',
+          'Rosedale One now has a page of its own. They describe it as a frontier reasoning model built by post-training an openly released frontier foundation model — Quebec French, Canadian legal and civic context, and release gates — and they serve it themselves, so prompts go to their Canadian gateway rather than to a third-party model API. They also started publishing numbers a buyer can check: 98.2 on HumanEval (n = 164, 95% CI 94.8–99.4), 86.7 on AIME 2025 (n = 30, 95% CI 70.3–94.7), and 100.0 on grounded answers from Québec sources (n = 60, 95% CI 94.0–100.0), plus $6 CAD per 1M output tokens on their developer API. Publishing a sample size and a confidence interval alongside a score is more than most vendors do, and it is worth crediting.',
+          'They make their ownership explicit in a way that matters to Canadian buyers: no US corporate parent and no US investors. Pricing is published in CAD on an annual view — free, Pro at $200 a year and Max at $800 a year, with a monthly view and a badge for two months free — and their French FAQ still quotes the monthly ladder plus an Ultra plan for all-day coding use. Enterprise options cover custom VPC, on-premises and GPU deployments, and they run a public trust centre on Vanta.',
+          'That is a real sovereign Canadian product, not a rebadged foreign API. They also ship more than chat: a knowledge product, contract review for Canadian law, and a coding agent of their own. If your requirement is “a Canadian model, from a Canadian company, with Canadian inference”, they satisfy it honestly — and on the specific question of published model benchmarks, they are ahead of us today.',
         ],
         sources: [
           { href: 'https://augureai.ca/', label: 'Augure AI — models, sovereignty claims and team' },
-          { href: 'https://augureai.ca/pricing', label: 'Augure AI — CAD pricing tiers' },
+          { href: 'https://augureai.ca/models/rosedale-one', label: 'Augure AI — Rosedale One model page, benchmarks and API price' },
+          { href: 'https://augureai.ca/fr', label: 'Augure AI — French pages and FAQ (monthly plans)' },
         ],
       },
       {
@@ -2157,7 +2162,7 @@ const CORE_SITE_PAGES: SitePage[] = [
           'Multi-model routing plus a check — the answer comes from the model suited to the question, and contested or high-stakes answers get an independent second model reviewing the first.',
           'Deep research — a council of models researches a question in parallel and writes one sourced report.',
           'A coding agent in the same product — Digby Code works in a real workspace and opens pull requests.',
-          'No-account start — open digby.example.com and type, rather than choosing a plan first.',
+          'No-account start — open digby.ai and type, rather than choosing a plan first.',
           'Self-host on anything — the full stack runs against any OpenAI-compatible endpoint: vLLM, Ollama or LM Studio on your own GPUs.',
         ],
         links: [
@@ -2168,13 +2173,13 @@ const CORE_SITE_PAGES: SitePage[] = [
       {
         heading: 'The honest comparison on sovereignty',
         tone: 'inverse',
-        paragraphs: ['Augure AI is defensible as “sovereign” in the strict sense: Canadian company, Canadian models, Canadian storage, Canadian inference, no foreign parent. Digby is defensible differently — Canadian storage, Canadian inference on Canadian-located GPU hardware, open weights so nothing is locked to one vendor, and a documented self-hosting path. Where the emphasis is a proprietary Canadian model, they are ahead; where the emphasis is not being locked to any single model vendor, Digby is.'],
+        paragraphs: ['Augure AI is defensible as “sovereign” in the strict sense: Canadian company, Canadian storage, Canadian inference, no foreign parent — and their models are theirs by post-training an openly released foundation rather than by owning the weights outright. Digby is defensible differently — Canadian storage, Canadian inference on Canadian-located GPU hardware, open weights so nothing is locked to one vendor, and a documented self-hosting path. Where the emphasis is a named model with published benchmarks, they are ahead; where the emphasis is not being locked to any single model vendor, or running the whole system on your own hardware, Digby is.'],
         links: [{ href: '/infrastructure', label: 'Where Digby’s models run' }],
       },
       {
         heading: 'When Augure AI suits you better',
         paragraphs: [
-          'Choose them if your procurement rule is that every layer — model, company, storage, inference — must be Canadian and proprietary is preferred over open-weight; if you want a published per-seat price list to compare against a budget line; or if you want a vendor whose headline promise is a named model rather than a routing layer.',
+          'Choose them if your procurement rule is that every layer — model, company, storage, inference — must be Canadian; if you want a published per-seat price list and published model benchmarks to compare against a budget or a technical bar; or if you want a vendor whose headline promise is a named model rather than a routing layer.',
           'Choose Digby if you want to start in ten seconds without a plan, if open weights matter to your exit strategy, if you want the research council and coding agent in the same product, or if your path ends in self-hosting on hardware you already own.',
         ],
         links: [{ href: '/industries-legal', label: 'AI for Canadian law firms' }, { href: '/digby-vs-cohere-north', label: 'Digby vs Cohere North' }],
@@ -2195,16 +2200,17 @@ const CORE_SITE_PAGES: SitePage[] = [
     faqs: [
       { q: 'Is Augure AI Canadian?', a: 'Yes. They present themselves as Canadian-owned with no US parent or investors, and their pages describe storage and inference in Canada. Digby is also built in Canada.' },
       { q: 'Which is more sovereign?', a: 'They answer different questions. Augure AI emphasises its own named Canadian models; Digby uses open-weight models, so the intelligence can be swapped, and publishes a self-hosting path that runs on any OpenAI-compatible endpoint. Both keep data and inference in Canada.' },
-      { q: 'Can I try both?', a: 'Augure AI publishes a free tier and paid CAD plans. Digby can be tried at digby.example.com with no account at all.' },
+      { q: 'Can I try both?', a: 'Augure AI publishes a free tier and paid CAD plans, quoted annually on the homepage and monthly in their French FAQ. Digby can be tried at digby.ai with no account at all.' },
+      { q: 'Does Augure AI publish benchmarks?', a: 'Yes, as of November 2026. Rosedale One’s page lists 98.2 on HumanEval (n = 164, 95% CI 94.8–99.4), 86.7 on AIME 2025 (n = 30, 95% CI 70.3–94.7) and 100.0 on grounded answers from Québec sources (n = 60, 95% CI 94.0–100.0), with a stated method and a per-token API price. We publish hardware and location instead, and no model benchmark — see the answer above for why we will not borrow the comparison.' },
       { q: 'Does Digby certify compliance?', a: 'No. Digby holds no PIPEDA, Law 25 or SOC 2 certification and we do not describe it as compliant. We describe exactly where data lives, where inference runs and how deletion works.' },
-      { q: 'Can I self-host Digby?', a: 'Yes — the full stack on your own servers, pointed at your own model endpoints, with nothing reaching digby.example.com unless you configure it.' },
+      { q: 'Can I self-host Digby?', a: 'Yes — the full stack on your own servers, pointed at your own model endpoints, with nothing reaching digby.ai unless you configure it.' },
     ],
     related: ['sovereign-ai', 'self-hosted-ai', 'digby-vs-cohere-north', 'compliance'],
   },
   {
     slug: 'digby-vs-discreetly-ai',
     group: 'compare',
-    updated: '2026-10-28',
+    updated: '2026-11-05',
     nav: 'Digby vs Discreetly AI',
     title: 'Digby vs Discreetly AI — hosted in Canada or on-prem',
     description: 'Digby vs Discreetly AI: on-premises-only deployment compared with a Canadian-hosted assistant you can start today — data location, speed to use and price.',
@@ -2229,14 +2235,14 @@ const CORE_SITE_PAGES: SitePage[] = [
             { label: 'Sector focus', cells: ['Any sector; six sector pages', 'Manufacturing, health, legal, finance'] },
             { label: 'Price', cells: [PRICING_ROW_VALUE, 'Contact sales'] },
           ],
-          note: 'Discreetly AI details from their published pages as of October 2026.',
+          note: 'Discreetly AI details from their published pages as of November 2026.',
         },
       },
       {
         heading: 'What Discreetly AI actually is',
         paragraphs: [
           'Discreetly AI deploys a private retrieval assistant directly into your own infrastructure — on-premises or private cloud, with air-gap capability — aimed at manufacturing, healthcare, legal and financial organisations. Their central promise is that documents, queries and answers never leave your environment and never reach a third-party model API.',
-          'The site is genuinely bilingual English and French, and the framing is built around the standards their buyers already answer to: ISO 9001, ISO 45001 and IATF 16949 in manufacturing, PIPEDA and Law 25 for Canadian data, HIPAA-aligned handling for health. Every answer cites the source document and page number, they index scanned PDFs and training videos (with self-hosted transcription), and pricing is a fixed monthly infrastructure cost rather than per-token billing — quoted rather than published, through a consultative sale.',
+          'The site is genuinely bilingual English and French, and the framing is built around the standards their buyers already answer to: ISO 9001, ISO 45001 and IATF 16949 in manufacturing, PIPEDA and Law 25 for Canadian data, PHIPA named on their healthcare page, and HIPAA-aligned handling for health. As of November 2026 their homepage also names CCPA for US buyers, which was not on the pages we recorded in October. The wording is deliberate and worth reading closely: they say deployments are “built to align with” those frameworks depending on where data has to stay, rather than claiming certification — which is the same distinction we draw for ourselves. Every answer cites the source document and page number, they index scanned PDFs and training videos (with self-hosted transcription), and pricing is a fixed monthly infrastructure cost rather than per-token billing — quoted rather than published, through a consultative sale.',
           'For a buyer whose requirement is that nothing leaves the building, that posture is genuinely stronger than a hosted product. That is worth saying plainly.',
         ],
         sources: [
@@ -2247,7 +2253,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       {
         heading: 'Where Digby differs',
         bullets: [
-          'Usable today — open digby.example.com and ask, with no deployment project, no procurement cycle and no account.',
+          'Usable today — open digby.ai and ask, with no deployment project, no procurement cycle and no account.',
           'Canadian-hosted by default for everyone — storage in Montréal, inference on Canadian-located GPU hardware, including for guests.',
           'A self-host path you can take later — the full stack on your servers with any OpenAI-compatible endpoint, so “on-prem” is a step you can reach rather than a project you must start with.',
           'Verified answers — sources on grounded answers, an independent second model checking high-stakes replies, and a deep research council for the hardest questions.',
@@ -2288,7 +2294,7 @@ const CORE_SITE_PAGES: SitePage[] = [
       { q: 'Is on-premises more private than hosted?', a: 'It removes a class of vendor risk and adds an operating burden. For most organisations, hosted with Canadian storage and Canadian inference is enough; self-hosting is the right choice when a specific obligation demands it.' },
       { q: 'Can Digby run fully on-premises?', a: 'Yes. Self-hosted Digby runs the full stack — database, interface, integrations and coding workspace — on your servers with your own model endpoints.' },
       { q: 'Does Digby have audit logs?', a: 'Digby keeps grounded answers tied to the passages they came from and gives you deletion and sharing controls. It does not market itself as a compliance audit-log platform, and we do not claim a logging certification.' },
-      { q: 'Can I try Digby before talking to anyone?', a: 'Yes — open digby.example.com and ask a question. No account, no sales call.' },
+      { q: 'Can I try Digby before talking to anyone?', a: 'Yes — open digby.ai and ask a question. No account, no sales call.' },
     ],
     related: ['self-hosted-ai', 'sovereign-ai', 'industries-manufacturing', 'digby-vs-augure-ai'],
   },
@@ -2859,6 +2865,9 @@ export function footerColumns(): { title: string; links: ContentLink[] }[] {
         { href: '/privacy', label: 'Privacy Policy' },
         { href: '/terms', label: 'Terms of Service' },
         { href: `mailto:${CONTACT_EMAIL}`, label: 'Contact' },
+        // Public source repository (goal 2ee2aa2d phase 1). Served from the
+        // canada-quant/digby carve-out, which is a separate repo from this one.
+        { href: OPEN_SOURCE_REPO_URL, label: 'Source code' },
       ],
     },
   ];

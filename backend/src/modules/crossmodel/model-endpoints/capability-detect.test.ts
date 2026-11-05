@@ -69,7 +69,7 @@ import {
 } from './capability-detect';
 
 const KEY = 'sk-cql-secret-key-0042';
-const BASE = 'https://llm.example.com/v1';
+const BASE = 'https://llm.cql.ca/v1';
 const ASTRA = 'api-openai-gpt-6-astra';
 const EFFORT_400 = "litellm.BadRequestError: OpenAIException - Function tools with reasoning_effort are not supported for gpt-6-astra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.";
 const TOOLS_400 = "litellm.BadRequestError: OpenAIException - Invalid 'tools': array too long. Expected an array with maximum length 128, but got an array with length 200.";
@@ -521,10 +521,10 @@ describe('probe 11 — LiteLLM /model/info fallback (audit 2026-10-06 T1-2)', ()
   it('the /v1 alias 404s → the root /model/info is tried; /models failing outright still reaches it', async () => {
     installFake({});
     const ep = await seed([{ id: GLM }]);
-    route({ 'https://llm.example.com/model/info': () => ({ data: MODEL_INFO }) });
+    route({ 'https://llm.cql.ca/model/info': () => ({ data: MODEL_INFO }) });
     const r = await detectEndpointCapabilities(ep.id, { capabilities: ['context_window'] });
     expect(rowOf(r.models[0].results, 'context_window')).toMatchObject({ ok: true, value: 200_000 });
-    expect(mockedAxios.get).toHaveBeenCalledWith('https://llm.example.com/model/info', expect.anything());
+    expect(mockedAxios.get).toHaveBeenCalledWith('https://llm.cql.ca/model/info', expect.anything());
   });
 
   it('no row for the model → blank, evidence names what was tried; kill switch skips the probe entirely', async () => {

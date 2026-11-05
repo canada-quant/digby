@@ -1,9 +1,9 @@
 /**
  * Ticket cf5f9718 — the done-bar's merged ∧ deployed proof was PLATFORM-
  * repo-scoped: fix-state.ts hardcoded the instance repo (production default
- * canada-quant/digby) into every GitHub read, so a fix verified merged +
+ * example-org/crossmodel) into every GitHub read, so a fix verified merged +
  * live in a DIFFERENT repo (2026-10-27, ticket 4e818bb9: deckpose fix merged
- * in canada-quant/example-repo, PR #184, live-probed) could NEVER machine-close —
+ * in example-org/optcg, PR #184, live-probed) could NEVER machine-close —
  * the compare 404'd deterministically and the close was refused fix_not_live.
  *
  * THE FIX: the evidence envelope may name the repo (evidence.repo,
@@ -44,7 +44,7 @@ jest.mock('../github/token-manager', () => ({ __esModule: true, getValidToken: m
 import { resolveFixStateFromEvidence, parseClosureEvidenceNote, resolveEvidenceRepoScope } from './fix-state';
 
 const OWNER_TOKEN_USER = '11111111-2222-4333-8444-555566667777';
-const OPTCG_FIX = '23fb37165c53eee4418b31e1cac935369de013f2'; // the 4e818bb9 deckpose merge commit (canada-quant/example-repo)
+const OPTCG_FIX = '23fb37165c53eee4418b31e1cac935369de013f2'; // the 4e818bb9 deckpose merge commit (example-org/optcg)
 const OPTCG_RUN = '40440661177'; // a green Actions run id
 const TICKET = 'cf5f9718-4a17-4438-8837-d1f58f942816';
 
@@ -61,8 +61,8 @@ const makeGh = (routes: Array<{ match: RegExp; body: any }> = []) =>
   }) as any;
 
 const OPTCG_GREEN = [
-  { match: new RegExp(`/repos/canada-quant/example-repo/compare/${OPTCG_FIX}\\.\\.\\.main`), body: { status: 'ahead', ahead_by: 2, behind_by: 0 } },
-  { match: new RegExp(`/repos/canada-quant/example-repo/actions/runs/${OPTCG_RUN}`), body: { status: 'completed', conclusion: 'success' } },
+  { match: new RegExp(`/repos/example-org/optcg/compare/${OPTCG_FIX}\\.\\.\\.main`), body: { status: 'ahead', ahead_by: 2, behind_by: 0 } },
+  { match: new RegExp(`/repos/example-org/optcg/actions/runs/${OPTCG_RUN}`), body: { status: 'completed', conclusion: 'success' } },
 ];
 
 const ENV = { ...process.env };
@@ -90,14 +90,14 @@ beforeEach(() => {
   mockPrisma.loopMetric.findMany.mockResolvedValue([]);
   // The named-repo scenarios need the owner's box-env opt-in: the allowlist
   // (lane-unwritable) is the trust anchor — unset = the instance repo only.
-  process.env.FIX_STATE_EVIDENCE_REPO_ALLOWLIST = 'canada-quant/example-repo';
+  process.env.FIX_STATE_EVIDENCE_REPO_ALLOWLIST = 'example-org/optcg';
 });
 
 describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the evidence names', () => {
   it('REPLAY (the 4e818bb9 refusal): the SAME merged+green optcg evidence machine-closes once the evidence names the repo', async () => {
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', deployRunId: OPTCG_RUN },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg', deployRunId: OPTCG_RUN },
       { fetchImpl: makeGh(OPTCG_GREEN) },
     );
     expect(st.fixLive).toBe(true);
@@ -105,7 +105,7 @@ describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the
     expect(st.reason).toContain(`deploy run ${OPTCG_RUN} concluded success`);
     // Every GitHub read went to the NAMED repo — never the platform repo.
     expect(urls.length).toBeGreaterThan(0);
-    expect(urls.every((u) => u.includes('/repos/canada-quant/example-repo/'))).toBe(true);
+    expect(urls.every((u) => u.includes('/repos/example-org/optcg/'))).toBe(true);
   });
 
   it('DETECTOR-RECALL REPLAY: the SAME evidence WITHOUT repo still targets the platform repo and refuses (the pre-cf5f9718 true positive — the exact 4e818bb9 compare-404 refusal — still fires)', async () => {
@@ -116,16 +116,16 @@ describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the
     );
     expect(st.fixLive).toBe(false);
     expect(st.reason).toContain('GitHub compare 404');
-    expect(urls.every((u) => u.includes('/repos/canada-quant/digby/'))).toBe(true);
+    expect(urls.every((u) => u.includes('/repos/example-org/crossmodel/'))).toBe(true);
   });
 
   it('DETECTOR-RECALL REPLAY: an UNMERGED sha in the NAMED repo still refuses — the bar did not loosen', async () => {
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', deployRunId: OPTCG_RUN },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg', deployRunId: OPTCG_RUN },
       {
         fetchImpl: makeGh([
-          { match: new RegExp(`/repos/canada-quant/example-repo/compare/${OPTCG_FIX}`), body: { status: 'behind', ahead_by: 0, behind_by: 5 } },
+          { match: new RegExp(`/repos/example-org/optcg/compare/${OPTCG_FIX}`), body: { status: 'behind', ahead_by: 0, behind_by: 5 } },
         ]),
       },
     );
@@ -136,16 +136,16 @@ describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the
   it('a green deploy run in the named repo is read from the NAMED repo too (Actions run URL)', async () => {
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', deployRunId: OPTCG_RUN },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg', deployRunId: OPTCG_RUN },
       {
         fetchImpl: makeGh([
-          { match: new RegExp(`/repos/canada-quant/example-repo/compare/${OPTCG_FIX}\\.\\.\\.main`), body: { status: 'identical' } },
-          { match: new RegExp(`/repos/canada-quant/example-repo/actions/runs/${OPTCG_RUN}`), body: { status: 'completed', conclusion: 'success' } },
+          { match: new RegExp(`/repos/example-org/optcg/compare/${OPTCG_FIX}\\.\\.\\.main`), body: { status: 'identical' } },
+          { match: new RegExp(`/repos/example-org/optcg/actions/runs/${OPTCG_RUN}`), body: { status: 'completed', conclusion: 'success' } },
         ]),
       },
     );
     expect(st.fixLive).toBe(true);
-    expect(urls.some((u) => u.includes(`/repos/canada-quant/example-repo/actions/runs/${OPTCG_RUN}`))).toBe(true);
+    expect(urls.some((u) => u.includes(`/repos/example-org/optcg/actions/runs/${OPTCG_RUN}`))).toBe(true);
   });
 
   it('a NON-prod instance refuses to scope ticket-closure evidence at the PRODUCTION repo (the c75b5f34 boundary applies to the scope) — and makes NO GitHub read', async () => {
@@ -153,12 +153,12 @@ describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the
     try {
       const st = await resolveFixStateFromEvidence(
         { id: TICKET, userId: OWNER_TOKEN_USER },
-        { commitSha: OPTCG_FIX, repo: 'canada-quant/digby', deployRunId: OPTCG_RUN },
+        { commitSha: OPTCG_FIX, repo: 'example-org/crossmodel', deployRunId: OPTCG_RUN },
         { fetchImpl: makeGh() },
       );
       expect(st.fixLive).toBe(false);
       expect(st.reason).toContain('ISOLATION BOUNDARY');
-      expect(st.reason).toContain('canada-quant/digby');
+      expect(st.reason).toContain('example-org/crossmodel');
       expect(urls).toEqual([]);
     } finally {
       delete process.env.DIGBY_INSTANCE;
@@ -166,11 +166,11 @@ describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the
   });
 
   it('a repo NOT on the allowlist refuses with REPO NOT ALLOWED before ANY GitHub read (the lane-unwritable trust anchor — a scratch repo cannot launder a merged ∧ deployed proof)', async () => {
-    process.env.FIX_STATE_EVIDENCE_REPO_ALLOWLIST = 'canada-quant/digby';
+    process.env.FIX_STATE_EVIDENCE_REPO_ALLOWLIST = 'example-org/crossmodel';
     try {
       const st = await resolveFixStateFromEvidence(
         { id: TICKET, userId: OWNER_TOKEN_USER },
-        { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', deployRunId: OPTCG_RUN },
+        { commitSha: OPTCG_FIX, repo: 'example-org/optcg', deployRunId: OPTCG_RUN },
         { fetchImpl: makeGh(OPTCG_GREEN) }, // green evidence would have passed — the allowlist must refuse FIRST
       );
       expect(st.fixLive).toBe(false);
@@ -178,7 +178,7 @@ describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the
       expect(st.reason).toContain('FIX_STATE_EVIDENCE_REPO_ALLOWLIST');
       expect(urls).toEqual([]);
     } finally {
-      process.env.FIX_STATE_EVIDENCE_REPO_ALLOWLIST = 'canada-quant/example-repo';
+      process.env.FIX_STATE_EVIDENCE_REPO_ALLOWLIST = 'example-org/optcg';
     }
   });
 
@@ -187,12 +187,12 @@ describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the
     try {
       const st = await resolveFixStateFromEvidence(
         { id: TICKET, userId: OWNER_TOKEN_USER },
-        { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', deployRunId: OPTCG_RUN },
+        { commitSha: OPTCG_FIX, repo: 'example-org/optcg', deployRunId: OPTCG_RUN },
         { fetchImpl: makeGh() }, // crossmodel compare 404s
       );
       expect(st.fixLive).toBe(false);
       expect(st.reason).toContain('GitHub compare 404');
-      expect(urls.every((u) => u.includes('/repos/canada-quant/digby/'))).toBe(true);
+      expect(urls.every((u) => u.includes('/repos/example-org/crossmodel/'))).toBe(true);
     } finally {
       delete process.env.FIX_STATE_EVIDENCE_REPO_DISABLED;
     }
@@ -206,61 +206,61 @@ describe('ticket cf5f9718 — the merged ∧ deployed proof targets the repo the
     );
     expect(st.fixLive).toBe(false);
     expect(st.reason).toContain('GitHub compare 404');
-    expect(urls.every((u) => u.includes('/repos/canada-quant/digby/'))).toBe(true);
+    expect(urls.every((u) => u.includes('/repos/example-org/crossmodel/'))).toBe(true);
   });
 });
 
 describe('resolveEvidenceRepoScope — the lane-unwritable trust anchor (ticket cf5f9718 review)', () => {
-  const ALLOW = { FIX_STATE_EVIDENCE_REPO_ALLOWLIST: 'Acme-Corp/Widgets, canada-quant/other, canada-quant/example-repo' } as NodeJS.ProcessEnv;
+  const ALLOW = { FIX_STATE_EVIDENCE_REPO_ALLOWLIST: 'example-org/optcg, example-org/repo' } as NodeJS.ProcessEnv;
 
   it('a repo ON the allowlist resolves; case is normalized', () => {
-    expect(resolveEvidenceRepoScope({ repo: 'Acme-Corp/Widgets' }, ALLOW)).toEqual({ slug: 'acme-corp/widgets' });
+    expect(resolveEvidenceRepoScope({ repo: 'example-org/optcg' }, ALLOW)).toEqual({ slug: 'example-org/optcg' });
   });
   it('UNSET allowlist = the instance repo only: naming the platform repo on prod resolves (the pre-cf5f9718 behavior)', () => {
-    expect(resolveEvidenceRepoScope({ repo: 'canada-quant/digby' }, {})).toEqual({ slug: 'canada-quant/digby' });
+    expect(resolveEvidenceRepoScope({ repo: 'example-org/crossmodel' }, {})).toEqual({ slug: 'example-org/crossmodel' });
   });
   it('UNSET allowlist: naming any OTHER repo refuses with owner-action guidance naming the env var', () => {
-    const r = resolveEvidenceRepoScope({ repo: 'canada-quant/example-repo' }, {});
+    const r = resolveEvidenceRepoScope({ repo: 'example-org/optcg' }, {});
     expect(r.refusal).toContain('REPO NOT ALLOWED');
     expect(r.refusal).toContain('FIX_STATE_EVIDENCE_REPO_ALLOWLIST');
     expect(r.slug).toBeUndefined();
   });
   it('the isolation boundary fires BEFORE the allowlist (a non-prod instance never reads production, allowlist or not)', () => {
-    const env = { DIGBY_INSTANCE: 'edge', FIX_STATE_EVIDENCE_REPO_ALLOWLIST: 'canada-quant/digby' } as NodeJS.ProcessEnv;
-    expect(resolveEvidenceRepoScope({ repo: 'canada-quant/digby' }, env).refusal).toContain('ISOLATION BOUNDARY');
+    const env = { DIGBY_INSTANCE: 'edge', FIX_STATE_EVIDENCE_REPO_ALLOWLIST: 'example-org/crossmodel' } as NodeJS.ProcessEnv;
+    expect(resolveEvidenceRepoScope({ repo: 'example-org/crossmodel' }, env).refusal).toContain('ISOLATION BOUNDARY');
   });
   it('absent repo → unscoped (the instance slug), allowlist untouched', () => {
     expect(resolveEvidenceRepoScope({}, ALLOW)).toEqual({});
   });
   it('an invalid slug → unscoped, not an error', () => {
-    expect(resolveEvidenceRepoScope({ repo: 'pasta paul' }, ALLOW)).toEqual({});
+    expect(resolveEvidenceRepoScope({ repo: 'acme corp' }, ALLOW)).toEqual({});
   });
   it('the kill switch ignores the named repo', () => {
-    const env = { FIX_STATE_EVIDENCE_REPO_DISABLED: '1', FIX_STATE_EVIDENCE_REPO_ALLOWLIST: 'canada-quant/example-repo' } as NodeJS.ProcessEnv;
-    expect(resolveEvidenceRepoScope({ repo: 'canada-quant/example-repo' }, env)).toEqual({});
+    const env = { FIX_STATE_EVIDENCE_REPO_DISABLED: '1', FIX_STATE_EVIDENCE_REPO_ALLOWLIST: 'example-org/optcg' } as NodeJS.ProcessEnv;
+    expect(resolveEvidenceRepoScope({ repo: 'example-org/optcg' }, env)).toEqual({});
   });
   it('EVIDENCE MISMATCH: a prUrl naming a DIFFERENT repo than the scope refuses before any read', () => {
-    const r = resolveEvidenceRepoScope({ repo: 'canada-quant/example-repo', prUrl: 'https://github.com/canada-quant/digby/pull/184' }, ALLOW);
+    const r = resolveEvidenceRepoScope({ repo: 'example-org/optcg', prUrl: 'https://github.com/example-org/crossmodel/pull/184' }, ALLOW);
     expect(r.refusal).toContain('EVIDENCE MISMATCH');
-    expect(r.refusal).toContain('canada-quant/digby');
+    expect(r.refusal).toContain('example-org/crossmodel');
   });
   it('a prUrl INSIDE the named repo is consistent (case-insensitive)', () => {
-    expect(resolveEvidenceRepoScope({ repo: 'canada-quant/example-repo', prUrl: 'https://github.com/Canada-Quant/Example-Repo/pull/184' }, ALLOW)).toEqual({ slug: 'canada-quant/example-repo' });
+    expect(resolveEvidenceRepoScope({ repo: 'example-org/optcg', prUrl: 'https://github.com/example-org/optcg/pull/184' }, ALLOW)).toEqual({ slug: 'example-org/optcg' });
   });
   it('an unparseable prUrl is left to the close gate (no mismatch refusal here)', () => {
-    expect(resolveEvidenceRepoScope({ repo: 'canada-quant/example-repo', prUrl: 'http://evil.example/pull/1' }, ALLOW)).toEqual({ slug: 'canada-quant/example-repo' });
+    expect(resolveEvidenceRepoScope({ repo: 'example-org/optcg', prUrl: 'http://evil.example/pull/1' }, ALLOW)).toEqual({ slug: 'example-org/optcg' });
   });
 });
 
 describe('parseClosureEvidenceNote — the repo member round-trips through the audit note', () => {
   it('repo <owner/name> parses (the shape closure-evidence.ts / closure-manifest.ts record)', () => {
     const note = parseClosureEvidenceNote(
-      `[machine-close evidence: commit ${OPTCG_FIX}; repo canada-quant/example-repo; PR https://github.com/canada-quant/example-repo/pull/184; deploy run ${OPTCG_RUN}]`,
+      `[machine-close evidence: commit ${OPTCG_FIX}; repo example-org/optcg; PR https://github.com/example-org/optcg/pull/184; deploy run ${OPTCG_RUN}]`,
     );
     expect(note).toEqual({
       commitSha: OPTCG_FIX,
-      repo: 'canada-quant/example-repo',
-      prUrl: 'https://github.com/canada-quant/example-repo/pull/184',
+      repo: 'example-org/optcg',
+      prUrl: 'https://github.com/example-org/optcg/pull/184',
       deployRunId: OPTCG_RUN,
     });
   });

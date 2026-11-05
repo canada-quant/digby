@@ -33,7 +33,7 @@ const mockPrisma: any = {
   projectGoal: { findMany: jest.fn() },
   projectTodo: { findMany: jest.fn() },
   agentRun: { findMany: jest.fn() },
-  codingSchedule: { findMany: jest.fn() },
+  chatSchedule: { findMany: jest.fn() },
   eventHook: { findFirst: jest.fn() },
   hookEvent: { findMany: jest.fn() },
   // count: open owner items on the project's chats; findMany: the CanLaw-2026-09-15
@@ -152,7 +152,7 @@ function wireMocks() {
     const ids: string[] = args?.where?.sessionId?.in ?? [];
     return Promise.resolve(runningRuns.filter((r) => ids.includes(r.sessionId)));
   });
-  mockPrisma.codingSchedule.findMany.mockImplementation((args: any) => {
+  mockPrisma.chatSchedule.findMany.mockImplementation((args: any) => {
     const ids: string[] = args?.where?.sessionId?.in ?? [];
     return Promise.resolve(schedules.filter((s) => ids.includes(s.sessionId)));
   });

@@ -372,7 +372,7 @@ export function AdminTab() {
               </thead>
               <tbody>
                 {users.map(u => {
-                  const isOwner = u.email?.toLowerCase() === 'paul@sunday.market';
+                  const isOwner = u.email?.toLowerCase() === 'example-user@example.com';
                   const isAdmin = u.role === 'ADMIN' || isOwner;
                   return (
                     <tr key={u.id} className={cn('border-t', isAdmin && 'bg-brand-faint')}>

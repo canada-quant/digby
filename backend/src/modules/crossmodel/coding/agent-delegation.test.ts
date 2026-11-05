@@ -331,6 +331,61 @@ describe('incremental worker offload (mid-flight search_memory)', () => {
   });
 });
 
+describe('durable worker reports at completion (ticket 95210e7e)', () => {
+  // The bug: the on-disk report existed ONLY when the report overflowed the
+  // 12,000-char clip cap, so an ordinary reviewer verdict left no durable
+  // artefact and a mid-turn restart (deploy) orphaned it — the regenerated
+  // turn's note carried a 200-char head as the only surviving copy.
+  test('a report UNDER the clip cap is written to disk at completion, and the note names the file', async () => {
+    const verdict = 'The fix is real and landed.\nBut the second half has problems:\n1. finding one.\n2. finding two.\nVERDICT: request changes.';
+    expect(verdict.length).toBeLessThan(12_000); // under the clip cap: the class that was lost
+    const checkpoints: RunCheckpoint[] = [];
+    mockRunModelTurn
+      .mockResolvedValueOnce(orchTurn([delegateCall({ role: 'reviewer', task: 'review the diff', title: 'Adversarial review' })]))
+      .mockResolvedValueOnce(finalTurn(`${verdict}\n\`\`\`json\n{"status":"partial"}\n\`\`\``))
+      .mockResolvedValueOnce(orchTurn([{ id: 'r9', name: 'read_file', arguments: JSON.stringify({ path: 'big.txt' }) }]))
+      .mockResolvedValueOnce(finalTurn('done'));
+    await runCodingAgent(makeInput({ onCheckpoint: cp => checkpoints.push(cp) }));
+
+    // 1. A durable file exists, holding the WHOLE verdict (footer kept verbatim).
+    const dir = path.join(worktree, '.digby', 'session', 'worker-reports');
+    const reviewerFiles = (await fs.readdir(dir)).filter(f => f.includes('-reviewer-'));
+    expect(reviewerFiles.length).toBeGreaterThan(0);
+    const written = await fs.readFile(path.join(dir, reviewerFiles[reviewerFiles.length - 1]), 'utf8');
+    expect(written).toContain('2. finding two.');
+    expect(written).toContain('VERDICT: request changes.');
+
+    // 2. The dispatch checkpoint's note POINTS at it instead of a 200-char head.
+    const note = checkpoints
+      .filter(cp => cp.messages.some((m: any) => typeof m.content === 'string' && m.content.includes(COMPLETED_DELEGATIONS_MARKER)))
+      .pop()!.messages.find((m: any) => typeof m.content === 'string' && m.content.includes(COMPLETED_DELEGATIONS_MARKER));
+    expect(note.content).toContain('FULL REPORT (durable): .digby/session/worker-reports/');
+    const rel = String(note.content).match(/\.digby\/session\/worker-reports\/[^\s]+-reviewer-\d+-[0-9a-f]{6}\.md/)![0];
+
+    // 3. …and the named path resolves after a "restart" (fresh read, no in-memory state).
+    const reread = await fs.readFile(path.join(worktree, rel), 'utf8');
+    expect(reread).toContain('VERDICT: request changes.');
+  });
+
+  test('the note survives trimToPreModel with its durable path intact — the resumed turn can read the report', async () => {
+    const checkpoints: RunCheckpoint[] = [];
+    mockRunModelTurn
+      .mockResolvedValueOnce(orchTurn([delegateCall({ role: 'reviewer', task: 'review', title: 'Review' })]))
+      .mockResolvedValueOnce(finalTurn('SECOND-HALF FINDING: the retry swallows a rejection.\n```json\n{"status":"done"}\n```'))
+      .mockResolvedValueOnce(orchTurn([{ id: 'r8', name: 'read_file', arguments: JSON.stringify({ path: 'big.txt' }) }]))
+      .mockResolvedValueOnce(finalTurn('done'));
+    await runCodingAgent(makeInput({ onCheckpoint: cp => checkpoints.push(cp) }));
+
+    const cp = checkpoints.filter(c => c.messages.some((m: any) =>
+      typeof m.content === 'string' && m.content.includes(COMPLETED_DELEGATIONS_MARKER))).pop()!;
+    const trimmed = trimToPreModel(cp.messages);
+    const noteAfterTrim = trimmed.find((m: any) =>
+      typeof m.content === 'string' && m.content.includes(COMPLETED_DELEGATIONS_MARKER));
+    expect(noteAfterTrim).toBeDefined(); // the note is what survives the rewind…
+    expect(noteAfterTrim.content).toContain('FULL REPORT (durable):'); // …and it carries the path
+  });
+});
+
 describe('delegation resume-notes (dispatch checkpoints + resume)', () => {
   test('a dispatch checkpoint written after a completed delegation carries the note, positioned to survive trimToPreModel', async () => {
     const checkpoints: RunCheckpoint[] = [];

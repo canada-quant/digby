@@ -241,7 +241,7 @@ async function factsFor(meta: Record<string, any>, decidedAt: Date, now: Date): 
     }
   }
   if (meta.verdict === 'schedule' && typeof meta.callerChatId === 'string') {
-    const n = await (prisma as any).codingSchedule.count({ where: { sessionId: meta.callerChatId, createdAt: { gte: decidedAt, lte: windowEnd } } }).catch(() => 0);
+    const n = await (prisma as any).chatSchedule.count({ where: { sessionId: meta.callerChatId, createdAt: { gte: decidedAt, lte: windowEnd } } }).catch(() => 0);
     f.scheduleArmed = n > 0;
   }
   return f;

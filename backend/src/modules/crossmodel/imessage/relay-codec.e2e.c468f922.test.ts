@@ -334,11 +334,36 @@ function captureScreen(w: number, h: number) {
 // 1. THE CARRY, WITH A REAL SCREEN — device codec → routes → operator codec
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * ── WHY THESE TWO CASES CARRY AN EXPLICIT DEADLINE (ticket a92a34c2) ────────
+ * The two heavy cases below push a real capture through REAL HTTP round trips:
+ * 63 frames for 1280×800 and 127 for 1080p (measured, not estimated), one
+ * `fetch` each, plus the codec's own encode/decode. Measured on an IDLE
+ * 8-vCPU box: 1.4 s and 5.5 s respectively.
+ * jest's 5 s default is therefore already BELOW this suite's own runtime, and
+ * `jest.config.js` deliberately caps `maxWorkers` at 4 on a shared box (ticket
+ * ca4798a6), so under the full verify chain these cases share the CPU with
+ * three other suites and several co-tenant sessions. The 5 s ceiling is then a
+ * COIN FLIP, not a regression signal: it was the sole red that blocked PR
+ * creation for an unrelated lane whose diff touched zero imessage files.
+ *
+ * This is the SAME diagnosis the sibling suite recorded when IT was the
+ * aggressor (`relay-operator-render.e2e.c468f922.test.ts`, "RAISE THE TIMEOUT"
+ * half): 5 s is simply wrong for a case that opens a real socket and moves a
+ * real screen. The victim inherited the problem and never got the deadline.
+ *
+ * WHAT IS **NOT** CHANGED, deliberately: not one assertion, and nothing is
+ * skipped. The byte-identity check (`viewer.rgba().equals(screen.rgba)`) is the
+ * codec-drift guard — raising a deadline tolerates contention-induced SLOWNESS
+ * only. A genuine server-side reset, a wrong pixel, a broken chunk boundary or
+ * a halted viewer still fails immediately and still fails loudly.
+ *
+ * `jest.setTimeout` (file-wide) is the more common idiom here, but a per-case
+ * deadline is narrower: the other 11 cases in this file are millisecond-scale
+ * and keep jest's tight default, so a real hang in THEM is still caught fast.
+ */
+
 describe('AN AUTHORIZED SESSION CARRIES A REAL SCREEN END TO END', () => {
-  // 30s: a real 1280×800 capture crosses the relay as MANY frames and each is
-  // decoded byte-for-byte — the 5s default is the documented parallel-load
-  // timeout class (ticket 61024ae3), not a code defect. Scoped to this one
-  // test so a genuine hang elsewhere still fails fast.
   it('a captured 1280×800 screen crosses the relay as many frames and decodes byte-identically', async () => {
     const { sessionId, capability } = await openLiveSession();
 
@@ -390,7 +415,7 @@ describe('AN AUTHORIZED SESSION CARRIES A REAL SCREEN END TO END', () => {
     expect(snap.rectsApplied).toBe(1);
     // THE PROOF: the pixels that left the device are the pixels the operator sees.
     expect(viewer.rgba().equals(screen.rgba)).toBe(true);
-  }, 30000);
+  }, 60_000); // 63 sequential HTTP round trips + real codec work — see the note above describe()
 
   it('an operator INPUT event crosses the relay and decodes into an executable action', async () => {
     const { sessionId, capability } = await openLiveSession();
@@ -483,7 +508,7 @@ describe('AN AUTHORIZED SESSION CARRIES A REAL SCREEN END TO END', () => {
     expect(viewer.width).toBe(1920);
     expect(viewer.height).toBe(1080);
     expect(viewer.rgba().equals(screen.rgba)).toBe(true);
-  }, 30_000); // ~250 sequential HTTP round trips to a loopback server
+  }, 60_000); // 127 sequential HTTP round trips — measured 5.5 s idle (see the note above describe())
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

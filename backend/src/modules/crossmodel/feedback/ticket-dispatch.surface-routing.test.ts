@@ -68,7 +68,7 @@ const mockPrisma: any = {
       && (!where.updatedAt?.gte || r.updatedAt >= where.updatedAt.gte)).length),
   },
   chatCodingState: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   contextStoreEntry: { findUnique: jest.fn(async () => null) },
 };
 withEmptyHouseRuleReads(mockPrisma);
@@ -140,8 +140,8 @@ beforeEach(() => {
   for (const k of Object.keys(projects)) delete projects[k];
   spawnSeq = 0;
   chats.set(STANDING, { userId: 'owner-1', projectId: 'proj-crossmodel', archivedAt: null });
-  projects['proj-crossmodel'] = { id: 'proj-crossmodel', userId: 'owner-1', repoUrl: 'https://github.com/canada-quant/digby', name: 'crossmodel' };
-  projects['proj-deckpose'] = { id: 'proj-deckpose', userId: 'owner-1', repoUrl: 'https://github.com/canada-quant/example-repo', name: 'deckpose' };
+  projects['proj-crossmodel'] = { id: 'proj-crossmodel', userId: 'owner-1', repoUrl: 'https://github.com/example-org/crossmodel', name: 'crossmodel' };
+  projects['proj-deckpose'] = { id: 'proj-deckpose', userId: 'owner-1', repoUrl: 'https://github.com/example-org/optcg', name: 'deckpose' };
   projects['proj-foreign'] = { id: 'proj-foreign', userId: 'owner-2', repoUrl: 'https://github.com/other/thing', name: 'foreign' };
 });
 afterAll(() => { process.env = ENV; });

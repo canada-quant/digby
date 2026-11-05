@@ -642,8 +642,10 @@ describe("write-path watchdog (ticket ac9022a0)", () => {
       .mockResolvedValueOnce(SHOT_A) // streak 1
       .mockResolvedValueOnce(ACTION_OK) // key return
       .mockResolvedValueOnce(SHOT_A) // streak 2 ⇒ the HARNESS probes
-      .mockResolvedValueOnce(ACTION_OK) // probe: key cmd+space
-      .mockResolvedValueOnce(SHOT_A) // probe frame — IDENTICAL, frontmost unchanged ⇒ probe FAILED
+      .mockResolvedValueOnce(ACTION_OK) // probe leg 1: key cmd+space
+      .mockResolvedValueOnce(SHOT_A) // probe frame — IDENTICAL, frontmost unchanged (remap-shaped)
+      .mockResolvedValueOnce(ACTION_OK) // probe leg 2: key cmd+tab (ticket a40f64d9)
+      .mockResolvedValueOnce(SHOT_A) // probe frame — IDENTICAL too ⇒ EVERY leg inert ⇒ probe FAILED
       .mockResolvedValueOnce(ACTION_OK) // probe cleanup: key escape
       .mockResolvedValueOnce(SHOT_A); // post-cleanup frame
     mockVisionChat
@@ -667,6 +669,7 @@ describe("write-path watchdog (ticket ac9022a0)", () => {
     expect(keys).toEqual([
       { key: "return", modifiers: [] },
       { key: "space", modifiers: ["cmd"] },
+      { key: "tab", modifiers: ["cmd"] },
       { key: "escape", modifiers: [] },
     ]);
     expect(r.harness).toMatchObject({ noChangeStrikes: 2, probesRun: 1, probesPassed: 0, inputProven: false });

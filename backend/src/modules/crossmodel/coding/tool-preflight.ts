@@ -769,7 +769,17 @@ export function ungroundedIdRefusal(tool: string, bad: UngroundedIdArg[], intend
         ? `Your reasoning named ${intended} — you evidently meant to call ${intended}; call it now with its real parameters.`
         : `If you have no such id, you do not need ${tool} right now — call the tool that advances the task instead.`) +
       (chatRefused
-        ? ` To target a chat, call list_chats first and use an id from its rows (a chat TITLE is not an id); for the chat you are running in, use your own session's chat id from your context.`
+        ? ` To target a chat, call list_chats first and use an id from its rows (a chat TITLE is not an id); for the chat you are running in, use your own session's chat id from your context.` +
+          // Ticket 53406cc4 (2026-11-04): a lane calling get_fleet_telemetry view
+          // 'metrics' emitted chatId="__all__" — a fabricated ALL-CHATS sentinel
+          // for an arg that is an OPTIONAL FILTER there (the schema requires only
+          // `view`; omitting chatId IS the platform-wide read). The c5615f58 hint
+          // only taught the list_chats recovery, which is the wrong remedy for a
+          // filter: there is no id to fetch, the call just needs the arg gone. So
+          // the hint now names the omit path too (message-only: grounding, the
+          // refusal and the breaker arithmetic are unchanged; a sentinel is
+          // never an id and is still refused).
+          ` If this tool's chat arg is an OPTIONAL FILTER rather than a target (e.g. a metrics read narrowed to one chat), OMIT it instead — omitting a filter means the all-chats read and needs no id at all; a sentinel like "__all__" is never an id.`
         : '') +
       (projectRefused
         ? ` To file under a project, call list_projects first and use an id from its rows (a project NAME or slug is not an id) — or omit projectId and it defaults to the current project when known.`

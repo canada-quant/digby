@@ -46,6 +46,19 @@ jest.mock('../memory/context-store', () => ({
   __esModule: true,
   storeGet: jest.fn(async (ns: string[], key: string) => _store.get(ns.join('/') + '::' + key) ?? null),
   storePut: jest.fn(async (ns: string[], key: string, value: any) => { _store.set(ns.join('/') + '::' + key, value); }),
+  // Ticket 458342f5: the durable background-report spill reads its rows by
+  // EXACT handle key (never a bounded namespace scan) and deletes them once the
+  // report is durable elsewhere.
+  storeGetMany: jest.fn(async (ns: string[], keys: string[]) => {
+    const prefix = ns.join('/') + '::';
+    const out = new Map<string, any>();
+    for (const k of keys) {
+      const v = _store.get(prefix + k);
+      if (v !== undefined) out.set(k, v);
+    }
+    return out;
+  }),
+  storeDelete: jest.fn(async (ns: string[], key: string) => { _store.delete(ns.join('/') + '::' + key); }),
 }));
 jest.mock('./run-journal.service', () => ({ __esModule: true, getRecentJournalEntries: jest.fn(async () => []), formatJournalBlock: jest.fn(() => '') }));
 jest.mock('./container.service', () => ({ __esModule: true, ensureSessionContainer: jest.fn(async () => false), execInContainer: jest.fn(), isContainerMode: jest.fn(() => false) }));
@@ -462,5 +475,99 @@ describe('resume', () => {
       } as any,
     }));
     expect(bgRows()[0]?.meta).toEqual(expect.objectContaining({ phase: 'lost_on_resume', workerIds: ['bg1-dead'] }));
+  });
+
+  /**
+   * TICKET 458342f5 REPLAY — the mishap, end to end.
+   *
+   * A background worker FINISHED before the container was replaced, and its
+   * report was spilled when it settled. The resumed run must inject that report
+   * (so the lead does not buy a second review cycle) and must NOT call it lost.
+   * Before the fix the report lived only in the dead process and this exact
+   * shape produced only the "did NOT survive the restart" notice.
+   */
+  test('458342f5: a worker that FINISHED before the restart has its report RECOVERED and injected — not declared lost', async () => {
+    _store.set(
+      'chat-resume/background-report::bg1-finished',
+      {
+        id: 'bg1-finished', role: 'reviewer', title: 'Adversarial review',
+        startedAt: 1_000, finishedAt: 61_000,
+        report: 'VERDICT: merge-safe. Two non-blocking nits.', at: 61_000,
+      },
+    );
+    const seen: string[] = [];
+    route([(messages) => {
+      const texts = userTexts(messages);
+      const recovered = texts.find(t => t.includes('RECOVERED'));
+      expect(recovered).toContain('bg1-finished');
+      expect(recovered).toContain('VERDICT: merge-safe');
+      expect(recovered).toContain('do not re-delegate');
+      // The lost notice must NOT name a worker whose report came back.
+      expect(texts.some(t => t.includes('did NOT survive the restart') && t.includes('bg1-finished'))).toBe(false);
+      seen.push(...texts);
+      return finalTurn('acting on the recovered ruling');
+    }], async () => finalTurn('n/a'));
+
+    await runCodingAgent(makeInput({
+      userMessage: 'continue',
+      sessionId: 'chat-resume',
+      resumeFrom: {
+        version: 1, step: 2, stepBudget: 8, phase: 'preModel',
+        messages: [
+          { role: 'system', content: 'old system' },
+          { role: 'user', content: 'review the diff' },
+          { role: 'assistant', content: '', tool_calls: [{ id: 't1', type: 'function', function: { name: 'delegate', arguments: '{}' } }] },
+          { role: 'tool', tool_call_id: 't1', content: '[BACKGROUND WORKER STARTED — reviewer "Adversarial review" · handle bg1-finished]\nIt is running in the background…' },
+        ],
+      } as any,
+    }));
+
+    expect(seen.some(t => t.includes('VERDICT: merge-safe'))).toBe(true);
+    expect(bgPhases()).toContain('recovered_on_resume');
+    expect(bgPhases()).not.toContain('lost_on_resume');
+    const row = bgRows().find((r: any) => r.meta?.phase === 'recovered_on_resume');
+    expect(row?.meta).toEqual(expect.objectContaining({ workerIds: ['bg1-finished'], count: 1 }));
+  });
+
+  /**
+   * TICKET 458342f5 REPLAY — the OTHER half, which must not regress: a worker
+   * that was still RUNNING when the process died produced no report, so it is
+   * still announced as lost (and only it — the finished one is recovered).
+   */
+  test('458342f5: a worker that was still RUNNING is still announced lost, alongside a recovered one', async () => {
+    _store.set('chat-mixed/background-report::bg1-finished', {
+      id: 'bg1-finished', role: 'reviewer', title: 'Adversarial review',
+      startedAt: 1_000, finishedAt: 61_000, report: 'VERDICT: merge-safe.', at: 61_000,
+    });
+    route([(messages) => {
+      const texts = userTexts(messages);
+      expect(texts.some(t => t.includes('RECOVERED') && t.includes('bg1-finished'))).toBe(true);
+      const notice = texts.find(t => t.includes('did NOT survive the restart'));
+      expect(notice).toContain('bg2-running');
+      expect(notice).not.toContain('bg1-finished');
+      return finalTurn('done');
+    }], async () => finalTurn('n/a'));
+
+    await runCodingAgent(makeInput({
+      userMessage: 'continue',
+      sessionId: 'chat-mixed',
+      resumeFrom: {
+        version: 1, step: 2, stepBudget: 8, phase: 'preModel',
+        messages: [
+          { role: 'system', content: 'old system' },
+          { role: 'user', content: 'review the diff and research RTSP' },
+          { role: 'assistant', content: '', tool_calls: [
+            { id: 't1', type: 'function', function: { name: 'delegate', arguments: '{}' } },
+            { id: 't2', type: 'function', function: { name: 'delegate', arguments: '{}' } },
+          ] },
+          { role: 'tool', tool_call_id: 't1', content: '[BACKGROUND WORKER STARTED — reviewer "Adversarial review" · handle bg1-finished]\nIt is running in the background…' },
+          { role: 'tool', tool_call_id: 't2', content: '[BACKGROUND WORKER STARTED — web_researcher "RTSP research" · handle bg2-running]\nIt is running in the background…' },
+        ],
+      } as any,
+    }));
+
+    expect(bgPhases()).toContain('recovered_on_resume');
+    expect(bgPhases()).toContain('lost_on_resume');
+    expect(bgRows().find((r: any) => r.meta?.phase === 'lost_on_resume')?.meta).toEqual(expect.objectContaining({ workerIds: ['bg2-running'] }));
   });
 });

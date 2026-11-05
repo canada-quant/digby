@@ -38,10 +38,10 @@ beforeEach(() => {
 describe('shareUrlForToken', () => {
   it('uses the FIRST FRONTEND_URL entry (comma list) and the legacy fallback host', () => {
     const prev = process.env.FRONTEND_URL;
-    process.env.FRONTEND_URL = 'https://digby.example.com,http://localhost:8247';
-    expect(shareUrlForToken('abc')).toBe('https://digby.example.com/shared/chat/abc');
+    process.env.FRONTEND_URL = 'https://digby.ai,http://localhost:8247';
+    expect(shareUrlForToken('abc')).toBe('https://digby.ai/shared/chat/abc');
     delete process.env.FRONTEND_URL;
-    expect(shareUrlForToken('abc')).toBe('http://crossmodel.cozz/shared/chat/abc');
+    expect(shareUrlForToken('abc')).toBe('http://example-local.test/shared/chat/abc');
     if (prev !== undefined) process.env.FRONTEND_URL = prev;
   });
 });

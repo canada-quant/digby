@@ -120,6 +120,18 @@ export const CLAIMS_BLOCK_TYPES = [
   //                  misses land unverifiable (the supervisor state tools
   //                  mint no receipt; finish-run FR-3's 18-rejection lesson).
   'commit', 'schedule_armed', 'email_sent', 'state_update',
+  // CT-5 (backlog "claims-block phase 2", todo 76fd0cce): the two observation
+  // classes the fence could not express. A lane's honest "the box is on sha X
+  // (probe) / the bench scored 4.2 (benchmark)" is a run_command result, and
+  // until now the only typed way to record it was `deploy` — which claims a
+  // deploy ran. Both verify against the SAME channel the prose guard uses:
+  //   probe      run_command   ids.commandHash / inputHash prefix |
+  //                             receipt id | ids.sha
+  //   benchmark  run_command   ids.commandHash / inputHash prefix |
+  //                             receipt id | ids.sha
+  // (they share one matcher; the type still carries the MEANING into the
+  // record, which is the point of a typed claim).
+  'probe', 'benchmark',
 ] as const;
 
 export type ClaimsBlockType = (typeof CLAIMS_BLOCK_TYPES)[number];
@@ -439,6 +451,11 @@ const CLAIM_TYPE_TOOLS: Record<ClaimsBlockType, ReadonlySet<string>> = {
   // coarse tier; git_commit keeps it).
   file_change: new Set(['git_commit', 'open_pull_request']),
   verify: new Set(['verify']),
+  // CT-5 (todo 76fd0cce): observation claims are proven by the command that
+  // produced them — the same channel the prose guard's probe/benchmark tiers
+  // read (run_command). See claimMatchesReceipt.
+  probe: new Set(['run_command']),
+  benchmark: new Set(['run_command']),
   merge: new Set(['merge_pull_request']),
   // Ticket 6d7b379f (2026-10-12) — the finish_run vocabulary. Receipt rules
   // mirror finish-run.ts TYPE_RECEIPT_TOOLS where the receipt channel exists:
@@ -542,6 +559,43 @@ function claimMatchesReceipt(claim: ClaimsBlockEntry, r: ToolReceipt): boolean {
       // carry (scheduleId, ticketId, purpose…) vouches the same way
       // message_sent's envelope ids do. A specific ref must NAME something.
       return idMatches(ref, r.id) || anyIdsValueMatches(ref, ids);
+    case 'probe':
+    case 'benchmark': {
+      // CT-5 (todo 76fd0cce): an observation claim is proven by the command that
+      // produced it. A ref may name:
+      //   • the receipt id (idMatches below — which already enforces the ≥8-char
+      //     both-sides floor),
+      //   • the COMMAND HASH — the full sha256 of the command text
+      //     (ids.commandHash) or the short prefix a lane pastes,
+      //   • the harness args hash (r.inputHash) the same way.
+      // NO coarse tier: "any ok run_command vouches" is exactly the hole the
+      // deploy case retired (P4 v1#23) — an ok `ls` must not stamp a probe
+      // VERIFIED.
+      // REVIEW FIX D1 (2026-11-03): the prefix legs MUST carry the same ≥8-char
+      // floor idMatches enforces. Without it a 1-character ref ("0") is a prefix
+      // of every sha256, so one `ruby -e` of a probe entry stamped ANY ok
+      // run_command VERIFIED — measured 14/16 one-char and 34/256 two-char refs
+      // convicting over 20 realistic receipts. That is the retired coarse tier
+      // wearing a hash. A short ref now simply does not verify.
+      // REVIEW FIX D2 (2026-11-03): the ids.sha leg is DELETED. run_command sets
+      // only { exitCode, commandHash } (run-receipts.ts), so no producer ever
+      // populated ids.sha here — the leg could not fire in production and the
+      // test that appeared to pin it hand-built a receipt shape extractReceipt
+      // never returns. A dead leg plus a fiction fixture is worse than no leg:
+      // cite the receipt id or the command hash.
+      const MIN_PREFIX = 8;
+      const hashRefMatches = (hash: string | null): boolean => {
+        if (!hash) return false;
+        const h = hash.toLowerCase();
+        const c = ref.toLowerCase();
+        if (h === c) return true;
+        return c.length >= MIN_PREFIX && h.length >= MIN_PREFIX && (h.startsWith(c) || c.startsWith(h));
+      };
+      if (idMatches(ref, r.id)) return true;
+      if (hashRefMatches(typeof ids.commandHash === 'string' ? ids.commandHash : null)) return true;
+      if (hashRefMatches(r.inputHash ?? null)) return true;
+      return false;
+    }
     case 'deploy': {
       if (idMatches(ref, r.id)) return true;
       const sha = typeof ids.sha === 'string' ? ids.sha : null;

@@ -416,7 +416,7 @@ describe('testEndpointConnection', () => {
       const ep = await createEndpoint({ ...VALID, apiKey: 'sk-cql', models: [{ id: 'agx-laya', coding: true }] });
       mockedAxios.get.mockResolvedValueOnce({ data: { data: [{ id: 'agx-laya' }] } } as any);
       // The 1-token chat probe draws the live usage guide (verbatim shape from
-      // the llm.example.com gateway, probe lane fea91f9e 2026-10-20).
+      // the llm.cql.ca gateway, probe lane fea91f9e 2026-10-20).
       mockedAxios.post.mockRejectedValueOnce({
         response: {
           status: 400,
@@ -425,7 +425,7 @@ describe('testEndpointConnection', () => {
         message: 'Request failed with status code 400',
       } as any);
       // The decision-shape re-probe passes (the endpoint is healthy).
-      mockProbeSystemOne.mockResolvedValueOnce({ ok: true, target: 'llm.example.com (typed decisions via chat completions)', latencyMs: 211, detail: '/chat/completions (typed-decision proxy) OK on agx-laya in 211 ms — refund noul 0.90, team "billing"' });
+      mockProbeSystemOne.mockResolvedValueOnce({ ok: true, target: 'llm.cql.ca (typed decisions via chat completions)', latencyMs: 211, detail: '/chat/completions (typed-decision proxy) OK on agx-laya in 211 ms — refund noul 0.90, team "billing"' });
       const result = await testEndpointConnection(ep.id);
       expect(result.ok).toBe(true);
       expect(result.completionAuth).toBe('ok');
@@ -1009,7 +1009,7 @@ describe('decision-backend flag: decision "systemone_chat" + the systemone_chat 
     const created = await createEndpoint({
       label: 'cql-litellm',
       providerShape: 'openai_chat',
-      baseUrl: 'https://llm.example.com/v1',
+      baseUrl: 'https://llm.cql.ca/v1',
       apiKey: 'sk-cql',
       models: [
         { id: 'agx-laya', decision: 'systemone_chat', maxStateChars: 3800 },
@@ -1019,7 +1019,7 @@ describe('decision-backend flag: decision "systemone_chat" + the systemone_chat 
     });
     expect(created.models).toEqual([{ id: 'agx-laya', decision: 'systemone_chat', maxStateChars: 3800 }, { id: 'agx-chat', coding: true }, { id: 'weird' }]);
     const laya = await resolveRegistryModel('cql-litellm:agx-laya');
-    expect(laya).toMatchObject({ providerShape: 'openai_chat', decision: 'systemone_chat', maxStateChars: 3800, model: 'agx-laya', baseUrl: 'https://llm.example.com/v1', url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk-cql' });
+    expect(laya).toMatchObject({ providerShape: 'openai_chat', decision: 'systemone_chat', maxStateChars: 3800, model: 'agx-laya', baseUrl: 'https://llm.cql.ca/v1', url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk-cql' });
     const chat = await resolveRegistryModel('cql-litellm:agx-chat');
     expect('decision' in chat!).toBe(false);
     expect(chat).toMatchObject({ providerShape: 'openai_chat', coding: true });
@@ -1030,12 +1030,12 @@ describe('decision-backend flag: decision "systemone_chat" + the systemone_chat 
   });
 
   it('the dedicated systemone_chat shape is accepted; its connectivity check REQUIRES GET /models (no 404 tolerance) and probes the FIRST ROW MODEL through the chat transport, noting a model the proxy does not list', async () => {
-    const ep = await createEndpoint({ label: 'laya-proxy', providerShape: 'systemone_chat', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', models: [{ id: 'agx-laya', maxStateChars: 3800 }] });
+    const ep = await createEndpoint({ label: 'laya-proxy', providerShape: 'systemone_chat', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', models: [{ id: 'agx-laya', maxStateChars: 3800 }] });
     expect(ep.providerShape).toBe('systemone_chat');
     mockedAxios.get.mockResolvedValueOnce({ data: { data: [{ id: 'agx-chat' }, { id: 'agx-laya' }] } } as any);
     const ok = await testEndpointConnection(ep.id);
     expect(ok).toEqual({ ok: true, models: ['agx-chat', 'agx-laya'], completionAuth: 'ok', detail: 'probe ok' });
-    expect(mockProbeSystemOne).toHaveBeenCalledWith({ baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-cql', model: 'agx-laya', transport: 'chat' });
+    expect(mockProbeSystemOne).toHaveBeenCalledWith({ baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-cql', model: 'agx-laya', transport: 'chat' });
     // GET /models 404 → the check fails (a systemone endpoint tolerates it, the chat proxy serves /models).
     mockedAxios.get.mockRejectedValueOnce({ response: { status: 404 }, message: 'nope' });
     const nf = await testEndpointConnection(ep.id);
@@ -1080,7 +1080,7 @@ describe('provider class (audit E3): endpoint summaries + registry resolutions c
 
   it('a proxy that lists a frontier model id next to open ids: endpoint class stays open, the frontier id is named, and ONLY its resolution carries providerClass frontier (the E3 evidence shape)', async () => {
     const ep = await createEndpoint({
-      label: 'cql-litellm', providerShape: 'openai_chat', baseUrl: 'https://llm.example.com/v1',
+      label: 'cql-litellm', providerShape: 'openai_chat', baseUrl: 'https://llm.cql.ca/v1',
       models: [{ id: 'agx-chat', coding: true }, { id: 'api-anthropic-claude-fable-5-1', coding: true }, { id: 'agx-laya', decision: 'systemone_chat' }],
     });
     expect(ep).toMatchObject({ providerClass: 'open', frontierModelIds: ['api-anthropic-claude-fable-5-1'] });
@@ -1114,7 +1114,7 @@ describe('refreshEndpointModels (model-list sync, ticket 780cd7a4)', () => {
   // The llm-cql specimen (fleet-verified 2026-10-23): a stale snapshot naming
   // routes the gateway retired, next to flags an admin/detect set by hand.
   const llmCql = {
-    label: 'llm-cql', providerShape: 'openai_chat', baseUrl: 'https://llm.example.com/v1',
+    label: 'llm-cql', providerShape: 'openai_chat', baseUrl: 'https://llm.cql.ca/v1',
     models: [
       { id: 'spark-deepseek-v4.1-flash-1017', coding: true },
       { id: 'spark-memo-v26-flash-rl', coding: true },
@@ -1251,7 +1251,7 @@ describe('refreshEndpointModels (model-list sync, ticket 780cd7a4)', () => {
       if (prev === undefined) delete process.env.MODEL_ENDPOINT_SYNC_DISABLED; else process.env.MODEL_ENDPOINT_SYNC_DISABLED = prev;
     }
     // systemone_chat rows sync the same way (LiteLLM fronting Laya serves /v1/models).
-    const decision = await createEndpoint({ label: 'cql-litellm', providerShape: 'systemone_chat', baseUrl: 'https://llm.example.com/v1', models: [{ id: 'agx-laya', decision: 'systemone_chat', maxStateChars: 3800 }] });
+    const decision = await createEndpoint({ label: 'cql-litellm', providerShape: 'systemone_chat', baseUrl: 'https://llm.cql.ca/v1', models: [{ id: 'agx-laya', decision: 'systemone_chat', maxStateChars: 3800 }] });
     mockedAxios.get.mockReset();
     liveList(['agx-laya', 'agx-chat']);
     const out = await refreshEndpointModels(decision.id);

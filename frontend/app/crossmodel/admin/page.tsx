@@ -46,7 +46,7 @@ import {
 
 /** ADMIN role, or the owner e-mail (production convenience; a self-host admin has the role). Used by BOTH gates below. */
 const isAdminUser = (u: { role?: string; email?: string | null } | null | undefined): boolean =>
-  u?.role === 'ADMIN' || (u?.email ?? '').toLowerCase() === 'paul@sunday.market';
+  u?.role === 'ADMIN' || (u?.email ?? '').toLowerCase() === 'example-user@example.com';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/api';
 

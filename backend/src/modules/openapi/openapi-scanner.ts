@@ -694,7 +694,7 @@ export function buildOpenApiSpec(version: string, backendRoot: string): Record<s
       // instance, not production (self-host setup hardening 2026-10-20); production
       // and the drift-guard snapshot (prod-kind env) are unchanged.
       ...(!isProdInstance() && instancePublicUrl() ? [{ url: `${instancePublicUrl()}/api`, description: 'This instance' }] : []),
-      { url: 'https://digby.example.com/api', description: 'Production' },
+      { url: 'https://digby.ai/api', description: 'Production' },
       { url: 'http://localhost:4000/api', description: 'Local development' },
     ],
     tags: tags.map((name) => ({ name })),

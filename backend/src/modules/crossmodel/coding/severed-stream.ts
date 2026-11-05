@@ -106,7 +106,7 @@ export function severedStreamRecoveryDisabled(): boolean {
  * THIS SECOND CONDITION IS NOT OPTIONAL, and it is the difference between a safe
  * fix and a platform-wide regression. `streamCompleted === false` alone only
  * says "no `[DONE]` sentinel arrived" — and this same reader documents that some
- * OpenAI-compatible gateways (a LiteLLM/vLLM proxy config, llm.example.com — see the
+ * OpenAI-compatible gateways (a LiteLLM/vLLM proxy config, llm.cql.ca — see the
  * raw-text fallback at coding-model.ts) NEVER emit the sentinel and simply close
  * the socket. On such a path EVERY turn would read `false`, so a sentinel-only
  * gate would re-emit EVERY tool-calling turn: a doubled round-trip and doubled

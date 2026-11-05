@@ -11,7 +11,7 @@
  * signing Mac (owner-gated), so the code-side fix is the ticket's second
  * acceptance clause: a CLEAR VERSION INDICATOR + a served path to the current
  * release (the one-line installer, which pulls the CURRENT tarball from
- * digby.example.com). The web UI is served LIVE inside the existing desktop app
+ * digby.ai). The web UI is served LIVE inside the existing desktop app
  * (WKWebView), so these surfaces reach the owner's installed app immediately.
  *
  * Two idioms per the repo's node-environment vitest constraints (no jsdom, no
@@ -45,7 +45,7 @@ const FEED = JSON.parse(readSrc('../../../../public/desktop-latest.json')) as {
   notes: string;
 };
 
-const UPDATE_CMD = 'curl -fsSL https://digby.example.com/install-digby-agent.sh | bash -s -- --update-only';
+const UPDATE_CMD = 'curl -fsSL https://digby.ai/install-digby-agent.sh | bash -s -- --update-only';
 
 // The agent the CURRENT tree bundles into a freshly built DMG — build-app.sh
 // stamps desktop-latest.json's agentVersion from this exact file at build
@@ -150,7 +150,7 @@ describe('IMessageCard — wiring pins (source level)', () => {
     // go get a code they do not need — --update-only skips pairing. Since the
     // 2026-10-20 self-host hardening both one-liners are built by
     // lib/instance-setup.ts from the page origin (so a self-host never points
-    // its Macs at digby.example.com); the card calls the helper, the helper carries the flag.
+    // its Macs at digby.ai); the card calls the helper, the helper carries the flag.
     expect(CARD).toContain("bash -s -- --update-only"); // production's exact one-liner
     expect(CARD).toContain('macAgentUpdateCommand(installOrigin)'); // a self-host origin's
     expect(SETUP_LIB).toContain("bash -s -- --update-only");
@@ -180,7 +180,7 @@ describe('desktop-latest.json — the bundled-agent stamp', () => {
     // honestly name an OLDER agent (a later agent bump before the DMG is
     // rebuilt) but never a WISHFUL newer one — the exact hand-stamp bug
     // this suite was written to pin.
-    expect(FEED.url).toBe('https://digby.example.com/Digby.dmg');
+    expect(FEED.url).toBe('https://digby.ai/Digby.dmg');
     if (atLeast(FEED.version, '0.1.12')) {
       expect(agentVersionOlder(AGENT_PKG.version, FEED.agentVersion ?? '')).toBe(false);
     } else {
@@ -202,7 +202,7 @@ describe('desktop-latest.json — the bundled-agent stamp', () => {
   });
 });
 
-describe('install-digby-agent.sh — the --update-only path (served from digby.example.com)', () => {
+describe('install-digby-agent.sh — the --update-only path (served from digby.ai)', () => {
   it('accepts --update-only and skips the pairing-code requirement for it', () => {
     expect(INSTALLER).toContain('--update-only');
     // The update path does not hard-exit on a missing code — that early-exit

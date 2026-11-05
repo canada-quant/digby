@@ -172,7 +172,7 @@ const makeCtx = (over: Record<string, any> = {}): any => ({
   ...over,
 });
 
-const repoJson = (name: string, login = 'canada-quant') => ({
+const repoJson = (name: string, login = 'example-org') => ({
   name,
   html_url: `https://github.com/${login}/${name}`,
   clone_url: `https://github.com/${login}/${name}.git`,
@@ -219,20 +219,20 @@ describe('ticket b1852d45 — ensureGithubRepoForBlank bootstrap hardening', () 
     expect(mockPost).toHaveBeenCalledTimes(1);
     expect(mockPost.mock.calls[0][1]).toMatchObject({ name: 'ericfoundation', private: true, auto_init: false });
     expect(ctx.provider).toBe('github');
-    expect(ctx.repoUrl).toBe('https://github.com/canada-quant/ericfoundation.git');
+    expect(ctx.repoUrl).toBe('https://github.com/example-org/ericfoundation.git');
     expect(ctx.emit).toHaveBeenCalledWith('repo_created', {
-      url: 'https://github.com/canada-quant/ericfoundation',
+      url: 'https://github.com/example-org/ericfoundation',
       private: true,
-      owner: 'canada-quant',
+      owner: 'example-org',
       name: 'ericfoundation',
     });
-    expect(mockPersistProjectRepo).toHaveBeenCalledWith('proj-1', 'https://github.com/canada-quant/ericfoundation.git');
+    expect(mockPersistProjectRepo).toHaveBeenCalledWith('proj-1', 'https://github.com/example-org/ericfoundation.git');
   });
 
   it('collision + existing repo EMPTY (409 on commits) → reuses it (no new repo, no suffix)', async () => {
     mockPost.mockRejectedValueOnce(alreadyExistsErr());
     mockGet.mockImplementation(async (url: string) => {
-      if (url === 'https://api.github.com/user') return { data: { login: 'canada-quant' } };
+      if (url === 'https://api.github.com/user') return { data: { login: 'example-org' } };
       if (url.endsWith('/commits')) { const e: any = new Error('empty'); e.response = { status: 409 }; throw e; }
       return { data: repoJson('ericfoundation') };
     });
@@ -240,8 +240,8 @@ describe('ticket b1852d45 — ensureGithubRepoForBlank bootstrap hardening', () 
     const err = await ensureGithubRepoForBlank(ctx);
     expect(err).toBeNull();
     expect(mockPost).toHaveBeenCalledTimes(1); // no second creation attempt
-    expect(ctx.repoUrl).toBe('https://github.com/canada-quant/ericfoundation.git');
-    expect(ctx.emit).toHaveBeenCalledWith('repo_created', expect.objectContaining({ owner: 'canada-quant', name: 'ericfoundation' }));
+    expect(ctx.repoUrl).toBe('https://github.com/example-org/ericfoundation.git');
+    expect(ctx.emit).toHaveBeenCalledWith('repo_created', expect.objectContaining({ owner: 'example-org', name: 'ericfoundation' }));
   });
 
   it('collision + existing repo NON-EMPTY → does NOT hijack it — falls through to the session-suffixed name', async () => {
@@ -249,7 +249,7 @@ describe('ticket b1852d45 — ensureGithubRepoForBlank bootstrap hardening', () 
       .mockRejectedValueOnce(alreadyExistsErr())                    // slug collides
       .mockResolvedValueOnce({ data: repoJson(`ericfoundation-${SUFFIX}`) }); // suffixed creation succeeds
     mockGet.mockImplementation(async (url: string) => {
-      if (url === 'https://api.github.com/user') return { data: { login: 'canada-quant' } };
+      if (url === 'https://api.github.com/user') return { data: { login: 'example-org' } };
       if (url.endsWith('/commits')) return { data: [{ sha: 'deadbeef' }] }; // non-empty
       return { data: repoJson('ericfoundation') };
     });
@@ -259,14 +259,14 @@ describe('ticket b1852d45 — ensureGithubRepoForBlank bootstrap hardening', () 
     expect(mockPost).toHaveBeenCalledTimes(2);
     expect(mockPost.mock.calls[0][1]).toMatchObject({ name: 'ericfoundation' });
     expect(mockPost.mock.calls[1][1]).toMatchObject({ name: `ericfoundation-${SUFFIX}` });
-    expect(ctx.repoUrl).toBe(`https://github.com/canada-quant/ericfoundation-${SUFFIX}.git`);
+    expect(ctx.repoUrl).toBe(`https://github.com/example-org/ericfoundation-${SUFFIX}.git`);
     expect(ctx.emit).toHaveBeenCalledWith('repo_created', expect.objectContaining({ name: `ericfoundation-${SUFFIX}` }));
   });
 
   it('both candidates collide NON-EMPTY → clear user-facing error, ctx untouched, no emit, no persist', async () => {
     mockPost.mockRejectedValue(alreadyExistsErr());
     mockGet.mockImplementation(async (url: string) => {
-      if (url === 'https://api.github.com/user') return { data: { login: 'canada-quant' } };
+      if (url === 'https://api.github.com/user') return { data: { login: 'example-org' } };
       if (url.endsWith('/commits')) return { data: [{ sha: 'deadbeef' }] };
       return { data: repoJson('ericfoundation') };
     });

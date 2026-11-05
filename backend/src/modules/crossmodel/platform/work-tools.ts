@@ -52,10 +52,11 @@
  * tool is in exactly one of the two sets (pinned by work-tools.test.ts), so a
  * new consequential tool must be classified before it ships.
  *
- * Leaf module: node builtins only, safe to import from anywhere. Kill
- * switches: WORK_TOOLS_NO_CARD_DISABLED=1 restores the card on every tool;
- * TASK_CARD_DISABLED=1 (the inline task card's own switch) makes the note say
- * "posted in this chat" instead of naming the card.
+ * Leaf module: node builtins only, safe to import from anywhere.
+ * (The inline task card's own TASK_CARD_DISABLED was retired in RSW-1
+ * cluster 35 — a card that can render always renders. The card-free direct
+ * path's own WORK_TOOLS_NO_CARD_DISABLED was retired the same way — a card
+ * that a human turn's own message has already authorized always executes.)
  */
 
 import { createHash } from 'crypto';
@@ -103,9 +104,7 @@ export function isWorkTool(name: string): boolean {
   return Object.prototype.hasOwnProperty.call(WORK_TOOLS, name);
 }
 
-export function workToolsNoCardDisabled(): boolean {
-  return process.env.WORK_TOOLS_NO_CARD_DISABLED === '1';
-}
+
 
 /**
  * A HUMAN turn: a real user message anchors this run AND the executor did not
@@ -222,14 +221,13 @@ export function workToolDedupeKey(input: { sessionId: string; tool: string; args
 }
 
 /**
- * Whether the inline task card (chat-agent/task-events.ts, its own kill
- * switch TASK_CARD_DISABLED) exists in this build — the note names the card
- * only when a card can actually render; otherwise it says the progress and
- * the result are posted in this chat, which is true either way. The presence
- * probe is a resolve, not an import: this leaf pulls nothing in.
+ * Whether the inline task card (chat-agent/task-events.ts) exists in this
+ * build — the note names the card only when a card can actually render;
+ * otherwise it says the progress and the result are posted in this chat,
+ * which is true either way. The presence probe is a resolve, not an import:
+ * this leaf pulls nothing in.
  */
 export function taskCardAvailable(): boolean {
-  if (process.env.TASK_CARD_DISABLED === '1') return false;
   try {
     require.resolve('../chat-agent/task-events');
     return true;

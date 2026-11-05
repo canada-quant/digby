@@ -1,5 +1,5 @@
 /**
- * Ticket 2cee7764 (2026-10-24, filed by the ctrl.example.com Supervisor relay via
+ * Ticket 2cee7764 (2026-10-24, filed by the ctrl.cql.ca Supervisor relay via
  * the Fleet Supervisor report-up lane) — ACCEPTANCE REPLAY, the ticket's own
  * bar: "an owner credential pasted on an owner-question card answer lands in
  * the encrypted store intact (verifiable via store_secret fromMessageId

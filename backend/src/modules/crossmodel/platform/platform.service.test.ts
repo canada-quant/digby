@@ -33,7 +33,7 @@ const mockPrisma: any = {
   // Kid guards (User Space §4c): sendChatMessage's satellite branch + router
   // gate and convertChatToCoding read the sender's isChild here.
   user: { findUnique: jest.fn() },
-  codingSchedule: { count: jest.fn(), create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn(), groupBy: jest.fn() },
+  chatSchedule: { count: jest.fn(), create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), update: jest.fn(), groupBy: jest.fn() },
   activity: { create: jest.fn(async () => ({})), findMany: jest.fn(async () => []) },
   $transaction: jest.fn(async (arg: any) => (typeof arg === 'function' ? arg(mockPrisma) : Promise.all(arg))),
 };
@@ -316,12 +316,12 @@ beforeEach(() => {
   // Attention state: no active agent_runs, no Redis pending keys by default.
   mockPrisma.agentRun.findMany.mockResolvedValue([]);
   mockPrisma.agentRun.findFirst.mockResolvedValue(null);
-  // Sidebar schedule indicator (listChats' batched codingSchedule.groupBy):
+  // Sidebar schedule indicator (listChats' batched chatSchedule.groupBy):
   // no enabled schedule rows by default.
-  mockPrisma.codingSchedule.groupBy.mockResolvedValue([]);
+  mockPrisma.chatSchedule.groupBy.mockResolvedValue([]);
   // getChatStatus cadence visibility (forensics fix 3b): no schedules by default.
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   // Archive guards: no running sessions in a subtree by default.
   mockPrisma.chatCodingState.count.mockResolvedValue(0);
   mockRedis.scan.mockResolvedValue({ cursor: 0, keys: [] });
@@ -778,7 +778,7 @@ describe('archiveChat', () => {
   it('refuses while the chat has ENABLED schedules (archive is lossless — pause first)', async () => {
     mockPrisma.crossModelChat.findUnique.mockResolvedValue({ userId: OWNER, isSupervisor: false });
     mockPrisma.chatCodingState.findUnique.mockResolvedValue(null);
-    mockPrisma.codingSchedule.count.mockResolvedValue(2);
+    mockPrisma.chatSchedule.count.mockResolvedValue(2);
     await expect(platform.archiveChat({ userId: OWNER, chatId: CHAT.id }))
       .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('schedules') });
     expect(mockPrisma.crossModelChat.update).not.toHaveBeenCalled();
@@ -860,7 +860,7 @@ describe('archiveChat — CASCADE to idle children (lane lifecycle C2, 2026-10-2
     mockPrisma.userFeatureRequest.findMany.mockImplementation(async ({ where }: any) => [...chats.values()].filter((c) => c.ticket && where.status.in.includes(c.ticket) && where.OR.some((o: any) => o.context.equals === c.id)).map((c) => ({ context: { dispatchedTo: c.id } })));
     mockPrisma.delegationTask.findMany.mockResolvedValue([]);
     mockPrisma.chatCodingState.findUnique.mockImplementation(async ({ where }: any) => { const c = chats.get(where.id); return c?.status ? { status: c.status } : null; });
-    mockPrisma.codingSchedule.count.mockImplementation(async ({ where }: any) => chats.get(where.sessionId)?.schedules ?? 0);
+    mockPrisma.chatSchedule.count.mockImplementation(async ({ where }: any) => chats.get(where.sessionId)?.schedules ?? 0);
     mockPrisma.agentRun.findFirst.mockImplementation(async ({ where }: any) => {
       const c = chats.get(where.sessionId);
       if (where.status) return c?.liveRun ? { id: 'r-live' } : null;
@@ -886,7 +886,7 @@ describe('archiveChat — CASCADE to idle children (lane lifecycle C2, 2026-10-2
     mockPrisma.pendingConfirmation.findFirst.mockImplementation(async ({ where }: any) => (chats.get(where.chatId)?.confirmation ? { id: 'cf-1' } : null));
     // the family read's liveness legs, over the descendant ids
     mockPrisma.agentRun.findMany.mockImplementation(async ({ where }: any) => (where.sessionId?.in ?? []).filter((id: string) => chats.get(id)?.liveRun).map((sessionId: string) => ({ sessionId })));
-    mockPrisma.codingSchedule.findMany.mockImplementation(async ({ where }: any) => (where.sessionId?.in ?? []).filter((id: string) => (chats.get(id)?.schedules ?? 0) > 0).map((sessionId: string) => ({ sessionId })));
+    mockPrisma.chatSchedule.findMany.mockImplementation(async ({ where }: any) => (where.sessionId?.in ?? []).filter((id: string) => (chats.get(id)?.schedules ?? 0) > 0).map((sessionId: string) => ({ sessionId })));
     mockPrisma.chatCodingState.findMany.mockImplementation(async ({ where }: any) => (where.id?.in ?? []).filter((id: string) => ['running', 'provisioning'].includes(String(chats.get(id)?.status))).map((id: string) => ({ id })));
   }
   const archivedIds = () => [...chats.values()].filter((c) => c.archivedAt).map((c) => c.id).sort();
@@ -904,7 +904,7 @@ describe('archiveChat — CASCADE to idle children (lane lifecycle C2, 2026-10-2
     for (const f of [
       mockPrisma.crossModelChat.findUnique, mockPrisma.crossModelChat.findMany, mockPrisma.crossModelChat.update, mockPrisma.projectTodo.findFirst, mockPrisma.crossModelMessage.findFirst, mockPrisma.crossModelMessage.findMany,
       mockPrisma.projectTodo.findUnique, mockPrisma.projectGoal.findUnique,
-      mockPrisma.ownerQuestion.findFirst, mockPrisma.pendingConfirmation.findFirst, mockPrisma.agentRun.findMany, mockPrisma.codingSchedule.findMany, mockPrisma.chatCodingState.findMany,
+      mockPrisma.ownerQuestion.findFirst, mockPrisma.pendingConfirmation.findFirst, mockPrisma.agentRun.findMany, mockPrisma.chatSchedule.findMany, mockPrisma.chatCodingState.findMany,
       mockPrisma.chatShareLink.findMany, mockPrisma.chatWebhook.findMany, mockPrisma.eventHook.findMany, mockPrisma.userFeatureRequest.findMany, mockPrisma.delegationTask.findMany,
     ]) f.mockReset();
     for (const f of [mockPrisma.chatShareLink.findMany, mockPrisma.chatWebhook.findMany, mockPrisma.eventHook.findMany, mockPrisma.userFeatureRequest.findMany, mockPrisma.delegationTask.findMany]) f.mockResolvedValue([]);
@@ -939,7 +939,7 @@ describe('archiveChat — CASCADE to idle children (lane lifecycle C2, 2026-10-2
       windows: { 'c-idle': { from: expect.any(String), to: expect.any(String) }, 'c-plain': { from: expect.any(String), to: expect.any(String) } },
     });
     // the scheduled child's schedules are never paused here
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     // the children read is the parent's own, unarchived, owner-scoped, oldest first, bounded — and
     // (second review fixer) a machine archive's is the parent's FOLDER only
     expect(mockPrisma.crossModelChat.findMany).toHaveBeenCalledWith({ where: { parentChatId: 'P', userId: OWNER, archivedAt: null, projectId: 'proj-1' }, select: { id: true, isSupervisor: true, isProjectSupervisor: true, charterGoalId: true, charterTodoId: true }, orderBy: { createdAt: 'asc' }, take: 25 });
@@ -994,7 +994,7 @@ describe('archiveChat — CASCADE to idle children (lane lifecycle C2, 2026-10-2
 
   it('a failed family read keeps the child (fail-safe)', async () => {
     seed([{ id: 'P' }, { id: 'c1', parent: 'P' }, { id: 'g1', parent: 'c1' }]);
-    mockPrisma.codingSchedule.findMany.mockRejectedValue(new Error('down'));
+    mockPrisma.chatSchedule.findMany.mockRejectedValue(new Error('down'));
     await platform.archiveChat({ userId: OWNER, chatId: 'P' });
     expect(archivedIds()).toEqual(['P']);
   });
@@ -1320,7 +1320,7 @@ describe('archiveProject', () => {
   it('refuses while chats in the subtree have ENABLED schedules', async () => {
     mockPrisma.crossModelProject.findUnique.mockResolvedValue({ ...PROJ_ROW });
     mockPrisma.crossModelProject.findMany.mockResolvedValue([]);
-    mockPrisma.codingSchedule.count.mockResolvedValue(3);
+    mockPrisma.chatSchedule.count.mockResolvedValue(3);
     await expect(platform.archiveProject({ userId: OWNER, projectId: 'proj-1' }))
       .rejects.toMatchObject({ statusCode: 409, message: expect.stringContaining('schedule') });
     expect(mockPrisma.crossModelProject.update).not.toHaveBeenCalled();
@@ -1446,12 +1446,12 @@ describe('getChatStatus', () => {
     mockChatAccess(CHAT, null);
     const soon = new Date(Date.now() + 5 * 60_000);
     const later = new Date(Date.now() + 3600_000);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ nextRunAt: later }, { nextRunAt: soon }]);
-    mockPrisma.codingSchedule.count.mockResolvedValue(1); // one cadence stopped in the last 24h
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ nextRunAt: later }, { nextRunAt: soon }]);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1); // one cadence stopped in the last 24h
     const s = await platform.getChatStatus({ userId: OWNER, chatId: CHAT.id });
     expect(s.schedules).toEqual({ enabled: 2, nextRunAt: soon.toISOString(), recentlyDisabled: 1, nearCap: 0, runCaps: [] });
     // The recently-disabled probe is scoped to THIS chat's disabled rows.
-    expect(mockPrisma.codingSchedule.count).toHaveBeenCalledWith(
+    expect(mockPrisma.chatSchedule.count).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ sessionId: CHAT.id, enabled: false }) }),
     );
   });
@@ -1459,7 +1459,7 @@ describe('getChatStatus', () => {
   it('schedules exposes run-cap utilization — runCaps per capped row and a nearCap count on the sweeper predicate (ticket b4d1096c)', async () => {
     mockChatAccess(CHAT, null);
     const far = new Date(Date.now() + 20 * 86_400_000);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       // At 482/500 (the CanLaw deaf-watch shape): near-cap, cited by id.
       { id: 'sched-near-1', nextRunAt: new Date(Date.now() + 60_000), kind: 'recurring', runsCount: 482, maxRuns: 500, expiresAt: far },
       // 100/500: capped but NOT near — listed in runCaps, absent from nearCap.
@@ -1467,7 +1467,7 @@ describe('getChatStatus', () => {
       // Uncapped: neither list.
       { id: 'sched-open-3', nextRunAt: new Date(Date.now() + 180_000), kind: 'recurring', runsCount: 7, maxRuns: null, expiresAt: far },
     ]);
-    mockPrisma.codingSchedule.count.mockResolvedValue(0);
+    mockPrisma.chatSchedule.count.mockResolvedValue(0);
     const s = await platform.getChatStatus({ userId: OWNER, chatId: CHAT.id });
     expect(s.schedules.nearCap).toBe(1);
     expect(s.schedules.runCaps).toEqual([
@@ -1478,7 +1478,7 @@ describe('getChatStatus', () => {
 
   it('a schedules lookup failure degrades to zeros — the status read never breaks', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.findMany.mockRejectedValue(new Error('db down'));
+    mockPrisma.chatSchedule.findMany.mockRejectedValue(new Error('db down'));
     const s = await platform.getChatStatus({ userId: OWNER, chatId: CHAT.id });
     expect(s.schedules).toEqual({ enabled: 0, nextRunAt: null, recentlyDisabled: 0, nearCap: 0, runCaps: [] });
   });
@@ -2565,6 +2565,39 @@ describe('listChats (P6 two-tier filters)', () => {
       const archived = await platform.listChats({ userId: OWNER, status: 'archived' });
       expect(archived.chats).toEqual([]);
       expect(archived.pagination).toMatchObject({ total: 0, pages: 0 });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+it('SUPERVISION SCOPE (03d14b78) — excludeProjectIds is PROJECTED into the payload crossModelService.listChats actually receives', async () => {
+    // The defect this pins (PR #2495 review finding 1): excludeProjectIds was
+    // declared on ListChatsFilters but NOT projected into the `dbFilters`
+    // literal, which is the ONLY filter object crossModelService.listChats ever
+    // sees. The field was silently dropped and the Fleet scope filter became a
+    // no-op — invisible to a suite that mocks platform.service itself. This test
+    // spies on the REAL crossModelService.listChats and asserts the 4th arg.
+    const spy = jest.spyOn(crossModelService, 'listChats').mockResolvedValue(pageOf([rowB]) as any);
+    try {
+      await platform.listChats({ userId: OWNER, excludeProjectIds: ['p-opted-out', 'p-also-out'] });
+      expect(spy).toHaveBeenCalledWith(OWNER, 1, 20, { excludeProjectIds: ['p-opted-out', 'p-also-out'] });
+      // …and on the DERIVED full-fetch arm too (running/codeCapable/status).
+      await platform.listChats({ userId: OWNER, running: true, excludeProjectIds: ['p-opted-out'] });
+      expect(spy).toHaveBeenCalledWith(OWNER, 1, 1000, { excludeProjectIds: ['p-opted-out'] });
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('SUPERVISION SCOPE (03d14b78) — an ABSENT/empty excludeProjectIds leaves the payload byte-identical', async () => {
+    // The non-Fleet contract: every existing caller (REST, sidebar polls,
+    // ordinary chats, project supervisors) passes no scope argument, and must
+    // observe exactly today's filter object.
+    const spy = jest.spyOn(crossModelService, 'listChats').mockResolvedValue(pageOf([rowB]) as any);
+    try {
+      await platform.listChats({ userId: OWNER, q: 'bet', projectId: 'p1', mode: 'single_thinking' });
+      expect(spy).toHaveBeenCalledWith(OWNER, 1, 20, { q: 'bet', projectId: 'p1', mode: 'single_thinking' });
+      await platform.listChats({ userId: OWNER, excludeProjectIds: [] });
+      expect(spy).toHaveBeenCalledWith(OWNER, 1, 20, {});
     } finally {
       spy.mockRestore();
     }
@@ -3776,8 +3809,8 @@ describe('scheduleChatRun / listSchedules / cancelSchedule', () => {
 
   it('owner schedules a run on their chat (audited schedule.create)', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.count.mockResolvedValue(0);
-    mockPrisma.codingSchedule.create.mockImplementation(async ({ data }: any) => ({ ...SCHED_ROW, ...data }));
+    mockPrisma.chatSchedule.count.mockResolvedValue(0);
+    mockPrisma.chatSchedule.create.mockImplementation(async ({ data }: any) => ({ ...SCHED_ROW, ...data }));
     const s = await platform.scheduleChatRun({
       userId: OWNER, chatId: CHAT.id, prompt: 'run it', kind: 'recurring', intervalSec: MIN_INTERVAL_SEC,
     });
@@ -3792,7 +3825,7 @@ describe('scheduleChatRun / listSchedules / cancelSchedule', () => {
     mockChatAccess(CHAT, null);
     await expect(platform.scheduleChatRun({ userId: OWNER, chatId: CHAT.id, prompt: 'x', kind: 'once', intervalSec: 60 }))
       .rejects.toMatchObject({ statusCode: 400 });
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('an editor member canNOT schedule (runs execute as the owner — owner-only)', async () => {
@@ -3804,36 +3837,36 @@ describe('scheduleChatRun / listSchedules / cancelSchedule', () => {
   it('listSchedules is user-scoped (all chats)', async () => {
     // Two-query contract since dd0d37ac: enabled rows are queried explicitly
     // (never take-windowed) + capped terminal history.
-    mockPrisma.codingSchedule.findMany.mockImplementation(async (args: any) =>
+    mockPrisma.chatSchedule.findMany.mockImplementation(async (args: any) =>
       args?.where?.enabled === false ? [] : [SCHED_ROW]);
     const rows = await platform.listSchedules({ userId: OWNER });
     // Active rows are queried explicitly (feedback dd0d37ac) + terminal fill —
     // BOTH queries stay user-scoped.
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ userId: OWNER, enabled: true }) }),
     );
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ userId: OWNER, enabled: false }) }),
     );
     expect(rows[0].sessionId).toBe(CHAT.id);
   });
 
   it('cancelSchedule cancels only the user\'s own rows (audited)', async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(SCHED_ROW);
-    mockPrisma.codingSchedule.update.mockResolvedValue({});
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(SCHED_ROW);
+    mockPrisma.chatSchedule.update.mockResolvedValue({});
     const ok = await platform.cancelSchedule({ userId: OWNER, id: 'sch-1' });
     expect(ok).toBe(true);
-    expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalledWith({ where: { id: 'sch-1', userId: OWNER } });
+    expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalledWith({ where: { id: 'sch-1', userId: OWNER } });
     expect(mockPrisma.activity.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ action: 'schedule.cancel' }) }),
     );
   });
 
   it('cancelSchedule returns false for someone else\'s schedule', async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null); // where { id, userId } misses
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null); // where { id, userId } misses
     const ok = await platform.cancelSchedule({ userId: STRANGER, id: 'sch-1' });
     expect(ok).toBe(false);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 });
 
@@ -3849,15 +3882,15 @@ describe('cancelChatSchedule / setChatScheduleEnabled (workspace-panel Schedules
 
   it('owner cancel: cancel_schedule tool parity — enabled:false + lastStatus cancelled, schedule_disabled event, schedule.cancel audit, deaf-lane warning', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(ROW);
-    mockPrisma.codingSchedule.update.mockResolvedValue({ ...ROW, enabled: false, lastStatus: 'cancelled' });
-    mockPrisma.codingSchedule.count.mockResolvedValue(0); // deaf lane: no enabled schedules left
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(ROW);
+    mockPrisma.chatSchedule.update.mockResolvedValue({ ...ROW, enabled: false, lastStatus: 'cancelled' });
+    mockPrisma.chatSchedule.count.mockResolvedValue(0); // deaf lane: no enabled schedules left
 
     const out = await platform.cancelChatSchedule({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1' });
 
     expect(out.cancelled).toBe(true);
     expect(out.alreadyDisabled).toBe(false);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'sch-1' }, data: { enabled: false, lastStatus: 'cancelled', cancelledBy: 'owner', disabledAt: expect.any(Date) }, // v1#13 stamps: Schedules-tab cancel is an OWNER action
     });
     // Supervisor-audible (cadence self-noticing doctrine): the ONE
@@ -3877,12 +3910,12 @@ describe('cancelChatSchedule / setChatScheduleEnabled (workspace-panel Schedules
 
   it('cancel is idempotent: an already-disabled row is a quiet success — no update, no re-emit, no re-audit', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ ...ROW, enabled: false, lastStatus: 'cancelled' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ ...ROW, enabled: false, lastStatus: 'cancelled' });
 
     const out = await platform.cancelChatSchedule({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1' });
 
     expect(out).toEqual({ cancelled: true, alreadyDisabled: true, warning: null });
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(mockEmitHookEvent).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).not.toHaveBeenCalled();
   });
@@ -3891,7 +3924,7 @@ describe('cancelChatSchedule / setChatScheduleEnabled (workspace-panel Schedules
     mockChatAccess(CHAT, 'editor');
     await expect(platform.cancelChatSchedule({ userId: EDITOR, chatId: CHAT.id, scheduleId: 'sch-1' }))
       .rejects.toMatchObject({ statusCode: 403 });
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 
   it('a stranger gets 404 (no existence leak — same shape as an unknown chat)', async () => {
@@ -3902,23 +3935,23 @@ describe('cancelChatSchedule / setChatScheduleEnabled (workspace-panel Schedules
 
   it('a scheduleId belonging to ANOTHER chat 404s (chat-scoped lookup)', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null); // where { id, sessionId } misses
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null); // where { id, sessionId } misses
     await expect(platform.cancelChatSchedule({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-other-chat' }))
       .rejects.toMatchObject({ statusCode: 404, message: 'Schedule not found' });
-    expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalledWith({ where: { id: 'sch-other-chat', sessionId: CHAT.id } });
+    expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalledWith({ where: { id: 'sch-other-chat', sessionId: CHAT.id } });
   });
 
   it('pause: enabled:false + lastStatus paused, schedule_disabled(reason paused) emitted, schedule.pause audited', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(ROW);
-    mockPrisma.codingSchedule.update.mockImplementation(async ({ data }: any) => ({ ...ROW, ...data }));
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(ROW);
+    mockPrisma.chatSchedule.update.mockImplementation(async ({ data }: any) => ({ ...ROW, ...data }));
 
     const out = await platform.setChatScheduleEnabled({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1', enabled: false });
 
     expect(out.changed).toBe(true);
     expect(out.schedule.enabled).toBe(false);
     expect(out.schedule.lastStatus).toBe('paused');
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'sch-1' }, data: { enabled: false, lastStatus: 'paused', cancelledBy: 'owner', disabledAt: expect.any(Date) }, // v1#13 stamps
     });
     expect(mockEmitHookEvent).toHaveBeenCalledWith(
@@ -3933,14 +3966,14 @@ describe('cancelChatSchedule / setChatScheduleEnabled (workspace-panel Schedules
   it('resume recomputes a STALE nextRunAt to now + intervalSec (never an immediate catch-up fire) and audits schedule.resume', async () => {
     mockChatAccess(CHAT, null);
     const stale = { ...ROW, enabled: false, lastStatus: 'paused', nextRunAt: new Date(Date.now() - 3600_000) };
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(stale);
-    mockPrisma.codingSchedule.count.mockResolvedValue(1); // under MAX_ACTIVE_PER_SESSION
-    mockPrisma.codingSchedule.update.mockImplementation(async ({ data }: any) => ({ ...stale, ...data }));
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(stale);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1); // under MAX_ACTIVE_PER_SESSION
+    mockPrisma.chatSchedule.update.mockImplementation(async ({ data }: any) => ({ ...stale, ...data }));
 
     const before = Date.now();
     const out = await platform.setChatScheduleEnabled({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1', enabled: true });
 
-    const updateData = mockPrisma.codingSchedule.update.mock.calls[0][0].data;
+    const updateData = mockPrisma.chatSchedule.update.mock.calls[0][0].data;
     expect(updateData.enabled).toBe(true);
     expect(updateData.lastStatus).toBe('resumed');
     // Recomputed from NOW, not fired-from-the-past: ≥ now + intervalSec.
@@ -3954,37 +3987,37 @@ describe('cancelChatSchedule / setChatScheduleEnabled (workspace-panel Schedules
   it('resume keeps a still-future nextRunAt untouched (no gratuitous reschedule)', async () => {
     mockChatAccess(CHAT, null);
     const future = { ...ROW, enabled: false, lastStatus: 'paused' }; // nextRunAt +15 min
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(future);
-    mockPrisma.codingSchedule.count.mockResolvedValue(0);
-    mockPrisma.codingSchedule.update.mockImplementation(async ({ data }: any) => ({ ...future, ...data }));
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(future);
+    mockPrisma.chatSchedule.count.mockResolvedValue(0);
+    mockPrisma.chatSchedule.update.mockImplementation(async ({ data }: any) => ({ ...future, ...data }));
 
     await platform.setChatScheduleEnabled({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1', enabled: true });
-    expect(mockPrisma.codingSchedule.update.mock.calls[0][0].data.nextRunAt).toBeUndefined();
+    expect(mockPrisma.chatSchedule.update.mock.calls[0][0].data.nextRunAt).toBeUndefined();
   });
 
   it('resume refuses a COMPLETED schedule with 409 (the sweeper would just re-expire it)', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ ...ROW, enabled: false, runsCount: 500, maxRuns: 500 });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ ...ROW, enabled: false, runsCount: 500, maxRuns: 500 });
     await expect(platform.setChatScheduleEnabled({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1', enabled: true }))
       .rejects.toMatchObject({ statusCode: 409 });
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 
   it('resume re-checks the active-schedule cap (409 at MAX_ACTIVE_PER_SESSION)', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ ...ROW, enabled: false, lastStatus: 'paused' });
-    mockPrisma.codingSchedule.count.mockResolvedValue(5);
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ ...ROW, enabled: false, lastStatus: 'paused' });
+    mockPrisma.chatSchedule.count.mockResolvedValue(5);
     await expect(platform.setChatScheduleEnabled({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1', enabled: true }))
       .rejects.toMatchObject({ statusCode: 409 });
   });
 
   it('idempotent toggle: a row already in the requested state is changed:false with NO audit/event', async () => {
     mockChatAccess(CHAT, null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ ...ROW, enabled: false, lastStatus: 'cancelled' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ ...ROW, enabled: false, lastStatus: 'cancelled' });
     const out = await platform.setChatScheduleEnabled({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1', enabled: false });
     expect(out.changed).toBe(false);
     expect(out.schedule.lastStatus).toBe('cancelled'); // a re-pause must not relabel a cancelled row
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(mockEmitHookEvent).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).not.toHaveBeenCalled();
   });
@@ -3992,9 +4025,9 @@ describe('cancelChatSchedule / setChatScheduleEnabled (workspace-panel Schedules
   it('resume of a CANCELLED row is allowed — the UI Undo path (cancel persists, nothing destroyed)', async () => {
     mockChatAccess(CHAT, null);
     const cancelled = { ...ROW, enabled: false, lastStatus: 'cancelled' };
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(cancelled);
-    mockPrisma.codingSchedule.count.mockResolvedValue(0);
-    mockPrisma.codingSchedule.update.mockImplementation(async ({ data }: any) => ({ ...cancelled, ...data }));
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(cancelled);
+    mockPrisma.chatSchedule.count.mockResolvedValue(0);
+    mockPrisma.chatSchedule.update.mockImplementation(async ({ data }: any) => ({ ...cancelled, ...data }));
 
     const out = await platform.setChatScheduleEnabled({ userId: OWNER, chatId: CHAT.id, scheduleId: 'sch-1', enabled: true });
     expect(out.changed).toBe(true);
@@ -4172,7 +4205,7 @@ describe('SHARED-PROJECT-DISPATCH: a write member starts a lane in a shared proj
 
 // ── Framework surface guards (ticket 9471d338) ────────────────────────────────
 // The Digby Framework project (repoUrl = the instance's own repo — here the
-// production slug canada-quant/digby) is a platform surface, not a user
+// production slug example-org/crossmodel) is a platform surface, not a user
 // folder: rename / move / delete / archive / file-into refuse, each BEFORE any
 // mutation (nothing half-applies). Identity rides getProjectAccess's loaded
 // row or deleteProject's bare row; a same-named user project with no repoUrl
@@ -4181,7 +4214,7 @@ describe('framework surface guards (ticket 9471d338)', () => {
   const FW = 'proj-fw';
   const frameworkRow = (extra: any = {}) => ({
     id: FW, userId: OWNER, name: 'crossmodel', path: `/${FW}`,
-    repoUrl: 'https://github.com/canada-quant/digby', ...extra,
+    repoUrl: 'https://github.com/example-org/crossmodel', ...extra,
   });
 
   beforeEach(() => {
@@ -4242,7 +4275,7 @@ describe('framework surface guards (ticket 9471d338)', () => {
   });
 
   it('moveChat refuses filing a user chat INTO the framework project (early, before destination authz)', async () => {
-    mockPrisma.crossModelProject.findUnique.mockResolvedValue({ id: FW, repoUrl: 'canada-quant/digby' });
+    mockPrisma.crossModelProject.findUnique.mockResolvedValue({ id: FW, repoUrl: 'example-org/crossmodel' });
     const updateSpy = jest.spyOn(crossModelService, 'updateChat');
     await expect(platform.moveChat({ userId: OWNER, chatId: 'chat-1', projectId: FW }))
       .rejects.toMatchObject({ statusCode: 403, message: expect.stringContaining('filed under') });

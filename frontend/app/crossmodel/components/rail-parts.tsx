@@ -16,9 +16,10 @@
  */
 
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
-import Image from 'next/image';
 import { PanelLeft, Settings } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { BrandLogo } from '@/components/ui/custom/BrandLogo';
+import { useBranding } from '@/app/branding/BrandingProvider';
 
 /** Coarse pointers (phones) get a 44px hit target without changing the look. */
 const COARSE_HIT = '[@media(pointer:coarse)]:min-h-11 [@media(pointer:coarse)]:min-w-11';
@@ -27,10 +28,11 @@ export function RailBrandRow({ onCollapse, collapseLabel = 'Close sidebar' }: {
   onCollapse: () => void;
   collapseLabel?: string;
 }) {
+  const branding = useBranding();
   return (
     <div className="flex h-14 flex-shrink-0 items-center gap-[9px] pl-4 pr-2.5">
-      <Image src="/digbyhat.png" alt="" width={22} height={22} className="size-[22px] object-contain" priority />
-      <span className="flex-1 font-serif text-[20px] font-medium tracking-[-0.01em] text-ink">Digby</span>
+      <BrandLogo compact size={22} alt="" priority className="size-[22px] object-contain" />
+      <span className="min-w-0 flex-1 truncate font-serif text-[20px] font-medium tracking-[-0.01em] text-ink">{branding.name}</span>
       <button
         type="button"
         onClick={onCollapse}

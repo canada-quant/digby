@@ -261,7 +261,7 @@ test('dispatch: the W3 safety gate blocks input actions with the frozen refusal 
     assert.equal(calls.length, 0, `${method} injects NOTHING when elevated`);
   }
   // open() is NOT input injection (ShellExecute spawns/activates) — allowed.
-  const open = await executeComputer('computer_open', { target: 'https://digby.example.com' }, deps, { ...GEO });
+  const open = await executeComputer('computer_open', { target: 'https://digby.ai' }, deps, { ...GEO });
   assert.equal(open.ok, true);
   assert.deepEqual(calls, [['open']]);
   // With no gate wired (older surface), actions proceed.

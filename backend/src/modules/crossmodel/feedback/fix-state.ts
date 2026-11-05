@@ -50,7 +50,7 @@
  * lane discipline — a bare test/env context never pays the import-chain
  * cost). Every fetch is 8s-bounded (the closure-evidence origin/main
  * budget). Repo slug: $GITHUB_REPO_SLUG resolved per instance — production
- * defaults to canada-quant/digby, a NON-prod instance has NO default
+ * defaults to example-org/crossmodel, a NON-prod instance has NO default
  * (unset ⇒ no GitHub fetch, configured to prod ⇒ hard fail — the
  * instance-targets.ts boundary).
  *
@@ -62,7 +62,7 @@
  * check) then targets THAT repo. The default (no repo member) stays the
  * instance's own slug, so a platform fix's proof is byte-identical to the
  * pre-cf5f9718 behavior; a cross-repo fix (the 2026-10-27 deckpose close on
- * ticket 4e818bb9 — merged + live in canada-quant/example-repo, refused forever by the
+ * ticket 4e818bb9 — merged + live in example-org/optcg, refused forever by the
  * hardcoded compare) machine-closes under the SAME merged ∧ deployed bar.
  * The box_health telemetry half still reads THIS fleet's boxes either way —
  * a foreign repo's deploy proves itself through its own recorded Actions run
@@ -499,7 +499,7 @@ export async function resolveFixStateFromEvidence(
       // (b-iii) LIVENESS PROBE (ticket 36b8c979) — the last deployed path, for
       // a fix whose repo deploys WITHOUT GitHub Actions and is not a Digby box
       // (no deployRunId exists, no box_health row will ever carry its sha —
-      // e.g. canada-quant/example-repo → deckpose.com). The gate RE-FETCHES the
+      // e.g. example-org/optcg → deckpose.com). The gate RE-FETCHES the
       // recorded probe server-side HERE, at resolve time, and asserts every
       // expected string — a lane-pasted curl output is never trusted, and a
       // surface that has since dropped the strings fails the close. Kill

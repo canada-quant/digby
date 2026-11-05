@@ -457,7 +457,7 @@ function CanvasEditor({
             <iframe
               srcDoc={canvas.content}
               className="w-full h-full border-0 bg-white"
-              /* NEVER add allow-same-origin here: srcDoc inherits the digby.example.com
+              /* NEVER add allow-same-origin here: srcDoc inherits the digby.ai
                  origin, so allow-scripts + allow-same-origin would let AI/collab-
                  authored canvas HTML read window.parent.localStorage (the JWT).
                  Scripts still run, just with no access to our origin. */

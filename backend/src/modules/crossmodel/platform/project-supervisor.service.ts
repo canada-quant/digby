@@ -538,7 +538,7 @@ async function ensureProjectSweepSchedule(
   projectId: string,
   fleetSupervisorChatId: string | null,
 ): Promise<void> {
-  const sweeps = await prisma.codingSchedule.findMany({
+  const sweeps = await prisma.chatSchedule.findMany({
     where: { sessionId: chatId, kind: 'recurring', enabled: true },
     // intervalSec (wake-cadence-3): the keeper heal restores a stock row below the floor.
     select: { id: true, prompt: true, kind: true, runsCount: true, promptSetBy: true, intervalSec: true },
@@ -571,7 +571,7 @@ async function ensureProjectSweepSchedule(
       // next heal (or the fire-time gate) retries the park.
       let parkedOk = false;
       try {
-        await prisma.codingSchedule.update({
+        await prisma.chatSchedule.update({
           where: { id: row.id },
           data: { enabled: false, lastStatus: DORMANT_LAST_STATUS, cancelledBy: 'machine', disabledAt: new Date() },
         });
@@ -608,14 +608,14 @@ async function ensureProjectSweepSchedule(
       } catch (err: any) {
         logger.warn(`project supervisor: schedule_disabled emission failed before dedupe (non-fatal): ${err?.message}`);
       }
-      await prisma.codingSchedule.deleteMany({
+      await prisma.chatSchedule.deleteMany({
         where: { id: { in: doomed.map((s: any) => s.id) } },
       });
       logger.warn(`project supervisor: deduped ${doomed.length} duplicate STOCK sweep schedule(s) on ${chatId.slice(0, 8)} (${sweeps.length - stock.length} lane-authored recurring row(s) untouched)`);
     }
     const keeper = stock[0];
     if (keeper.prompt !== current) {
-      await prisma.codingSchedule.update({ where: { id: keeper.id }, data: { prompt: current, promptSetBy: 'system' } })
+      await prisma.chatSchedule.update({ where: { id: keeper.id }, data: { prompt: current, promptSetBy: 'system' } })
         .catch((err: any) => logger.warn(`project supervisor: sweep-prompt heal failed for ${keeper.id.slice(0, 8)}: ${err?.message}`));
     }
     // wake-cadence-3 (2026-09-27 tt-rd audit): CADENCE FLOOR heal. The heal
@@ -643,7 +643,7 @@ async function ensureProjectSweepSchedule(
         return;
       }
       try {
-        await prisma.codingSchedule.update({ where: { id: keeper.id }, data: { intervalSec: PROJECT_SWEEP_INTERVAL_SEC } });
+        await prisma.chatSchedule.update({ where: { id: keeper.id }, data: { intervalSec: PROJECT_SWEEP_INTERVAL_SEC } });
         await audit(userId, 'schedule.update', {
           scheduleId: keeper.id, chatId, projectId, fields: ['intervalSec'], source: 'project-sweep-cadence-floor',
           from: keeperInterval, to: PROJECT_SWEEP_INTERVAL_SEC,
@@ -664,7 +664,7 @@ async function ensureProjectSweepSchedule(
   const now = Date.now();
   // Toggle-ON: resume the newest DISABLED stock row instead of piling up a new
   // one per OFF→ON cycle. Exhausted rows (maxRuns spent) fall through to create.
-  const paused = await prisma.codingSchedule.findFirst({
+  const paused = await prisma.chatSchedule.findFirst({
     where: { sessionId: chatId, kind: 'recurring', enabled: false, prompt: { startsWith: PROJECT_SWEEP_PROMPT_OPENER } },
     select: { id: true, runsCount: true, maxRuns: true, expiresAt: true, lastStatus: true, cancelledBy: true },
     orderBy: { createdAt: 'desc' },
@@ -692,7 +692,7 @@ async function ensureProjectSweepSchedule(
   if (paused && !(paused.maxRuns != null && paused.runsCount >= paused.maxRuns)) {
     const expAt = paused.expiresAt ? new Date(paused.expiresAt as any).getTime() : null;
     try {
-      await prisma.codingSchedule.update({
+      await prisma.chatSchedule.update({
         where: { id: paused.id },
         data: {
           // ff0f6ad9: the stamp names the ACTOR — list_schedules renders
@@ -714,7 +714,7 @@ async function ensureProjectSweepSchedule(
       logger.warn(`project supervisor: paused-sweep resume failed for ${paused.id.slice(0, 8)} — creating a fresh sweep: ${err?.message}`);
     }
   }
-  await prisma.codingSchedule.create({
+  await prisma.chatSchedule.create({
     data: {
       sessionId: chatId,
       userId,
@@ -916,7 +916,7 @@ export async function pauseProjectSupervisor(userId: string, projectId: string):
     const keptSpawnHookIds = keepSpawnHooks
       ? enabledHooks.filter((h: any) => PAUSE_EXEMPT_HOOK_ORIGINS.has(String(h?.createdVia ?? ''))).map((h) => h.id)
       : [];
-    const scheduleRows = await prisma.codingSchedule.findMany({
+    const scheduleRows = await prisma.chatSchedule.findMany({
       where: { sessionId: lane.id, enabled: true },
       select: { id: true, kind: true },
     });
@@ -930,7 +930,7 @@ export async function pauseProjectSupervisor(userId: string, projectId: string):
         })
       : { count: 0 };
     const schedules = scheduleIds.length
-      ? await prisma.codingSchedule.updateMany({
+      ? await prisma.chatSchedule.updateMany({
           where: { id: { in: scheduleIds }, enabled: true },
           // Stamped like every other disable path (schedule.service pause shape)
           // so a paused row reads as paused, not as a silent flag flip.
@@ -1061,7 +1061,7 @@ async function resumeWhatPauseDisabled(chatId: string, userId: string, projectId
       skippedDormant.push(...scheduleIds);
       logger.info(`project supervisor: ${scheduleIds.length} paused schedule(s) on lane ${chatId.slice(0, 8)} left parked — ${dormancy.reason}`);
     } else if (scheduleIds.length) {
-      const rows = await prisma.codingSchedule.findMany({
+      const rows = await prisma.chatSchedule.findMany({
         where: { id: { in: scheduleIds }, sessionId: chatId, enabled: false },
         select: { id: true, kind: true, nextRunAt: true, intervalSec: true, maxRuns: true, runsCount: true, expiresAt: true, lastStatus: true },
       });
@@ -1080,7 +1080,7 @@ async function resumeWhatPauseDisabled(chatId: string, userId: string, projectId
         if (stale) data.nextRunAt = new Date(now + (row.intervalSec ?? PROJECT_SWEEP_INTERVAL_SEC) * 1000);
         if (expAt !== null && expAt <= now) data.expiresAt = new Date(now + PROJECT_SWEEP_LIFETIME_MS);
         try {
-          await prisma.codingSchedule.update({ where: { id: row.id }, data });
+          await prisma.chatSchedule.update({ where: { id: row.id }, data });
           schedulesResumed += 1;
         } catch (err: any) {
           logger.warn(`project supervisor: schedule resume failed for ${row.id.slice(0, 8)}: ${err?.message}`);
@@ -1258,7 +1258,7 @@ export async function gcDetachedProjectSupervisors(userId: string): Promise<numb
           where: { targetChatId: lane.id },
           data: { enabled: false },
         });
-        await prisma.codingSchedule.updateMany({
+        await prisma.chatSchedule.updateMany({
           where: { sessionId: lane.id },
           data: { enabled: false },
         });

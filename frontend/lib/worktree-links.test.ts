@@ -34,10 +34,10 @@ describe('linkifyWorktreePaths (owner 2026-09-17: chat text interlinks the files
 
   it('never links mid-URL, absolute container paths, home paths, or node_modules/.git', () => {
     const md = [
-      'https://github.com/canada-quant/digby/blob/main/docs/BACKUPS.md',
+      'https://github.com/example-org/crossmodel/blob/main/docs/BACKUPS.md',
       '/app/dist/config/database.js and ~/.ssh/config',
       'node_modules/react/index.js .git/HEAD',
-      'api.z.ai/paas/v4 digby.example.com',
+      'api.z.ai/paas/v4 digby.ai',
     ].join('\n');
     expect(linkifyWorktreePaths(md)).toBe(md);
   });
@@ -59,7 +59,7 @@ describe('parseWorktreeLinkHref', () => {
     expect(parseWorktreeLinkHref(worktreeLinkHref('docs/a b.md'))).toBe('docs/a b.md');
     expect(parseWorktreeLinkHref('#worktree:%2Fetc%2Fpasswd')).toBeNull();
     expect(parseWorktreeLinkHref('#worktree:..%2Fx.md')).toBeNull();
-    expect(parseWorktreeLinkHref('https://digby.example.com/x')).toBeNull();
+    expect(parseWorktreeLinkHref('https://digby.ai/x')).toBeNull();
     expect(parseWorktreeLinkHref(undefined)).toBeNull();
   });
 });

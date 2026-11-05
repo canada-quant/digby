@@ -215,8 +215,14 @@ describe('v1#27: run_command publish-intent interception (observe-only since the
     expect(bare.execShell).toHaveBeenCalledTimes(1);
   });
 
-  it('DOCUMENTED gap: the separated-argument form `git -C /path push` is NOT matched (conservatism over coverage)', () => {
-    expect(detectPublishIntent('git -C /path push origin main')).toBeNull();
+  it('PBG-1: the separated-argument form `git -C /path push` NOW matches (was a DOCUMENTED gap before 2026-11-03)', () => {
+    // The pin flipped deliberately with the fix: this test used to assert
+    // `toBeNull()` as an accepted conservatism. The enumeration that closed
+    // PBG-1 measured that the separated form (and the path-prefixed binary, and
+    // the shell wrapper) executed with NO notice and NO metric, so all three
+    // are now OBSERVED. The rest of the conservatism list is re-pinned below.
+    expect(detectPublishIntent('git -C /path push origin main')).toMatchObject({ what: 'git push', hardRefuse: false });
+    expect(detectPublishIntent('git --git-dir=/r/.git push origin main')).toMatchObject({ what: 'git push' });
   });
 
   it('opt-in RUN_COMMAND_PUSH_GUARD_ENFORCE=1 → a machine `git push` is REFUSED again (old envelope), nothing executed', async () => {
@@ -254,6 +260,105 @@ describe('v1#27: run_command publish-intent interception (observe-only since the
     const refused = await executeCodingTool(cred.ctx, 'run_command', { command: 'git remote set-url origin https://x-access-token:ghp_abc@github.com/o/r.git' });
     expect(refused).toContain('[command REFUSED');
     expect(cred.execShell).not.toHaveBeenCalled();
+  });
+
+  it('PBG-1: enumERATION AS A PIN — every run_command→origin path with its OBSERVE-or-REFUSE verdict', () => {
+    // The written enumeration lives in docs/FRAMEWORK_BACKLOG.md (PBG-1) and in
+    // the PR body; this test is the executable half, so a future regex edit
+    // that silently un-covers a path fails CI instead of drifting.
+    const OBSERVE: Array<[string, string]> = [
+      ['P1 raw', 'git push origin main'],
+      ['P2 forced', 'git push --force origin HEAD'],
+      ['P3 separated arg', 'git -C /w push origin main'],
+      ['P3b separated --git-dir', 'git --git-dir=/r/.git push origin main'],
+      ['P3c path-prefixed binary', '/usr/bin/git push origin main'],
+      ['P3d relative-path binary', './bin/git push origin main'],
+      ['P4 gh pr merge', 'gh pr merge 2421 --squash'],
+      ['P4b path-prefixed gh', '/usr/bin/gh pr merge 7'],
+      ['P5 REST merge PUT', 'curl -X PUT https://api.github.com/repos/a/b/pulls/1/merge'],
+      ['P10 sh -c single-quoted', "sh -c 'git push origin main'"],
+      ['P11 bash -c double-quoted', 'bash -c "git push origin main"'],
+      ['P11b combined flags', 'bash -lc "gh pr merge 7"'],
+      ['P17 subshell', '(git push origin main)'],
+      ['P18 backgrounded', 'git push origin main &'],
+      ['P19 env prefix', 'GIT_SSH_COMMAND=ssh git push origin main'],
+    ];
+    for (const [label, cmd] of OBSERVE) {
+      const r = detectPublishIntent(cmd);
+      expect([label, r?.what]).toEqual([label, expect.stringMatching(/^(git push|gh pr merge|GitHub REST merge call)$/)]);
+      expect(r!.hardRefuse).toBe(false); // observe-only — never a refusal
+    }
+
+    // REFUSE — the ONE class: credential persistence, machine runs only.
+    const refuse = detectPublishIntent('git remote set-url origin https://x-access-token:a@github.com/a/b.git');
+    expect(refuse).toMatchObject({ hardRefuse: true });
+    expect(detectPublishIntent('git remote add o https://x-access-token:a@github.com/a/b')!.hardRefuse).toBe(true);
+
+    // UNCOVERED BY DESIGN (documented, not silent): a repo script or an npm
+    // script that pushes internally, and a nested wrapper past the depth bound.
+    for (const byDesign of ['./commit-and-push.sh', 'npm run publish:push', 'bash scripts/deploy.sh']) {
+      expect(detectPublishIntent(byDesign)).toBeNull();
+    }
+    // …and these must STAY null or the guard starts crying wolf on reads.
+    for (const read of ['git log --oneline -5', 'git fetch && git rebase origin/main', 'grep -rn "git push" docs/', 'echo "git push"', 'bash -x build.sh', 'curl https://api.github.com/repos/a/b/pulls/1/merge']) {
+      expect(detectPublishIntent(read)).toBeNull();
+    }
+  });
+
+  it('PBG-1 follow-up (review B1/B2/N1/N2/N3): the defects the FIRST cut shipped, pinned so they cannot come back', () => {
+    // B1 — the first cut's "one separated argument" group was ambiguous (the
+    // argument could itself be a flag), so a long flag run backtracked
+    // exponentially INSIDE the synchronous run_command handler: a stuck tool
+    // call, worse than the silent bypass being closed. Now the separated
+    // argument is forbidden from starting with `-`, which makes matching
+    // linear. Timing is asserted, not assumed: profiled shapes must stay well
+    // inside a per-command budget (they run in 0–2 ms; 250 ms is generous).
+    for (const n of [8, 12, 16, 20]) {
+      const cmd = 'git log ' + Array.from({ length: n }, (_, i) => ['--stat', '--oneline', '--author=x', '--grep=y', '--'][i % 5]).join(' ');
+      const t0 = Date.now();
+      detectPublishIntent(cmd);
+      expect([n, Date.now() - t0 < 250]).toEqual([n, true]);
+    }
+
+    // B2 — widening git/gh while leaving the credential class narrow made the
+    // ONE auto-refused class bypassable by prefix: `x-access-token` remotes
+    // under an executable path matched NOTHING.
+    for (const cmd of [
+      'git remote set-url origin https://x-access-token:a@github.com/a/b.git',
+      '/usr/bin/git remote set-url origin https://x-access-token:a@github.com/a/b.git',
+      './bin/git remote add o https://x-access-token:a@github.com/a/b',
+    ]) {
+      expect([cmd, detectPublishIntent(cmd)?.hardRefuse]).toEqual([cmd, true]);
+    }
+
+    // N1 — the wrapper unwrap must not depend on `c` being GLUED to the flag
+    // cluster: `bash -e -c …` / `sh -o pipefail -c …` are the ordinary forms.
+    for (const cmd of [
+      "bash -c 'git push origin main'",
+      'bash -c "git push origin main"',
+      "bash -e -c 'git push origin main'",
+      "bash -eu -c 'git push origin main'",
+      "sh -e -c 'git push origin main'",
+      'bash -o pipefail -c "git push origin main"',
+      "bash -ec 'git push origin main'",
+      "bash --command 'git push origin main'",
+    ]) {
+      expect([cmd, detectPublishIntent(cmd)?.what]).toEqual([cmd, 'git push']);
+    }
+    // …while a script-file invocation is NOT a payload and yields nothing.
+    expect(detectPublishIntent('bash -x build.sh')).toBeNull();
+    expect(detectPublishIntent('bash scripts/deploy.sh')).toBeNull();
+
+    // N2 — the path prefix must look like an EXECUTABLE path. A bare `bin/`
+    // made quoted prose match, which is exactly the crying-wolf failure the
+    // 15/15 refusals taught.
+    for (const cmd of ['grep -rn "bin/git push" docs/', 'echo "please run bin/git push later"', 'grep -rn "git push" docs/', 'echo "git push"']) {
+      expect([cmd, detectPublishIntent(cmd)]).toEqual([cmd, null]);
+    }
+
+    // N3 — the documented separated form must be PINNED, not just true.
+    expect(detectPublishIntent('git --git-dir /r/.git push origin main')).toMatchObject({ what: 'git push' });
+    expect(detectPublishIntent('git -C /w push origin main')).toMatchObject({ what: 'git push' });
   });
 
   it('detectPublishIntent: unit rows for the exact shapes (+ hardRefuse flag, + REST write-verb requirement)', () => {

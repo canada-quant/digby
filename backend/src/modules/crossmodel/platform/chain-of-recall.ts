@@ -14,16 +14,18 @@
  * both measured in production, with the line NOT appended. Phase 1 flips
  * `applied` to true and appends. No new store, no embedding change.
  *
- * ── OBSERVE-ONLY IS A TYPE INVARIANT, NOT A COMMENT ──
- * `RecallChain.applied` is the literal `false`. There is no render branch in
- * this module, so "prompts are byte-identical with the feature on and off" is
- * true by construction rather than by inspection of every call site. The only
- * production effect is ONE loop-metric row per recall call that HAD a next hop
- * to offer.
+ * ── PHASE 1 (todo 2ef2b254): `applied` IS A REAL BOOLEAN, AND THE APPEND SHIPS ──
+ * Phase 0 pinned `RecallChain.applied` to the literal `false`: no render branch
+ * existed, so prompts were byte-identical by construction. Phase 1 widens the
+ * field to `boolean` deliberately and adds `renderRecallChain`, which appends the
+ * `next:` line. The Phase-0 safety property MOVES rather than disappears: the
+ * DEFAULT mode is still `observe`, so a box with nothing set appends nothing, and
+ * only an explicit opt-in value can change what a reader is shown.
  *
- * THE TWO STATES:
- *   unset / '' / '0'  → mode 'observe' — resolve the hops, LOG them, append nothing.
- *   '1' / 'true'/'on' → mode 'off'     — today's behaviour, no row.
+ * THREE STATES:
+ *   unset / '' / '0' / junk → mode 'observe' — resolve the hops, LOG them, append nothing.
+ *   'apply' / 'rewrite'     → mode 'apply'   — resolve the hops AND append the line.
+ *   '1' / 'true' / 'on'     → mode 'off'     — today's behaviour, no row.
  *
  * Kill switch: CHAIN_OF_RECALL_DISABLED=1 (release; =1 stops appending `next:` lines).
  *
@@ -45,20 +47,39 @@ export interface RecallHop {
   label?: string;
 }
 
+/** The three states — same shape as inline-spill, and the same fail-safe floor:
+ *  `observe` is the DEFAULT, so deploying this module cannot change a prompt. */
+export type RecallMode = 'observe' | 'apply' | 'off';
+
 export interface RecallChain {
-  /** PHASE 0 INVARIANT — always the literal false. See the module header. */
-  applied: false;
-  mode: 'observe' | 'off';
+  /** WIDENED IN PHASE 1 (todo 2ef2b254) — `true` only when mode is `apply` AND
+   *  there was at least one hop to append, i.e. only when a render actually
+   *  happened. Truthful rather than constant. See the module header. */
+  applied: boolean;
+  mode: RecallMode;
   surface: RecallChainSurface | 'unknown';
   hops: RecallHop[];
-  /** How many hops a Phase-1 apply WOULD append. Reported, never applied. */
+  /** How many hops this chain appends (apply) or would append (observe). */
   wouldAppendHops: number;
 }
 
-/** The kill switch. '1'/'true'/'on' (trimmed, any case) = OFF; anything else = observe. */
+/** The kill switch. '1'/'true'/'on' (trimmed, any case) = OFF; anything else = not-off. */
 export function chainOfRecallDisabled(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): boolean {
   const raw = String(env?.CHAIN_OF_RECALL_DISABLED ?? '').trim().toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'on';
+}
+
+/**
+ * Resolve the mode from the ONE registered switch. Pure.
+ *   '1'/'true'/'on'   → 'off'     kill switch: no append, no row (unchanged).
+ *   'apply'/'rewrite' → 'apply'   Phase 1: append the `next:` line / field.
+ *   anything else     → 'observe' the floor — an unrecognised value can never
+ *                                 silently start changing what a reader is shown.
+ */
+export function chainOfRecallMode(env: NodeJS.ProcessEnv | Record<string, string | undefined> = process.env): RecallMode {
+  if (chainOfRecallDisabled(env)) return 'off';
+  const raw = String(env?.CHAIN_OF_RECALL_DISABLED ?? '').trim().toLowerCase();
+  return raw === 'apply' || raw === 'rewrite' ? 'apply' : 'observe';
 }
 
 /**
@@ -85,10 +106,13 @@ function safeId(id: string): string {
 }
 
 /**
- * Resolve the observe-only chain for ONE recall call. Pure; never throws; never
- * returns an applied plan. Hops with no id are dropped (an empty hop is not a
- * hop), duplicates are collapsed keeping FIRST occurrence order (a run that is
- * both the author and the sibling must not be listed twice).
+ * Resolve the chain for ONE recall call. Pure; never throws. Hops with no id are
+ * dropped (an empty hop is not a hop), duplicates are collapsed keeping FIRST
+ * occurrence order (a run that is both the author and the sibling must not be
+ * listed twice).
+ *
+ * `applied` is true only in `apply` mode with at least one hop — see the module
+ * header. In `observe` (the default) nothing about a caller's output changes.
  */
 export function planRecallChain(
   input: { surface: RecallChainSurface | string; hops: ReadonlyArray<RecallHop | null | undefined> },
@@ -97,7 +121,8 @@ export function planRecallChain(
   const surface = (RECALL_CHAIN_SURFACES as readonly string[]).includes(String(input?.surface))
     ? (input.surface as RecallChainSurface)
     : 'unknown';
-  if (chainOfRecallDisabled(env)) {
+  const mode = chainOfRecallMode(env);
+  if (mode === 'off') {
     return { applied: false, mode: 'off', surface, hops: [], wouldAppendHops: 0 };
   }
   const seen = new Set<string>();
@@ -113,7 +138,44 @@ export function planRecallChain(
       ...(h.label ? { label: String(h.label).slice(0, 80) } : {}),
     });
   }
-  return { applied: false, mode: 'observe', surface, hops, wouldAppendHops: hops.length };
+  return { applied: mode === 'apply' && hops.length > 0, mode, surface, hops, wouldAppendHops: hops.length };
+}
+
+/**
+ * THE PHASE-1 RENDER BRANCH — append form, for surfaces whose output is PROSE
+ * (a wake block, a memory answer). Returns `text` unchanged unless the chain
+ * actually applied, so observe/off are byte-identical by construction.
+ *
+ * Pure.
+ */
+export function renderRecallChain(text: string, chain: RecallChain): string {
+  if (!chain || !chain.applied || chain.mode !== 'apply') return text;
+  const line = recallChainLine(chain.hops);
+  if (!line) return text;
+  return `${text}\n${line}`;
+}
+
+/**
+ * THE PHASE-1 RENDER BRANCH — JSON form, for surfaces whose output is an ENVELOPE
+ * a caller parses. Adds ONE additive key and touches nothing else, so an existing
+ * consumer that ignores unknown keys is unaffected.
+ *
+ * WHY THIS EXISTS AT ALL (rather than reusing the append form): this repo has a
+ * recorded rule that callers parse these envelopes from the FIRST BRACE, so a
+ * trailing prose line after the JSON breaks every one of them — goal_create's
+ * fidelity note already rides a PROSE PREFIX for exactly this reason. An additive
+ * field is the only shape that widens the envelope without moving a byte an
+ * existing parser relies on. The key is `next` (not `nextHops`) because it
+ * matches the prose form's own label, so a reader sees one vocabulary.
+ *
+ * Pure: returns the SAME object reference when nothing applied, so a caller can
+ * pass its envelope in unconditionally.
+ */
+export function withRecallChainField<T extends Record<string, unknown>>(envelope: T, chain: RecallChain): T & { next?: string } {
+  if (!chain || !chain.applied || chain.mode !== 'apply') return envelope;
+  const line = recallChainLine(chain.hops);
+  if (!line) return envelope;
+  return { ...envelope, next: line };
 }
 
 /**
@@ -122,11 +184,19 @@ export function planRecallChain(
  * (kill switch on, or no hops), so an idle recall writes no row. Pure.
  */
 export function recallChainMetricMeta(chain: RecallChain, extra: Record<string, unknown> = {}): Record<string, unknown> | null {
-  if (!chain || chain.mode !== 'observe' || !chain.hops.length) return null;
+  // PHASE 1 (todo 2ef2b254): the gate is `mode === 'off'`, NOT `mode === 'observe'`.
+  // Phase 0 could bail on anything that was not observe because observe was the
+  // ONLY live mode. Keeping that test after the widen would switch the readout off
+  // at exactly the moment the feature begins appending `next:` lines — the
+  // instrument going blind when its reading finally matters. The spill twin had the
+  // identical gate and the identical fix; a case in the Phase-0 pin suite fails on
+  // either one left behind.
+  if (!chain || chain.mode === 'off' || !chain.hops.length) return null;
   const kinds: Record<string, number> = {};
   for (const h of chain.hops) kinds[h.kind] = (kinds[h.kind] ?? 0) + 1;
   return {
     surface: chain.surface,
+    applied: chain.applied === true,
     wouldAppend: chain.hops.length,
     kinds,
     ids: chain.hops.slice(0, 3).map((h) => safeId(h.id).slice(0, 8)),

@@ -81,4 +81,37 @@ describe('the pure renderers', () => {
 });
 
 describe('recordLesson on a temp copy of the REAL files', () => {
+  it('refuses without writing; dry-run writes nothing; a real call appends to both files under every real section anchor', async () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-'));
+    const coreSrc = fs.readFileSync(path.join(REPO_ROOT, CORE_DOCTRINE_PATH), 'utf8');
+    const doc = fs.readFileSync(path.join(REPO_ROOT, LESSONS_DOC_PATH), 'utf8');
+    fs.mkdirSync(path.join(tmp, path.dirname(CORE_DOCTRINE_PATH)), { recursive: true });
+    fs.mkdirSync(path.join(tmp, path.dirname(LESSONS_DOC_PATH)), { recursive: true });
+    fs.writeFileSync(path.join(tmp, CORE_DOCTRINE_PATH), coreSrc);
+    fs.writeFileSync(path.join(tmp, LESSONS_DOC_PATH), doc);
+
+    const refused = await recordLesson({ ...GOOD, repoRoot: tmp, rule: 'Never do this again (ticket 661fb494) — the CanLaw lane parked.' });
+    expect(refused.ok).toBe(false);
+    expect(fs.readFileSync(path.join(tmp, CORE_DOCTRINE_PATH), 'utf8')).toBe(coreSrc);
+
+    const dry = await recordLesson({ ...GOOD, repoRoot: tmp, dryRun: true });
+    expect(dry.ok).toBe(true);
+    expect(dry.bullet).toBe(lessonBullet(GOOD));
+    expect(fs.readFileSync(path.join(tmp, LESSONS_DOC_PATH), 'utf8')).toBe(doc);
+
+    for (const section of Object.keys(CORE_SECTION_ANCHORS) as Array<keyof typeof CORE_SECTION_ANCHORS>) {
+      const r = await recordLesson({ ...GOOD, repoRoot: tmp, section, ruleId: `test.${section}` });
+      expect(r.ok).toBe(true);
+    }
+    const nextCore = fs.readFileSync(path.join(tmp, CORE_DOCTRINE_PATH), 'utf8');
+    const nextDoc = fs.readFileSync(path.join(tmp, LESSONS_DOC_PATH), 'utf8');
+    for (const section of Object.keys(CORE_SECTION_ANCHORS)) {
+      expect(nextCore).toContain(`- (rule test.${section}) ${GOOD.rule}`);
+      expect(nextDoc).toContain(`\`test.${section}\``);
+    }
+    // the bullets landed INSIDE the literals (after their section), never in the anchors object line
+    const anchorsLine = nextCore.split('\n').find(l => l.includes('export const CORE_SECTION_ANCHORS'))!;
+    expect(anchorsLine).not.toContain('rule test.');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
 });

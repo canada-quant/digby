@@ -1,7 +1,7 @@
 /**
  * Digby Web Search — BrightData MCP Tools
  *
- * Calls BrightData tools via the self-hosted MCP gateway at mcp.digby.example.com.
+ * Calls BrightData tools via the self-hosted MCP gateway at mcp.digby.ai.
  *
  * Transport: MCP Streamable HTTP (POST) — MCP spec 2025-03-26
  *   - POST to /mcp with JSON-RPC 2.0 body
@@ -23,7 +23,7 @@
  * Used by Open Source models (GLM-5.2, Kimi K3, DeepSeek V4 Flash/Pro) for web search.
  * Frontier models use their own native web search capabilities.
  *
- * Health check: https://mcp.digby.example.com/health (no auth needed) → "ok"
+ * Health check: https://mcp.digby.ai/health (no auth needed) → "ok"
  *
  * Returns formatted context strings, or empty string on failure (graceful degradation).
  */
@@ -37,17 +37,46 @@ import { extractPdfText } from './pdf-extract';
 import { serpProviderErrorDetail, SerpProviderErrorBodyError, type SerpCallOpts } from './serp-provider-guard';
 import { unwrapSerpJsonText } from './serp-redirects';
 import { isProdInstance } from './platform/instance-targets';
+// MCP wire sessions (ticket 5f69fdc4): the gateway holds ONE stdio child —
+// hence ONE BrightData browser — per Mcp-Session-Id, so the client must carry
+// the id across calls or every tools/call lands on a fresh, blank browser.
+import { mcpSessions, type McpSessionHeaders } from './mcp-session';
 
 // Updated URL: new server at /mcp path (MCP Streamable HTTP transport)
 // Env-overridable for self-hosted instances (which may run their own gateway or
-// disable web search); the production default (mcp.digby.example.com) applies ONLY on the
+// disable web search); the production default (mcp.digby.ai) applies ONLY on the
 // production instance (DIGBY_INSTANCE unset / 'prod'). A self-host that sets an
 // invented MCP_DIGBY_TOKEN but forgets MCP_DIGBY_URL used to POST that token to
 // production on every search (401 → ~14 s of retries → "the gateway is
 // recovering" forever); now the gateway tier is simply OFF there, and the
 // instance setup page names the missing MCP_DIGBY_URL (platform/instance-setup.ts).
-const MCP_DIGBY_URL   = process.env.MCP_DIGBY_URL || (isProdInstance() ? 'https://mcp.digby.example.com/mcp' : '');
+const MCP_DIGBY_URL   = process.env.MCP_DIGBY_URL || (isProdInstance() ? 'https://mcp.digby.ai/mcp' : '');
 const MCP_DIGBY_TOKEN = process.env.MCP_DIGBY_TOKEN;
+/**
+ * The STATEFUL mount for interactive cloud browsing (ticket 5f69fdc4).
+ *
+ * The gateway runs TWO supergateways: `/mcp` stays stateless (byte-identical to
+ * the pre-fix behaviour, so search/scrape AND the x-mcp service — a live
+ * session-less client — are unaffected), and `/browser/mcp` is `--stateful`,
+ * holding ONE stdio child (hence ONE BrightData browser) per Mcp-Session-Id.
+ * Measured on supergateway 4.2.1: a stateful instance answers a session-less
+ * POST with 400 "No valid session ID provided", which is exactly why this is a
+ * separate path rather than a flag on the shared one.
+ *
+ * Derived from MCP_DIGBY_URL (…/mcp → …/browser/mcp) so a self-host that points
+ * the gateway elsewhere gets the right mount; MCP_DIGBY_BROWSER_URL wins if set.
+ */
+const MCP_DIGBY_BROWSER_URL = process.env.MCP_DIGBY_BROWSER_URL
+  || (MCP_DIGBY_URL ? MCP_DIGBY_URL.replace(/\/mcp\/?$/, '/browser/mcp') : '');
+
+/** Gateway target for MCP-session lifecycle calls (initialize/release) — ticket 5f69fdc4. */
+export const mcpGatewayTarget = (): { url: string; token: string } => ({ url: MCP_DIGBY_URL, token: MCP_DIGBY_TOKEN || '' });
+
+/** The STATEFUL gateway target the interactive cloud browser must use (ticket 5f69fdc4). */
+export const mcpBrowserGatewayTarget = (): { url: string; token: string } => ({
+  url: MCP_DIGBY_BROWSER_URL || MCP_DIGBY_URL,
+  token: MCP_DIGBY_TOKEN || '',
+});
 
 // When an injected one-shot search comes back EMPTY, callers append this to the
 // system context. Without it, models that know they "always have web search"
@@ -211,6 +240,36 @@ const DIRECT_FAILOVER_TOOLS = new Set(['search_engine', 'scrape_as_markdown', 's
  *  budget; a stated wait ABOVE this takes the gateway tier's fail-fast return
  *  instead. */
 const SERP_PROVIDER_RETRY_WAIT_CAP_MS = 8000;
+
+/** The D3 fail-fast / resume decision, as ONE pure function (WRP-1 D3-R,
+ *  2026-11-03). Extracted so the arithmetic that decides whether a stated
+ *  throttle is waited out or fail-fasted is pinnable without burning the
+ *  provider's real 60 s period in a test.
+ *
+ *  - `failFast` for a DETERMINISTIC class always (the same query fails the same
+ *    way — retrying is pure latency).
+ *  - `failFast` for a stated wait beyond the cap UNLESS the caller passed a
+ *    resume budget that still covers it. That second half is the whole point:
+ *    `cap` protects the INTERACTIVE caller (no budget ⇒ budgetMs 0 ⇒
+ *    resumeWorthIt false ⇒ any stated wait > 8 s fails fast, ca805a61 intact),
+ *    while a long-budget caller (web_pipe) resumes. */
+export function serpResumeDecision(input: {
+  retryable: boolean;
+  statedWaitMs: number;
+  /** The caller's total resume budget (0 = none — the interactive default). */
+  budgetMs: number;
+  /** The caller's fixed resume deadline (Date.now() + budgetMs at tier entry). */
+  resumeDeadline: number;
+  now?: number;
+}): { resumeWorthIt: boolean; failFast: boolean } {
+  const statedWaitMs = input.statedWaitMs > 0 ? input.statedWaitMs : 0;
+  const resumeWorthIt = input.budgetMs > 0
+    && input.retryable
+    && (input.now ?? Date.now()) + statedWaitMs <= input.resumeDeadline;
+  const failFast = !input.retryable
+    || (statedWaitMs > SERP_PROVIDER_RETRY_WAIT_CAP_MS && !resumeWorthIt);
+  return { resumeWorthIt, failFast };
+}
 
 // ── Hedged gateway (autonomy loop #7, 2026-09-19) ─────────────────────────────
 // Box C, 16:07–20:07Z: the DIRECT tier timed out 67 times (55 scrapes at 45 s,
@@ -588,7 +647,17 @@ export async function callMcpTool(toolName: string, args: Record<string, any>, t
     // pass through byte-identical.
     return typeof result === 'string' ? unwrapSerpJsonText(result) : result;
   }
-  return routeMcpTool(toolName, args, timeoutMsOverride);
+  // FORWARD `opts` (ticket 5f69fdc4, measured 2026-11-03). This is the fallthrough
+  // every `scraping_browser_*` call takes, and dropping `opts` here silently
+  // stripped BOTH halves of the wire-session contract the cloud browser depends
+  // on: `sessionKey` (so no `initialize` was ever issued and no Mcp-Session-Id
+  // ridden) and `gatewayUrl` (so the call fell back to the STATELESS
+  // MCP_DIGBY_URL /mcp instead of the stateful /browser/mcp mount). Symptom on
+  // prod: `navigate` ok=true len=0 after ~86s, then a snapshot of "Page:
+  // about:blank" — each tools/call got its own fresh browser. Restoring the two
+  // arguments is the whole fix; verified by patching this one line in memory on
+  // the deployed dist (navigate len=1565, snapshot https://example.com/).
+  return routeMcpTool(toolName, args, timeoutMsOverride, opts);
 }
 
 async function routeMcpTool(toolName: string, args: Record<string, any>, timeoutMsOverride?: number, opts?: SerpCallOpts): Promise<any> {
@@ -760,7 +829,7 @@ async function gatewayTier(toolName: string, args: Record<string, any>, timeoutM
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      const result = await callMcpToolOnce(toolName, args, timeoutMsOverride);
+      const result = await callMcpToolOnce(toolName, args, timeoutMsOverride, opts);
       // SERP provider-error guard at the GATEWAY tier (ticket ca805a61): the
       // gateway answers a FAILING search backend with the provider's own
       // error/debug TEXT as a normal tools/call result — that is a FAILED
@@ -793,11 +862,14 @@ async function gatewayTier(toolName: string, args: Record<string, any>, timeoutM
           // surfacing it — but only if the whole wait still fits inside its own
           // deadline. Interactive callers pass nothing, so `resumeWorthIt` is
           // false and the ca805a61 fail-fast contract below is untouched.
-          const resumeWorthIt = resumeBudgetMs > 0
-            && providerError.retryable
-            && Date.now() + statedWaitMs <= resumeDeadline;
-          const failFast = !providerError.retryable
-            || (statedWaitMs > SERP_PROVIDER_RETRY_WAIT_CAP_MS && !resumeWorthIt);
+          // The decision lives in ONE pure function so its arithmetic (the part
+          // WRP-1 D3-R was about) is unit-pinned — see `serpResumeDecision`.
+          const { failFast } = serpResumeDecision({
+            retryable: providerError.retryable,
+            statedWaitMs,
+            budgetMs: resumeBudgetMs,
+            resumeDeadline,
+          });
           if (failFast) {
             recordCircuitFailure(toolName);
             logger.warn(
@@ -883,7 +955,7 @@ async function gatewayTier(toolName: string, args: Record<string, any>, timeoutM
   return null;
 }
 
-async function callMcpToolOnce(toolName: string, args: Record<string, any>, timeoutMsOverride?: number): Promise<any> {
+async function callMcpToolOnce(toolName: string, args: Record<string, any>, timeoutMsOverride?: number, opts?: SerpCallOpts): Promise<any> {
   const requestId = Date.now() + Math.floor(Math.random() * 10000);
 
   // Shorter timeout for scrape operations (30s) — they either work fast or not at all
@@ -891,8 +963,30 @@ async function callMcpToolOnce(toolName: string, args: Record<string, any>, time
   // agent allows a longer scrape window since BrightData scrape can exceed 30s).
   const timeoutMs = timeoutMsOverride ?? (toolName.startsWith('scrape') ? 30000 : 90000);
 
+  // Session-scoped transport (ticket 5f69fdc4): every scraping_browser_* call
+  // MUST ride the SAME Mcp-Session-Id, because the gateway holds one stdio
+  // child (and thus one BrightData browser) per session. Without this every
+  // tools/call got its own fresh browser — navigate reported success and the
+  // very next snapshot read "Page: about:blank".
+  //
+  // OPT-IN ONLY. A session is engaged solely when the caller passes an explicit
+  // `sessionKey` (the cloud browser driver). Search/scrape and every other
+  // caller send NOTHING extra and perform NO handshake — byte-identical to the
+  // pre-fix request, which is what keeps the working scrape path (and x-mcp's
+  // sibling traffic) untouched on the shared stateless /mcp. Hammering a
+  // stateless gateway with an `initialize` before every tools/call would be
+  // pure waste and would perturb the existing call-count pins.
+  const sessionKey = opts?.sessionKey;
+  // WHICH MOUNT this call rides (ticket 5f69fdc4): the interactive cloud browser
+  // goes to the STATEFUL /browser/mcp; every other caller keeps the shared,
+  // stateless /mcp (absent ⇒ MCP_DIGBY_URL ⇒ byte-identical to pre-fix).
+  const gatewayUrl = opts?.gatewayUrl || MCP_DIGBY_URL;
+  const sessionHeaders: McpSessionHeaders = sessionKey
+    ? await mcpSessions.headers(sessionKey, { url: gatewayUrl, token: MCP_DIGBY_TOKEN || '' })
+    : {};
+
   const response = await axios.post(
-    MCP_DIGBY_URL,
+    gatewayUrl,
     {
       jsonrpc: '2.0',
       method: 'tools/call',
@@ -901,15 +995,116 @@ async function callMcpToolOnce(toolName: string, args: Record<string, any>, time
     },
     {
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json, text/event-stream',
-        'X-API-Key': MCP_DIGBY_TOKEN,
+        ...baseGatewayHeaders(),
+        ...sessionHeaders,
       },
       timeout: timeoutMs,
       responseType: 'stream',
+      // Each attempt must own its own error class: a session-expiry 404 has to
+      // be distinguishable so the NEXT attempt re-initializes instead of
+      // replaying a dead id (spec: 404 ⇒ start a new session).
+      validateStatus: () => true,
     }
   );
 
+  const status = Number(response.status || 0);
+  if (status === 404 && sessionHeaders['Mcp-Session-Id'] && sessionKey) {
+    // supergateway reaped/restarted the session (30-min idle, container
+    // restart) — drop the id so the retry handshakes again. This is exactly
+    // the case supergateway 4.0.0 changed from 400 to 404 to make recoverable.
+    drainStream(response.data);
+    mcpSessions.invalidate(sessionKey);
+    throw new Error(`MCP session expired for ${toolName} (HTTP 404) — re-initializing`);
+  }
+  if (status === 400 && !sessionHeaders['Mcp-Session-Id'] && sessionKey) {
+    // A STATEFUL gateway refuses a session-less tools/call with 400. Retry
+    // once with a fresh handshake rather than failing the call — this is the
+    // window right after the gateway flips to --stateful.
+    drainStream(response.data);
+    mcpSessions.invalidate(sessionKey);
+    const retryHeaders = await mcpSessions.headers(sessionKey, { url: gatewayUrl, token: MCP_DIGBY_TOKEN || '' });
+    if (retryHeaders['Mcp-Session-Id']) {
+      const retry = await axios.post(
+        gatewayUrl,
+        { jsonrpc: '2.0', method: 'tools/call', params: { name: toolName, arguments: args }, id: requestId },
+        { headers: { ...baseGatewayHeaders(), ...retryHeaders }, timeout: timeoutMs, responseType: 'stream', validateStatus: () => true },
+      );
+      return parseToolCallResponse(retry, toolName, requestId, timeoutMs);
+    }
+  }
+  if (status >= 400) {
+    // Non-session HTTP error: read the body for the diagnostic (a JSON-RPC
+    // error carries the real reason), then let the existing retry/health
+    // ladder own it.
+    const body = await readBodyBestEffort(response.data, timeoutMs);
+    drainStream(response.data);
+    const parsed = parseRpcBody(body);
+    const msg = parsed?.error?.message ? String(parsed.error.message) : (body || '').trim().slice(0, 300);
+    throw new Error(`MCP gateway HTTP ${status} for ${toolName}${msg ? `: ${msg}` : ''}`);
+  }
+
+  return parseToolCallResponse(response, toolName, requestId, timeoutMs);
+}
+
+/** The gateway request headers that are NOT session-scoped. */
+function baseGatewayHeaders(): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'Accept': 'application/json, text/event-stream',
+    'X-API-Key': MCP_DIGBY_TOKEN || '',
+  };
+}
+
+function drainStream(data: any): void {
+  try {
+    if (data && typeof data.destroy === 'function') data.destroy();
+    else if (data && typeof data.resume === 'function') data.resume();
+  } catch { /* best-effort */ }
+}
+
+/** Read an already-buffered or streamed axios body as text, bounded. */
+function readBodyBestEffort(data: any, timeoutMs: number): Promise<string> {
+  return new Promise<string>((resolve) => {
+    if (data == null) { resolve(''); return; }
+    if (typeof data === 'string') { resolve(data); return; }
+    if (typeof data.on !== 'function') {
+      try { resolve(JSON.stringify(data)); } catch { resolve(''); }
+      return;
+    }
+    let out = '';
+    let done = false;
+    const finish = (v: string) => { if (done) return; done = true; clearTimeout(timer); resolve(v); };
+    const timer = setTimeout(() => finish(out), Math.max(1, Math.min(timeoutMs, 15000)));
+    (timer as any).unref?.();
+    data.on('data', (c: Buffer) => { out += c.toString(); if (out.length > 100_000) finish(out); });
+    data.on('end', () => finish(out));
+    data.on('error', () => finish(out));
+  });
+}
+
+/** Parse a JSON-RPC envelope out of an SSE-framed or plain-JSON body. */
+function parseRpcBody(body: string): any {
+  const trimmed = (body || '').trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch { /* fall through to SSE */ }
+  for (const line of trimmed.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('data:')) continue;
+    const raw = t.slice(5).trim();
+    if (!raw || raw === '[DONE]') continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object' && !('method' in parsed)) return parsed;
+    } catch { /* skip */ }
+  }
+  return null;
+}
+
+/** Turn a successful gateway response into the tool's text result. */
+function parseToolCallResponse(response: any, toolName: string, requestId: number, timeoutMs: number): Promise<any> {
   // Parse the response and return the result. FORMAT-AGNOSTIC (2026-07-10):
   // MCP Streamable HTTP allows the server to answer a POST with EITHER an SSE
   // stream (`data:`-framed) OR a plain JSON body. This parser previously assumed

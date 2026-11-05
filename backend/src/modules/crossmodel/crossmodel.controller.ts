@@ -6,13 +6,12 @@ import * as platformService from './platform/platform.service';
 import { subscribeChatEvents } from './platform/chat-events';
 import { openSSEStream } from './coding/live-runs';
 // isAdminViewer = ONE admin predicate: ADMIN role, or the owner e-mail on PRODUCTION only — the inline
-// `email !== 'paul@sunday.market'` checks made that address a super-admin on any open-registration
+// `email !== 'example-user@example.com'` checks made that address a super-admin on any open-registration
 // self-host (self-host setup hardening 2026-10-20).
 import { resolveViewModeForRequest, isAdminViewer } from './view/view-mode';
 import { wrapSseResponse } from './view/minimal-sse';
 import { minimalChatDto } from './view/minimal-view';
 import { AUTO_MODE, normalizePatienceMode } from './types';
-import { routeMessageHeuristic } from './platform/auto-router';
 import { routeMessageAuto } from './platform/auto-router-gate';
 // Self-host setup hardening (2026-10-20): instance-level configuration truth (pure leaf).
 import { webSearchMissingOnInstance, webSearchStatus } from './platform/instance-setup';
@@ -164,7 +163,7 @@ const GUEST_SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 // authenticated smoke with a bare 401 the CI log does not even surface.
 // Default protects the documented canonical account (AGENTS.md); override with
 // a comma-separated ADMIN_DELETE_PROTECTED_EMAILS (empty string = unprotected).
-const ADMIN_DELETE_PROTECTED_EMAILS_DEFAULT = 'claudebot@digby.example.com';
+const ADMIN_DELETE_PROTECTED_EMAILS_DEFAULT = 'claudebot@digby.ai';
 const adminDeleteProtectedEmails = (): string[] => {
   const raw = process.env.ADMIN_DELETE_PROTECTED_EMAILS !== undefined
     ? process.env.ADMIN_DELETE_PROTECTED_EMAILS
@@ -530,9 +529,28 @@ export class CrossModelController {
       return res.status(403).json({ error: 'Coding is not available for child accounts' });
     }
 
-    // ── Back-compat START (?message=…, code-capable chats only — see docstring). ──
+    // ── Back-compat START (?message=… — see docstring). ──────────────────────
+    // MERGE-1 slice 2 (2026-11-03): this branch used to read
+    // `if (capability.codeCapable) streamCapabilityRun(...)`. codeCapable
+    // includes the folder-chain leg and every chat is auto-filed into a capable
+    // user-space project, so ANY `GET /chats/<plain>/stream?message=hello`
+    // attached a PERMANENT workspace satellite — silently converting the chat
+    // into a coding session for good, with no code-intent trigger, no
+    // supervisor guard and no task-kind gate. A mutating GET, ungated, at the
+    // exact seam the 2026-10-20 workspace-attach audit exists to close.
+    // It now asks the SAME per-message resolver as the two POST send seams
+    // (platform/send-profile.ts): the satellite routes, the gates decide
+    // whether this send may attach one.
     if (message.trim()) {
-      if ((await getCap()).codeCapable) {
+      const { resolveSendProfile } = await import('./platform/send-profile');
+      const decision = await resolveSendProfile({
+        chat,
+        senderUserId: userId,
+        message,
+        origin: 'user',
+        hasUploads: false,
+      });
+      if (decision.profile === 'coding') {
         const { default: codingStreamController } = await import('./coding/coding-stream.controller');
         return codingStreamController.streamCapabilityRun(req, res, chat, message);
       }
@@ -621,6 +639,103 @@ export class CrossModelController {
         return res.json({ success: true, data: { stopping: true } });
       }
       return res.json({ success: true, data: { stopping: false } });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  /**
+   * GET /api/crossmodel/chats/:id/queue — the caller's OWN user messages
+   * waiting behind a live run, in the order the drain will deliver them
+   * (ticket ea04454c). Position + content + attachment count; machine relay
+   * rows and other people's rows are never listed (queue-controls.ts).
+   */
+  async listChatQueue(req: Request, res: Response) {
+    try {
+      const userId = req.user!.id;
+      const chatId = String(req.params.id || '');
+      if (!chatId) return res.status(400).json({ error: 'chatId is required' });
+      const { access, exists } = await crossModelService.getChatAccess(chatId, userId);
+      if (!chatReadAccessGranted({ userId, access, exists })) {
+        return res.status(404).json({ error: 'Chat not found' }); // no existence leak
+      }
+      const { listUserQueue } = await import('./chat-agent/queue-controls');
+      return res.json({ success: true, data: { queue: await listUserQueue(chatId, userId) } });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  /**
+   * POST /api/crossmodel/chats/:id/queue/:pendingId/cancel — drop a queued
+   * message before it fires (ticket ea04454c: the owner had only wait-or-stop).
+   */
+  async cancelChatQueueItem(req: Request, res: Response) {
+    return this.applyQueueControl(req, res, (chatId, userId, pendingId) =>
+      import('./chat-agent/queue-controls').then((m) => m.cancelQueuedUserMessage(chatId, userId, pendingId)));
+  }
+
+  /**
+   * POST /api/crossmodel/chats/:id/queue/:pendingId/promote — make it the NEXT
+   * turn. Deliberately does NOT stop the live run: the UI pairs it with the
+   * existing Stop control so the person chooses whether to interrupt, instead
+   * of the server deciding for them.
+   */
+  async promoteChatQueueItem(req: Request, res: Response) {
+    return this.applyQueueControl(req, res, (chatId, userId, pendingId) =>
+      import('./chat-agent/queue-controls').then((m) => m.promoteQueuedUserMessage(chatId, userId, pendingId)));
+  }
+
+  /** POST /api/crossmodel/chats/:id/queue/:pendingId/move { direction } — one slot up/down (reorder). */
+  async moveChatQueueItem(req: Request, res: Response) {
+    const direction = req.body?.direction === 'down' ? 'down' : req.body?.direction === 'up' ? 'up' : null;
+    if (!direction) return res.status(400).json({ error: "direction must be 'up' or 'down'" });
+    return this.applyQueueControl(req, res, (chatId, userId, pendingId) =>
+      import('./chat-agent/queue-controls').then((m) => m.moveQueuedUserMessage(chatId, userId, pendingId, direction)));
+  }
+
+  /** Shared auth/ownership + refusal→HTTP mapping for the three queue controls. */
+  private async applyQueueControl(
+    req: Request,
+    res: Response,
+    run: (chatId: string, userId: string, pendingId: string) => Promise<import('./chat-agent/queue-controls').QueueControlResult>,
+  ) {
+    try {
+      const userId = req.user!.id;
+      const chatId = String(req.params.id || '');
+      const pendingId = String(req.params.pendingId || '');
+      if (!chatId || !pendingId) return res.status(400).json({ error: 'chatId and pendingId are required' });
+      const { access, exists } = await crossModelService.getChatAccess(chatId, userId);
+      if (!chatReadAccessGranted({ userId, access, exists })) {
+        return res.status(404).json({ error: 'Chat not found' }); // no existence leak
+      }
+      const result = await run(chatId, userId, pendingId);
+      if (result.ok) return res.json({ success: true, data: { queue: result.queue } });
+      // Honest, distinguishable refusals: the UI names what happened instead of
+      // silently dropping the click ("no longer queued" vs "not yours").
+      if (result.refusal === 'not_owned' || result.refusal === 'not_a_user_row') {
+        return res.status(403).json({
+          error: result.refusal === 'not_owned'
+            ? 'Only the sender can change that queued message.'
+            : 'That queued message came from a machine sender — it cannot be edited from here.',
+          code: result.refusal === 'not_owned' ? 'QUEUE_NOT_OWNER' : 'QUEUE_NOT_USER_ROW',
+          data: { queue: result.queue },
+        });
+      }
+      if (result.refusal === 'blocked') {
+        // Another person is waiting on the row in the way — their place is not
+        // ours to move (they cannot see or undo it).
+        return res.status(409).json({
+          error: 'Someone else is waiting on the message next to that one — its position is theirs to keep.',
+          code: 'QUEUE_BLOCKED_BY_OTHER',
+          data: { queue: result.queue },
+        });
+      }
+      return res.status(404).json({
+        error: 'That message is no longer queued — the list has been refreshed.',
+        code: 'QUEUE_ITEM_GONE',
+        data: { queue: result.queue },
+      });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -1645,29 +1760,30 @@ export class CrossModelController {
           .findUnique({ where: { id: chatId }, select: { id: true, userId: true, projectId: true, title: true, isSupervisor: true, isProjectSupervisor: true, ghostMode: true } })
           .catch(() => null);
         if (targetChat && targetChat.userId === userId) {
-          const { getChatCapability } = await import('./coding/coding-data.service');
-          const capability = await getChatCapability(targetChat);
-          let { hasWorkspaceState } = capability;
-          // 2026-10-20: never on a project supervisor (a plain chat by design — the platform send seam's rule) or a
-          // Dig-deeper escalation (it deepens a chat answer and is never routed to coding, so attaching only converted
-          // the chat silently); the keyword hit is a TRIGGER — the task_kind decision keeps a confidently non-code ask
-          // ("fix the grammar: …") a chat (platform/workspace-attach-gate.ts).
-          if (!hasWorkspaceState && capability.codeCapable && !targetChat.isSupervisor && !targetChat.isProjectSupervisor && !escalation
-              && routeMessageHeuristic({ content: message, hasWorkspace: capability.codeCapable }).needsWorkspace) {
-            const { shouldAttachWorkspace } = await import('./platform/workspace-attach-gate');
-            const gate = await shouldAttachWorkspace(message, { chatId, origin: 'user', segment: 'user', hasUploads: uploadIds.length > 0 });
-            if (gate.attach) {
-              const { ensureChatWorkspaceState } = await import('./coding/coding-data.service');
-              const attached = await ensureChatWorkspaceState(targetChat).catch(() => null);
-              if (attached) {
-                hasWorkspaceState = true;
-                logger.info(`userspace: router attached workspace to chat ${String(chatId).slice(0, 8)} (code-intent send; ${gate.reason})`);
-              }
-            } else {
-              logger.info(`userspace: chat ${String(chatId).slice(0, 8)} kept a chat — "${gate.label}" keyword, ${gate.reason} (task kind ${gate.kind}, p ${gate.p?.toFixed(2)})`);
-            }
+          // MERGE-1 slice 2 (2026-11-03): this seam held the THIRD copy of the
+          // per-message routing guards (capability read, owner/supervisor/
+          // escalation checks, the code-intent trigger and the attach gate).
+          // All of it now lives in platform/send-profile.ts — the same resolver
+          // the platform send seam and the ?message= back-compat start use.
+          const { resolveSendProfile } = await import('./platform/send-profile');
+          const decision = await resolveSendProfile({
+            chat: targetChat,
+            senderUserId: userId,
+            message,
+            origin: 'user',
+            segment: 'user',
+            hasUploads: uploadIds.length > 0,
+            // `escalation` is the Dig-deeper descriptor ({ofMessageId, rung}) or
+            // null — the resolver only needs "is this an escalation".
+            escalation: !!escalation,
+            // The kid read already happened above (isChild / req.user.isChild)
+            // — pass it so the resolver never re-queries it.
+            senderIsChild: false,
+          });
+          if (decision.attached) {
+            logger.info(`userspace: router attached workspace to chat ${String(chatId).slice(0, 8)} (code-intent send; ${decision.gate?.reason ?? 'attached'})`);
           }
-          if (hasWorkspaceState && !escalation) {
+          if (decision.profile === 'coding') {
             const { default: codingStreamController } = await import('./coding/coding-stream.controller');
             // 7f546b03: the parsed uploadIds ride along — staged chat uploads
             // resolve into REAL files for the coding run (previously dropped).
@@ -2106,7 +2222,7 @@ export class CrossModelController {
               }
               try {
                 const { enqueueChatMessage } = await import('./chat-agent/message-queue.service');
-                const { position } = await enqueueChatMessage({
+                const { id: pendingId, position } = await enqueueChatMessage({
                   chatId, userId, content: message, mode, source: 'user',
                   // Queued attachments (ac65d51e): the staged upload ids ride
                   // the pending row; the drain resolves them into the run.
@@ -2116,7 +2232,10 @@ export class CrossModelController {
                   if (councilSlotReserved) { councilSlotReserved = false; await refundDeepResearchQuota(userId); }
                   throw err;
                 });
-                sendEvent('queued', { position });
+                // `id` (ticket ea04454c): the row's handle, so the client can
+                // promote/cancel THIS message immediately — "Send now" =
+                // queue → stop → promote needs the id without a second GET.
+                sendEvent('queued', { position, id: pendingId });
                 // F2(b) enqueue-side nudge (incident 2026-09-04): if the busy
                 // check raced the active run's finalize (its drain already ran),
                 // nothing would deliver this row until the sweep — attempt an
@@ -3498,7 +3617,7 @@ export class CrossModelController {
    */
   async getWebSearchConfig(req: Request, res: Response) {
     const user = (req as any).user;
-    if (user?.role !== 'ADMIN' && user?.email !== 'paul@sunday.market') {
+    if (user?.role !== 'ADMIN' && user?.email !== 'example-user@example.com') {
       return res.status(403).json({ error: 'Forbidden: admin access required' });
     }
     try {
@@ -3519,7 +3638,7 @@ export class CrossModelController {
    */
   async updateWebSearchConfig(req: Request, res: Response) {
     const user = (req as any).user;
-    if (user?.role !== 'ADMIN' && user?.email !== 'paul@sunday.market') {
+    if (user?.role !== 'ADMIN' && user?.email !== 'example-user@example.com') {
       return res.status(403).json({ error: 'Forbidden: admin access required' });
     }
     try {
@@ -3702,7 +3821,7 @@ export class CrossModelController {
   /**
    * GET /api/crossmodel/admin/stats
    * Returns high-level admin stats: total users, chats, signups today/7d/30d, open tickets.
-   * Admin only (paul@sunday.market or ADMIN role).
+   * Admin only (example-user@example.com or ADMIN role).
    */
   async getAdminStats(req: Request, res: Response) {
     const user = (req as any).user;
@@ -3738,7 +3857,7 @@ export class CrossModelController {
   /**
    * GET /api/crossmodel/admin/users
    * Returns all users with role, status, chat count, message count, last active.
-   * Admin only (paul@sunday.market or ADMIN role).
+   * Admin only (example-user@example.com or ADMIN role).
    */
   async getAdminUsers(req: Request, res: Response) {
     const user = (req as any).user;
@@ -3826,7 +3945,7 @@ export class CrossModelController {
   /**
    * DELETE /api/crossmodel/admin/users/:id
    * Hard-delete a user and all their related data (cascade).
-   * Admin only (paul@sunday.market or ADMIN role).
+   * Admin only (example-user@example.com or ADMIN role).
    * Cannot delete yourself.
    */
   async adminDeleteUser(req: Request, res: Response) {
@@ -3895,7 +4014,7 @@ export class CrossModelController {
     try {
       const target = await prisma.user.findUnique({ where: { id: targetId }, select: { id: true, email: true, role: true, isChild: true } });
       if (!target) return res.status(404).json({ error: 'User not found' });
-      if (role === 'USER' && target.email.toLowerCase() === 'paul@sunday.market') {
+      if (role === 'USER' && target.email.toLowerCase() === 'example-user@example.com') {
         return res.status(400).json({ error: 'The owner account is always an admin' });
       }
       if (role === 'ADMIN' && target.isChild) return res.status(400).json({ error: 'A Digby Kids account cannot be an admin' });
@@ -4171,7 +4290,7 @@ export class CrossModelController {
       if (webSearchMissingOnInstance()) {
         return res.json({ success: true, data: [], unconfigured: true, unconfiguredReason: 'search' });
       }
-      // Edge formatter hardening (2026-10-26, the digby.example.com outage): search
+      // Edge formatter hardening (2026-10-26, the digby.cql.ca outage): search
       // can be configured while the utility FORMATTER is not — a gateway-only
       // self-host with no DEEPSEEK_API_KEY / DASHSCOPE_API_KEY and no Utility
       // seat assignment. Previously that corner degraded forever
@@ -4182,7 +4301,7 @@ export class CrossModelController {
       // CAPABILITY-keyed, not instance-kind-keyed (review F1, 2026-10-27):
       // NOT conjunct-guarded on !isProdInstance() — an Edge deployed without
       // DIGBY_INSTANCE reads as 'prod' and the gate must still fire (the
-      // reported digby.example.com box may be exactly that shape). Prod-safe on
+      // reported digby.cql.ca box may be exactly that shape). Prod-safe on
       // its own: production's env keys make utilityChainUnconfigured() false
       // before any config read, and a read error fail-opens to false.
       if (await utilityChainUnconfigured()) {
@@ -4431,7 +4550,7 @@ export class CrossModelController {
   /**
    * GET /api/crossmodel/admin/error-logs
    * Returns paginated app error/warning logs from the database.
-   * Admin only (paul@sunday.market or ADMIN role).
+   * Admin only (example-user@example.com or ADMIN role).
    * Query: ?level=error|warn  &page=1  &limit=50  &since=ISO  &until=ISO  &search=text
    */
   async getAdminErrorLogs(req: Request, res: Response) {

@@ -34,13 +34,13 @@ describe('endpoints', () => {
       { kind: 'run_spend', day: day('2026-10-08'), key: 'lane-1', v: 3 },
       { kind: 'run_spend', day: day('2026-10-07'), key: 'lane-2', v: 1 },
     ]);
-    db.crossModelChat.findMany.mockResolvedValueOnce([{ id: 'lane-1', title: 'QB2 64K · bench' }, { id: 'lane-2', title: null }]);
+    db.crossModelChat.findMany.mockResolvedValueOnce([{ id: 'lane-1', title: 'node-a 64K · bench' }, { id: 'lane-2', title: null }]);
     const u = await projectUsage('p1', 'owner-1', now);
     const [sql, ...params] = db.$queryRawUnsafe.mock.calls[0];
     expect(sql).toContain('c."projectId" = $1 AND c."userId" = $2');
     expect(params.slice(0, 2)).toEqual(['p1', 'owner-1']);
     expect(u.today.usd).toBe(3);
-    expect(u.topChats.map(t => [t.chatId, t.title, t.usd7d])).toEqual([['lane-1', 'QB2 64K · bench', 3], ['lane-2', null, 1]]);
+    expect(u.topChats.map(t => [t.chatId, t.title, t.usd7d])).toEqual([['lane-1', 'node-a 64K · bench', 3], ['lane-2', null, 1]]);
   });
 
   it('fleet usage groups per project with the project supervisor chat to open', async () => {

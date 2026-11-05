@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Digby Windows shell (W2) — a WebView2 host wrapping https://digby.example.com/crossmodel.
+  <!-- Digby Windows shell (W2) — a WebView2 host wrapping https://digby.ai/crossmodel.
        The Windows port of macos-app/Sources/Digby/main.swift. Self-contained
        single-file publish for win-x64; the only dependency is Microsoft.Web.WebView2
        (the WebView2 runtime itself ships with Windows 10/11 via Edge). -->
@@ -17,7 +17,7 @@
     <AssemblyVersion>1.0.2.0</AssemblyVersion>
     <FileVersion>1.0.2.0</FileVersion>
     <Product>Digby</Product>
-    <Description>Digby for Windows — the desktop shell around digby.example.com</Description>
+    <Description>Digby for Windows — the desktop shell around digby.ai</Description>
 
     <!-- App icon (embedded in the exe; also feeds the tray icon + shortcuts). -->
     <ApplicationIcon>digby.ico</ApplicationIcon>

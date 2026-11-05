@@ -83,6 +83,8 @@ jest.mock('../../../config/redis', () => ({
 }));
 
 /** repo root (…/backend/src/modules/crossmodel/imessage → up 5) */
+import { isExportTree } from '../../../utils/export-mode';
+
 const ROOT = path.join(__dirname, '..', '..', '..', '..', '..');
 const TARBALL = path.join(ROOT, 'frontend', 'public', 'digby-imessage-agent.tar.gz');
 const SRC_DIR = path.join(ROOT, 'imessage-agent', 'src');
@@ -131,9 +133,20 @@ const diskSrcFiles = fs
   .filter((f) => f.endsWith('.ts'))
   .sort();
 
-const servedSrcFiles = tarSrcEntries();
+// EXPORT TREE (todo 13069ce2, 2026-11-05): this suite compares the committed
+// release artifact against the source tree, and the public export DROPS that
+// artifact (`drop frontend/public/digby-imessage-agent.tar.gz` — a binary cannot
+// be redacted, and the export exists to prove the SOURCE builds). `servedSrcFiles`
+// is computed at MODULE level, so a missing tarball throws during collection —
+// before the "tarball exists" assertion below could ever report it. Guarding the
+// call is what keeps the failure meaningful: in an export there is no artifact
+// to compare, in a checkout a missing one still throws here.
+const IN_EXPORT = isExportTree(ROOT);
+const servedSrcFiles = IN_EXPORT ? [] : tarSrcEntries();
 
-describe('served agent artifact is a build of the CURRENT source tree (ticket c468f922)', () => {
+const artifactSuite = IN_EXPORT ? describe.skip : describe;
+
+artifactSuite('served agent artifact is a build of the CURRENT source tree (ticket c468f922)', () => {
   it('the committed tarball exists (a checkout without it cannot ship a release)', () => {
     expect(fs.existsSync(TARBALL)).toBe(true);
   });

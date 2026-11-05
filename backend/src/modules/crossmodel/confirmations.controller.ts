@@ -27,7 +27,7 @@ import { randomUUID } from 'crypto';
 import prisma from '../../config/database';
 import logger from '../../utils/logger';
 import { readConfirmPendingForChats } from './confirm-pending';
-import { extractReceipt, ToolReceipt } from './coding/run-receipts';
+import { extractReceipt, ToolReceipt, WEB_PROBE_RECEIPT_TOOLS_SET } from './coding/run-receipts';
 import { recordRunReceiptAsync } from './coding/run-receipts.service';
 import {
   getPendingConfirmation,
@@ -86,10 +86,28 @@ type PendingEntry = {
  * pairs the staged row with its execution and follow-through / cross-wake
  * exoneration see owner-confirmed actions. Fire-and-forget, never throws;
  * skipped for anon- chats (no crossmodel_chats row to FK).
+ *
+ * INVARIANT — the web-probe receipt class is COLLECTOR-ONLY (WP-3, backlog
+ * 2026-11-03 / review 66007a6e advisory A5). `extractReceipt` admits
+ * `WEB_PROBE_RECEIPT_TOOLS_SET` (scrape_as_markdown, scrape_batch,
+ * search_engine, web_pipe, youtube_pipe), and the agent seam deliberately
+ * SKIPS recordRunReceiptAsync for that set (agent.ts:6262-6270): web tools are
+ * the hottest tool class fleet-wide, its receipt is gate evidence for
+ * observe_resource — never claim evidence — and keeping it out of
+ * run_tool_receipts leaves every DB-reading pool untouched by construction.
+ * This function is the ONE other writer, so it must uphold the same skip or a
+ * hypothetical future stageable web tool would silently start writing rows
+ * from the card path and break that invariant. UNREACHABLE TODAY (web tools
+ * execute read-only through the ToolCache with no confirmation gate) — this is
+ * a seam guard, not a live hole. If the platform ever makes a web tool
+ * confirmation-staged, decide DELIBERATELY: keep the skip, or widen the
+ * invariant in run-receipts.ts + agent.ts together — never let the two writers
+ * drift.
  */
 function recordConfirmedCardReceipt(row: { id: string; chatId: string; tool: string; args: unknown }, resultText: string): void {
   try {
     if (!row.chatId || row.chatId.startsWith('anon-') || row.chatId.startsWith('chatless-')) return;
+    if (WEB_PROBE_RECEIPT_TOOLS_SET.has(row.tool)) return; // WP-3 collector-only invariant
     const draft = extractReceipt(row.tool, row.args, resultText, new Date());
     if (!draft) return;
     const receipt: ToolReceipt = {

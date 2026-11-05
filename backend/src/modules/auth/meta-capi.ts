@@ -106,8 +106,8 @@ export function buildCompleteRegistrationEvent(i: MetaRegistrationInput): Record
 
 /** The page the sign-up happened on — the Referer when it is an https digby page, else the site's sign-up URL. */
 export function eventSourceUrlFrom(referer: string | undefined): string {
-  if (referer && /^https:\/\/(www\.)?digby\.example\.com(\/|$)/.test(referer)) return referer.slice(0, 1000);
-  return 'https://digby.example.com/login?signup=true';
+  if (referer && /^https:\/\/(www\.)?digby\.ai(\/|$)/.test(referer)) return referer.slice(0, 1000);
+  return 'https://digby.ai/login?signup=true';
 }
 
 type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; text(): Promise<string> }>;

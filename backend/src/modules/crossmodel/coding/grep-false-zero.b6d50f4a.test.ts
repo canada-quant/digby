@@ -215,7 +215,12 @@ describe('ticket b6d50f4a — grep false-zero replay (git grep + honest failure 
     // throw. The OLD tool read only stdout and answered "(no matches)".
     const deadExec = async () => ({ stdout: '', stderr: '[exit: 124 — timed out]' });
     const out = await executeCodingTool(mkCtx(deadExec as typeof realExec), 'grep', { pattern: 'INVALID_TOKEN_SPIKE_THRESHOLD', path: 'backend' });
-    expect(out).toMatch(/^Tool grep failed: the search did not complete/);
+    // tool-failure-streak family (2026-11-03): the timeout shape is a TRANSPORT
+    // death, so it is now anchored `[INFRA]` and exempted from the derail
+    // breaker. This case's claim is unchanged — an honest failure, never
+    // "(no matches)". Only the anchor prefix moved; see
+    // infra-not-model.tool-failure-streak.test.ts.
+    expect(out).toMatch(/^(?:\[INFRA\] )?Tool grep failed: the search did not complete/);
     expect(out).toContain('[exit: 124 — timed out]');
     expect(out).toContain('NOT a "no matches" verdict');
     expect(out).not.toContain('(no matches)');
@@ -224,7 +229,11 @@ describe('ticket b6d50f4a — grep false-zero replay (git grep + honest failure 
   it('a thrown exec (the .catch path) is also an honest failure, never "(no matches)"', async () => {
     const throwingExec = async () => { throw new Error('spawn ENOENT'); };
     const out = await executeCodingTool(mkCtx(throwingExec as typeof realExec), 'grep', { pattern: 'x' });
-    expect(out).toMatch(/^Tool grep failed: the search did not complete/);
+    // ticket 0c6a47de: a spawn that never produced a shell is the same transport
+    // death as a timeout — `[exec failed] spawn ENOENT` now carries the transport
+    // signature, so the result is anchored `[INFRA]` like the case above. This
+    // case's claim is unchanged: an honest failure, never "(no matches)".
+    expect(out).toMatch(/^(?:\[INFRA\] )?Tool grep failed: the search did not complete/);
     expect(out).toContain('spawn ENOENT');
     expect(out).not.toBe('(no matches)');
   });

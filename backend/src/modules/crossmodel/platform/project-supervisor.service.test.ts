@@ -36,7 +36,7 @@ const mockPrisma: any = {
     findUnique: jest.fn(), upsert: jest.fn(async () => ({})), update: jest.fn(async () => ({})),
     deleteMany: jest.fn(async () => ({ count: 0 })),
   },
-  codingSchedule: {
+  chatSchedule: {
     findMany: jest.fn(), findFirst: jest.fn(async () => null), create: jest.fn(async () => ({})), update: jest.fn(async () => ({})),
     updateMany: jest.fn(async () => ({ count: 0 })), deleteMany: jest.fn(async () => ({ count: 0 })),
   },
@@ -173,7 +173,7 @@ function mockFlagOnProject(lane: any = null) {
   mockPrisma.chatAutonomy.findUnique.mockResolvedValue(null);
   mockPrisma.eventHook.findFirst.mockResolvedValue(null);
   mockPrisma.eventHook.create.mockImplementation(async ({ data }: any) => ({ id: 'h-new', ...data }));
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
 }
 
 beforeEach(() => {
@@ -181,7 +181,7 @@ beforeEach(() => {
   // These two carry a null default that tests override with mockResolvedValue
   // (which clearAllMocks does NOT undo) — reset them so no test inherits a
   // paused-sweep row or a pause audit from an earlier test.
-  mockPrisma.codingSchedule.findFirst.mockReset().mockResolvedValue(null);
+  mockPrisma.chatSchedule.findFirst.mockReset().mockResolvedValue(null);
   mockPrisma.activity.findFirst.mockReset().mockResolvedValue(null);
   // wake-cadence-3 owner guard (fixer 2026-09-27): the interval-attribution read — default: nothing attributed.
   mockPrisma.activity.findMany.mockReset().mockResolvedValue([]);
@@ -629,7 +629,7 @@ describe('ensureProjectSupervisor — first creation (flag ON)', () => {
 
     // ONE recurring sweep schedule (2 h since wake-cadence-3, 2026-09-27 — was
     // 60 min; the project hook is the event path, the sweep is only the diff).
-    const sched = mockPrisma.codingSchedule.create.mock.calls[0][0].data;
+    const sched = mockPrisma.chatSchedule.create.mock.calls[0][0].data;
     expect(sched.sessionId).toBe('psup1');
     expect(sched.userId).toBe(UID);
     expect(sched.kind).toBe('recurring');
@@ -679,7 +679,7 @@ describe('ensureProjectSupervisor — gates', () => {
   const expectZeroCreates = () => {
     expect(mockPrisma.crossModelChat.create).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
     expect(mockPrisma.chatAutonomy.upsert).not.toHaveBeenCalled();
   };
 
@@ -737,7 +737,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       { id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring', runsCount: 3 },
     ]);
 
@@ -750,9 +750,9 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     expect(mockPrisma.chatAutonomy.update).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.create).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.update).not.toHaveBeenCalled(); // stock + enabled → untouched
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled(); // current sweep prompt → no heal
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled(); // single sweep → no dedupe
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled(); // current sweep prompt → no heal
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled(); // single sweep → no dedupe
   });
 
   it('heals title drift on an existing lane (rename re-interpolates)', async () => {
@@ -761,7 +761,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
 
     const chat = await ensureProjectSupervisor(UID, PID);
 
@@ -777,7 +777,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     const wire = () => {
       mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'psup1', allowedTools: [...AUTONOMY_GRANTABLE_TOOLS] });
       mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '' });
-      mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring', runsCount: 3 }]);
+      mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring', runsCount: 3 }]);
     };
     mockFlagOnProject({ ...LANE, title: 'Apollo Supervisor · sweep', systemPrompt: currentStockPrompt() });
     wire();
@@ -798,7 +798,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
     await ensureProjectSupervisor(UID, PID);
     expect(mockPrisma.crossModelChat.update).toHaveBeenCalledWith({
       where: { id: 'psup1' },
@@ -819,7 +819,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
     await ensureProjectSupervisor(UID, PID);
     expect(mockPrisma.crossModelChat.update).not.toHaveBeenCalled();
   });
@@ -834,7 +834,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
     await ensureProjectSupervisor(UID, PID);
     expect(mockPrisma.crossModelChat.update).toHaveBeenCalledWith({
       where: { id: 'psup1' },
@@ -848,7 +848,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
       mockFlagOnProject({ ...LANE, systemPrompt: currentStockPrompt() });
       mockPrisma.chatAutonomy.findUnique.mockResolvedValue({ chatId: 'psup1', allowedTools: [...AUTONOMY_GRANTABLE_TOOLS] });
       mockPrisma.eventHook.findFirst.mockResolvedValue({ id: 'h1', eventTypes: [...legacy], enabled: true, promptTemplate: '' });
-      mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring', runsCount: 3 }]);
+      mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring', runsCount: 3 }]);
     };
     wire();
     await ensureProjectSupervisor(UID, PID);
@@ -872,7 +872,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     mockFlagOnProject({ ...LANE, systemPrompt: currentStockPrompt() });
     mockPrisma.chatAutonomy.findUnique.mockResolvedValue(null); // grant missing → re-granted
     mockPrisma.eventHook.findFirst.mockResolvedValue(null); // hook missing → recreated
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]); // sweep dead → recreated
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]); // sweep dead → recreated
 
     const chat = await ensureProjectSupervisor(UID, PID);
 
@@ -881,7 +881,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     expect(mockPrisma.chatAutonomy.upsert).toHaveBeenCalledTimes(1);
     expect(mockPrisma.chatAutonomy.upsert.mock.calls[0][0].create.scheduleCap).toBe(PROJECT_SUPERVISOR_SCHEDULE_CAP);
     expect(mockPrisma.eventHook.create).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.create).toHaveBeenCalledTimes(1);
   });
 
   it('toggle-ON restore: a DISABLED stock project hook is re-enabled; a customized hook is never clobbered', async () => {
@@ -891,7 +891,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: false, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
     await ensureProjectSupervisor(UID, PID);
     expect(mockPrisma.eventHook.update).toHaveBeenCalledWith({ where: { id: 'h1' }, data: { enabled: true } });
     expect(mockPrisma.activity.create).toHaveBeenCalledWith({
@@ -910,7 +910,7 @@ describe('ensureProjectSupervisor — idempotent self-heal', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: false, promptTemplate: 'custom {{summary}}',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
     mockPrisma.activity.findFirst.mockResolvedValue(null); // no pause audit for this lane
     await ensureProjectSupervisor(UID, PID);
     expect(mockPrisma.eventHook.update).not.toHaveBeenCalled();
@@ -948,7 +948,7 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
     mockPausedLane({ id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: false, promptTemplate: 'custom {{summary}}' });
     mockPauseAudit({ hookIds: ['h1', 'h-direct'], scheduleIds: [] });
     mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 2 });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
 
     await ensureProjectSupervisor(UID, PID);
 
@@ -982,7 +982,7 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
       where?.createdVia === 'system:child-result-hook' ? [{ id: 'ch-in', sourceChatId: 'lane-in' }, { id: 'ch-out', sourceChatId: 'lane-out' }] : []);
     mockPrisma.crossModelChat.findMany.mockImplementation(async ({ where }: any) =>
       Array.isArray(where?.id?.in) && where?.projectId === PID ? [{ id: 'lane-in' }] : []);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
 
     await ensureProjectSupervisor(UID, PID);
 
@@ -1002,7 +1002,7 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
       mockPausedLane({ id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: false, promptTemplate: '' });
       mockPauseAudit({ hookIds: ['h1'], scheduleIds: [] });
       mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 1 });
-      mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+      mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
       await ensureProjectSupervisor(UID, PID);
       expect(mockPrisma.eventHook.findMany).not.toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({ createdVia: 'system:child-result-hook' }) }));
       expect(mockPrisma.eventHook.updateMany).toHaveBeenCalledTimes(1);
@@ -1015,9 +1015,9 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
     mockPausedLane({ id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: false, promptTemplate: '' });
     mockPauseAudit({ hookIds: ['h1'], scheduleIds: ['sweep1', 'once-fresh', 'once-stale', 'spent'] });
     mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 1 });
-    // Route codingSchedule.findMany: the by-id resume read (disabled rows) vs the
+    // Route chatSchedule.findMany: the by-id resume read (disabled rows) vs the
     // enabled-sweep read that follows (the resumed stock sweep is enabled again).
-    mockPrisma.codingSchedule.findMany.mockImplementation(async ({ where }: any) => {
+    mockPrisma.chatSchedule.findMany.mockImplementation(async ({ where }: any) => {
       if (where?.id?.in) return [
         { id: 'sweep1', kind: 'recurring', nextRunAt: PAST, intervalSec: 3600, maxRuns: 500, runsCount: 12, expiresAt: FUTURE },
         { id: 'once-fresh', kind: 'once', nextRunAt: FUTURE, intervalSec: null, maxRuns: null, runsCount: 0, expiresAt: null },
@@ -1029,26 +1029,26 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
 
     await ensureProjectSupervisor(UID, PID);
 
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: { in: ['sweep1', 'once-fresh', 'once-stale', 'spent'] }, sessionId: 'psup1', enabled: false },
     }));
     // Recurring stock sweep: resumed, stale nextRunAt recomputed one interval out.
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'sweep1' },
       data: { enabled: true, lastStatus: 'resumed', cancelledBy: null, disabledAt: null, busySkips: 0, nextRunAt: expect.any(Date) },
     });
     // Fresh once row: resumed as-is (its fire time is still ahead).
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'once-fresh' },
       data: { enabled: true, lastStatus: 'resumed', cancelledBy: null, disabledAt: null, busySkips: 0 },
     });
     // Stale once + exhausted: NOT resumed.
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'once-stale' } }));
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'spent' } }));
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledTimes(2);
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'once-stale' } }));
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'spent' } }));
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledTimes(2);
     // The sweep ensure sees the resumed stock row → no new sweep row (no dead-row pile-up).
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: 'project_supervisor.resume',
@@ -1062,12 +1062,12 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
   it('is a no-op when a resume audit is already NEWER than the latest pause (later heals do not re-resume)', async () => {
     mockPausedLane({ id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: false, promptTemplate: 'custom {{summary}}' });
     mockPauseAudit({ hookIds: ['h1'], scheduleIds: ['sweep1'] }, /* resumedAfter */ true);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
 
     await ensureProjectSupervisor(UID, PID);
 
     expect(mockPrisma.eventHook.updateMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'project_supervisor.resume' }) });
     // The newer-resume probe is scoped to rows AFTER the pause.
     expect(mockPrisma.activity.findFirst).toHaveBeenCalledWith(expect.objectContaining({
@@ -1077,7 +1077,7 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
 
   it('cheap gate: an ENABLED project-scope hook means nothing is pending — the Activity table is never queried on the common 15-min heal', async () => {
     mockPausedLane({ id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '' });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
     await ensureProjectSupervisor(UID, PID);
     expect(mockPrisma.activity.findFirst).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.updateMany).not.toHaveBeenCalled();
@@ -1086,7 +1086,7 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
   it('a LEGACY pause audit (no ids recorded) resumes nothing by id, writes an honest resume audit, and the stock-only fallback still re-enables the stock hook', async () => {
     mockPausedLane({ id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: false, promptTemplate: '' });
     mockPauseAudit({ hooksDisabled: 1, schedulesDisabled: 1 }); // pre-2026-09-14 shape
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
 
     await ensureProjectSupervisor(UID, PID);
 
@@ -1104,7 +1104,7 @@ describe('ensureProjectSupervisor — toggle-ON exact-ids resume (hardening revi
   it('a resume failure is a warn, never a throw — the ensure still returns the lane', async () => {
     mockPausedLane({ id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: false, promptTemplate: '' });
     mockPrisma.activity.findFirst.mockRejectedValue(new Error('db down'));
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
     const chat = await ensureProjectSupervisor(UID, PID);
     expect(chat.id).toBe('psup1');
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('resume failed'));
@@ -1125,7 +1125,7 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue(rows);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue(rows);
   }
   const STOCK = (id: string, over: any = {}) => ({ id, prompt: currentSweepPrompt(), kind: 'recurring', runsCount: 3, promptSetBy: 'system', ...over });
   const MACHINE = (id: string, over: any = {}) => ({ id, prompt: 'poll worker X every 30 min and steer if idle', kind: 'recurring', runsCount: 5, promptSetBy: 'machine', ...over });
@@ -1133,36 +1133,36 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
   it('THE BUG: the stock sweep + a machine-authored recurring self-arm → nothing deleted, nothing emitted, nothing created (the lane\'s own cadence survives every heal)', async () => {
     mockLaneWithSweeps([STOCK('sweep1'), MACHINE('poll1')]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
     expect(emitScheduleDisabled).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled(); // machine prompt never rewritten; stock current
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled(); // machine prompt never rewritten; stock current
     expect(mockPrisma.activity.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'schedule_hard_deleted' }) });
   });
 
   it('a machine-authored recurring row ALONE does not mask a dead stock sweep → the stock sweep is created; the machine row is untouched', async () => {
     mockLaneWithSweeps([MACHINE('poll1')]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.create).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.create.mock.calls[0][0].data.prompt).toBe(currentSweepPrompt());
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.create.mock.calls[0][0].data.prompt).toBe(currentSweepPrompt());
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 
   it('an OWNER-customized recurring row (promptSetBy user, no opener) ALONE is the lane\'s cadence → no create, no update, no delete (the non-clobber / c0e22e36 shape)', async () => {
     mockLaneWithSweeps([{ id: 'custom1', prompt: 'Check on the Apollo migration hourly and report.', kind: 'recurring', runsCount: 383, promptSetBy: 'user' }]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.findFirst).not.toHaveBeenCalled(); // no paused-row lookup either
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.findFirst).not.toHaveBeenCalled(); // no paused-row lookup either
   });
 
   it('two stock rows + a machine row → ONLY the newer stock duplicate is emitted/audited/deleted; the machine row is not in the doomed set', async () => {
     mockLaneWithSweeps([STOCK('sweep1', { runsCount: 10 }), MACHINE('poll1'), STOCK('sweep2', { runsCount: 0 })]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.deleteMany).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['sweep2'] } } });
+    expect(mockPrisma.chatSchedule.deleteMany).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.deleteMany).toHaveBeenCalledWith({ where: { id: { in: ['sweep2'] } } });
     expect(emitScheduleDisabled).toHaveBeenCalledTimes(1);
     expect(emitScheduleDisabled).toHaveBeenCalledWith({ id: 'sweep2', sessionId: 'psup1', kind: 'recurring' }, 'obsolete', 0);
     expect(mockPrisma.activity.create).toHaveBeenCalledWith({
@@ -1174,7 +1174,7 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
     expect(mockPrisma.activity.create).not.toHaveBeenCalledWith({
       data: expect.objectContaining({ metadata: expect.objectContaining({ scheduleId: 'poll1' }) }),
     });
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('a renewOnExhaustion successor (opener, promptSetBy system) NEWER than an older machine row is the keeper — the machine row is not deleted and no sweep is created', async () => {
@@ -1182,16 +1182,16 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
     // successor sweep, then returned without creating — the lane lost its sweep.
     mockLaneWithSweeps([MACHINE('poll1'), STOCK('successor', { runsCount: 0 })]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 
   it('the stale-prompt heal rewrites ONLY the stock keeper; a machine row with a stale-looking prompt is never rewritten', async () => {
     mockLaneWithSweeps([STOCK('sweep1', { prompt: `${PROJECT_SWEEP_PROMPT_OPENER} for "Apollo" — OLD VERSION` }), MACHINE('poll1')]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'sweep1' },
       data: { prompt: currentSweepPrompt(), promptSetBy: 'system' },
     });
@@ -1202,15 +1202,15 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
   it('CADENCE FLOOR heal: a stock keeper BELOW the default is restored to it (audited, source project-sweep-cadence-floor); rows at/above it — incl. a backed-off 4 h row — are untouched', async () => {
     mockLaneWithSweeps([STOCK('sweep1', { intervalSec: 1800 }), MACHINE('poll1', { intervalSec: 1800 })]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({ where: { id: 'sweep1' }, data: { intervalSec: PROJECT_SWEEP_INTERVAL_SEC } });
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({ where: { id: 'sweep1' }, data: { intervalSec: PROJECT_SWEEP_INTERVAL_SEC } });
     expect(mockPrisma.activity.create).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: 'schedule.update', metadata: expect.objectContaining({ scheduleId: 'sweep1', source: 'project-sweep-cadence-floor', from: 1800, to: PROJECT_SWEEP_INTERVAL_SEC }) }),
     });
     jest.clearAllMocks();
     mockLaneWithSweeps([STOCK('sweep1', { intervalSec: 4 * 3600 })]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
   });
 
   // fixer 2026-09-27: the floor refusal promises "An owner turn may still set it lower" — the heal must not undo it.
@@ -1224,20 +1224,20 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
       where: { userId: UID, resource: 'platform', action: 'schedule.update', metadata: { path: ['scheduleId'], equals: 'sweep1' } },
       orderBy: { createdAt: 'desc' },
     }));
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ metadata: expect.objectContaining({ source: 'project-sweep-cadence-floor' }) }) });
     // a machine turn cut it (attributed machine-interval, newer than an older owner edit) → healed as before
     jest.clearAllMocks();
     mockLaneWithSweeps([STOCK('sweep1', { intervalSec: 1800 })]);
     mockPrisma.activity.findMany.mockResolvedValue([{ metadata: { scheduleId: 'sweep1', fields: ['intervalSec'], source: 'machine-interval', from: 7200, to: 1800 } }, ownerRow]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({ where: { id: 'sweep1' }, data: { intervalSec: PROJECT_SWEEP_INTERVAL_SEC } });
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({ where: { id: 'sweep1' }, data: { intervalSec: PROJECT_SWEEP_INTERVAL_SEC } });
     // a read error: skipped THIS pass (never a silent override on a DB blip), retried next pass
     jest.clearAllMocks();
     mockLaneWithSweeps([STOCK('sweep1', { intervalSec: 1800 })]);
     mockPrisma.activity.findMany.mockRejectedValue(new Error('db blip'));
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringMatching(/interval attribution read failed .* heal skipped this pass/));
     // the opt-in restores the unconditional heal (no attribution read at all)
     jest.clearAllMocks();
@@ -1247,7 +1247,7 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
       mockPrisma.activity.findMany.mockResolvedValue([ownerRow]);
       await ensureProjectSupervisor(UID, PID);
       expect(mockPrisma.activity.findMany).not.toHaveBeenCalled();
-      expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({ where: { id: 'sweep1' }, data: { intervalSec: PROJECT_SWEEP_INTERVAL_SEC } });
+      expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({ where: { id: 'sweep1' }, data: { intervalSec: PROJECT_SWEEP_INTERVAL_SEC } });
     } finally {
       delete process.env.PROJECT_SWEEP_FLOOR_HEAL_OWNER_ROWS;
     }
@@ -1255,14 +1255,14 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
 
   it('toggle-ON: with no enabled sweep, the newest PAUSED stock row is RESUMED (schedule.service resume shape + current prompt) instead of a new row being created — and audited', async () => {
     mockLaneWithSweeps([]);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: 'paused1', runsCount: 40, maxRuns: 500, expiresAt: new Date(Date.now() + 86400_000), lastStatus: 'paused', cancelledBy: 'owner' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: 'paused1', runsCount: 40, maxRuns: 500, expiresAt: new Date(Date.now() + 86400_000), lastStatus: 'paused', cancelledBy: 'owner' });
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalledWith(expect.objectContaining({
       where: { sessionId: 'psup1', kind: 'recurring', enabled: false, prompt: { startsWith: PROJECT_SWEEP_PROMPT_OPENER } },
       orderBy: { createdAt: 'desc' },
     }));
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'paused1' },
       data: {
         // ff0f6ad9: the ensure's auto-resume stamps its ACTOR, never a bare 'resumed'.
@@ -1270,7 +1270,7 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
         nextRunAt: expect.any(Date), prompt: currentSweepPrompt(), promptSetBy: 'system',
       },
     });
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: 'schedule.resume',
@@ -1281,28 +1281,28 @@ describe('ensureProjectSweepSchedule — stock-partitioned dedupe + paused-row r
 
   it('toggle-ON: a paused stock row whose expiry LAPSED is resumed with its expiry slid forward', async () => {
     mockLaneWithSweeps([]);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: 'paused1', runsCount: 40, maxRuns: 500, expiresAt: new Date(Date.now() - 1000), lastStatus: 'paused', cancelledBy: 'owner' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: 'paused1', runsCount: 40, maxRuns: 500, expiresAt: new Date(Date.now() - 1000), lastStatus: 'paused', cancelledBy: 'owner' });
     await ensureProjectSupervisor(UID, PID);
-    const data = mockPrisma.codingSchedule.update.mock.calls[0][0].data;
+    const data = mockPrisma.chatSchedule.update.mock.calls[0][0].data;
     expect(data.enabled).toBe(true);
     expect(data.expiresAt).toEqual(expect.any(Date));
     expect(data.expiresAt.getTime()).toBeGreaterThan(Date.now());
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('toggle-ON: an EXHAUSTED paused stock row (runsCount ≥ maxRuns) is left alone and a fresh sweep is created', async () => {
     mockLaneWithSweeps([]);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: 'spent', runsCount: 500, maxRuns: 500, expiresAt: null });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: 'spent', runsCount: 500, maxRuns: 500, expiresAt: null });
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).toHaveBeenCalledTimes(1);
   });
 
   it('no paused stock row at all → the stock sweep is created (unchanged first-scaffold path)', async () => {
     mockLaneWithSweeps([]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -1329,8 +1329,8 @@ describe('ff0f6ad9 — an explicitly CANCELLED stock sweep is a DURABLE stop', (
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]); // no ENABLED recurring rows
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]); // no ENABLED recurring rows
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({
       id: 'sweep1', runsCount: 77, maxRuns: 500, expiresAt: FUTURE,
       lastStatus: 'cancelled', cancelledBy: 'machine', // the lane's own 21:44Z cancel_schedule
     });
@@ -1340,8 +1340,8 @@ describe('ff0f6ad9 — an explicitly CANCELLED stock sweep is a DURABLE stop', (
     mockLaneWithCancelledSweep();
     await ensureProjectSupervisor(UID, PID);
     await ensureProjectSupervisor(UID, PID); // the next 15-min heal — the stop must survive it too
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
     // Quiet suppression: no resume-audit spam per heal (the cancelled row
     // itself — lastStatus/cancelledBy/disabledAt, now surfaced in
     // list_schedules — IS the attribution record).
@@ -1370,21 +1370,21 @@ describe('ff0f6ad9 — an explicitly CANCELLED stock sweep is a DURABLE stop', (
       return null; // no resume after the pause
     });
     mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 1 });
-    mockPrisma.codingSchedule.findMany.mockImplementation(async ({ where }: any) => {
+    mockPrisma.chatSchedule.findMany.mockImplementation(async ({ where }: any) => {
       if (where?.id?.in) {
         // The by-id resume read: cancelled after the pause recorded it.
         return [{ id: 'sweep1', kind: 'recurring', nextRunAt: FUTURE, intervalSec: 3600, maxRuns: 500, runsCount: 12, expiresAt: FUTURE, lastStatus: 'cancelled' }];
       }
       return []; // no enabled sweep afterwards either
     });
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({
       id: 'sweep1', runsCount: 12, maxRuns: 500, expiresAt: FUTURE, lastStatus: 'cancelled', cancelledBy: 'owner',
     });
 
     await ensureProjectSupervisor(UID, PID);
 
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: 'project_supervisor.resume',
@@ -1399,17 +1399,17 @@ describe('ff0f6ad9 — an explicitly CANCELLED stock sweep is a DURABLE stop', (
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({
       id: 'paused1', runsCount: 40, maxRuns: 500, expiresAt: FUTURE, lastStatus: 'paused', cancelledBy: 'owner',
     });
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'paused1' },
       data: expect.objectContaining({ enabled: true, lastStatus: 'resumed:project_sweep_ensure', cancelledBy: null, disabledAt: null }),
     });
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
         action: 'schedule.resume',
@@ -1433,7 +1433,7 @@ describe('ensureProjectSupervisor — create race + never-throws', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
 
     const chat = await ensureProjectSupervisor(UID, PID);
     expect(chat.id).toBe('psup-win');
@@ -1463,9 +1463,9 @@ describe('pauseProjectSupervisor', () => {
       { id: 'h1', sourceChatId: null, projectId: PID },          // the project-scope hook
       { id: 'h-direct', sourceChatId: 'worker1', projectId: null }, // a direct worker→lane hook
     ]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 's1', kind: 'recurring' }, { id: 's2', kind: 'once' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 's1', kind: 'recurring' }, { id: 's2', kind: 'once' }]);
     mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 2 });
-    mockPrisma.codingSchedule.updateMany.mockResolvedValue({ count: 2 });
+    mockPrisma.chatSchedule.updateMany.mockResolvedValue({ count: 2 });
 
     await pauseProjectSupervisor(UID, PID);
 
@@ -1481,11 +1481,11 @@ describe('pauseProjectSupervisor', () => {
       where: { id: { in: ['h1', 'h-direct'] }, enabled: true },
       data: { enabled: false },
     });
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith({
       where: { sessionId: 'psup1', enabled: true },
       select: { id: true, kind: true },
     });
-    expect(mockPrisma.codingSchedule.updateMany).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ['s1', 's2'] }, enabled: true },
       data: { enabled: false, lastStatus: 'paused', cancelledBy: 'owner', disabledAt: expect.any(Date) },
     });
@@ -1494,7 +1494,7 @@ describe('pauseProjectSupervisor', () => {
     expect(mockPrisma.crossModelChat.deleteMany).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.delete).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.deleteMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
     expect(mockPrisma.chatAutonomy.deleteMany).not.toHaveBeenCalled();
     // The pause is audited with the disable counts AND the exact ids (toggle-ON reads these).
     expect(mockPrisma.activity.create).toHaveBeenCalledWith({
@@ -1514,12 +1514,12 @@ describe('pauseProjectSupervisor', () => {
   it('an ALREADY-PAUSED lane (nothing enabled) is quiet: no updateMany, no audit row, no info log', async () => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: 'psup1' });
     mockPrisma.eventHook.findMany.mockResolvedValue([]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
 
     await pauseProjectSupervisor(UID, PID);
 
     expect(mockPrisma.eventHook.updateMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).not.toHaveBeenCalled();
     expect(logger.info).not.toHaveBeenCalled();
   });
@@ -1527,12 +1527,12 @@ describe('pauseProjectSupervisor', () => {
   it('a pause that RACED another pause (rows flipped between read and write → counts 0) does not double-audit', async () => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: 'psup1' });
     mockPrisma.eventHook.findMany.mockResolvedValue([{ id: 'h1', sourceChatId: null, projectId: PID }]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 0 });
 
     await pauseProjectSupervisor(UID, PID);
 
-    expect(mockPrisma.codingSchedule.updateMany).not.toHaveBeenCalled(); // no schedule ids → no write at all
+    expect(mockPrisma.chatSchedule.updateMany).not.toHaveBeenCalled(); // no schedule ids → no write at all
     expect(mockPrisma.activity.create).not.toHaveBeenCalled();
   });
 
@@ -1541,7 +1541,7 @@ describe('pauseProjectSupervisor', () => {
     await pauseProjectSupervisor(UID, PID);
     expect(mockPrisma.eventHook.findMany).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.updateMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).not.toHaveBeenCalled();
   });
 
@@ -1572,9 +1572,9 @@ describe('audit 2026-10-08 W1-1 — pause keeps spawn-wired hooks', () => {
   it('a toggle-OFF pause disables the project-scope + subscribed hooks but leaves the child-result and direct-wake hooks enabled (audited as keptSpawnHookIds)', async () => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: PS });
     mockPrisma.eventHook.findMany.mockResolvedValue([PROJECT_HOOK, PEER_HOOK, CHILD_HOOK, SELF_WAKE]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 's1', kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 's1', kind: 'recurring' }]);
     mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 2 });
-    mockPrisma.codingSchedule.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.chatSchedule.updateMany.mockResolvedValue({ count: 1 });
 
     await pauseProjectSupervisor(UID, PID);
 
@@ -1597,7 +1597,7 @@ describe('audit 2026-10-08 W1-1 — pause keeps spawn-wired hooks', () => {
     mockPrisma.crossModelChat.findMany.mockResolvedValue([{ id: PS, projectId: PID }]);
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: PS });
     mockPrisma.eventHook.findMany.mockImplementation(async ({ where }: any) => (where?.targetChatId ? [CHILD_HOOK, SELF_WAKE] : []));
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]); // the toggle-OFF pause already parked the sweep
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]); // the toggle-OFF pause already parked the sweep
 
     await healProjectSupervisors(UID); // 21:58:48 tick
     await healProjectSupervisors(UID); // 22:13:48 tick
@@ -1611,7 +1611,7 @@ describe('audit 2026-10-08 W1-1 — pause keeps spawn-wired hooks', () => {
     process.env.PAUSE_KEEPS_SPAWN_HOOKS_DISABLED = '1';
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: PS });
     mockPrisma.eventHook.findMany.mockResolvedValue([PROJECT_HOOK, CHILD_HOOK, SELF_WAKE]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 3 });
 
     await pauseProjectSupervisor(UID, PID);
@@ -1707,13 +1707,13 @@ describe('healProjectSupervisors', () => {
     expect(mockPrisma.crossModelChat.create).toHaveBeenCalledTimes(1);
     expect(mockPrisma.crossModelChat.create.mock.calls[0][0].data.project).toEqual({ connect: { id: PID } });
     expect(mockPrisma.eventHook.create).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.create).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.create).toHaveBeenCalledTimes(1);
   });
 
   /** Route eventHook.findMany: the pause's "enabled hooks on this lane" read vs the heal's step-3 project-hook scan. */
   function mockPauseReads(hookRows: any[], scheduleRows: any[]) {
     mockPrisma.eventHook.findMany.mockImplementation(async ({ where }: any) => (where?.targetChatId ? hookRows : []));
-    mockPrisma.codingSchedule.findMany.mockResolvedValue(scheduleRows);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue(scheduleRows);
   }
 
   // Pin updated 2026-09-14 (hardening review): pause disables by exact id
@@ -1729,7 +1729,7 @@ describe('healProjectSupervisors', () => {
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: 'psup1' }); // pause's lane lookup
     mockPauseReads([{ id: 'h1', sourceChatId: null, projectId: 'p2' }], [{ id: 's1', kind: 'recurring' }]);
     mockPrisma.eventHook.updateMany.mockResolvedValue({ count: 1 });
-    mockPrisma.codingSchedule.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.chatSchedule.updateMany.mockResolvedValue({ count: 1 });
 
     await healProjectSupervisors(UID);
 
@@ -1737,7 +1737,7 @@ describe('healProjectSupervisors', () => {
       where: { id: { in: ['h1'] }, enabled: true },
       data: { enabled: false },
     });
-    expect(mockPrisma.codingSchedule.updateMany).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ['s1'] }, enabled: true },
       data: { enabled: false, lastStatus: 'paused', cancelledBy: 'owner', disabledAt: expect.any(Date) },
     });
@@ -1746,7 +1746,7 @@ describe('healProjectSupervisors', () => {
     });
     expect(mockPrisma.crossModelChat.create).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.delete).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
   });
 
   // Hardening review 2026-09-14: the heal runs every 15 min — an already-paused
@@ -1764,7 +1764,7 @@ describe('healProjectSupervisors', () => {
     await healProjectSupervisors(UID);
 
     expect(mockPrisma.eventHook.updateMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.activity.create).not.toHaveBeenCalledWith({ data: expect.objectContaining({ action: 'project_supervisor.pause' }) });
     expect(logger.info).not.toHaveBeenCalledWith(expect.stringContaining('paused lane'));
   });
@@ -1774,11 +1774,11 @@ describe('healProjectSupervisors', () => {
     mockPrisma.crossModelChat.findMany.mockResolvedValue([{ id: 'psup1', projectId: 'p-gone' }]);
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: 'psup1' });
     mockPauseReads([], [{ id: 's1', kind: 'recurring' }]);
-    mockPrisma.codingSchedule.updateMany.mockResolvedValue({ count: 1 });
+    mockPrisma.chatSchedule.updateMany.mockResolvedValue({ count: 1 });
 
     await healProjectSupervisors(UID);
 
-    expect(mockPrisma.codingSchedule.updateMany).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.updateMany).toHaveBeenCalledWith({
       where: { id: { in: ['s1'] }, enabled: true },
       data: { enabled: false, lastStatus: 'paused', cancelledBy: 'owner', disabledAt: expect.any(Date) },
     });
@@ -1790,7 +1790,7 @@ describe('healProjectSupervisors', () => {
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: 'sch1', prompt: currentSweepPrompt(), kind: 'recurring' }]);
     mockPrisma.crossModelProject.findMany.mockImplementation(async ({ where }: any) => {
       if (where?.projectSupervisorEnabled === true) return [{ id: PID }];
       if (where?.id?.in) return [{ ...PROJECT }];
@@ -1802,10 +1802,10 @@ describe('healProjectSupervisors', () => {
     await healProjectSupervisors(UID);
 
     expect(mockPrisma.eventHook.updateMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.updateMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.updateMany).not.toHaveBeenCalled();
     expect(mockPrisma.crossModelChat.create).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.create).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('disables a STALE project-scope hook whose lane chat moved to a different project (never deletes)', async () => {
@@ -1868,7 +1868,7 @@ describe('gcDetachedProjectSupervisors', () => {
         where: { targetChatId: id },
         data: { enabled: false },
       });
-      expect(mockPrisma.codingSchedule.updateMany).toHaveBeenCalledWith({
+      expect(mockPrisma.chatSchedule.updateMany).toHaveBeenCalledWith({
         where: { sessionId: id },
         data: { enabled: false },
       });
@@ -1887,7 +1887,7 @@ describe('gcDetachedProjectSupervisors', () => {
     expect(mockPrisma.crossModelChat.delete).not.toHaveBeenCalled();
     expect(mockPrisma.crossModelChat.deleteMany).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.delete).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.deleteMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.deleteMany).not.toHaveBeenCalled();
   });
 
   it('no detached lanes → 0 and no writes', async () => {
@@ -1953,9 +1953,9 @@ describe('b1d435fd — goal-gate: dormant projects get ZERO wakes from the ensur
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockImplementation(async ({ where }: any) =>
+    mockPrisma.chatSchedule.findMany.mockImplementation(async ({ where }: any) =>
       rows.filter((r) => r.kind === 'recurring' && (where?.enabled === undefined || r.enabled === where.enabled)));
-    mockPrisma.codingSchedule.update.mockImplementation(async ({ where, data }: any) => {
+    mockPrisma.chatSchedule.update.mockImplementation(async ({ where, data }: any) => {
       const r = rows.find((x) => x.id === where?.id);
       if (r) Object.assign(r, data);
       return {};
@@ -1971,15 +1971,15 @@ describe('b1d435fd — goal-gate: dormant projects get ZERO wakes from the ensur
       expect.objectContaining({ detail: expect.stringContaining('dormant') }),
     );
     // …and NOTHING is created beside it.
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
 
     // The next 15-min heal: the row is already parked → no further writes at all (idempotent + quiet).
-    mockPrisma.codingSchedule.update.mockClear();
+    mockPrisma.chatSchedule.update.mockClear();
     (emitScheduleDisabled as jest.Mock).mockClear();
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
     expect(emitScheduleDisabled).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('a PAUSED (disabled, non-cancelled) stock row on a dormant project is NOT resumed and NOT replaced — the resurrection loop is closed', async () => {
@@ -1988,14 +1988,14 @@ describe('b1d435fd — goal-gate: dormant projects get ZERO wakes from the ensur
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]); // no ENABLED recurring rows
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]); // no ENABLED recurring rows
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({
       id: 'sweep1', runsCount: 8, maxRuns: 500, expiresAt: new Date(Date.now() + 86_400_000),
       lastStatus: 'paused', cancelledBy: null,
     });
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
     expect(emitScheduleDisabled).not.toHaveBeenCalled(); // nothing enabled → nothing to park → quiet
   });
 
@@ -2006,16 +2006,16 @@ describe('b1d435fd — goal-gate: dormant projects get ZERO wakes from the ensur
     mockPrisma.eventHook.findFirst.mockResolvedValue({
       id: 'h1', eventTypes: [...PROJECT_SUPERVISOR_HOOK_EVENT_TYPES], enabled: true, promptTemplate: '',
     });
-    mockPrisma.codingSchedule.findMany.mockImplementation(async ({ where }: any) =>
+    mockPrisma.chatSchedule.findMany.mockImplementation(async ({ where }: any) =>
       rows.filter((r) => r.kind === 'recurring' && (where?.enabled === undefined || r.enabled === where.enabled)));
     // The park write fails (transient DB error) — the row NEVER parks…
-    mockPrisma.codingSchedule.update.mockRejectedValueOnce(new Error('db down'));
+    mockPrisma.chatSchedule.update.mockRejectedValueOnce(new Error('db down'));
     await ensureProjectSupervisor(UID, PID);
     // …so the ALARM-class "It stays parked" event must NOT be emitted (37fa747d).
     expect(emitScheduleDisabled).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('dormancy park failed'));
     // …and nothing is created beside it (a failed park is not a resume path).
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
   });
 
   it('toggle-ON on a dormant project: hooks STILL resume (the wake path) but the pause’s schedule ids STAY parked — named skippedDormant in the audit', async () => {
@@ -2037,7 +2037,7 @@ describe('b1d435fd — goal-gate: dormant projects get ZERO wakes from the ensur
       data: { enabled: true },
     });
     // …but the zero-work heartbeat was NOT re-armed…
-    expect(mockPrisma.codingSchedule.update).not.toHaveBeenCalledWith(
+    expect(mockPrisma.chatSchedule.update).not.toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'sched-2ee243ad' }, data: expect.objectContaining({ enabled: true }) }),
     );
     // …and the resume audit NAMES the dormancy skip.
@@ -2063,12 +2063,12 @@ describe('b1d435fd — goal-gate: dormant projects get ZERO wakes from the ensur
       where?.action === 'project_supervisor.pause'
         ? { id: 'pause1', createdAt: new Date(Date.now() - 3_600_000), metadata: { hookIds: ['h1'], scheduleIds: ['sweep-live'] } }
         : null);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{
       id: 'sweep-live', kind: 'recurring', nextRunAt: new Date(Date.now() + 3_600_000),
       intervalSec: 3600, maxRuns: 500, runsCount: 3, expiresAt: new Date(Date.now() + 86_400_000), lastStatus: 'paused',
     }]);
     await ensureProjectSupervisor(UID, PID);
-    expect(mockPrisma.codingSchedule.update).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.update).toHaveBeenCalledWith({
       where: { id: 'sweep-live' },
       data: expect.objectContaining({ enabled: true, lastStatus: 'resumed' }),
     });
@@ -2101,8 +2101,8 @@ describe('supervisor OFF switch × ensureProjectSupervisor', () => {
     expect(chat).toMatchObject({ id: 'psup1' });
     expect(mockPrisma.chatAutonomy.findUnique).not.toHaveBeenCalled();
     expect(mockPrisma.eventHook.findFirst).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.findMany).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.create).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.create).not.toHaveBeenCalled();
     expect(mockPrisma.crossModelChat.update).not.toHaveBeenCalled();
     expect(mockPrisma.activity.findFirst).not.toHaveBeenCalled(); // no pause-resume lookup
     expect(mockRedisIncr).not.toHaveBeenCalled();

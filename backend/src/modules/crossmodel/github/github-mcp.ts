@@ -313,7 +313,7 @@ export async function getRepo(
 // GitHub's code-search index covers each repo's DEFAULT branch only and does
 // not index every private repo (verified live 2026-09-15 with the owner's
 // token: org-owned private repos ARE searchable — repo:canada-quant/bearclaw
-// import → 535 — while the user-owned private repo canada-quant/digby
+// import → 535 — while the user-owned private repo example-org/crossmodel
 // returns 0 for every term). The header + the MCP server's empty-result text
 // state this instead of letting silence look like "no matches in your code".
 

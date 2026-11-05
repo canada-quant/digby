@@ -31,7 +31,7 @@ import {
 } from './coding-model';
 
 const GATEWAY = (model: string, extra: Record<string, any> = {}) => ({
-  url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk-gw', model, label: 'cql-litellm',
+  url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk-gw', model, label: 'cql-litellm',
   supportsVision: false, coding: true, chatCapable: true, ...extra,
 });
 

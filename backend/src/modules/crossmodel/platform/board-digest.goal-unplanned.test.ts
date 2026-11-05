@@ -26,7 +26,7 @@ const facts = (over: Partial<BoardFacts> = {}): BoardFacts => ({
   projectName: 'tt-rd',
   now: NOW,
   goals: [
-    { id: uuid('gplanned'), title: 'Serve Qwen on QB2', status: 'active' },
+    { id: uuid('gplanned'), title: 'Serve Qwen on node-a', status: 'active' },
     { id: uuid('gunplan0'), title: 'Hit 10 tok/s client-visible', status: 'active' },
     { id: uuid('gheld000'), title: 'Redeploy :3001', status: 'active', progressNote: 'HOLD until the owner rules on the box' },
     { id: uuid('gblocked'), title: 'Vendor firmware', status: 'blocked', blockKind: 'external', blockedReason: 'Waiting on the vendor' },
@@ -50,7 +50,7 @@ describe('goal lines — todo counts + UNPLANNED', () => {
   it('counts per goal (dropped excluded); only the ACTIVE, un-held goal with zero open todos is UNPLANNED', () => {
     const block = renderProjectBoardBlock(facts());
     // GOAL-PRIORITY-SPEND (2026-10-20): every tracked goal line leads with its rank (unset = P2 · 60 here).
-    expect(block).toContain('- [P2 · 60] goal gplanned [active] "Serve Qwen on QB2" · todos 1 open/1 done\n');
+    expect(block).toContain('- [P2 · 60] goal gplanned [active] "Serve Qwen on node-a" · todos 1 open/1 done\n');
     expect(block).toContain('- [P2 · 60] goal gunplan0 [active] "Hit 10 tok/s client-visible" · todos 0 open/1 done · UNPLANNED\n');
     expect(block).toContain('- [P2 · 60] goal gheld000 [active] "Redeploy :3001" · todos 0 open/0 done\n'); // held on purpose
     expect(block).toContain('- [P2 · 60] goal gblocked [blocked] "Vendor firmware" — blocked (external): Waiting on the vendor · todos 0 open/0 done\n');

@@ -46,7 +46,7 @@ import {
 } from './coding-model';
 
 const mockPost = (axios as any).post as jest.Mock;
-const GLM: ProviderConfig = { url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk', model: 'api-optimize-zai-glm-5.3', label: 'cql-litellm (custom endpoint)', extra: { max_tokens: 262_144, reasoning_effort: 'max' }, reasoningEffort: 'auto' };
+const GLM: ProviderConfig = { url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk', model: 'api-optimize-zai-glm-5.3', label: 'cql-litellm (custom endpoint)', extra: { max_tokens: 262_144, reasoning_effort: 'max' }, reasoningEffort: 'auto' };
 const BUILTIN_GLM = resolveProvider('glm-5.3');
 const http400 = (body: string) => Object.assign(new Error('Request failed with status code 400'), { response: { status: 400, data: Readable.from([`{"error":{"message":${JSON.stringify(body)}}}`]) } });
 const okStream = () => ({ data: Readable.from(['data: {"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\n', 'data: [DONE]\n\n']) });
@@ -91,7 +91,7 @@ describe('maxOutputTokensFor — live-probed vendor maximums', () => {
 });
 
 describe('resolveProviderForRun — custom endpoint extras', () => {
-  const reg = (over: Record<string, any> = {}) => ({ url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk', model: 'api-optimize-zai-glm-5.3', label: 'cql-litellm', kind: 'chat', coding: true, ...over });
+  const reg = (over: Record<string, any> = {}) => ({ url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk', model: 'api-optimize-zai-glm-5.3', label: 'cql-litellm', kind: 'chat', coding: true, ...over });
   it('a thinking model gets max output + reasoning_effort max', async () => {
     mockResolveRegistryModel.mockResolvedValueOnce(reg());
     const p = await resolveProviderForRun('cql-litellm:api-optimize-zai-glm-5.3');

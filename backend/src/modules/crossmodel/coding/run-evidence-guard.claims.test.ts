@@ -343,7 +343,7 @@ describe('applyClaimsBlockLane — verified block downgrades covered prose convi
   it('P4 v1#23: an UNVERIFIABLE deploy entry (descriptive ref, generic ok receipt) lifts NOTHING — the prose conviction stands and no positive verdict is earned', async () => {
     const prose: CompletionClaim = { kind: 'deploy', text: 'Deploy green, health check 200.' };
     const oldNote = renderEvidenceGuardNote([prose], { triggerKind: 'hook', resumed: false });
-    const body = `Deploy green, health check 200.\n\n${fence('[{"type":"deploy","ref":"digby.example.com blue-green flip"}]')}`;
+    const body = `Deploy green, health check 200.\n\n${fence('[{"type":"deploy","ref":"digby.ai blue-green flip"}]')}`;
     const guarded = mkGuarded(`${body}\n\n${oldNote}`, [oldNote], { unprovenKinds: ['deploy'], unprovenClaims: [prose] });
     const out = await applyClaimsBlockLane({
       originalText: body, guarded, receipts: [receipt('run_command', true)], triggerKind: 'hook',

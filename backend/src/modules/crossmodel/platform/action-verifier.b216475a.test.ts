@@ -34,7 +34,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) }, // coding_sessions (ticket f1cb73ff lane)
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) }, // user_feature_requests — the ticket lane's existence + near-miss probes (b216475a)
   // (tick 24) the kind-agnostic fallback for list-inferred ids probes every
   // artifact table — a MISSING mock throws, and citedIdExistsAnywhere fails
@@ -86,7 +86,7 @@ beforeEach(() => {
   jest.clearAllMocks();
   mockGetRecentChatReceipts.mockResolvedValue([]);
   mockPrisma.crossModelMessage.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
   // 378224d5 is the real chat the incident line cites in passing — the
   // tick-21 bare chat lane probes it, so the mocked store must know it.
   mockPrisma.crossModelChat.findFirst.mockImplementation(async (args: any) => (String(args?.where?.id?.startsWith ?? args?.where?.id ?? '').startsWith('378224d5') ? { id: '378224d5-0000-4000-8000-000000000000' } : null));

@@ -53,7 +53,7 @@ const mockPrisma: any = {
     count: jest.fn(async () => 0),
   },
   projectTodo: { findUnique: jest.fn(), count: jest.fn(async () => 0) },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   crossModelProject: { findUnique: jest.fn() },
   crossModelChat: { findUnique: jest.fn(), update: jest.fn(async () => ({})) },
   crossModelMessage: { create: jest.fn(async () => ({})) },
@@ -180,7 +180,7 @@ beforeEach(() => {
   mockPrisma.hookEvent.count.mockResolvedValue(0);
   mockPrisma.projectTodo.findUnique.mockResolvedValue({ status: 'pending', assigneeChatId: 'c-tgt' });
   // Retired by default: no enabled schedules, no open todos.
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.projectTodo.count.mockResolvedValue(0);
   targetChat = { ...RETIRED_CODING_LANE };
   mockPrisma.crossModelChat.findUnique.mockImplementation(({ where }: any) =>
@@ -209,7 +209,7 @@ describe('F1a — legacy child-result hook exemption by SIGNATURE (ticket 9df506
     expect(mockFireScheduleTarget).toHaveBeenCalledTimes(1); // the verdict is DELIVERED
     expect(updatesWith((d) => d?.status === HOOK_STATUS_TARGET_RETIRED)).toHaveLength(0);
     expect(mockPrisma.eventHook.updateMany.mock.calls.some((c: any[]) => c[0]?.data?.enabled === false)).toBe(false);
-    expect(mockPrisma.codingSchedule.count).not.toHaveBeenCalled(); // exempt BEFORE the counts
+    expect(mockPrisma.chatSchedule.count).not.toHaveBeenCalled(); // exempt BEFORE the counts
   });
 
   it('eventTypes ORDER does not matter — the signature is a set match', async () => {

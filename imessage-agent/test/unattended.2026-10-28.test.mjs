@@ -37,6 +37,7 @@ const {
   pmsetEffective,
   parsePasswordExpiry,
   parseFastUserSwitching,
+  parseIsAdmin,
   consoleIsAtLoginWindow,
   evaluateMacUnattended,
   unattendedAdvertValue,
@@ -273,7 +274,7 @@ test('probeMacUnattended: assembles the snapshot from the real commands, degradi
     if (line.startsWith('pwpolicy')) return { stdout: '', code: 1 }; // unreadable → null
     if (line.startsWith('defaults read com.apple.loginwindow ShowUserList')) return { stdout: '0\n', code: 0 };
     if (line.startsWith('stat -f %Su /dev/console')) return { stdout: 'paul\n', code: 0 };
-    if (line === 'sudo -n true') return { stdout: '', code: 0 };
+    if (line === 'id -Gn paul') return { stdout: 'staff admin\n', code: 0 };
     return { stdout: '', code: 1 };
   });
   const s = await probeMacUnattended(io, { user: 'paul', enabled: true });
@@ -295,6 +296,77 @@ test('probeMacUnattended: a missing kcpassword reads false (not "unknown")', asy
   });
   const s = await probeMacUnattended(io, { user: 'paul', enabled: true });
   assert.equal(s.kcPasswordExists, false);
+});
+
+// TICKET e530220e — THE REGRESSION PIN for the owner's actual complaint
+// ("Permissions: all granted ✓ … Unattended use · blocked — the agent lacks the
+// administrator rights the preset needs").
+//
+// The old snapshot asked `sudo -n true`. `-n` NEVER PROMPTS, so an ordinary
+// administrator Mac whose sudo cache had expired answered exit 1 — and exit 1
+// was mapped to `canAdmin:false`, i.e. the card accused a fully-privileged
+// owner of missing rights on EVERY poll. "sudo is not primed right now" is not
+// "this account can never administer". Membership is the fact the blocker
+// claims, and since 0.9.21 the enable escalates for itself (ensureAdminRights).
+test('e530220e: an ADMIN Mac whose sudo cache expired is NOT "no-admin"', async () => {
+  const io = fakeIo((cmd, args) => {
+    const line = [cmd, ...args].join(' ');
+    // …the whole healthy-Mac snapshot…
+    if (line === 'fdesetup status') return { stdout: 'FileVault is Off.', code: 0 };
+    if (line === 'defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser') return { stdout: 'paul\n', code: 0 };
+    if (line === 'test -f /etc/kcpassword') return { stdout: '', code: 0 };
+    if (line === 'defaults read com.apple.screensaver askForPassword') return { stdout: '0\n', code: 0 };
+    if (line === 'defaults read com.apple.screensaver askForPasswordDelay') return { stdout: '0\n', code: 0 };
+    if (line === 'defaults -currentHost read com.apple.screensaver idleTime') return { stdout: '0\n', code: 0 };
+    if (line === 'pmset -g custom') return { stdout: 'AC Power:\n sleep                0\n', code: 0 };
+    if (line.startsWith('defaults read com.apple.loginwindow ShowUserList')) return { stdout: '0\n', code: 0 };
+    if (line.startsWith('stat -f %Su /dev/console')) return { stdout: 'paul\n', code: 0 };
+    // …on an account that IS an administrator…
+    if (line === 'id -Gn paul') return { stdout: '_lpoperator admin staff\n', code: 0 };
+    // …and sudo, if it were asked, would say "not primed".
+    if (line === 'sudo -n true') return { stdout: '', code: 1 };
+    return { stdout: '', code: 1 };
+  });
+  const s = await probeMacUnattended(io, { user: 'paul', enabled: true });
+  assert.equal(s.canAdmin, true, 'membership decides, not a stale sudo cache');
+  assert.deepEqual(evaluateMacUnattended(s).blockers, [], 'and NO no-admin blocker is invented');
+  // The old probe must not be reachable from the snapshot path at all.
+  assert.ok(!io.calls.includes('sudo -n true'), 'the snapshot never probes sudo');
+});
+
+test('e530220e: a real non-admin account still reads no-admin (the blocker keeps its meaning)', async () => {
+  const io = fakeIo((cmd, args) => {
+    const line = [cmd, ...args].join(' ');
+    if (line === 'fdesetup status') return { stdout: 'FileVault is Off.', code: 0 };
+    if (line === 'id -Gn paul') return { stdout: 'staff everyone\n', code: 0 };
+    if (line.startsWith('stat -f %Su /dev/console')) return { stdout: 'paul\n', code: 0 };
+    return { stdout: '', code: 1 };
+  });
+  const s = await probeMacUnattended(io, { user: 'paul', enabled: true });
+  assert.equal(s.canAdmin, false);
+  assert.ok(evaluateMacUnattended(s).blockers.includes('no-admin'));
+});
+
+test('e530220e: an UNREADABLE groups read is unknown — never a fabricated no-admin', async () => {
+  for (const reply of [{ stdout: '', code: 1 }, { stdout: '', code: 0 }, { stdout: '   \n', code: 0 }]) {
+    const io = fakeIo((cmd, args) => {
+      const line = [cmd, ...args].join(' ');
+      if (line === 'id -Gn paul') return reply;
+      return { stdout: '', code: 1 };
+    });
+    const s = await probeMacUnattended(io, { user: 'paul', enabled: true });
+    assert.equal(s.canAdmin, null, `unreadable groups (${JSON.stringify(reply)}) must stay null`);
+    assert.ok(!evaluateMacUnattended(s).blockers.includes('no-admin'), 'an unknown never accuses');
+  }
+});
+
+test('parseIsAdmin: the macOS administrator group is `admin`', () => {
+  assert.equal(parseIsAdmin('staff admin'), true);
+  assert.equal(parseIsAdmin('_lpoperator admin staff'), true);
+  assert.equal(parseIsAdmin('staff'), false);
+  assert.equal(parseIsAdmin('staff administrators'), false, 'a lookalike group is not gid 80');
+  assert.equal(parseIsAdmin(''), null);
+  assert.equal(parseIsAdmin('   \n'), null);
 });
 
 // ── 5. apply / revert ────────────────────────────────────────────────────────

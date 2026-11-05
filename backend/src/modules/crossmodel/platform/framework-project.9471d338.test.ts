@@ -9,7 +9,7 @@
  *
  * Identity (two legs, BOTH checked — one alone is spoofable):
  *   - row.repoUrl canonicalizes (instance-targets.normalizeGithubRepoTarget)
- *     to the production repo slug canada-quant/digby, OR
+ *     to the production repo slug example-org/crossmodel, OR
  *   - row.isFramework is an explicitly-set boolean flag (the future migration
  *     column; a name rename can never forge or lose it).
  *
@@ -42,7 +42,7 @@ afterEach(() => {
 
 describe('identity constants', () => {
   it('the production repo slug is pinned (the platform repo)', () => {
-    expect(FRAMEWORK_GITHUB_REPO_SLUG).toBe('canada-quant/digby');
+    expect(FRAMEWORK_GITHUB_REPO_SLUG).toBe('example-org/crossmodel');
   });
 
   it('the kill switch defaults OFF (surface enabled)', () => {
@@ -53,11 +53,11 @@ describe('identity constants', () => {
 describe('isFrameworkProjectRow — row-level identity (prod env default)', () => {
   it('matches the production repo slug in ANY repoUrl spelling + case', () => {
     for (const repoUrl of [
-      'https://github.com/canada-quant/digby',
-      'https://github.com/Canada-Quant/DIGBY.git',
-      'git@github.com:canada-quant/digby',
-      'canada-quant/digby',
-      'https://github.com:443/canada-quant/digby',
+      'https://github.com/example-org/crossmodel',
+      'https://github.com/example-org/crossmodel.git',
+      'git@github.com:example-org/crossmodel',
+      'example-org/crossmodel',
+      'https://github.com:443/example-org/crossmodel',
     ]) {
       expect(isFrameworkProjectRow({ repoUrl }, PROD_ENV)).toBe(true);
     }
@@ -74,7 +74,7 @@ describe('isFrameworkProjectRow — row-level identity (prod env default)', () =
   });
 
   it('does NOT match OTHER github repos', () => {
-    expect(isFrameworkProjectRow({ repoUrl: 'https://github.com/canada-quant/other' }, PROD_ENV)).toBe(false);
+    expect(isFrameworkProjectRow({ repoUrl: 'https://github.com/example-org/repo' }, PROD_ENV)).toBe(false);
     expect(isFrameworkProjectRow({ repoUrl: 'schooltime/app' }, PROD_ENV)).toBe(false);
   });
 
@@ -92,7 +92,7 @@ describe('isFrameworkProjectRow — non-prod instances resolve their OWN repo', 
   it('a selfhost instance matches its own configured SELF_REPO slug', () => {
     expect(isFrameworkProjectRow({ repoUrl: 'https://github.com/me/my-digby-fork' }, SELFHOST_ENV)).toBe(true);
     // …and NOT the production repo slug (never a fallback there):
-    expect(isFrameworkProjectRow({ repoUrl: 'https://github.com/canada-quant/digby' }, SELFHOST_ENV)).toBe(false);
+    expect(isFrameworkProjectRow({ repoUrl: 'https://github.com/example-org/crossmodel' }, SELFHOST_ENV)).toBe(false);
   });
 
   it('a non-prod instance with NO own repo configured: only the explicit flag matches', () => {
@@ -108,20 +108,20 @@ describe('isFrameworkProjectRow — non-prod instances resolve their OWN repo', 
 
 describe('isFrameworkProjectRef — the ref that carries repoUrl at the seam', () => {
   it('reads row.repoUrl (the projects controller loads bare rows)', () => {
-    expect(isFrameworkProjectRef({ repoUrl: 'canada-quant/digby' }, PROD_ENV)).toBe(true);
+    expect(isFrameworkProjectRef({ repoUrl: 'example-org/crossmodel' }, PROD_ENV)).toBe(true);
     expect(isFrameworkProjectRef({ repoUrl: null }, PROD_ENV)).toBe(false);
   });
 
   it('refuses a string (callers must pass the loaded row)', () => {
     // A string has no repoUrl — never identity. (TypeScript forbids it; the
     // runtime pin keeps a JS caller from spoofing.)
-    expect((isFrameworkProjectRef as (r: unknown, e?: NodeJS.ProcessEnv) => boolean)('canada-quant/digby', PROD_ENV)).toBe(false);
+    expect((isFrameworkProjectRef as (r: unknown, e?: NodeJS.ProcessEnv) => boolean)('example-org/crossmodel', PROD_ENV)).toBe(false);
   });
 });
 
 describe('resolveFrameworkProjectRef — the getProjectAccess {project, role} shape', () => {
   it('identity rides on access.project (owner call)', () => {
-    expect(resolveFrameworkProjectRef({ project: { repoUrl: 'github.com/canada-quant/digby' }, role: 'owner' } as unknown as Parameters<typeof resolveFrameworkProjectRef>[0], PROD_ENV)).toBe(true);
+    expect(resolveFrameworkProjectRef({ project: { repoUrl: 'github.com/example-org/crossmodel' }, role: 'owner' } as unknown as Parameters<typeof resolveFrameworkProjectRef>[0], PROD_ENV)).toBe(true);
     expect(resolveFrameworkProjectRef({ project: { name: 'Work' }, role: 'owner' } as unknown as Parameters<typeof resolveFrameworkProjectRef>[0], PROD_ENV)).toBe(false);
   });
 
@@ -173,9 +173,9 @@ describe('refusal messages', () => {
 describe('FRAMEWORK_PROJECT_SURFACE_DISABLED kill switch', () => {
   it('identity reads FALSE with the switch set (every guard passes through)', () => {
     process.env.FRAMEWORK_PROJECT_SURFACE_DISABLED = '1';
-    expect(isFrameworkProjectRow({ repoUrl: 'https://github.com/canada-quant/digby', isFramework: true }, PROD_ENV)).toBe(false);
-    expect(isFrameworkProjectRef({ repoUrl: 'canada-quant/digby' }, PROD_ENV)).toBe(false);
-    expect(isFrameworkProject({ repoUrl: 'canada-quant/digby' }, PROD_ENV)).toBe(false);
+    expect(isFrameworkProjectRow({ repoUrl: 'https://github.com/example-org/crossmodel', isFramework: true }, PROD_ENV)).toBe(false);
+    expect(isFrameworkProjectRef({ repoUrl: 'example-org/crossmodel' }, PROD_ENV)).toBe(false);
+    expect(isFrameworkProject({ repoUrl: 'example-org/crossmodel' }, PROD_ENV)).toBe(false);
     expect(isFrameworkChatRow({ isSupervisor: true })).toBe(false);
   });
 });

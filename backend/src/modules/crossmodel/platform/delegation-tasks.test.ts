@@ -18,6 +18,11 @@
  *     tool-intent key is stamped duplicateOfId + one duplicate_key row;
  *   · background workers: start → injected / posted_late / cancelled /
  *     lost_on_resume;
+ *   · orphaned background workers (ticket d5974d65): a worker whose PARENT RUN
+ *     went terminal past the grace bound can no longer deliver a phase — the
+ *     orphan sweep fails (cancelled parent: cancels) its row instead of
+ *     leaving it 'working' forever; live parents, the grace window and
+ *     terminal rows are untouched;
  *   · the task card: the hand-off's done card completes the session task with
  *     its artifacts (also after the run outcome already closed it); a
  *     continuation's cards create + move their own task.
@@ -43,6 +48,8 @@ let seq = 0;
 let nowMs = Date.now();
 
 function cmp(v: any, cond: any): boolean {
+  // d5974d65 review: a bare Date condition must COMPARE, not fall through to always-true.
+  if (cond instanceof Date) return (v instanceof Date ? v.getTime() : v) === cond.getTime();
   if (cond && typeof cond === 'object' && !(cond instanceof Date) && !Array.isArray(cond)) {
     if ('in' in cond) return (cond.in as any[]).includes(v);
     if ('notIn' in cond) return !(cond.notIn as any[]).includes(v);
@@ -95,7 +102,10 @@ jest.mock('../../../config/database', () => ({
     },
     crossModelChat: { findMany: async ({ where }: any) => tables.chats.filter((r) => matches(r, where)) },
     chatCodingState: { findUnique: async ({ where }: any) => tables.coding.find((r) => r.id === where.id) ?? null },
-    agentRun: { findUnique: async ({ where }: any) => tables.runs.find((r) => r.id === where.id) ?? null },
+    agentRun: {
+      findUnique: async ({ where }: any) => tables.runs.find((r) => r.id === where.id) ?? null,
+      findMany: async ({ where, select, take }: any) => tables.runs.filter((r) => matches(r, where)).slice(0, take ?? 1e9).map((r) => pick(r, select)),
+    },
     userFeatureRequest: { findUnique: async ({ where }: any) => tables.tickets.find((r) => r.id === where.id) ?? null },
   },
 }));
@@ -105,7 +115,7 @@ import {
   fromBackgroundPhase, fromHookEvent, fromRunStatus, fromTaskCardStatus, fromTicketStatus, getDelegationTask, isReportUp,
   listDelegationTasks, mergeDelegationArtifacts, noteBackgroundWorkerPhase, noteBackgroundWorkersLost, noteChatRunEvent,
   noteChatRunStarted, noteTaskCardLifecycle, noteTicketDispatchExhausted, noteTicketLaneClosed, recordDelegationTask,
-  summarizeDelegationTasks, DELEGATION_STATES,
+  summarizeDelegationTasks, sweepOrphanedBackgroundWorkerTasks, BACKGROUND_ORPHAN_GRACE_MS, DELEGATION_STATES,
 } from './delegation-tasks';
 
 const flush = async () => { await flushDelegationTaskWrites(); await new Promise((r) => setImmediate(r)); await flushDelegationTaskWrites(); };
@@ -293,6 +303,95 @@ describe('delegation ledger — replays (shadow writes)', () => {
     noteBackgroundWorkerPhase('start', { id: 'bg1-zz', role: 'r', title: 't' }, { sessionId: 'anon-x' });
     await flush();
     expect(tables.tasks.some((r) => r.childRef === 'bg1-zz')).toBe(false);
+  });
+
+  it('orphan sweep (ticket d5974d65 replay): a worker whose parent run went TERMINAL past grace is failed/cancelled, never left working forever', async () => {
+    // The incident shape: bg worker started in a run that COMPLETED while the
+    // worker was still running; the late-post terminal phase never landed
+    // (the process died / the worker hung) and a completed run leaves no
+    // resume checkpoint for lost_on_resume — the row sat 'working' 11 h.
+    const t0 = Date.now();
+    const ctx = (runId: string, sessionId = 'lane-o') => ({ sessionId, runId, userId: 'u1', machine: true });
+    noteBackgroundWorkerPhase('start', { id: 'bg1-oo', role: 'web_researcher', title: 'done parent' }, ctx('run-done'));
+    noteBackgroundWorkerPhase('start', { id: 'bg2-oo', role: 'web_researcher', title: 'cancelled parent' }, ctx('run-cxl'));
+    noteBackgroundWorkerPhase('start', { id: 'bg3-oo', role: 'web_researcher', title: 'failed parent' }, ctx('run-fail'));
+    noteBackgroundWorkerPhase('start', { id: 'bg4-oo', role: 'web_researcher', title: 'within grace' }, ctx('run-grace'));
+    noteBackgroundWorkerPhase('start', { id: 'bg5-oo', role: 'web_researcher', title: 'live parent' }, ctx('run-live'));
+    noteBackgroundWorkerPhase('start', { id: 'bg6-oo', role: 'web_researcher', title: 'interrupted parent' }, ctx('run-int'));
+    noteBackgroundWorkerPhase('start', { id: 'bg7-oo', role: 'web_researcher', title: 'no parent pointer, ancient' }, { sessionId: 'lane-o', userId: 'u1', machine: true });
+    noteBackgroundWorkerPhase('start', { id: 'bg8-oo', role: 'web_researcher', title: 'no parent pointer, fresh' }, { sessionId: 'lane-o', userId: 'u1', machine: true });
+    noteBackgroundWorkerPhase('start', { id: 'bg9-oo', role: 'web_researcher', title: 'already completed' }, ctx('run-done2'));
+    noteBackgroundWorkerPhase('start', { id: 'bg1-zz', role: 'web_researcher', title: 'other session orphan' }, ctx('run-other', 'lane-p'));
+    noteBackgroundWorkerPhase('start', { id: 'bgA-oo', role: 'web_researcher', title: 'older than the 30-day scan window' }, ctx('run-ancient'));
+    await flush();
+    noteBackgroundWorkerPhase('posted_late', { id: 'bg9-oo', role: 'web_researcher', title: 'already completed' }, ctx('run-done2'));
+    await flush();
+    tables.runs.push(
+      { id: 'run-done', status: 'completed', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: new Date(t0 - 2 * 3_600_000) },
+      { id: 'run-cxl', status: 'cancelled', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: new Date(t0 - 2 * 3_600_000) },
+      { id: 'run-fail', status: 'failed', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: new Date(t0 - 2 * 3_600_000) },
+      { id: 'run-grace', status: 'completed', createdAt: new Date(t0 - 20 * 60_000), finishedAt: new Date(t0 - 10 * 60_000) }, // inside the late-post window
+      { id: 'run-live', status: 'running', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: null },
+      { id: 'run-int', status: 'interrupted', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: null }, // resumable — never sweep
+      { id: 'run-done2', status: 'completed', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: new Date(t0 - 2 * 3_600_000) },
+      { id: 'run-other', status: 'completed', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: new Date(t0 - 2 * 3_600_000) },
+      { id: 'run-ancient', status: 'completed', createdAt: new Date(t0 - 32 * 86_400_000), finishedAt: new Date(t0 - 31 * 86_400_000) },
+    );
+    task((r) => r.childRef === 'bg7-oo').createdAt = new Date(t0 - 7 * 3_600_000); // older than the kind's stale bound (6 h)
+    task((r) => r.childRef === 'bgA-oo').createdAt = new Date(t0 - 31 * 86_400_000); // outside the sweep's 30-day scan window — never even scanned
+    const res = await sweepOrphanedBackgroundWorkerTasks();
+    expect(res).toMatchObject({ scanned: 9, swept: 5 });
+    expect(res.byReason).toEqual({ orphaned_parent_run_completed: 2, orphaned_parent_run_cancelled: 1, orphaned_parent_run_failed: 1, orphaned_no_parent_run: 1 });
+    expect(task((r) => r.childRef === 'bg1-oo')).toMatchObject({ state: 'failed', reason: 'orphaned_parent_run_completed' });
+    expect(task((r) => r.childRef === 'bg2-oo')).toMatchObject({ state: 'canceled', reason: 'orphaned_parent_run_cancelled' });
+    expect(task((r) => r.childRef === 'bg3-oo')).toMatchObject({ state: 'failed', reason: 'orphaned_parent_run_failed' });
+    expect(task((r) => r.childRef === 'bg1-zz')).toMatchObject({ state: 'failed', reason: 'orphaned_parent_run_completed' });
+    expect(task((r) => r.childRef === 'bg7-oo')).toMatchObject({ state: 'failed', reason: 'orphaned_no_parent_run' });
+    // the sweep's event is on the row, seam orphan_sweep, ref the parent run
+    const ev = task((r) => r.childRef === 'bg1-oo').events.at(-1);
+    expect(ev).toMatchObject({ from: 'working', to: 'failed', seam: 'orphan_sweep', ref: 'run-done' });
+    // untouched: within grace, live parent, resumable parent, fresh parent-less, already terminal
+    expect(task((r) => r.childRef === 'bg4-oo').state).toBe('working');
+    expect(task((r) => r.childRef === 'bg5-oo').state).toBe('working');
+    expect(task((r) => r.childRef === 'bg6-oo').state).toBe('working');
+    expect(task((r) => r.childRef === 'bg8-oo').state).toBe('working');
+    expect(task((r) => r.childRef === 'bg9-oo').state).toBe('completed');
+    expect(task((r) => r.childRef === 'bgA-oo').state).toBe('working'); // beyond the 30-day scan window
+    expect(metricPhases()).toContain('orphan_sweep');
+  });
+
+  it('orphan sweep: scoped to one session, honours a missing parent run row past the stale bound, and is a no-op when off', async () => {
+    const t0 = Date.now();
+    noteBackgroundWorkerPhase('start', { id: 'bg1-so', role: 'explorer', title: 'scoped a' }, { sessionId: 'lane-a', runId: 'run-a', userId: 'u1' });
+    noteBackgroundWorkerPhase('start', { id: 'bg2-so', role: 'explorer', title: 'scoped b' }, { sessionId: 'lane-b', runId: 'run-b', userId: 'u1' });
+    noteBackgroundWorkerPhase('start', { id: 'bg3-so', role: 'explorer', title: 'deleted parent run' }, { sessionId: 'lane-a', runId: 'run-gone', userId: 'u1' });
+    await flush();
+    tables.runs.push(
+      { id: 'run-a', status: 'completed', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: new Date(t0 - 2 * 3_600_000) },
+      { id: 'run-b', status: 'completed', createdAt: new Date(t0 - 3 * 3_600_000), finishedAt: new Date(t0 - 2 * 3_600_000) },
+      // run-gone: the agent_runs row is missing (pruned) — sweepable only past the stale bound
+    );
+    const scoped = await sweepOrphanedBackgroundWorkerTasks({ parentChatId: 'lane-a' });
+    expect(scoped).toMatchObject({ scanned: 2, swept: 1 }); // bg3-so's run row is missing and the task is fresh — not yet
+    expect(task((r) => r.childRef === 'bg1-so').state).toBe('failed');
+    expect(task((r) => r.childRef === 'bg2-so').state).toBe('working'); // lane-b untouched by lane-a's sweep
+    expect(task((r) => r.childRef === 'bg3-so').state).toBe('working');
+    task((r) => r.childRef === 'bg3-so').createdAt = new Date(t0 - 7 * 3_600_000);
+    const aged = await sweepOrphanedBackgroundWorkerTasks({ parentChatId: 'lane-a' });
+    expect(aged.swept).toBe(1);
+    expect(task((r) => r.childRef === 'bg3-so')).toMatchObject({ state: 'failed', reason: 'orphaned_no_parent_run' });
+    // kill switch: off ⇒ nothing sweeps
+    process.env.DELEGATION_TASKS_DISABLED = '1';
+    noteBackgroundWorkerPhase('start', { id: 'bg9-so', role: 'explorer', title: 'off' }, { sessionId: 'lane-c', runId: 'run-c', userId: 'u1' });
+    expect((await sweepOrphanedBackgroundWorkerTasks()).swept).toBe(0);
+    delete process.env.DELEGATION_TASKS_DISABLED;
+    // a custom grace: zero grace sweeps any terminal parent at once
+    noteBackgroundWorkerPhase('start', { id: 'bg4-so', role: 'explorer', title: 'zero grace' }, { sessionId: 'lane-d', runId: 'run-d', userId: 'u1' });
+    await flush();
+    tables.runs.push({ id: 'run-d', status: 'completed', createdAt: new Date(t0 - 60_000), finishedAt: new Date(t0 - 30_000) });
+    expect((await sweepOrphanedBackgroundWorkerTasks({ graceMs: 0 })).swept).toBeGreaterThanOrEqual(1);
+    expect(task((r) => r.childRef === 'bg4-so').state).toBe('failed');
+    expect(BACKGROUND_ORPHAN_GRACE_MS).toBe(60 * 60_000);
   });
 
   it('task card: the hand-off done card completes the session with its artifacts — also after the run outcome closed it', async () => {

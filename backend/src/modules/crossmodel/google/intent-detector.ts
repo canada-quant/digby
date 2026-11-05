@@ -133,7 +133,7 @@ const MONTHS: Record<string, string> = {
 /** Domains never treated as a "participant" filter even when mentioned (the user's own / infra / noise). */
 const IGNORED_PARTICIPANT_DOMAINS = new Set([
   'gmail.com', 'googlemail.com', 'google.com', 'script.google.com',
-  'digby.example.com', 'sunday.market',
+  'digby.ai', 'sunday.market',
 ]);
 
 /**

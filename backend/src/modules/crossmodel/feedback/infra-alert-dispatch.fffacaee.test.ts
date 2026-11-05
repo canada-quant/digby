@@ -31,7 +31,7 @@ import { makeFaithfulFindMany, mockMatchesWhere, mockApplySelect, type MockRow }
 // The incident's verbatim rows (both real titles + description heads).
 const RUN = '39441731823';
 const SHA = '51946acc';
-const REPO = 'canada-quant/digby';
+const REPO = 'example-org/crossmodel';
 const RUN_URL = `https://github.com/${REPO}/actions/runs/${RUN}`;
 const TITLE_A = `Deploy run ${RUN} failed (sha ${SHA}, CI also red) — fix and re-run`;
 const TITLE_B = `Deploy run ${RUN} failed on main head ${SHA} — fix and re-run`;
@@ -91,7 +91,7 @@ const mockPrisma: any = {
   chatCodingState: { findMany: jest.fn(async () => []) },
   // TICKET-LANE ARCHIVE GAPS review (2026-10-21): archiveTicketLane's owner-armed
   // schedule guard reads this (fail-closed without it) — no owner rows here.
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   contextStoreEntry: { findUnique: jest.fn(async () => null) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));

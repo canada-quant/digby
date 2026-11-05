@@ -12,8 +12,8 @@ internal static class HostPolicy
 {
     public static bool KeepInApp(string host)
     {
-        return host.Equals("digby.example.com", StringComparison.OrdinalIgnoreCase)
-            || host.EndsWith(".digby.example.com", StringComparison.OrdinalIgnoreCase)
+        return host.Equals("digby.ai", StringComparison.OrdinalIgnoreCase)
+            || host.EndsWith(".digby.ai", StringComparison.OrdinalIgnoreCase)
             || host.Contains("google.com", StringComparison.OrdinalIgnoreCase)             // sign-in / Workspace OAuth
             || host.Contains("github.com", StringComparison.OrdinalIgnoreCase)             // sign-in OAuth
             || host.Contains("githubusercontent.com", StringComparison.OrdinalIgnoreCase)

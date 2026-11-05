@@ -74,7 +74,6 @@ jest.mock('./self-merge.service', () => ({
   defaultGithubApi: () => mockGithubApi,
   // WAIT-ONCE (agent-decisions prerequisite 4, 2026-09-27) — inert here: the verify_chain
   // failures under test are never timing-class, so the tool bounces exactly as before.
-  selfMergeWaitOnceDisabled: () => false,
   classifyMergeWait: (input: any) => input?.failure?.transient ?? null,
   mergeWaitOnceMs: () => 1,
   repoCiP50Ms: async () => null,

@@ -116,7 +116,7 @@ export class ApiError extends Error {
 }
 
 export interface DigbyApiOptions {
-  /** API origin, e.g. `https://digby.example.com` or `http://localhost:4000`. No trailing slash. */
+  /** API origin, e.g. `https://digby.ai` or `http://localhost:4000`. No trailing slash. */
   baseUrl: string;
   /** Injectable transport. Defaults to global `fetch`. */
   fetch?: FetchLike;

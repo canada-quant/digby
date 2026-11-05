@@ -48,8 +48,8 @@ export const IMAGE_PART_CHAR_WEIGHT = 1_500; // fixed weight of one image_url pa
 // accounting, tail-weighted summarizer input carrying every tool-call name,
 // strict (strippable) recap marker only when ≥80% of the middle really stored,
 // and an earlier trigger (70% of budget) compacting the oldest THIRD instead
-// of one 100% cliff. Kill switch: COMPACTION_V2_DISABLED=1 restores the old
-// behavior byte-for-byte (compactMessagesV1 below is the untouched v1 body).
+// of one 100% cliff. v2 is the only body now — the pre-P6 body was deleted with
+// its release flag (RSW-1 cluster 41).
 export const COMPACTION_TRIGGER_RATIO = 0.7;        // v2: compact at 70% of the context budget
 export const COMPACT_OLDEST_FRACTION = 1 / 3;       // v2 'early' mode compacts the oldest third (by chars)
 export const MAX_OFFLOAD_ITEMS_PER_COMPACTION = 40; // bounded offload volume per compaction
@@ -124,20 +124,13 @@ export function compactStepDecision(state: { nonConvergingCuts: number }): Compa
 export function compactionOffloadStopped(): boolean { return process.env.COMPACTION_OFFLOAD_STOP_DISABLED !== '1'; }
 export const OFFLOAD_STOPPED_RECAP_LINE = '\nThe original turns are not stored anywhere searchable — if you need their exact output, re-run the call (re-read the file, re-run the command).';
 
-/** Kill switch (read per call so a env flip needs no restart): v2 off → v1 everywhere. */
-export function compactionV2Disabled(): boolean {
-  const v = process.env.COMPACTION_V2_DISABLED || '';
-  return v === '1' || /^true$/i.test(v);
-}
-
 /**
  * The transcript size at which the agent loop should compact. v2 triggers at
  * 70% of the budget (compacting the oldest third each time — several small
- * cheap compactions instead of one 100% cliff that summarizes everything);
- * the kill switch restores the old exact-budget cliff.
+ * cheap compactions instead of one 100% cliff that summarizes everything).
  */
 export function compactionTriggerChars(contextBudget: number): number {
-  return compactionV2Disabled() ? contextBudget : Math.floor(contextBudget * COMPACTION_TRIGGER_RATIO);
+  return Math.floor(contextBudget * COMPACTION_TRIGGER_RATIO);
 }
 
 export interface LoopMessage {
@@ -498,124 +491,16 @@ function contentToText(content: any): string {
  * ≤ MAX_OFFLOAD_ITEMS_PER_COMPACTION items) and the recap says HONESTLY how
  * much of it is retrievable via search_memory.
  *
- * `opts.mode` (v2 only): 'early' (default — the 70%-trigger path) compacts
+ * `opts.mode`: 'early' (default — the 70%-trigger path) compacts
  * the oldest THIRD of the transcript by chars; 'full' (the 400-recovery
  * paths) compacts everything down to the recent window, like v1 always did.
- * With COMPACTION_V2_DISABLED=1 both modes fall back to the v1 body.
  */
 export async function compactMessages(
   messages: LoopMessage[],
   sessionId?: string,
   opts?: { mode?: 'early' | 'full' },
 ): Promise<LoopMessage[] | null> {
-  if (compactionV2Disabled()) return compactMessagesV1(messages, sessionId);
   return compactMessagesV2(messages, sessionId, opts?.mode ?? 'early');
-}
-
-/** The pre-P6 compaction body, kept byte-identical behind the kill switch. */
-async function compactMessagesV1(messages: LoopMessage[], sessionId?: string): Promise<LoopMessage[] | null> {
-  if (messages.length <= KEEP_RECENT_MSGS + 3) return null;
-  const head = messages[0]; // system prompt
-  const compactionStartedAt = Date.now();
-  let summarizerError: string | undefined;
-  // PIN the first user message (the actual question) through compaction.
-  // Summarizing it into the recap left [system, assistant, tool...] with NO
-  // user turn — ZAI rejects that with 1214 'messages parameter is illegal'
-  // (the root cause of EVERY mystery 400 across L2/L3, found 2026-07-16 via
-  // payload fingerprinting).
-  const firstUser = messages[1]?.role === 'user' ? messages[1] : null;
-  let cut = messages.length - KEEP_RECENT_MSGS;
-  while (cut < messages.length && messages[cut]?.role === 'tool') cut++;
-  // Strip synthetic harness messages (notices/injections and PRIOR RECAPS)
-  // from the compaction input — see isSyntheticHarnessMessage (ticket
-  // 7852814c). The recent window is untouched: a notice there is live context.
-  const middleAll = messages.slice(firstUser ? 2 : 1, cut);
-  // Remember whether any recap being stripped (or carried) pointed at session
-  // memory — the NEW recap must keep that pointer alive or the earliest phases'
-  // retrievability dies with the stripped recap (owner 2026-09-04).
-  const priorOffloaded = middleAll.some(m => {
-    if (typeof m.content !== 'string') return false;
-    const t = m.content.trimStart();
-    return RECAP_PREFIXES.some(p => t.startsWith(p))
-      && (t.includes(RECAP_OFFLOAD_MARKER) || t.includes(RECAP_PRIOR_OFFLOAD_MARKER));
-  });
-  const middle = middleAll.filter(m => !isSyntheticHarnessMessage(m.content));
-  const recent = messages.slice(cut);
-  if (middle.length < 2) return null;
-
-  const middleText = middle.map(m => {
-    if (m.role === 'tool') return `[tool result] ${String(m.content ?? '').slice(0, 400)}`;
-    if (m.tool_calls?.length) return `[assistant → ${m.tool_calls.map(t => t.function?.name).join(', ')}] ${String(m.content ?? '').slice(0, 300)}`;
-    return `${m.role}: ${String(m.content ?? '').slice(0, 500)}`;
-  }).join('\n').slice(0, 14000);
-
-  // Embed the compacted-away turns at FULL fidelity (generous per-message slices;
-  // storeFindings chunks + caps internally) so search_memory can recover the
-  // verbatim detail the recap necessarily drops. Best-effort — a store failure
-  // just means the recap stays lossy, exactly as before.
-  let storedToMemory = false;
-  if (sessionId) {
-    try {
-      const fullText = middle.map(m => {
-        // Ticket f03b739c: same write-boundary gate as the live offload sites.
-        if (m.role === 'tool') {
-          const text = String(m.content ?? '');
-          const gate = sanitizeForMemoryEmbed(text);
-          return `[tool result] ${(gate.action === 'skip' ? failedSearchCompactRecord(text) : gate.content).slice(0, 3000)}`;
-        }
-        if (m.tool_calls?.length) return `[assistant → ${m.tool_calls.map(t => `${t.function?.name}(${String((t.function as any)?.arguments ?? '').slice(0, 400)})`).join(', ')}] ${String(m.content ?? '').slice(0, 2000)}`;
-        return `${m.role}: ${String(m.content ?? '').slice(0, 2000)}`;
-      }).join('\n\n');
-      const n = await storeFindings(sessionId, 'compaction', [{ ref: 'compacted earlier-run transcript', content: fullText }]);
-      storedToMemory = n > 0;
-    } catch { /* recap stays lossy */ }
-  }
-
-  let summary = '';
-  try {
-    summary = (await utilityChat([{ role: 'user', content:
-      `Summarize the earlier part of an in-progress coding session into a concise progress recap (<=250 words). Cover: what was explored, files created/edited, commands run and their outcomes, key decisions, and any open threads. Keep concrete file paths and names.\n\n${middleText}` }],
-      { maxTokens: 500, temperature: 0.2, timeout: 30000, retryNotFound: true })).trim();
-  } catch (err: any) {
-    // 2026-09-22 audit: this was a bare catch — a failed summarizer degraded the
-    // recap to "[Earlier steps … omitted]" with no trace anywhere.
-    summarizerError = String(err?.message ?? err).slice(0, 160);
-    logger.warn(`compaction: recap summarizer failed for ${sessionId ?? 'anonymous'} — recap degrades to the omitted-steps line: ${summarizerError}`);
-  }
-
-  // Distill-on-write: store the normalized recap as its OWN embedded record
-  // (title = first line) alongside the raw transcript — the distilled form is
-  // what semantic search actually matches well (Cerebras finding). Fire-and-forget.
-  if (sessionId && summary) {
-    void storeFindings(sessionId, 'compaction', [{
-      ref: 'compacted recap (distilled)',
-      title: summary.split('\n')[0].slice(0, 200),
-      content: summary,
-    }]).catch(() => {});
-  }
-
-  // Guide composition: the strict 'embedded to session memory' phrasing marks
-  // THIS recap's turns as offloaded (→ strippable by the next compaction); the
-  // weaker 'is in session memory' phrasing keeps the pointer to EARLIER phases
-  // alive without marking this recap's own turns as recoverable.
-  const retrieveHow = 'call search_memory with specific keywords (file paths, function names, command output, error text) to retrieve any of it verbatim instead of re-doing the work.';
-  const retrieveGuide = storedToMemory
-    ? `\nThe FULL detail of these turns${priorOffloaded ? ' — and of earlier compacted phases of this run —' : ''} was embedded to session memory: ${retrieveHow}`
-    : priorOffloaded
-      ? `\nDetail from earlier compacted phases of this run is in session memory: ${retrieveHow}`
-      : '';
-  const recap: LoopMessage = { role: 'system', content: summary
-    ? `[EARLIER IN THIS RUN — summarized to fit the context window]\n${summary}${retrieveGuide}`
-    : `[Earlier steps in this run were omitted to fit the context window.]${retrieveGuide}` };
-  try {
-    recordLoopMetric({
-      kind: LOOP_METRIC_KINDS.CONTEXT_COMPACTION, sessionId, value: Date.now() - compactionStartedAt, unit: 'ms',
-      meta: { mode: 'v1', cutMessages: middleAll.length, keptMessages: recent.length, storedToMemory, priorOffloaded, summarizerOk: !!summary, ...(summarizerError ? { summarizerError } : {}) },
-    });
-  } catch { /* telemetry never breaks compaction */ }
-  // Also clip any oversized message still kept verbatim in the recent window — a
-  // couple of giant tool results there can keep us over the window on their own.
-  return clipOversizedMessages([head, ...(firstUser ? [firstUser] : []), recap, ...recent]);
 }
 
 /**

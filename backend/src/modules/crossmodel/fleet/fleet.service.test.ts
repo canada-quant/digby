@@ -17,7 +17,7 @@ const mockPrisma: any = {
   crossModelProject: { findMany: jest.fn() },
   crossModelMessage: { findMany: jest.fn(), findUnique: jest.fn() },
   chatCodingState: { findUnique: jest.fn(), findMany: jest.fn() },
-  codingSchedule: { findMany: jest.fn(), count: jest.fn() },
+  chatSchedule: { findMany: jest.fn(), count: jest.fn() },
   pendingChatMessage: { count: jest.fn() },
   chatFile: { findMany: jest.fn() }, // chip → ChatFile fileId injection (c6e8edda)
   activity: { findMany: jest.fn(), create: jest.fn(async () => ({})) },
@@ -154,8 +154,8 @@ beforeEach(() => {
   mockPrisma.crossModelMessage.findMany.mockResolvedValue([]);
   mockPrisma.chatCodingState.findUnique.mockResolvedValue(null);
   mockPrisma.chatCodingState.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.pendingChatMessage.count.mockResolvedValue(0);
   mockPrisma.chatFile.findMany.mockResolvedValue([]); // chip-less threads cost zero matches
   mockPrisma.activity.findMany.mockResolvedValue([]);
@@ -277,13 +277,13 @@ describe('getSidebarHiddenFleetArtifacts', () => {
 
   // ── Framework surface (ticket 9471d338): the platform's own project never ────
   // renders in the sidebar. Identity = repoUrl → the instance's own repo slug
-  // (production: canada-quant/digby) — the same resolution the backend
+  // (production: example-org/crossmodel) — the same resolution the backend
   // guards use. Hides EVEN when it holds no chats (fresh instance), and its
   // lanes hide with it wherever they are filed.
   it('hides the framework project (repoUrl = own repo) even when it holds NO chats', async () => {
     mockPrisma.crossModelChat.findMany.mockResolvedValue([]);
     mockPrisma.crossModelProject.findMany.mockResolvedValue([
-      { id: 'p-fw', name: 'crossmodel', repoUrl: 'https://github.com/canada-quant/digby' },
+      { id: 'p-fw', name: 'crossmodel', repoUrl: 'https://github.com/example-org/crossmodel' },
       P('p-user', 'Schooltime'),
     ]);
     const r = await fleet.getSidebarHiddenFleetArtifacts(OWNER);
@@ -298,7 +298,7 @@ describe('getSidebarHiddenFleetArtifacts', () => {
       C('c1', 'My research', null),
     ]);
     mockPrisma.crossModelProject.findMany.mockResolvedValue([
-      { id: 'p-fw', name: 'crossmodel', repoUrl: 'canada-quant/digby' },
+      { id: 'p-fw', name: 'crossmodel', repoUrl: 'example-org/crossmodel' },
     ]);
     const r = await fleet.getSidebarHiddenFleetArtifacts(OWNER);
     expect(r.chatIds).toEqual(['fw-op', 'fw-lane']);
@@ -372,10 +372,10 @@ describe('getFleetOverview', () => {
     mockPrisma.chatCodingState.findMany.mockResolvedValue([
       { id: 'c2', title: 'Other', status: 'running', branch: 'digby/session-c2', model: 'glm-5.2', updatedAt: D('11:00:00') },
     ]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       { id: 'sch1', sessionId: SUP, prompt: 'x'.repeat(150), kind: 'recurring', intervalSec: 900, nextRunAt: D('12:00:00'), enabled: true, lastStatus: 'started', runsCount: 3 },
     ]);
-    mockPrisma.codingSchedule.count.mockResolvedValue(1);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1);
     mockPrisma.pendingChatMessage.count.mockResolvedValue(2);
     startLiveRun('c2'); // coding runs key on the bare chat id
     try {
@@ -428,13 +428,13 @@ describe('getFleetOverview', () => {
 
   it('counts enabledSchedules with a REAL count query, not the take:100-capped list', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       { id: 'sch1', sessionId: SUP, prompt: 'p', kind: 'recurring', intervalSec: 900, nextRunAt: D('12:00:00'), enabled: true, lastStatus: null, runsCount: 0 },
     ]);
     // An automation-heavy user: 120 enabled schedules, only 1 in the capped list.
-    mockPrisma.codingSchedule.count.mockResolvedValue(120);
+    mockPrisma.chatSchedule.count.mockResolvedValue(120);
     const r = await fleet.getFleetOverview(OWNER);
-    expect(mockPrisma.codingSchedule.count).toHaveBeenCalledWith({ where: { userId: OWNER, enabled: true } });
+    expect(mockPrisma.chatSchedule.count).toHaveBeenCalledWith({ where: { userId: OWNER, enabled: true } });
     expect(r.counts.enabledSchedules).toBe(120);
     expect(r.schedules).toHaveLength(1); // the table stays the 100-soonest page
   });
@@ -571,7 +571,7 @@ describe('getSupervisorThread', () => {
 
   it('filters machine noise (marked + retro-matched) and keeps the interactive exchange', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ prompt: 'wake up and check' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ prompt: 'wake up and check' }]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue(NEWEST_FIRST);
     const r = await fleet.getSupervisorThread(OWNER, { limit: 50 });
     expect(r.chatId).toBe(SUP);
@@ -584,7 +584,7 @@ describe('getSupervisorThread', () => {
 
   it('includeMachine: true returns the FULL transcript — machine turns visible with their origin stamps (feedback 18061f31)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ prompt: 'wake up and check' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ prompt: 'wake up and check' }]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue(NEWEST_FIRST);
     const r = await fleet.getSupervisorThread(OWNER, { limit: 50, includeMachine: true } as any);
     // The pane bug: machine-triggered wake prompts + replies vanished the moment
@@ -599,7 +599,7 @@ describe('getSupervisorThread', () => {
 
   it('reports the live queue depth from main\'s busy-chat queue', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([M('m1', 'user', 'hi', D('08:00:00'))]);
     mockCountPending.mockResolvedValue(2);
     const r = await fleet.getSupervisorThread(OWNER, { limit: 50 });
@@ -651,7 +651,7 @@ describe('getSupervisorThread', () => {
 
   it('an assistant row with no preceding user row in the window stays interactive', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([M('m9', 'assistant', 'orphan reply', D('12:00:00'))]);
     const r = await fleet.getSupervisorThread(OWNER, { limit: 50 });
     expect(r.messages.map((m: any) => m.id)).toEqual(['m9']);
@@ -659,7 +659,7 @@ describe('getSupervisorThread', () => {
 
   it('pages backward via the before cursor (message id → tie-safe (createdAt, id) bound)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findUnique.mockResolvedValue({ chatId: SUP, createdAt: D('09:00:00') });
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([M('m1', 'user', 'old', D('08:00:00'))]);
     const r = await fleet.getSupervisorThread(OWNER, { before: 'm3', limit: 50 });
@@ -681,7 +681,7 @@ describe('getSupervisorThread', () => {
 
   it('scans PAST an all-noise newest window to reach the interactive rows behind it', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     // limit 2 → each raw fetch takes 3 (take+1 probe). Five newest raw pages
     // are 100% schedule noise (hasMore stays true through the cheap 5-page
     // budget); the 6th page holds the last real exchange. Before the
@@ -708,7 +708,7 @@ describe('getSupervisorThread', () => {
 
   it('all-noise beyond the hard scan cap → honest empty page with a usable nextBefore; the follow-up reaches the interactive rows', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     // 40 straight pages (the hard cap) of schedule noise, 3 rows each (limit 2
     // + 1 probe row → hasMore stays true through the whole scan).
     const noiseAt = (p: number, sec: number) => new Date(D('15:00:00').getTime() - p * 60_000 + sec * 1000);
@@ -757,7 +757,7 @@ describe('getSupervisorThread', () => {
 
   it('F3: the page carries queuedUserCount (the USER-typed subset) alongside queuedCount — the honest Status source', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([M('m1', 'user', 'hello', D('10:00:00'))]);
     mockCountPending.mockResolvedValue(3);      // 2 machine relays + 1 owner send…
     mockCountPendingUser.mockResolvedValue(1);  // …of which ONE is the owner's
@@ -769,7 +769,7 @@ describe('getSupervisorThread', () => {
 
   it('ticket 56d6b204: a hook-origin user row carrying metadata.childResult flattens childResult:true on its messages item (and a plain hook row without it does not)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     // A delivered child→parent result wake next to an ordinary hook wake —
     // the client's grouping probe reads `childResult` off the group's ANCHOR
     // row to mount the machine turn EXPANDED (the 2026-09-25 incident,
@@ -792,7 +792,7 @@ describe('getSupervisorThread', () => {
 
   it('fixer 2026-09-27 (upward-chatter-1): metadata.ownerAskReply flattens ownerAskReply:true on the owner-ask wake anchor and its answering reply (an ordinary hook row does not)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
       M('m3', 'user', 'Fleet event from chat "X" (run_completed): routine completion', D('12:00:00'), { origin: 'hook' }),
       M('m2', 'assistant', 'We are at 5.08 tok/s of record (msg 871d203b).', D('11:00:00'), { origin: 'hook', engine: 'agent', ownerAskReply: true }),
@@ -827,7 +827,7 @@ describe('getLatestSupervisorWakeNote (dashboard Fleet-summary card, platform ta
 
   it('returns the NEWEST machine assistant note from the durable transcript (single source of truth)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue(P1);
     const r = await fleet.getLatestSupervisorWakeNote(OWNER);
     expect(r.chatId).toBe(SUP);
@@ -838,7 +838,7 @@ describe('getLatestSupervisorWakeNote (dashboard Fleet-summary card, platform ta
 
   it('skips empty notes and interactive rows — falls through to the older machine note', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     // Only a legacy (origin-inherited) note exists: the wake envelope n1
     // PRECEDES the note n2 chronologically, so n2 inherits its noise.
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
@@ -852,7 +852,7 @@ describe('getLatestSupervisorWakeNote (dashboard Fleet-summary card, platform ta
 
   it('null note when the transcript has no machine notes; null chatId when no supervisor exists', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([M('m3', 'user', 'what is up', D('09:00:00'))]);
     const r = await fleet.getLatestSupervisorWakeNote(OWNER);
     expect(r.chatId).toBe(SUP);
@@ -866,7 +866,7 @@ describe('getLatestSupervisorWakeNote (dashboard Fleet-summary card, platform ta
 
   it('skips a one-line no-op wake note and falls back to the last SUBSTANTIVE note (feedback f3256715)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     // Newest note = the owner-directed no-op one-liner; the older note is the
     // real summary the card must surface instead.
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
@@ -881,7 +881,7 @@ describe('getLatestSupervisorWakeNote (dashboard Fleet-summary card, platform ta
 
   it('a multi-line note whose headline MENTIONS no-ops is substantive — no false positive (f3256715)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
       M('k5', 'assistant', '**Fleet wake — 2 lane completions, both no-ops**\n\nDetails.', D('12:00:30'), { origin: 'schedule' }),
     ]);
@@ -891,7 +891,7 @@ describe('getLatestSupervisorWakeNote (dashboard Fleet-summary card, platform ta
 
   it('degenerate all-no-op window → the NEWEST no-op note still renders (never an empty card)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
       M('k8', 'assistant', 'WAKE: no-op (poller tick)', D('12:00:30'), { origin: 'schedule' }),
       M('k7', 'assistant', 'wake: NO OP — nothing moved', D('11:00:30'), { origin: 'schedule' }),
@@ -1271,7 +1271,7 @@ describe('getQueuedCount', () => {
 describe('getFleetLog', () => {
   it('merges transcript + agent Activity rows newest-first with kinds/from/to', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ prompt: 'legacy wake' }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ prompt: 'legacy wake' }]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
       M('m4', 'assistant', 'Reply to you.', D('10:30:00')),
       M('m3', 'user', 'agent ping', D('10:20:00'), { origin: 'agent', sourceChatId: 'chat-9' }),
@@ -1299,7 +1299,7 @@ describe('getFleetLog', () => {
 
   it('resolves from/to labels through the chat-title map (raw ids only as fallback)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelChat.findMany.mockResolvedValue([
       { id: 'chat-7', title: 'Research bot' },
       { id: 'chat-2', title: 'Ops chat' },
@@ -1319,7 +1319,7 @@ describe('getFleetLog', () => {
 
   it('dedupes an agent→supervisor send: the transcript row is canonical, the Activity twin is dropped', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
       M('m3', 'user', 'agent ping', D('10:20:00'), { origin: 'agent', sourceChatId: 'chat-9' }),
     ]);
@@ -1334,7 +1334,7 @@ describe('getFleetLog', () => {
 
   it('hasMore when either source fills its page; nextBefore is the last kept (at|id) cursor', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     // limit 2 → transcript fetch takes 3 (hasMore true), activities take 2 (full page).
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
       M('m3', 'user', 'c', D('10:03:00')), M('m2', 'user', 'b', D('10:02:00')), M('m1', 'user', 'a', D('10:01:00')),
@@ -1363,7 +1363,7 @@ describe('getFleetLog', () => {
 
   it('applies a legacy plain-ISO before cursor to BOTH sources (strict lt, no tiebreak)', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     await fleet.getFleetLog(OWNER, { before: '2026-08-10T10:00:00.000Z', limit: 50 });
     const bound = new Date('2026-08-10T10:00:00.000Z');
     expect(mockPrisma.crossModelMessage.findMany).toHaveBeenCalledWith(expect.objectContaining({
@@ -1376,7 +1376,7 @@ describe('getFleetLog', () => {
 
   it('applies a compound (at|id) cursor to BOTH sources with the id tiebreak', async () => {
     mockSupervisorProvisioned();
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     await fleet.getFleetLog(OWNER, { before: '2026-08-10T10:00:00.000Z|row-5', limit: 50 });
     const bound = new Date('2026-08-10T10:00:00.000Z');
     const orBound = [{ createdAt: { lt: bound } }, { createdAt: bound, id: { lt: 'row-5' } }];
@@ -1792,9 +1792,9 @@ const SCH = (id: string, sessionId: string, over: any = {}) => ({
 
 describe('getFleetSchedules', () => {
   it('queries owner-scoped, enabled-first then nextRunAt-asc, capped at 200', async () => {
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     await fleet.getFleetSchedules(OWNER);
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith({
       where: { userId: OWNER },
       orderBy: [{ enabled: 'desc' }, { nextRunAt: 'asc' }],
       take: 200,
@@ -1802,7 +1802,7 @@ describe('getFleetSchedules', () => {
   });
 
   it('joins chat titles via ONE batched lookup over the DISTINCT session ids', async () => {
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       SCH('s1', 'c1'),
       SCH('s2', 'c2'),
       SCH('s3', 'c1'), // second schedule on the same chat — distinct() before the join
@@ -1825,7 +1825,7 @@ describe('getFleetSchedules', () => {
 
   it('carries the lifecycle fields + a 140-char prompt snippet', async () => {
     const long = 'x'.repeat(200);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       SCH('s1', 'c-gone', { prompt: long, kind: 'once', intervalSec: null, maxRuns: 1, lastStatus: 'error:boom' }),
     ]);
     mockPrisma.crossModelChat.findMany.mockResolvedValue([]); // chat deleted — row lingers until GC
@@ -1844,7 +1844,7 @@ describe('getFleetSchedules', () => {
   });
 
   it('empty fleet: no chat-title lookup at all', async () => {
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     const r = await fleet.getFleetSchedules(OWNER);
     expect(r.schedules).toEqual([]);
     expect(mockPrisma.crossModelChat.findMany).not.toHaveBeenCalled();
@@ -1865,5 +1865,76 @@ describe('isVerifierStruckNote (dashboard summary picker)', () => {
   it('never flags clean sweeps or no-ops', () => {
     expect(isVerifierStruckNote('**Fleet sweep — all lanes idle, no owner action.**')).toBe(false);
     expect(isVerifierStruckNote('no-op')).toBe(false);
+  });
+});
+
+/**
+ * ============================================================================
+ * DETECTOR-RECALL REPLAY — ticket 739e8191 (child-session relay visibility)
+ * ============================================================================
+ * classifyThreadRows is a RECALL filter (it decides what an owner never sees),
+ * so these cases re-assert the PRIOR true positives still fire while the new
+ * lineage exemption lets a SUB-SESSION's report reach the owner. Owner report
+ * (chat 99e63f86, msg be494d38): "you dont see to communicate with the
+ * user/human after you get a message from a sub session ie...you should then
+ * relay to me whatever message was sent back from the subsession … ie the agent
+ * has finished the work and everything is done". The parent DID relay — the
+ * relay row (origin 'agent') and its reply were classified noise.
+ */
+describe('getSupervisorThread — child-session relay exemption (ticket 739e8191)', () => {
+  const CHILD = 'child-lane-9';
+  const SIBLING = 'sibling-lane-3';
+  const relay = (title: string, id: string) =>
+    `[AGENT-SENT MESSAGE — from chat "${title}" (${id}) in project "p", another Digby agent, NOT the owner.]\n` +
+    `The work is finished and everything is done.\n\n[Agent message ${id.slice(0, 8)}]`;
+
+  const ROWS = [
+    M('w1', 'user', 'hourly sweep', D('21:00:00'), { origin: 'schedule' }),
+    M('a1', 'assistant', 'Status: nominal.', D('21:00:20'), { origin: 'schedule' }),
+    // THE RELAY under test: this chat's CHILD reports its finished work.
+    M('r1', 'user', relay('crossmodel lane', CHILD), D('21:54:00'), { origin: 'agent', sourceChatId: CHILD }),
+    M('r2', 'assistant', 'The lane finished — here is what it delivered.', D('21:54:20')),
+    // A relay from a chat that is NOT a child — internal traffic, stays hidden.
+    M('s1', 'user', relay('other lane', SIBLING), D('21:56:00'), { origin: 'agent', sourceChatId: SIBLING }),
+    M('s2', 'assistant', 'Acknowledged.', D('21:56:10')),
+  ];
+
+  it('surfaces the child relay AND its reply to the owner (the delivered result is seen)', async () => {
+    mockSupervisorProvisioned();
+    mockPrisma.crossModelMessage.findMany.mockResolvedValue([...ROWS].reverse());
+    mockPrisma.crossModelChat.findMany.mockResolvedValue([{ id: CHILD }]);
+    const r = await fleet.getSupervisorThread(OWNER, { limit: 50 });
+    expect(r.messages.map((m: any) => m.id)).toEqual(['r1', 'r2']);
+    // The relay is flattened with the marker every view layer already reads.
+    expect((r.messages[0] as any).childResult).toBe(true);
+    const reply = r.messages[1] as any;
+    expect(reply.content).toContain('The lane finished');
+  });
+
+  it('DETECTOR-RECALL REPLAY: with no child lineage the relay and its reply stay hidden (today behaviour)', async () => {
+    mockSupervisorProvisioned();
+    mockPrisma.crossModelMessage.findMany.mockResolvedValue([...ROWS].reverse());
+    mockPrisma.crossModelChat.findMany.mockResolvedValue([]); // no children known
+    const r = await fleet.getSupervisorThread(OWNER, { limit: 50 });
+    expect(r.messages.map((m: any) => m.id)).toEqual([]);
+  });
+
+  it('DETECTOR-RECALL REPLAY: a NON-child [AGENT-SENT MESSAGE] relay is still noise (supervisor fan-out never surfaces)', async () => {
+    mockSupervisorProvisioned();
+    // Only the sibling relays present — the new exemption must not touch them.
+    mockPrisma.crossModelMessage.findMany.mockResolvedValue(
+      [ROWS[4], ROWS[5]].reverse(),
+    );
+    mockPrisma.crossModelChat.findMany.mockResolvedValue([{ id: CHILD }]);
+    const r = await fleet.getSupervisorThread(OWNER, { limit: 50 });
+    expect(r.messages.map((m: any) => m.id)).toEqual([]);
+  });
+
+  it('DETECTOR-RECALL REPLAY: an unarmed machine wake stays noise even when children exist', async () => {
+    mockSupervisorProvisioned();
+    mockPrisma.crossModelMessage.findMany.mockResolvedValue([ROWS[0], ROWS[1]].reverse());
+    mockPrisma.crossModelChat.findMany.mockResolvedValue([{ id: CHILD }]);
+    const r = await fleet.getSupervisorThread(OWNER, { limit: 50 });
+    expect(r.messages.map((m: any) => m.id)).toEqual([]);
   });
 });

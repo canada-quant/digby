@@ -7,8 +7,8 @@ import { probeTelegramWebhook, _resetTelegramWebhookCache } from './telegram-web
 
 jest.mock('../../../utils/logger', () => ({ __esModule: true, default: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 
-const SELFHOST = { DIGBY_INSTANCE: 'selfhost', SELFHOST_PUBLIC_URL: 'https://digby.example.com', TELEGRAM_BOT_TOKEN: 'tok' } as NodeJS.ProcessEnv;
-const PROD = { FRONTEND_URL: 'https://digby.example.com', TELEGRAM_BOT_TOKEN: 'tok' } as NodeJS.ProcessEnv;
+const SELFHOST = { DIGBY_INSTANCE: 'selfhost', SELFHOST_PUBLIC_URL: 'https://digby.cql.ca', TELEGRAM_BOT_TOKEN: 'tok' } as NodeJS.ProcessEnv;
+const PROD = { FRONTEND_URL: 'https://digby.ai', TELEGRAM_BOT_TOKEN: 'tok' } as NodeJS.ProcessEnv;
 
 describe('probeTelegramWebhook', () => {
   const realFetch = (global as any).fetch;
@@ -30,19 +30,19 @@ describe('probeTelegramWebhook', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it('compares the registered url with THIS instance\'s webhook and caches the answer', async () => {
-    fetchMock.mockResolvedValue({ json: async () => ({ ok: true, result: { url: 'https://digby.example.com/api/crossmodel/telegram/webhook' } }) });
-    expect(await probeTelegramWebhook(SELFHOST, 1_000)).toEqual({ registered: true, url: 'https://digby.example.com/api/crossmodel/telegram/webhook' });
+    fetchMock.mockResolvedValue({ json: async () => ({ ok: true, result: { url: 'https://digby.cql.ca/api/crossmodel/telegram/webhook' } }) });
+    expect(await probeTelegramWebhook(SELFHOST, 1_000)).toEqual({ registered: true, url: 'https://digby.cql.ca/api/crossmodel/telegram/webhook' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toBe('https://api.telegram.org/bottok/getWebhookInfo');
-    expect(await probeTelegramWebhook(SELFHOST, 2_000)).toEqual({ registered: true, url: 'https://digby.example.com/api/crossmodel/telegram/webhook' });
+    expect(await probeTelegramWebhook(SELFHOST, 2_000)).toEqual({ registered: true, url: 'https://digby.cql.ca/api/crossmodel/telegram/webhook' });
     expect(fetchMock).toHaveBeenCalledTimes(1); // cached
   });
   it('reports a foreign or empty registration as not registered', async () => {
     fetchMock.mockResolvedValue({ json: async () => ({ ok: true, result: { url: '' } }) });
     expect(await probeTelegramWebhook(SELFHOST, 1_000)).toEqual({ registered: false, url: null });
     _resetTelegramWebhookCache();
-    fetchMock.mockResolvedValue({ json: async () => ({ ok: true, result: { url: 'https://elsewhere.example.org/api/crossmodel/telegram/webhook' } }) });
-    expect(await probeTelegramWebhook(SELFHOST, 1_000)).toEqual({ registered: false, url: 'https://elsewhere.example.org/api/crossmodel/telegram/webhook' });
+    fetchMock.mockResolvedValue({ json: async () => ({ ok: true, result: { url: 'https://digby.ai/api/crossmodel/telegram/webhook' } }) });
+    expect(await probeTelegramWebhook(SELFHOST, 1_000)).toEqual({ registered: false, url: 'https://digby.ai/api/crossmodel/telegram/webhook' });
   });
   it('answers null (not undefined) when Telegram is unreachable, and retries after the short failure cache', async () => {
     fetchMock.mockRejectedValue(new Error('ENOTFOUND'));

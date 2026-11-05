@@ -42,7 +42,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -104,8 +104,8 @@ describe('FO firing 57 — the PRE-DELIVERY strike carries its evidence (claimAu
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([]);
     mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: '62671567-0000-4000-8000-000000000000' });
     mockPrisma.chatCodingState.findFirst.mockResolvedValue(null);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: `${REAL_SCHED_1}-0000-4000-8000-000000000000` });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: `${REAL_SCHED_1}-0000-4000-8000-000000000000` });
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null);
     mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
   });

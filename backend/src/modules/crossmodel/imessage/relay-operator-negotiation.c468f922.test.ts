@@ -980,6 +980,7 @@ describe('D3 — DIGBY_RFB_HOST / DIGBY_RFB_PORT are documented and truthful', (
 
 describe('D3b — the README documents the encodings the code really decodes', () => {
   const README = SRC('windows-agent/README.md');
+  const UNATTENDED = SRC('docs/UNATTENDED_DEVICES.md');
   const VIEWER = SRC('backend/src/modules/crossmodel/imessage/relay-operator-viewer.ts');
 
   it('every advertised encoding is named in the README', () => {
@@ -1011,6 +1012,11 @@ describe('D3b — the README documents the encodings the code really decodes', (
     expect(README).toMatch(/persist across rectangles/i);
   });
 
+  it('docs/UNATTENDED_DEVICES.md names Tight on the backend side', () => {
+    expect(UNATTENDED).toContain('Tight');
+    // It must not still claim the backend decodes only CopyRect+Hextile.
+    expect(UNATTENDED).toMatch(/backend\*\* operator decoder additionally implements[^.]*Tight/s);
+  });
 
   it('the decoder really implements the filters the README claims', () => {
     // The pin above only checks prose. This one checks the SOURCE, so the README

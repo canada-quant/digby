@@ -62,6 +62,9 @@ import {
 import { loadGoalSpend, knownGoalSpendUsd, GOAL_SPEND_WINDOW_DAYS, GOAL_SPEND_MAX_GOALS, type GoalSpendRead } from './goal-spend';
 import { classifyOwnerGatedRows, computeNeedsYouUnion, type OwnerGatedRow, type OwnerGateCardView } from './owner-needs-you';
 import { INLINE_OQ_ID_RE } from './owner-questions';
+// TICKET dca83b85: the ONE answer to "is this project in the Fleet's scope?" —
+// `supervised === false` opts a project out of every FLEET composition surface.
+import { unsupervisedProjectIds } from './supervision-scope';
 
 /** Non-mutating INLINE_OQ_ID_RE test (the shared regex carries lastIndex state). */
 function INLINE_OQ_ID_RE_TEST(s: string): string | null { INLINE_OQ_ID_RE.lastIndex = 0; return INLINE_OQ_ID_RE.exec(s)?.[0] ?? null; }
@@ -1015,13 +1018,37 @@ async function buildBoardDigestBlockCore(opts: { scope: 'project'; projectId: st
       const timing = await computeProjectTiming(opts.projectId, now);
       return timing ? `${block}\n${renderTimingBlock(timing, now)}` : block;
     }
+    // TICKET dca83b85: the fleet roll-up is SUPERVISION-SCOPED. A project the
+    // owner has taken out of fleet supervision (supervised:false) is excluded
+    // here — before composition — even when it still runs its own project
+    // supervisor (projectSupervisorEnabled is an INDEPENDENT setting: that lane
+    // stays in its own project's flow and is never re-listed by the Fleet).
     const projects = (await prisma.crossModelProject.findMany({
-      where: { userId: opts.userId, archivedAt: null, projectSupervisorEnabled: true },
+      where: { userId: opts.userId, archivedAt: null, projectSupervisorEnabled: true, supervised: { not: false } },
       select: { id: true, name: true },
       take: 40,
     })) as Array<{ id: string; name: string }>;
     if (!projects.length) return '';
     const pids = projects.map((p) => p.id);
+    // Same scope for the account-wide owner-question section (requirement 4):
+    // a card raised inside an OPTED-OUT project belongs to that project's own
+    // flow, never to the Fleet's board. OwnerQuestion keys on chatId (the
+    // flagging run's session), so the subtraction is chat-id based; the
+    // project's own supervisor still sees and works its cards.
+    const optedOut = await prisma.crossModelProject.findMany({
+      where: { userId: opts.userId, supervised: false },
+      // `supervised` MUST ride the select: unsupervisedProjectIds() keys on the
+      // flag, so a bare {id} projection makes this set silently empty and the
+      // question filter below a no-op (adversarial review B1).
+      select: { id: true, supervised: true },
+    }).catch(() => [] as Array<{ id: string; supervised?: boolean | null }>);
+    const optedOutIds = unsupervisedProjectIds(optedOut as Array<{ id: string; supervised?: boolean | null }>);
+    const optedOutChatIds = optedOutIds.size
+      ? new Set(((await prisma.crossModelChat.findMany({
+          where: { projectId: { in: [...optedOutIds] } },
+          select: { id: true },
+        }).catch(() => [])) as Array<{ id: string }>).map((c) => c.id))
+      : new Set<string>();
     const [goalGroups, todoGroups, chats] = await Promise.all([
       (prisma.projectGoal as any).groupBy({ by: ['projectId', 'status'], where: { projectId: { in: pids } }, _count: { _all: true } }).catch(() => []),
       (prisma.projectTodo as any).groupBy({ by: ['projectId', 'status'], where: { projectId: { in: pids } }, _count: { _all: true } }).catch(() => []),
@@ -1032,7 +1059,7 @@ async function buildBoardDigestBlockCore(opts: { scope: 'project'; projectId: st
       select: { id: true, status: true, createdAt: true, resolvedAt: true, answeredBy: true, question: true, chatId: true, forChatId: true },
       orderBy: { createdAt: 'desc' },
       take: 40,
-    }).catch(() => [])) as any[];
+    }).catch(() => []) as any[]).filter((q: any) => !optedOutChatIds.has(String(q.chatId ?? '')) && !(q.forChatId && optedOutChatIds.has(String(q.forChatId))));
     const projectOfChat = new Map<string, string>((chats as any[]).map((c) => [c.id, String(c.projectId)]));
     // C2: recent done goals (one bounded read) — assessed per row, counted per project.
     const recentDone = (await (prisma.projectGoal as any).findMany({

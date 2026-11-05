@@ -1075,22 +1075,26 @@ export default function ProjectPage() {
             <Separator />
 
             {/* Fleet-supervision toggle (ticket 3217e287) — same flag as the
-                Management dashboard's Supervised column. */}
-            <div className="flex items-start justify-between gap-4">
-              <div className="min-w-0 space-y-1">
-                <h3 className="font-semibold text-sm">Supervise this folder</h3>
-                <p className="text-xs text-muted-foreground">
-                  When on, the Fleet Supervisor watches this folder — its chats wake the supervisor on
-                  blocked goals and failed runs, and the folder appears in hourly digests and watchdog
-                  alerts. On by default — turn off to keep this folder out of fleet supervision.
-                </p>
+                Management dashboard's Supervised column. TICKET dca83b85: the
+                framework project is permanently fleet-supervised, so no
+                off/disable control renders for it (the API refuses it too). */}
+            {!project?.isFrameworkProject && (
+              <div className="flex items-start justify-between gap-4">
+                <div className="min-w-0 space-y-1">
+                  <h3 className="font-semibold text-sm">Supervise this folder</h3>
+                  <p className="text-xs text-muted-foreground">
+                    When on, the Fleet Supervisor watches this folder — its chats wake the supervisor on
+                    blocked goals and failed runs, and the folder appears in hourly digests and watchdog
+                    alerts. On by default — turn off to keep this folder out of fleet supervision.
+                  </p>
+                </div>
+                <Switch
+                  checked={editSupervised}
+                  onCheckedChange={setEditSupervised}
+                  className="mt-0.5 flex-shrink-0"
+                />
               </div>
-              <Switch
-                checked={editSupervised}
-                onCheckedChange={setEditSupervised}
-                className="mt-0.5 flex-shrink-0"
-              />
-            </div>
+            )}
 
             <Button
               className="w-full bg-send text-send-ink hover:opacity-90 border-0"

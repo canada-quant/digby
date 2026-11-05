@@ -3,7 +3,7 @@
 # Digby iMessage agent — one-line installer for macOS.
 #
 # Usage (the Digby website shows this with your pairing code already filled in):
-#   curl -fsSL https://digby.example.com/install-digby-agent.sh | bash -s -- YOUR-CODE
+#   curl -fsSL https://digby.ai/install-digby-agent.sh | bash -s -- YOUR-CODE
 #
 # It downloads the agent, builds it, pairs it with your Digby account, and sets it
 # up to run in the background 24/7. The only manual step is flipping one macOS
@@ -24,13 +24,13 @@ for arg in "$@"; do
   if [[ "$arg" == "--update-only" ]]; then UPDATE_ONLY=1; else ARGS+=("$arg"); fi
 done
 PAIR_CODE="${ARGS[0]:-${DIGBY_PAIR_CODE:-}}"
-API_URL="${ARGS[1]:-${DIGBY_API_URL:-https://digby.example.com/api}}"
+API_URL="${ARGS[1]:-${DIGBY_API_URL:-https://digby.ai/api}}"
 # Self-host setup hardening (2026-10-20): a self-hosted Digby serves this script,
 # the tarball and the pairing API from ITS OWN origin — the "Your Mac" card emits
 #   curl -fsSL <origin>/install-digby-agent.sh | DIGBY_INSTALL_HOST=<origin> bash -s -- <code> <origin>/api
 # so nothing here falls back to production for a self-host user. Production keeps
-# the digby.example.com defaults.
-TARBALL_URL="${DIGBY_INSTALL_HOST:-https://digby.example.com}/digby-imessage-agent.tar.gz"
+# the digby.ai defaults.
+TARBALL_URL="${DIGBY_INSTALL_HOST:-https://digby.ai}/digby-imessage-agent.tar.gz"
 DEST="$HOME/Library/Application Support/Digby"
 # An update needs no code; install.sh's pair guard sees the existing config and
 # skips pairing. The placeholder only keeps the "no pairing code" early-exit

@@ -35,6 +35,22 @@ export function stripForStorage(text: string): string {
     .replace(/\[CANVAS[^\]]*\][\s\S]*/gi, '')
     .replace(/\[FOLLOWUPS\][\s\S]*?\[\/FOLLOWUPS\]/gi, '')
     .replace(/\[FOLLOWUPS\][\s\S]*$/gi, '')
+    // Ticket 7af42393 — ORPHAN CLOSERS. Every rule above is keyed on the
+    // LITERAL opener, so a closer whose opener the model got wrong survives to
+    // the reader as raw markup. Specimen (chat 9430e12f, msg 6a8f46bc): the
+    // model emitted a misspelled, spaced opener `[ FOLOWUPS ]` (ONE L) and then
+    // a perfectly-spelled `[/FOLLOWUPS]`; no opener rule matched, the closer
+    // rendered verbatim, and the sweep correctly filed it. A `[/FOLLOWUPS]`
+    // token is never prose a reader is meant to see, so delete it. The
+    // misspelled opener is left as ordinary text: it is not a marker any
+    // renderer consumes, and fuzzy-matching openers would risk eating prose.
+    //
+    // FOLLOWUPS ONLY — deliberately. CANVAS has no evidenced specimen, and
+    // stripping its orphan closer would remove the LAST CANVAS shape that
+    // still reaches a reader (closed blocks, `[CANVAS:x]` and any
+    // `[CANVAS…]` tail are all already erased), silently retiring the sweep's
+    // CANVAS detection. That is its own decision, on its own evidence.
+    .replace(/\[\/FOLLOWUPS\]/gi, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
@@ -58,6 +74,12 @@ export function stripLiveTags(text: string): string {
     .replace(/\[FOLLOWUPS\][\s\S]*$/gi, '')
     .replace(/\[SEND_EMAIL[^\]]*\][\s\S]*?\[\/SEND_EMAIL\]/gi, '')
     .replace(/\[SEND_EMAIL[\s\S]*$/gi, '')
+    // Orphan closers (ticket 7af42393; same rule as stripForStorage, and the
+    // same FOLLOWUPS-only scope). A live bubble must not flash `[/FOLLOWUPS]`
+    // either — the specimen streamed its misspelled `[ FOLOWUPS ]` opener, so
+    // every opener-keyed rule above missed and the closer appeared as raw
+    // markup in the answer the user was reading.
+    .replace(/\[\/FOLLOWUPS\]/gi, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

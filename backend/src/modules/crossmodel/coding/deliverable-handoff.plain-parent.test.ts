@@ -3,14 +3,15 @@
  * 2026-09-28). The live acceptance (parent b9ee9c20, 05:27:36Z) failed the
  * result post with `Invalid prisma.codingMessage.create() … Foreign key
  * constraint violated on coding_messages_sessionId_fkey` — the default deps'
- * appendMessage dual-wrote the CODING transcript for EVERY target while the
- * dual-write flag was on, and a plain chat has no coding_sessions row.
+ * appendMessage wrote the CODING transcript for EVERY target, and a plain chat
+ * has no coding_sessions row.
  *
  * Pins, against the REAL defaultHandoffDeps().appendMessage (prisma +
  * coding-data.service mocked at the boundary): a plain-chat parent gets the
  * chat message row only (result row posted, the task card flipped to done, NO
- * coding_messages write); a CODING parent keeps the coding transcript +
- * mirror path; the kill switch restores the unconditional dual-write.
+ * coding-path write); a CODING parent routes through appendCodingMessage.
+ * Since MERGE-1 completed (2026-11-04) both paths land in crossmodel_messages —
+ * the routing is now about the coding-path metadata treatment, not the table.
  */
 
 jest.mock('../../../utils/logger', () => ({
@@ -35,7 +36,6 @@ const mockAppendCodingMessage: jest.Mock = jest.fn(async (d: any) => mockCodingM
 const mockTouchChat: jest.Mock = jest.fn(async () => {});
 jest.mock('./coding-data.service', () => ({
   __esModule: true,
-  transcriptDualWriteEnabled: () => process.env.TRANSCRIPT_DUAL_WRITE !== 'off',
   appendCodingMessage: (...a: any[]) => mockAppendCodingMessage(...a),
   touchChat: (...a: any[]) => mockTouchChat(...a),
 }));
@@ -104,7 +104,6 @@ const input = (over: Partial<HandoffInput> = {}): HandoffInput => ({
 beforeEach(() => {
   jest.clearAllMocks();
   codingStateRows.clear();
-  delete process.env.TRANSCRIPT_DUAL_WRITE;
 });
 
 describe('hand-off result post → a PLAIN chat parent (no coding session row)', () => {
@@ -137,7 +136,7 @@ describe('hand-off result post → a PLAIN chat parent (no coding session row)',
     expect(w.metrics.find((m) => m.kind === 'deliverable_handoff')?.meta).toMatchObject({ posted: true, targetChatId: PARENT, files: 1 });
   });
 
-  it('a CODING parent keeps the coding transcript + mirror path (dual-write on)', async () => {
+  it('a CODING parent routes through appendCodingMessage (the coding-transcript path)', async () => {
     codingStateRows.add(CHILD);
     codingStateRows.add(PARENT);
     const w = world();
@@ -146,16 +145,6 @@ describe('hand-off result post → a PLAIN chat parent (no coding session row)',
     expect(mockAppendCodingMessage).toHaveBeenCalledWith(expect.objectContaining({ chatId: PARENT, role: 'assistant' }));
     expect(mockCrossModelMessageCreate).not.toHaveBeenCalled();
     expect(res.resultMessageId).toBe(`cm-${PARENT}`);
-  });
-
-  it('a coding parent with the dual-write OFF takes the chat row (the mirror IS the read side)', async () => {
-    process.env.TRANSCRIPT_DUAL_WRITE = 'off';
-    codingStateRows.add(CHILD);
-    codingStateRows.add(PARENT);
-    const w = world();
-    await runDeliverableHandoff(input(), w.deps);
-    expect(mockAppendCodingMessage).not.toHaveBeenCalled();
-    expect(mockCrossModelMessageCreate).toHaveBeenCalledTimes(1);
   });
 
   it('a probe error routes to the chat row (fail-open toward the write that cannot violate the FK)', async () => {

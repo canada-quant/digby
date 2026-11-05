@@ -347,7 +347,7 @@ describe("fix #2 review follow-up — the probe fires only on the action that SC
     expect(probeKeys()).toEqual(["space+cmd", "escape", "space+cmd", "escape"]);
     expect(r.harness).toMatchObject({ probesRun: 2, probesPassed: 0, inputProven: false, noChangeStrikes: 3 });
     expect(r.finalResponse).toContain("Computer use stopped: 3 consecutive input actions");
-    expect(r.finalResponse).toContain("tried its own positive-control probe (Cmd+Space, then Escape) 2 times but it was inconclusive");
+    expect(r.finalResponse).toContain("tried its own positive-control probe (Cmd+Space, then Cmd+Tab, then Escape) 2 times but it was inconclusive");
     expect(r.finalResponse).not.toContain("ALSO produced a byte-identical frame");
     expect(r.finalResponse).toContain("v0.5.1");
     const stop = progressMessages(input).find((m) => m.includes("stopping with a blocked report"));
@@ -385,14 +385,15 @@ describe("fix #2 review follow-up — the probe fires only on the action that SC
     expect(outs[3].harnessProbe).toContain("POSITIVE CONTROL PASSED");
   });
 
-  it("FAILED probe (Cmd+Space ⇒ identical frame, unchanged frontmost) at strike 2 ⇒ abort with the probe copy, geometry suffix and the 'failed harness positive-control probe' progress line — earlier than the legacy 3", async () => {
+  it("FAILED probe (EVERY leg ⇒ identical frame, unchanged frontmost) at strike 2 ⇒ abort with the probe copy, geometry suffix and the 'failed harness positive-control probe' progress line — earlier than the legacy 3", async () => {
     mockListAgents.mockResolvedValue([agentRow({ agentVersion: "0.5.0" })]);
     const T = { ...RICH_A, frontmostApp: "Finder", displayCount: 2 };
     mockDispatch
       .mockResolvedValueOnce(T) // initial
       .mockResolvedValueOnce(OK).mockResolvedValueOnce(T) // type ⇒ 1
       .mockResolvedValueOnce(OK).mockResolvedValueOnce(T) // type ⇒ 2 ⇒ probe
-      .mockResolvedValueOnce(OK).mockResolvedValueOnce(T) // probe cmd+space ⇒ IDENTICAL, same frontmost ⇒ FAILED
+      .mockResolvedValueOnce(OK).mockResolvedValueOnce(T) // probe leg 1 cmd+space ⇒ IDENTICAL, same frontmost
+      .mockResolvedValueOnce(OK).mockResolvedValueOnce(T) // probe leg 2 cmd+tab ⇒ IDENTICAL too ⇒ FAILED
       .mockResolvedValueOnce(OK).mockResolvedValueOnce(T); // probe escape
     mockVisionChat
       .mockResolvedValueOnce({ functionCalls: [fnCall("type", { text: "a" })], text: "" })
@@ -401,11 +402,11 @@ describe("fix #2 review follow-up — the probe fires only on the action that SC
     const input = baseInput();
     const r = await runComputerAgentSession(input);
     expect(r.steps).toBe(2);
-    expect(probeKeys()).toEqual(["space+cmd", "escape"]);
+    expect(probeKeys()).toEqual(["space+cmd", "tab+cmd", "escape"]);
     expect(r.harness).toMatchObject({ probesRun: 1, probesPassed: 0, inputProven: false, noChangeStrikes: 2, frameGeometry: "1568×980", displayCount: 2 });
     expect(r.finalResponse).toContain("Computer use stopped: 2 consecutive input actions");
     expect(r.finalResponse).toContain("(last attempted: type) (frames 1568×980, 2 displays reported)");
-    expect(r.finalResponse).toContain("The harness then ran its own positive-control probe (Cmd+Space, then Escape) and that ALSO produced a byte-identical frame with an unchanged frontmost app.");
+    expect(r.finalResponse).toContain("The harness then ran its own positive-control probe (Cmd+Space, then Cmd+Tab, then Escape) and EVERY leg produced a byte-identical frame with an unchanged frontmost app.");
     expect(r.finalResponse).toContain("v0.5.0");
     expect(r.finalResponse).toContain("display I am not capturing");
     expect(r.finalResponse).not.toContain("older than");
@@ -416,6 +417,101 @@ describe("fix #2 review follow-up — the probe fires only on the action that SC
     expect(probeEvents[0][1]).toMatchObject({ ok: false, app: "Finder" });
     expect(probeEvents[0][1].preview).toContain("identical frame with an unchanged frontmost app");
     expect(mockWarn.mock.calls.some((c) => String(c[0]).includes("harness probe failed"))).toBe(true);
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // ticket a40f64d9 — a REMAPPED single shortcut is not dead input.
+  //
+  // The reported symptom (lane 375ce2aa on cqlstannembp2): two Cmd+Space
+  // presses produced pixel-identical frames and Shift+Cmd+A moved <0.1%, while
+  // Escape dismissed a screensaver and mouse clicks landed in the SAME run.
+  // The controlled probe then proved typing lands (discord.com/download typed
+  // into Chrome's address bar, 5.3% pixel delta) — so key DELIVERY was fine and
+  // the class was shortcut mapping. But the single-leg positive control graded
+  // an inert-but-DELIVERED Cmd+Space as "input is not landing" and would abort
+  // a healthy session with the WRONG owner-facing remedy (check Accessibility).
+  // The control now runs a second leg before any such verdict.
+  describe("ticket a40f64d9 — multi-leg positive control (a remapped shortcut is NOT dead input)", () => {
+    it("REPLAY a40f64d9: Cmd+Space delivered-but-inert, Cmd+Tab proves input ⇒ PASS + remap note naming the OPEN-tool route, and NO abort", async () => {
+      // Same screen for every frame the model never changes, but Cmd+Tab
+      // switches frontmost Finder → Terminal: delivered input, on a frame shape
+      // that is byte-identical.
+      const F = { ...RICH_A, frontmostApp: "Finder" };
+      const T = { ...RICH_A, frontmostApp: "Terminal" };
+      mockDispatch
+        .mockResolvedValueOnce(F) // initial
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F) // type a ⇒ strike 1
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F) // type b ⇒ strike 2 ⇒ probe
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F) // probe leg 1 cmd+space ⇒ identical, same frontmost (REMAPPED)
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(T) // probe leg 2 cmd+tab ⇒ frontmost changed ⇒ PASS
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F) // probe restore cmd+tab ⇒ back to Finder
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F) // probe escape cleanup
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F) // type c (post-proof)
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F); // type d
+      mockVisionChat
+        .mockResolvedValueOnce({ functionCalls: [fnCall("type", { text: "a" })], text: "" })
+        .mockResolvedValueOnce({ functionCalls: [fnCall("type", { text: "b" })], text: "" })
+        .mockResolvedValueOnce({ functionCalls: [fnCall("type", { text: "c" })], text: "" })
+        .mockResolvedValueOnce({ functionCalls: [fnCall("done", { message: "Typed via a different route." })], text: "" });
+
+      const input = baseInput();
+      const r = await runComputerAgentSession(input);
+
+      // The session is NOT killed and the input-delivery hypothesis is closed.
+      expect(r.finalResponse).toBe("Typed via a different route.");
+      expect(progressMessages(input).some((m) => m.includes("stopping with a blocked report"))).toBe(false);
+      expect(r.harness).toMatchObject({ probesRun: 1, probesPassed: 1, inputProven: true });
+
+      // Both legs ran, then the restore Tab and the Escape cleanup.
+      const keys = mockDispatch.mock.calls.filter((c) => c[1] === "computer_key").map((c) => c[2]);
+      expect(keys).toEqual([
+        { key: "space", modifiers: ["cmd"] }, // leg 1 — inert
+        { key: "tab", modifiers: ["cmd"] }, // leg 2 — proves input
+        { key: "tab", modifiers: ["cmd"] }, // focus restored
+        { key: "escape", modifiers: [] }, // cleanup
+      ]);
+
+      // The verdict rides the outcome AND names the remap + the open-tool route.
+      const proven = fedOutputs().find((o) => o.harnessProbe);
+      expect(proven.harnessProbe).toContain("POSITIVE CONTROL PASSED");
+      expect(proven.harnessProbe).toContain("Cmd+Tab");
+      expect(proven.harnessProbe).toContain("Cmd+Space changed nothing on this Mac");
+      expect(proven.harnessProbe).toContain("use the open tool");
+      expect(proven.harnessProbe).toContain("do not read an inert shortcut as dead input");
+      // …and it must NOT diagnose a permission/input problem.
+      expect(proven.harnessProbe).not.toContain("input-delivery hypothesis is open");
+    });
+
+    it("an INCONCLUSIVE first leg is NOT called remapped — no leg-1 remap claim when its dispatch was refused", async () => {
+      const F = { ...RICH_A, frontmostApp: "Finder" };
+      const T = { ...RICH_A, frontmostApp: "Terminal" };
+      mockDispatch
+        .mockResolvedValueOnce(F) // initial
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F) // type ⇒ 1
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(F) // type ⇒ 2 ⇒ probe
+        .mockResolvedValueOnce({ ok: false, error: "computer_key refused: hotkey unavailable" }) // leg 1 INCONCLUSIVE (no frame) ⇒ probe stops
+        .mockResolvedValueOnce(OK).mockResolvedValueOnce(T); // probe escape cleanup
+      mockVisionChat
+        .mockResolvedValueOnce({ functionCalls: [fnCall("type", { text: "a" })], text: "" })
+        .mockResolvedValueOnce({ functionCalls: [fnCall("type", { text: "b" })], text: "" })
+        .mockResolvedValueOnce({ functionCalls: [fnCall("done", { message: "Stopped cleanly." })], text: "" });
+
+      const input = baseInput();
+      const r = await runComputerAgentSession(input);
+      // Inconclusive ⇒ NO verdict, no abort, streak stands (existing contract).
+      expect(r.finalResponse).toBe("Stopped cleanly.");
+      expect(r.harness).toMatchObject({ probesRun: 1, probesPassed: 0, inputProven: false });
+      // The second leg was never dispatched — an unread leg must not be
+      // followed by more input (Cmd+Tab would switch apps blind).
+      const keys = mockDispatch.mock.calls.filter((c) => c[1] === "computer_key").map((c) => c[2]);
+      expect(keys).toEqual([
+        { key: "space", modifiers: ["cmd"] },
+        { key: "escape", modifiers: [] },
+      ]);
+      const probeEvents = input.sendEvent.mock.calls.filter((c: any[]) => c[0] === "computer-observation" && c[1]?.action === "probe");
+      expect(probeEvents[0][1].preview).toContain("inconclusive");
+      expect(probeEvents[0][1].preview).not.toContain("remapped");
+    });
   });
 });
 

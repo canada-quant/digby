@@ -68,6 +68,7 @@ import {
   BLOCKER_TEXT,
   applyMacPreset,
   revertMacPreset,
+  ensureAdminRights,
   UnattendedRefusal,
   MacUnattendedSnapshot,
 } from './unattended';
@@ -82,10 +83,11 @@ import {
   runMacRemotePlan,
   verifyMacRemoteRevert,
   privilegedRunRefusal,
+  MAC_AGENT_CLI_QUOTED,
   VNC_SETTINGS_FILE,
 } from './remote-access';
 
-const DEFAULT_API_BASE = 'https://digby.example.com/api';
+const DEFAULT_API_BASE = 'https://digby.ai/api';
 
 function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -321,7 +323,7 @@ async function ensurePaired(): Promise<AgentConfig | null> {
 
   const code = await osascriptPrompt(
     'Enter your Digby pairing code.\n\n' +
-    'Get it from digby.example.com → Account → Integrations → iMessage → Connect your Mac.',
+    'Get it from digby.ai → Account → Integrations → iMessage → Connect your Mac.',
   );
   if (!code) return null;
 
@@ -1179,7 +1181,7 @@ async function runLoop(): Promise<void> {
           if (remoteAccessAdvert !== lastRemoteAccessAdvert) {
             lastRemoteAccessAdvert = remoteAccessAdvert;
             if (verdict.blockers.length > 0) {
-              log(`⚠️  remote-access: NOT ready — ${verdict.blockers.join('; ')} (run \`digby-agent remote-access status\`)`);
+              log(`⚠️  remote-access: NOT ready — ${verdict.blockers.join('; ')} (run \`${MAC_AGENT_CLI_QUOTED} remote-access status\`)`);
             } else if (verdict.enabled) {
               log('✅ remote-access: ready (tunnel-scoped, dedicated credential, designated account only)');
             } else {
@@ -1405,7 +1407,7 @@ async function unattendedCli(argv: string[]): Promise<void> {
 
   if (sub === 'enable') {
     if (!config) {
-      console.error('Not paired — run `digby-agent pair` first (the fleet can only see a paired device).');
+      console.error(`Not paired — run \`${MAC_AGENT_CLI_QUOTED} pair\` first (the fleet can only see a paired device).`);
       process.exit(1);
     }
     const loginUser = (argv[1] || user).trim();
@@ -1413,7 +1415,28 @@ async function unattendedCli(argv: string[]): Promise<void> {
     console.log('This LOWERS this Mac\'s security while it is enabled: anyone with physical access to the');
     console.log('unlocked machine can use it, and the account password is kept on disk in /etc/kcpassword');
     console.log('(root-only, obfuscated — loginwindow must read it before any session exists).');
-    console.log('`digby-agent unattended disable` restores every prior setting.');
+    console.log(`\`${MAC_AGENT_CLI_QUOTED} unattended disable\` restores every prior setting.`);
+    // TICKET bcdf5d2f: obtain administrator rights FIRST, before asking for
+    // anything else. REVIEW FINDING (B-3): the account-password prompt used to
+    // run first, so an owner who then cancelled or failed the sudo prompt had
+    // already typed their password for nothing — after being told the order was
+    // the other way round. Escalating first means the one step that can fail on
+    // permissions fails BEFORE anything is typed, and a refusal costs nothing.
+    const admin = await ensureAdminRights(realMacIo);
+    if (!admin.ok) {
+      console.error(`\n✗ Cannot enable on this Mac — ${admin.message}`);
+      process.exit(2);
+    }
+    // Say what the ONE remaining prompt is, before it appears. The old flow was
+    // silent about it — the first sign was an opaque refusal ("run it in a
+    // terminal where sudo is already authorised", which asked the user to know
+    // about `sudo -v`) or a password prompt they did not expect, which is where
+    // a non-technical owner stops and assumes they are being phished.
+    console.log('');
+    console.log('Now your Mac password once more, hidden this time: Digby needs it on this Mac');
+    console.log('so the machine can sign in at startup (/etc/kcpassword). It is never sent to');
+    console.log('Digby, and `unattended disable` removes it.');
+    console.log('');
     // The password prompt: hidden input on the LOCAL tty. Never argv/env.
     const password = await readSecret('macOS account password (input hidden, used once for /etc/kcpassword): ');
     if (!password) {
@@ -1545,7 +1568,7 @@ async function remoteAccessCli(argv: string[]): Promise<void> {
     console.log('    unlock the account);');
     console.log(`  - access limited to "${account}" only (never all users).`);
     console.log('It does NOT let the Digby agent type at the login window on its own.');
-    console.log('`digby-agent remote-access disable` removes all of it, verified.');
+    console.log(`\`${MAC_AGENT_CLI_QUOTED} remote-access disable\` removes all of it, verified.`);
     const vncPassword = await readSecret('New VNC password for remote access (input hidden): ');
     if (!vncPassword) {
       console.error('No password entered — nothing was changed.');
@@ -1623,7 +1646,7 @@ async function remoteAccessCli(argv: string[]): Promise<void> {
     } else {
       console.error('\n⚠️  Revoked, but VERIFICATION FOUND REMAINDERS:');
       for (const r of check.remaining) console.error(`  - ${r}`);
-      console.error('  Re-run `digby-agent remote-access disable`, or remove these by hand.');
+      console.error(`  Re-run \`${MAC_AGENT_CLI_QUOTED} remote-access disable\`, or remove these by hand.`);
       process.exit(2);
     }
     return;

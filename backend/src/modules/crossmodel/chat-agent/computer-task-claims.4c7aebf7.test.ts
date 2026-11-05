@@ -1,6 +1,6 @@
 /**
  * Related to ticket 4c7aebf7 part (c) — part (c) itself (quote the computer_task harness counters inline) is NOT built
- * here and stays open. (2026-10-21, chat e03452f4 — the 'cql-agx-orin64 Supervisor'): the 17:12:19Z machine
+ * here and stays open. (2026-10-21, chat e03452f4 — the 'cql-accelerator Supervisor'): the 17:12:19Z machine
  * note said it drove the owner's Mac via computer_task — "applied the ACL edit … and clicked Save" — while the
  * owner, watching the Mac live, saw zero cursor movement (an owner-active machine run is camera-only: the
  * computer_task result's header said OBSERVE-ONLY). This file pins the deterministic, observe-only check
@@ -40,11 +40,11 @@ const call = (result: string) => [
 
 /** The 17:12:19Z note (the incident shape). */
 const INCIDENT_NOTE = [
-  '**cql-agx-orin64 — 17:25Z**',
+  '**cql-accelerator — 17:25Z**',
   '',
   "Drove the owner's Mac via computer_task: opened the Tailscale admin console → Access controls, applied the ACL edit (tag:agx → port 22 for the orin64 node) and clicked Save — the policy file saved without errors.",
   '',
-  'Verify probe: `tailscale ping cql-agx-orin64` from the gateway is still RED (timeout after 3 tries).',
+  'Verify probe: `tailscale ping cql-accelerator` from the gateway is still RED (timeout after 3 tries).',
 ].join('\n');
 
 beforeEach(() => { delete process.env.COMPUTER_TASK_CLAIM_CHECK_DISABLED; delete process.env.COMPUTER_TASK_CLAIM_ANNOTATE_ENABLED; });
@@ -495,7 +495,7 @@ describe('round 4 — what still counts (screen-input verbs on the device / a UI
   });
 
   it('a host name or "MAC address" is never the device (case-sensitive Mac family)', () => {
-    expect(findScreenInputClaims('Typed the command on home-pauls-mac-mini in the terminal.')).toEqual([expect.objectContaining({ device: false })]);
+    expect(findScreenInputClaims('Typed the command on example-tailnet-peer in the terminal.')).toEqual([expect.objectContaining({ device: false })]);
     expect(findScreenInputClaims('Pasted the MAC address into the text field.')).toEqual([expect.objectContaining({ device: false })]);
   });
 });

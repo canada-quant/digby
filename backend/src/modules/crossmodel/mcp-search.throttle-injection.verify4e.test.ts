@@ -67,6 +67,13 @@ const THROTTLE_TEXT = [
  *  enough to wait out inside a test's own resume budget (D3). */
 const THROTTLE_TEXT_9S = THROTTLE_TEXT.replace('period-ms: 60000', 'period-ms: 9000');
 
+/** WRP-1 D3-R (2026-11-03): web_pipe's OWN budget, restated here as a literal
+ *  so this suite can prove the CANONICAL 60 s shape resumes without importing
+ *  `coding/web-pipe` (which imports this module — a circular require under the
+ *  partial-mock rule). `web-pipe.test.ts` pins the real constant to this shape:
+ *  the pipe must pass ≥ 60_000 + margin, and it passes this exact value. */
+const PIPE_BUDGET_MS = 70_000;
+
 /** A real organic SERP text — what a healthy tool result looks like. */
 const HEALTHY_TEXT = [
   'Organic results for "Polk County 281 arrested human trafficking bust":',

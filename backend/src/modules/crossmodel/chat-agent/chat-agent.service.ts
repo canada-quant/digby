@@ -122,7 +122,7 @@ import { createTurnUsageLedger } from './turn-spend';
 import type { UsageAccumulator } from '../coding/cost';
 // WI-O #4c (2026-09-25): a plain chat's stored lead-model pick (crossmodel_chats.leadModel).
 import { chatLeadOverrideForRun } from './chat-lead-model';
-import { ghostModeDisabled } from './ghost-runtime';
+import { ghostModeDisabled, ghostSingleModelPlan } from './ghost-runtime';
 import { resolveGhostEndpointForRun, type ResolvedGhostEndpoint } from '../model-endpoints/ghost-endpoint.service';
 import { frontLoadRunOutcome } from '../platform/run-outcome-line';
 import { endLiveRun, isRunActive, tryStartLiveRun, cancelRun, setRunEventTap, setRunMeta, bindLiveRun, type BoundLiveRun } from '../coding/live-runs';
@@ -138,7 +138,7 @@ import {
   takeChatRunStopRequest, isChatBusy, LIVE_RUN_HEARTBEAT_MS,
   isChatRunMachineTriggered, requestChatRunStop, clearChatRunStopRequest,
 } from './chat-busy';
-import { peekOldest, deletePending, readPendingOrigin, consumePendingUploads, latestOwnerRowsAfter, buildSupersededSteerNote, enqueueChatMessage } from './message-queue.service';
+import { peekOldest, deletePending, readPendingOrigin, consumePendingUploads, latestOwnerRowsAfter, buildSupersededSteerNote, enqueueChatMessage, createMessagesConsumingPending, consumeDrainedPendingRows, noteDrainAttempt, tripDrainCooldown, isDrainCoolingDown, MAX_DRAIN_ATTEMPTS } from './message-queue.service';
 // Turn continuation + the task-card contract (cohesive-chat wave 2026-09-28).
 import {
   classifyRunEnd, rewriteClosingText, armTurnContinuation, nextContinuationRound, planStepCounts, planUnfinishedCount,
@@ -160,7 +160,7 @@ import {
   type AnswerFirstObserver, type FollowThrough, type OwnerAnswerFirstResolution,
 } from './owner-answer-first';
 import {
-  buildTaskEvent, emitTaskEvent, persistTaskCard, TASK_EVENT_TYPE, buildSessionTaskEvent, spawnedSessionsInParts, sessionTaskCardDisabled,
+  buildTaskEvent, emitTaskEvent, persistTaskCard, TASK_EVENT_TYPE, buildSessionTaskEvent, spawnedSessionsInParts,
   spawnEndTurnNotice, spawnCardStillOwed, type TaskEvent, type SpawnedSession,
 } from './task-events';
 import { getPlan as getChatPlan, type CodingPlan } from '../coding/plan.service';
@@ -173,6 +173,10 @@ import {
   type OwnerTurnRead, type OwnerTurnRow,
 } from '../platform/owner-turn-history';
 import { isOwnerDispatchRun } from '../platform/agent-send-header';
+// Child-session relay lineage at PERSIST time (ticket 327ff5e3 — the residual
+// of 1757b07d): the same leaf the fleet read path uses, so one authority
+// decides "is this agent send my child reporting back?" on both sides.
+import { isChildSessionRelaySend } from '../platform/child-session-relay';
 import { humanTurnProviderExtra, effortProviderExtra, leadEffortArm } from './human-turn-effort';
 import { readMachineCaps } from './machine-caps';
 // N9 (2026-09-25): type-only — the machine-wake effort gate itself is a dynamic import (decision-gate's static graph reaches config/env).
@@ -1185,6 +1189,14 @@ export async function drainChatQueue(chatId: string, userId: string): Promise<bo
     if (await isChatBusy(chatId)) return false; // a run owns the chat — ITS finally drains
     let pending = await peekOldest(chatId);
     if (!pending) return false;
+    // MERGE-1 kill-window fix (2026-11-05): consume-at-persist means a persist
+    // that keeps failing leaves its row queued for redelivery — correct for a
+    // transient fault, but the finished run's own finally would re-drain it
+    // immediately, turning recovery into a tight retry loop. The bound is
+    // enforced at the RUN-START point below (see RUN-START BOUND), not here:
+    // counting a drain ENTRY would also charge the drop paths (superseded /
+    // cancel-class / ack-only), which make real progress by terminating a row
+    // — bounding those would strand a row that should be dropped.
     // Fleet origin + wake-depth stashed at enqueue (message-queue.service): a
     // queued AGENT send must drain MARKED (metadata.origin — otherwise it
     // renders as an interactive human turn in the fleet views) and must carry
@@ -1207,7 +1219,7 @@ export async function drainChatQueue(chatId: string, userId: string): Promise<bo
       const schedId = origin?.kind === 'schedule' ? origin.scheduleId : undefined;
       let drop = false;
       if (schedId) {
-        const sched = await prisma.codingSchedule
+        const sched = await prisma.chatSchedule
           .findUnique({ where: { id: schedId }, select: { lastStatus: true } })
           .catch(() => undefined);
         // 'parked:dormant' (ticket b1d435fd goal-gate) is cancel-class: the
@@ -1534,6 +1546,24 @@ export async function drainChatQueue(chatId: string, userId: string): Promise<bo
         message = '[Sent with attachment(s) while the chat was busy]';
       }
     }
+    // RUN-START BOUND (MERGE-1 kill-window fix, 2026-11-05 rework). The only
+    // cycle this bounds is the no-progress one: a run STARTED, its persist
+    // failed, the row stayed queued, and the finished run's finally re-drains
+    // it. Counting here — not at drain entry — is what keeps the DROP paths
+    // free: a superseded / cancel-class / ack-only row terminates WITHOUT
+    // starting a run, so it never consumes budget and can always be dropped.
+    // Past MAX_DRAIN_ATTEMPTS the row is left QUEUED under a bounded cooldown
+    // (the periodic sweep retries it; nothing is ever dropped).
+    if (isDrainCoolingDown(pending.id)) {
+      logger.warn(`chat-agent: queue row ${pending.id} for ${chatId} is cooling down after exhausting its immediate-delivery budget — left queued for the next sweep`, { source: 'chat-agent' });
+      return false;
+    }
+    const deliverAttempts = await noteDrainAttempt(pending.id);
+    if (deliverAttempts > MAX_DRAIN_ATTEMPTS) {
+      await tripDrainCooldown(pending.id);
+      logger.warn(`chat-agent: queue row ${pending.id} for ${chatId} exceeded ${MAX_DRAIN_ATTEMPTS} immediate deliveries — cooling down instead of re-arming, left queued for the next sweep`, { source: 'chat-agent' });
+      return false;
+    }
     const key = await startDetachedChatRun({
       userId,
       chatId,
@@ -1581,9 +1611,18 @@ export async function drainChatQueue(chatId: string, userId: string): Promise<bo
       ...(pending.userId ? { authorUserId: pending.userId } : {}),
       // N6: the drain_triage shadow stash rides to this run's finalize label.
       ...(drainStash ? { decision: drainStash } : {}),
+      // MERGE-1 cutover kill-window fix (2026-11-05): the queued rows this turn
+      // CARRIES ride to the run, which consumes them in the same transaction as
+      // its transcript row. Never deleted here — see the block below.
+      drainedPendingIds: batchRows.map((r) => r.id),
     });
     if (!key) {
       // lost the start race — the winner's finally retries this row (and re-asks); close this ask unlabelled so it still pairs.
+      // NOTE (2026-11-05): a lost start race deliberately KEEPS its attempt.
+      // Refunding it was tried and reverted — a refund makes the bound
+      // unreachable (charge 1, refund, charge 1 …), which reproduces the very
+      // hot no-progress retry this bound exists to stop. Charging a rare lost
+      // race one slot is the safe side of that trade.
       if (turnNoopStash) { const tn = await import('../platform/supervisor-turn-noop').catch(() => null); tn?.closeUnstartedTurnNoop(turnNoopStash, chatId, 'lost start race'); }
       return false;
     }
@@ -1599,13 +1638,11 @@ export async function drainChatQueue(chatId: string, userId: string): Promise<bo
         .then((m) => m.stampHookDepth(chatId, maxDepth))
         .catch(() => {});
     }
-    for (const row of batchRows) {
-      await deletePending(row.id).catch(err => {
-        // The run is already going; a surviving row would RE-run this message on
-        // the next drain. Single-writer per chat makes this vanishingly rare.
-        logger.error(`chat-agent: drained row ${row.id} for ${chatId} failed to delete (message may re-run): ${err?.message ?? err}`, { source: 'chat-agent' });
-      });
-    }
+    // MERGE-1 cutover kill-window fix (2026-11-05): the drained rows are NOT
+    // deleted here any more — see `drainedPendingIds` on startDetachedChatRun
+    // above. The run consumes them in the SAME transaction that persists its
+    // transcript row, which is the only ordering where a cutover kill can
+    // neither duplicate the message nor lose it.
     logger.info(`chat-agent: drained ${batchRows.length > 1 ? `${batchRows.length} coalesced agent messages` : `queued message ${pending.id} (source=${pending.source})`} into a new run for ${chatId}`, { source: 'chat-agent' });
     return true;
   } catch (err: any) {
@@ -1821,7 +1858,7 @@ export interface ChatAgentRunArgs {
   /**
    * Fleet origin marking (Management): who/what this run's message is from.
    *   - 'user'     — a real human turn (REST send, UI stream, fleet queue drain).
-   *   - 'schedule' — a CodingSchedule firing (machine wake).
+   *   - 'schedule' — a ChatSchedule firing (machine wake).
    *   - 'hook'     — an event-hook wake delivery (hooks.service outbox — NOT a
    *                  schedule; audit p10: hook wakes used to be mis-stamped
    *                  'schedule', sending overnight-run investigations to the
@@ -1906,6 +1943,17 @@ export interface ChatAgentRunArgs {
    * human-origin rows (messageOrigin absent or 'user') are stamped.
    */
   authorUserId?: string;
+  /**
+   * MERGE-1 cutover kill-window fix (2026-11-05) — the `pending_chat_messages`
+   * rows whose CONTENT this run carries. drainChatQueue no longer deletes them
+   * right after the claim; it threads their ids here so the run's own user-row
+   * persist consumes them in ONE transaction with the transcript write
+   * (message-queue.service createMessagesConsumingPending). That closes both
+   * halves of the handover window: a kill before the commit leaves the row
+   * queued for redelivery (no loss), a kill after it leaves both effects
+   * exactly once (no duplication). Absent = not a queue drain.
+   */
+  drainedPendingIds?: string[];
   send: LegacySend;
   isCancelled?: () => boolean;
   /**
@@ -2138,7 +2186,7 @@ export function chatDoctrine(args: PlatformDoctrineArgs & {
   webSearchConfigured?: boolean;
 }): string {
   const noWeb = args.webSearchConfigured === false;
-  return `You are Digby, the AI assistant at digby.example.com — answering ONE user question conversationally.
+  return `You are Digby, the AI assistant at digby.ai — answering ONE user question conversationally.
 
 ## How to answer
 ${noWeb
@@ -2829,16 +2877,21 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
   // ONCE per run (30s service cache behind it) so a mid-run config change
   // can't split one answer across lineups.
   const orchestratorSeatKey = isProjectSupervisorChat ? 'project_supervisor' : isFleetSupervisorChat ? 'supervisor' : 'chat_orchestrator';
-  // ── Ghost mode routing (owner 2026-10-22): a ghost run with a live
-  // designation puts EVERY leg on the designated self-hosted model — lead,
-  // Double Checker, council colleagues — and CLEARS the custom fallbacks (a
-  // cloud fallback would silently re-route a ghost turn's content to a
-  // provider API the admin never chose). No live designation → the normal
-  // seats resolve and the notice says why (ghost never bricks the chat). The
-  // per-turn swappers (Quick lane, model pick, role picks, lane checker) are
-  // pinned off below via the ghost pin, the same rule as a chat lead pin.
+  // ── Ghost mode routing (owner 2026-10-22; ONE-LEAD RULING 2026-11-03) ─────
+  // A ghost run with a live designation puts its model legs on the designated
+  // self-hosted model and CLEARS the custom fallbacks (a cloud fallback would
+  // silently re-route a ghost turn's content to a provider API the admin never
+  // chose). Since the owner's 2026-11-03 ruling a ghost run makes exactly ONE
+  // such leg — the lead. The checker / council seats below are still resolved
+  // (they are read by telemetry and the seat health checks) but NOTHING
+  // spawns them on a ghost run: `ghostSingleModelPlan` collapses the depth plan
+  // after every plan mutation and `shouldSpawnChecker` takes `ghost`.
+  // No live designation → the normal seats resolve and the notice says why
+  // (ghost never bricks the chat). The per-turn swappers (Quick lane, model
+  // pick, role picks, lane checker) are pinned off below via the ghost pin,
+  // the same rule as a chat lead pin.
   if (ghostEndpoint.spec) {
-    logger.info(`chat-agent: ghost run — every leg on ${ghostEndpoint.spec} (chat ${chatId ?? `guest/${args.sessionId ?? 'anon'}`})`, { source: 'chat-agent' });
+    logger.info(`chat-agent: ghost run — lead on ${ghostEndpoint.spec}, no checker / no council (one lead inference) (chat ${chatId ?? `guest/${args.sessionId ?? 'anon'}`})`, { source: 'chat-agent' });
     send('progress', { message: `Ghost mode — answering on the private endpoint (${ghostEndpoint.spec.split(':')[0]})…`, stage: 'context' });
   } else if (ghostRun) {
     const why = ghostEndpoint.reason === 'switch'
@@ -2953,6 +3006,13 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
       // Turn continuation (2026-09-28): the harness's own prompt is never a
       // transcript row — the human's ask already is; the result posts as a
       // new assistant message below. Unanchored (no userTurnAt) by design.
+      //
+      // MERGE-1 kill-window fix (2026-11-05): a continuation CAN be a drained
+      // queue row, and this branch persists no user row for it to ride along
+      // with — so consume its pending rows HERE. The harness prompt is not
+      // owner content, so the consume is its own committed step: losing the
+      // harness round is recoverable (the card settles), re-running it is not.
+      await consumeDrainedPendingRows(args.drainedPendingIds).catch(() => {});
       await prisma.crossModelChat.update({ where: { id: chatId }, data: { updatedAt: new Date() } }).catch(() => {});
     } else {
     // Fleet origin marking rides metadata.origin (machine wakes / agent turns
@@ -2970,6 +3030,31 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
     const authorId = (!args.messageOrigin || args.messageOrigin === 'user')
       ? (args.authorUserId ?? userId)
       : null;
+    // Child-session RELAY (ticket 327ff5e3 — residual of 1757b07d/739e8191):
+    // a sub-session that FINISHES and reports back through send_chat_message
+    // persists an '[AGENT-SENT MESSAGE]' user row with origin 'agent' — the
+    // far more common shape than the auto-wired result hook, which is the
+    // only path that ever stamped metadata.childResult. Without a stamp this
+    // row (and the reply it opens) is machine noise to every consumer: in a
+    // PLAIN chat the fleet thread's read-side flatten never runs, so the
+    // frontend grouping probe (childResult === true) never fires and the
+    // delivered result stays folded inside the collapsed machine accordion —
+    // exactly the owner's complaint 1757b07d was filed for.
+    //
+    // Decided HERE, at persist time, so EVERY reader (plain chat, fleet
+    // thread, minimal view) sees the marker without re-deriving lineage.
+    // ONE indexed PK read, issued only for an agent send that actually names
+    // a sender (never for a human/schedule/hook turn), and fail-CLOSED on any
+    // lookup error: a lineage hiccup degrades to today's rendering, it never
+    // breaks the send and never invents owner-facing content.
+    const childRelayStamp = args.messageOrigin === 'agent' && args.originSourceChatId && chatId
+      ? await isChildSessionRelaySend({
+        targetChatId: chatId,
+        sourceChatId: args.originSourceChatId,
+        lookupSender: (senderId) => prisma.crossModelChat
+          .findUnique({ where: { id: senderId }, select: { parentChatId: true } }),
+      })
+      : false;
     const userMetadata = {
       ...(originMetadata ?? {}),
       ...(args.attachmentMeta?.length ? { attachments: args.attachmentMeta } : {}),
@@ -2987,6 +3072,13 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
       // the 'hook' origin exactly like the schedule guard above — a stray
       // flag on any other origin must never stamp.
       ...(args.childResult && args.messageOrigin === 'hook' ? { childResult: true } : {}),
+      // Child-session RELAY into this chat (ticket 327ff5e3): the SAME marker,
+      // stamped at persist time when LINEAGE says the agent sender is this
+      // chat's own child (isChildSessionRelay above). Adding it here — rather
+      // than only on the fleet read path — is what makes a plain chat render
+      // the delivered result; the hook guard above is untouched, so an
+      // ordinary hook wake still never stamps.
+      ...(childRelayStamp ? { childResult: true } : {}),
       // Owner-ask wake (fixer 2026-09-27, finding upward-chatter-1): the wake
       // envelope of an [OWNER ASK UNANSWERED] re-wake / [FOLLOW-THROUGH]
       // nudge is the group's ANCHOR row — metadata.ownerAskReply mounts the
@@ -3008,9 +3100,20 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
         .then((m) => m.labelReaskForChat({ chatId, authorId, sentAt, sessionId: runSessionId }))
         .catch(() => {});
     }
-    const userRow = await prisma.crossModelMessage.create({
-      data: { chatId, role: 'user', content: message, metadata: Object.keys(userMetadata).length ? userMetadata : undefined },
-    }).catch(err => { logger.warn(`chat-agent: user-message persist failed: ${err.message}`, { source: 'chat-agent' }); return null; });
+    // MERGE-1 cutover kill-window fix (2026-11-05): when this turn carries
+    // queued rows, the transcript row and their consumption commit as ONE
+    // write. A kill before the commit leaves them queued (no loss); a kill
+    // after leaves both effects exactly once (no duplication).
+    const drainedPendingIds = Array.isArray(args.drainedPendingIds) ? args.drainedPendingIds.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
+    const userRow = await (drainedPendingIds.length
+      ? createMessagesConsumingPending({
+          messages: [{ chatId, role: 'user', content: message, ...(Object.keys(userMetadata).length ? { metadata: userMetadata } : {}) }],
+          pendingIds: drainedPendingIds,
+        }).then((rows) => rows[0] ?? null)
+      : prisma.crossModelMessage.create({
+          data: { chatId, role: 'user', content: message, metadata: Object.keys(userMetadata).length ? userMetadata : undefined },
+        })
+    ).catch((err: any) => { logger.warn(`chat-agent: user-message persist failed: ${err.message}`, { source: 'chat-agent' }); return null; });
     userRowPersisted = !!userRow;
     if (typeof (userRow as any)?.id === 'string') intentAnchorRowId = String((userRow as any).id);
     if (args.userTurnAt) userTurnAt = userRow?.createdAt ?? args.userTurnAt;
@@ -3342,7 +3445,8 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
   // the gate (preset rails only). The `mode` a machine wake arrives with is
   // already its preset fallback (types.ts storedModeToPreset: a stored 'auto'
   // ⇒ the L2 preset; a legacy stored level ⇒ that level).
-  const isCouncilMode = mode === 'deep_research' || mode === 'deep_research_all';
+  const ghostSingleModel = ghostRun && !!ghostEndpoint.spec;
+  const isCouncilMode = !ghostSingleModel && (mode === 'deep_research' || mode === 'deep_research_all');
   // The owner's stakes bound (STAKES_WAIT_MS env, default 90 s) and the D0 ask
   // ceiling are read PER RUN from the real gate (Module A) — never a boot-time const.
   const STAKES_WAIT_MS = stakesWaitMs();
@@ -3566,6 +3670,31 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
     mode = 'single_thinking';
     plan = { ...plan, preset: 'single_thinking', spawnChecker: false, checkerWaitMs: 0, council: 'none', lane: 'quick' };
   }
+  // ── GHOST = ONE LEAD INFERENCE (owner ruling 2026-11-03) ──────────────────
+  // HARD short-circuit, placed AFTER every plan mutation above (the
+  // compute-policy gate, the Dig-deeper rung, lane depth, the Quick lane) and
+  // BEFORE anything below reads the plan to decide the roster — the checker
+  // decision (`shouldSpawnChecker`), the checker_route ask, the checker spawn
+  // and every checker status line / pill all sit downstream of this line.
+  //
+  // Why it is needed at all: #1888 routed EVERY ghost leg to the designated
+  // endpoint but still RAN them, so a ghost 'thinking' turn spawned a Double
+  // Checker (the plan said `spawnChecker: true` from the preset, and the seat
+  // resolved to the ghost spec) and streamed "Digby is digging in — the Double
+  // Checker is researching alongside…". The owner retired that on 2026-11-03:
+  // ghost mode must make ONE private inference on the abliterated endpoint and
+  // nothing else — no checker, no ensemble, no council, whatever the depth,
+  // the routing or the decision gate asked for.
+  //
+  // `ghostRun && ghostEndpoint.spec` (NOT plain `ghostRun`): with no live
+  // designation the chat keeps the normal lineup and the honest notice — the
+  // privacy posture never bricks the chat (the long-standing ghost rule).
+  // (`ghostSingleModel` itself is declared above, beside `isCouncilMode`.)
+  if (ghostSingleModel) {
+    const before = `preset ${plan.preset}, checker ${plan.spawnChecker ? 'on' : 'off'}, council ${plan.council === 'none' ? 'none' : plan.council}`;
+    plan = ghostSingleModelPlan(plan);
+    logger.info(`chat-agent: GHOST one-lead-inference — ${before} collapsed to a single answer on ${ghostEndpoint.spec} (chat ${chatId ?? `guest/${args.sessionId ?? 'anon'}`})`, { source: 'chat-agent' });
+  }
   // Lane depth A-2: a lane-checked turn takes its checker from the checker POOL in a different family than the lead
   // (the pool follows the double_checker seat until an admin configures one ⇒ the seat; any error ⇒ the seat).
   // Roster C-3 (Team C's utility pick for the checker) replaces laneCheckerModelFor at this seam.
@@ -3649,7 +3778,7 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
   // mode==='thinking'") — the L2 preset says spawn, the L1 preset says not,
   // the gate in ACT may flip either way; the council never spawns; a machine
   // turn spawns ONLY a checker the gate acted to add (never from its preset).
-  const wantsChecker = shouldSpawnChecker({ plan, machineTurnSkipsChecker: machineTurnSkipsChecker && !gateSpawnedOnMachine, checkerSeatProblem: null, isCouncil: isCouncilMode });
+  const wantsChecker = shouldSpawnChecker({ plan, machineTurnSkipsChecker: machineTurnSkipsChecker && !gateSpawnedOnMachine, checkerSeatProblem: null, isCouncil: isCouncilMode, ghost: ghostSingleModel });
   const checkerSeatProblem = wantsChecker
     ? await seatUnservableReason(crossCheckers[0], runUserId)
     : null;
@@ -3666,8 +3795,15 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
   // the reconcile) — labelled from the reconcile's own material verdict.
   let draftsAgreeResult: Awaited<ReturnType<typeof decideDraftsAgree>> | null = null;
   let draftsAgreeActed = false;
-  if (args.escalation?.rung === 'research') send('progress', keyedProgress('deeper_findings_started'));
-  else if (plan.source === 'gate_act' && !plan.spawnChecker && plan.preset === 'thinking') checkState = { state: 'skipped' };
+  if (args.escalation?.rung === 'research') {
+    // Ghost = one lead inference (owner ruling 2026-11-03): the collapse above
+    // forced council 'none' and `isCouncil` is false, so no research rung runs —
+    // this line would promise "Deeper findings will post here" and then never
+    // post them. Same defect class as the Double Checker banner: a status line
+    // advertising a second model that is not going to run. Say nothing instead;
+    // the ghost notice already explains that one private answer is coming.
+    if (!ghostSingleModel) send('progress', keyedProgress('deeper_findings_started'));
+  } else if (plan.source === 'gate_act' && !plan.spawnChecker && plan.preset === 'thinking') checkState = { state: 'skipped' };
 
   // N4 checker-site router (shadow by default): fire the typed request now,
   // beside the regex verdict already taken. Only human Level 2 turns that
@@ -3946,7 +4082,13 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
   //    deep_research; its one-shot FRONTIER CONSULTANTS (gemini/chatgpt/grok)
   //    were deleted 2026-09-22 with every frontier model — the council is the
   //    Double Checker + Triple Checker seats. ──
-  const isCouncil = mode === 'deep_research' || mode === 'deep_research_all';
+  // Ghost = one lead inference (owner ruling 2026-11-03): the SECOND council
+  // read is keyed on `mode` alone, and `mode` deliberately stays as requested
+  // (it feeds the lead's step profile + doctrine below — collapsing it would
+  // shrink the one inference the ghost run is allowed to make). Gate the
+  // council read itself instead, so a chat STORED deep_research cannot convene
+  // colleagues around a plan the collapse set to council 'none'.
+  const isCouncil = !ghostSingleModel && (mode === 'deep_research' || mode === 'deep_research_all');
   // No wall clock (2026-10-20): stamp the live run as a research council and start its progress beats (the drain's
   // research extension reads both). RESEARCH_NO_WALL_CLOCK_DISABLED=1 ⇒ nothing stamped, today's drain eligibility.
   if (isCouncil && researchUnclocked && (chatId || args.sessionId)) {
@@ -4719,10 +4861,16 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
   // production-state matcher's grounding haystack (a read an earlier attempt made, e.g. the evidence an empty-answer
   // retry carries, grounds the delivered answer and forbids the re-run). Human supervisor turns only.
   const turnToolParts: any[] = [];
+  // HR-1 (todo 76fd0cce): every attempt's tool calls WITH their args — an earlier
+  // attempt's write can say what the turn proves for a claim the DELIVERED attempt
+  // cannot back (and only that: HR-1 never widens backing by class). Separate array
+  // from turnToolParts because the live-state grounding haystack is scope-gated.
+  const turnWriteCallParts: Array<{ type?: string; name?: string; args?: unknown }> = [];
   const runOrchestrator = async (harnessNotice?: string) => {
     const attempt = await runOrchestratorAttempt(harnessNotice);
     for (const p of (attempt?.parts || []) as any[]) {
       if (p?.type === 'tool_call') turnToolCallParts.push({ type: 'tool_call', name: String(p.name ?? '') });
+      if (p?.type === 'tool_call') turnWriteCallParts.push({ type: 'tool_call', name: String(p.name ?? ''), args: p.args });
       if (unreadStateNoteScope && (p?.type === 'tool_call' || p?.type === 'tool_result')) turnToolParts.push(p);
     }
     return attempt;
@@ -5411,7 +5559,7 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
     let residualClasses: string[] = [];
     if (!unbackedClaimRewriteDisabled()) {
       const deliverable = result.finalText || fallbackText;
-      const residual = await residualUnbackedClaims(cid, deliverable, result.parts as any[]).catch(() => []);
+      const residual = await residualUnbackedClaims(cid, deliverable, result.parts as any[], { turnParts: turnWriteCallParts }).catch(() => []);
       if (residual.length) {
         result = { ...result, finalText: rewriteUnbackedClaims(deliverable, residual) };
         // The transcript renders PARTS over content — keep them in step (the reconcile seam's pattern).
@@ -7055,7 +7203,7 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
       if (!detected.deferralLine && detected.citedLine && detected.citedScheduleIds?.length) {
         let resolved: 'own' | 'own_disabled' | 'unresolved' = 'unresolved';
         try {
-          const own: Array<{ id: string; enabled: boolean }> = await prisma.codingSchedule.findMany({
+          const own: Array<{ id: string; enabled: boolean }> = await prisma.chatSchedule.findMany({
             where: { sessionId: chatId, OR: detected.citedScheduleIds.map((id) => ({ id: { startsWith: id } })) },
             select: { id: true, enabled: true },
             take: 10,
@@ -7075,7 +7223,7 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
       const precise = !!verdict.deferralLine && !deferralNotePrecisionDisabled();
       let recurringArmed = false;
       if (precise) {
-        try { recurringArmed = (await prisma.codingSchedule.count({ where: { sessionId: chatId, enabled: true, kind: 'recurring' } })) > 0; } catch { /* unknown ⇒ unarmed (the previous note) */ }
+        try { recurringArmed = (await prisma.chatSchedule.count({ where: { sessionId: chatId, enabled: true, kind: 'recurring' } })) > 0; } catch { /* unknown ⇒ unarmed (the previous note) */ }
       }
       if (verdict.deferralLine && recurringArmed) {
         recordLoopMetric({ kind: 'supervisor_deferral_covered', sessionId: chatId, meta: { line: (verdict.deferralClause ?? verdict.deferralLine).slice(0, 120), by: 'recurring_schedule' } });
@@ -8843,7 +8991,7 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
   // it; the live frame already rode the stream at spawn time), flipped to done
   // by the deliverable hand-off with the same taskId when the child completes.
   // Human turns only: a machine wake's spawns are a supervisor's lanes, not a
-  // user's task. Kill switch TASK_CARD_DISABLED.
+  // user's task. (The per-card kill switch was retired in RSW-1 cluster 35.)
   const spawnedForMetric = spawnedSessionThisTurn as SpawnedSession | null;
   if (spawnTurnEnded && spawnedForMetric) {
     recordLoopMetric({
@@ -8851,7 +8999,7 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
       meta: { chatId: chatId ?? null, childChatId: spawnedForMetric.sessionId, title: spawnedForMetric.title, mode, stepsUsed: (result as { stepsUsed?: number })?.stepsUsed ?? null },
     });
   }
-  if (chatId && userId && assistantRowId && !runIsMachineTriggered && !isSupervisorChat && !sessionTaskCardDisabled()) {
+  if (chatId && userId && assistantRowId && !runIsMachineTriggered && !isSupervisorChat) {
     try {
       for (const spawned of spawnedSessionsInParts(result.parts)) {
         // Hand-off polish (2026-09-28, audit CT-2 b / E17): the hand-off may
@@ -9174,7 +9322,7 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
         // schedule with no mandate; read it after the quiet gate and the
         // 'quiet' outcome the registry documents is unreachable dead code.
         // One bounded read per fired run (daily digests — not a hot path).
-        const sched = await prisma.codingSchedule.findUnique({
+        const sched = await prisma.chatSchedule.findUnique({
           where: { id: backstopScheduleId },
           select: { prompt: true, enabled: true },
         });

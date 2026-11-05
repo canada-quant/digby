@@ -153,7 +153,7 @@ const GOAL = 'g-226be7b7-0000-4000-8000-000000000000';
 const RID = 'f5b42fe6-1111-4000-8000-000000000000';
 const KPI = { key: 'kpi:client_visible_e2e_tok_s', value: 5.08, unit: 'tok/s', bar: 10, receiptId: RID, setAt: new Date(Date.now() - 2 * 3600_000).toISOString(), history: [{ value: 3.44 }] };
 const goalRow = (over: any = {}) => ({
-  id: GOAL, userId: OWNER, projectId: PROJECT_ID, title: 'Qwen serving ≥10 tok/s on QB2',
+  id: GOAL, userId: OWNER, projectId: PROJECT_ID, title: 'Qwen serving ≥10 tok/s on node-a',
   status: 'active', blockedReason: null, blockKind: null, gateQuestionId: null, progressNote: null,
   premises: [KPI], createdByChatId: null, createdAt: new Date(Date.now() - 48 * 3600_000), ...over,
 });
@@ -189,7 +189,7 @@ describe('part 3 — the auto-complete cascade (seam auto)', () => {
     expect(mockEnqueueDirectWake).toHaveBeenCalledTimes(1);
     const wake = mockEnqueueDirectWake.mock.calls[0][0];
     expect(wake.targetChatId).toBe(SUP);
-    expect(wake.prompt).toContain('[GOAL OUTCOME UNMET — RE-PLAN] goal "Qwen serving ≥10 tok/s on QB2" (g-226be7): all 1 todo done; kpi client_visible_e2e_tok_s=5.08 tok/s < bar 10 (receipt f5b42fe6, age 2h).');
+    expect(wake.prompt).toContain('[GOAL OUTCOME UNMET — RE-PLAN] goal "Qwen serving ≥10 tok/s on node-a" (g-226be7): all 1 todo done; kpi client_visible_e2e_tok_s=5.08 tok/s < bar 10 (receipt f5b42fe6, age 2h).');
     expect(wake.meta).toEqual(expect.objectContaining({ goalId: GOAL, trigger: 'goal_outcome_unmet', seam: 'auto' }));
     const rows = metrics('goal_outcome_unmet');
     expect(rows).toHaveLength(1);
@@ -329,7 +329,7 @@ describe('part 3 — goal_update status:done (seam update)', () => {
     await updateGoal({ userId: OWNER, goalId: GOAL, status: 'done', machineTriggered: false, progressNote: 'tidy', ownerTurnText: 'update the notes please' });
     expect(store.get(`${GOAL}:goal-outcome/close`).ownerAccepted).toBe(false);
     // a REST edit that re-sends status beside other fields is not a close either
-    await updateGoal({ userId: OWNER, goalId: GOAL, status: 'done', title: 'Qwen serving ≥10 tok/s on QB2 (v2)', ownerExplicit: true });
+    await updateGoal({ userId: OWNER, goalId: GOAL, status: 'done', title: 'Qwen serving ≥10 tok/s on node-a (v2)', ownerExplicit: true });
     expect(store.get(`${GOAL}:goal-outcome/close`).ownerAccepted).toBe(false);
     expect(auditCalls('goal.outcome_accepted')).toHaveLength(0);
     // a STATUS-ONLY REST re-confirm is
@@ -358,12 +358,12 @@ describe('part 3 — goal_update status:done (seam update)', () => {
 describe('part 4 — OPT-IN GOAL_OUTCOME_GATE_ENFORCE=1', () => {
   it('the cascade HOLDS the close: the goal stays open with an [outcome unmet] note leading its progress note; the supervisor is woken (enforced)', async () => {
     process.env.GOAL_OUTCOME_GATE_ENFORCE = '1';
-    db.goals.push(goalRow({ progressNote: 'paged-KV adopted on QB2' }));
+    db.goals.push(goalRow({ progressNote: 'paged-KV adopted on node-a' }));
     db.todos.push(todoRow());
     await updateTodo({ userId: OWNER, todoId: 't-1', status: 'done', machineTriggered: true, actingChatId: LANE });
     expect(db.goals[0].status).toBe('active');
     expect(db.goals[0].progressNote.startsWith('[outcome unmet] all 1 todo done but kpi client_visible_e2e_tok_s=5.08 tok/s < bar 10')).toBe(true);
-    expect(db.goals[0].progressNote.endsWith('\npaged-KV adopted on QB2')).toBe(true);
+    expect(db.goals[0].progressNote.endsWith('\npaged-KV adopted on node-a')).toBe(true);
     expect(auditCalls('goal.auto_done_held')).toHaveLength(1);
     expect(auditCalls('goal.auto_done')).toHaveLength(0);
     expect(metrics('goal_done_suspect')).toHaveLength(0); // nothing closed
@@ -419,7 +419,7 @@ describe('part 4 of GOAL-UNPLANNED — goal_transition / todo_transition rows', 
 
   it('a user-anchored goal_update records actorKind user; no row when the status does not change; the kill switch stops every row', async () => {
     db.goals.push(goalRow({ premises: [] }));
-    await updateGoal({ userId: OWNER, goalId: GOAL, status: 'blocked', blockedReason: 'waiting on QB2' });
+    await updateGoal({ userId: OWNER, goalId: GOAL, status: 'blocked', blockedReason: 'waiting on node-a' });
     expect(metrics('goal_transition')[0].meta).toEqual(expect.objectContaining({ from: 'active', to: 'blocked', actorKind: 'user' }));
     await updateGoal({ userId: OWNER, goalId: GOAL, progressNote: 'still waiting' });
     expect(metrics('goal_transition')).toHaveLength(1);

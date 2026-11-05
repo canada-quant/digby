@@ -386,8 +386,8 @@ describe('buildChatQueryContext — [PROJECT LEARNINGS & DECISIONS] wiring', () 
   it('retrievalMessage (machine wakes: the pre-preamble text) drives the learnings, RAG and memory-relevance legs — `message` keeps the prompt', async () => {
     mockGated.mockResolvedValue([]);
     mockPrisma.projectDocument.count.mockResolvedValue(1);
-    const composed = `[MACHINE-TRIGGERED RUN — no user is on this turn…]\n${'boilerplate '.repeat(1200)}\nHOOK run_completed: QB2 gpqa-40 row truncated`;
-    const original = 'HOOK run_completed: QB2 gpqa-40 row truncated';
+    const composed = `[MACHINE-TRIGGERED RUN — no user is on this turn…]\n${'boilerplate '.repeat(1200)}\nHOOK run_completed: node-a gpqa-40 row truncated`;
+    const original = 'HOOK run_completed: node-a gpqa-40 row truncated';
     const ctx = await buildChatQueryContext({ userId: 'alice', chatId: 'chat1', message: composed, retrievalMessage: original, mode: 'thinking', modelSet: 'open_source', machineWake: true });
     expect(mockGated.mock.calls[0][2]).toBe(original);
     const { retrieveChunks } = jest.requireMock('../rag.service');

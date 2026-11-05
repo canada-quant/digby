@@ -19,16 +19,9 @@ jest.mock('../../../utils/logger', () => ({
 
 const mockPrisma: any = {
   agentRun: { findFirst: jest.fn() },
-  codingMessage: { findFirst: jest.fn() },
+  crossModelMessage: { findFirst: jest.fn() },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
-
-// MERGE-1 slice 1: the gate now resolves its transcript through the read-switch seam.
-// Mocked (not the real module) so this suite never drags in coding-data.service ->
-// middleware/error-handler -> config/env, which calls process.exit(1) without env vars
-// and kills the whole jest worker at import time. 'legacy' keeps every existing
-// expectation (they seed mockPrisma.codingMessage) exactly as before this change.
-jest.mock('./transcript-source', () => ({ __esModule: true, pickTranscriptSource: jest.fn(async () => 'legacy') }));
 
 const mockDecide: jest.Mock = jest.fn(async (..._a: any[]): Promise<any> => null);
 const mockMode: jest.Mock = jest.fn((): 'off' | 'shadow' | 'act' => 'off');
@@ -72,7 +65,7 @@ const seedLedger = (over: { run?: any; msg?: any } = {}) => {
   mockPrisma.agentRun.findFirst.mockResolvedValue('run' in over ? over.run : {
     id: 'run-abcdef12', startedAt: min(40), finishedAt: min(6), createdAt: min(41), input: { scheduleId: 'sch-1', triggerKind: 'schedule' },
   });
-  mockPrisma.codingMessage.findFirst.mockResolvedValue('msg' in over ? over.msg : {
+  mockPrisma.crossModelMessage.findFirst.mockResolvedValue('msg' in over ? over.msg : {
     content: 'Checked S3: 3 new shards found, reported to the supervisor. ' + 'x'.repeat(300),
     parts: [{ type: 'tool_call', name: 'run_command' }, { type: 'tool_call', name: 'send_chat_message' }, { type: 'text', text: 'done' }],
     metadata: { triggerKind: 'schedule', scheduleId: 'sch-1' },
@@ -81,7 +74,7 @@ const seedLedger = (over: { run?: any; msg?: any } = {}) => {
 
 beforeEach(() => {
   mockPrisma.agentRun.findFirst.mockReset();
-  mockPrisma.codingMessage.findFirst.mockReset();
+  mockPrisma.crossModelMessage.findFirst.mockReset();
   mockDecide.mockReset().mockResolvedValue(null);
   mockMode.mockReset().mockReturnValue('shadow');
   mockRecord.mockReset();
@@ -115,14 +108,14 @@ describe('readFinishedRunFacts — code-computed from the ledger', () => {
     const runWhere = mockPrisma.agentRun.findFirst.mock.calls[0][0].where;
     expect(runWhere).toMatchObject({ sessionId: 'lane-1', status: 'completed' });
     expect(runWhere.finishedAt.gte.getTime()).toBe(min(90).getTime()); // since the schedule last fired
-    const msgWhere = mockPrisma.codingMessage.findFirst.mock.calls[0][0].where;
+    const msgWhere = mockPrisma.crossModelMessage.findFirst.mock.calls[0][0].where;
     expect(msgWhere).toMatchObject({ chatId: 'lane-1', role: 'assistant' });
     expect(msgWhere.createdAt.gte.getTime()).toBe(min(40).getTime()); // the run's start
   });
   it('no completed run since the last fire ⇒ null (nothing to judge)', async () => {
     seedLedger({ run: null });
     expect(await readFinishedRunFacts(row(), NOW)).toBeNull();
-    expect(mockPrisma.codingMessage.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.crossModelMessage.findFirst).not.toHaveBeenCalled();
   });
   it('a run with no transcript row still yields facts (empty final, zero receipts)', async () => {
     seedLedger({ msg: null });

@@ -5,7 +5,7 @@ import Speech
 
 // ── Voice conversation mode (push-to-talk) ───────────────────────────────────
 // Smallest shippable slice: native SFSpeechRecognizer turns a push-to-talk
-// utterance into text, the text rides the ALREADY-LOADED web app (digby.example.com in
+// utterance into text, the text rides the ALREADY-LOADED web app (digby.ai in
 // the WKWebView — auth, modes, streaming, memory all reused), and the reply is
 // spoken by clicking the web transcript's own "Read aloud" button (the web's
 // proven voiceApi.tts → OpenAI TTS pipeline — no native TTS surface to build).

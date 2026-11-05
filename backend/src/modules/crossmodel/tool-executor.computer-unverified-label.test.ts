@@ -70,12 +70,12 @@ describe('formatComputerTaskToolResult — harness counters in the header (cu-di
     expect(formatComputerTaskToolResult(base)).toContain("[Computer task result — steps: 4 · mac: paired · online · agent v0.4.3]");
     const withHarness = formatComputerTaskToolResult({
       ...base,
-      harness: { refusedRepeats: 1, noChangeStrikes: 2, degenerateFrames: 0, frameGeometry: "1568×1013", displayCount: null, probesRun: 1, probesPassed: 0, inputProven: false, frontmostChanges: 0 },
+      harness: { refusedRepeats: 1, noChangeStrikes: 2, degenerateFrames: 0, frameGeometry: "1568×1013", displayCount: null, probesRun: 1, probesPassed: 0, probesConclusive: 1, inputProven: false, frontmostChanges: 0 },
     });
     expect(withHarness).toContain("[Computer task result — steps: 4 · mac: paired · online · agent v0.4.3 · harness: refusedRepeats=1 noChangeStrikes=2 degenerateFrames=0 frame=1568×1013 displays=unknown probe=0/1 FAILED]");
     const proven = formatComputerTaskToolResult({
       ...base,
-      harness: { refusedRepeats: 0, noChangeStrikes: 3, degenerateFrames: 1, frameGeometry: "1568×882", displayCount: 2, probesRun: 1, probesPassed: 1, inputProven: true, frontmostChanges: 1 },
+      harness: { refusedRepeats: 0, noChangeStrikes: 3, degenerateFrames: 1, frameGeometry: "1568×882", displayCount: 2, probesRun: 1, probesPassed: 1, probesConclusive: 1, inputProven: true, frontmostChanges: 1 },
     });
     expect(proven).toContain("displays=2 probe=1/1 input-proven frontmostChanges=1]");
   });

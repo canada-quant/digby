@@ -70,6 +70,16 @@ council is always yours to ask for with **Dig deeper** (an administrator can
 opt the automatic start in once a launcher exists). When the daily allowance is
 used up, Dig deeper says so plainly instead of starting one.
 
+### Dig deeper in a ghost conversation
+
+A **ghost** conversation runs exactly one model — the administrator's
+designated private endpoint — so a rung that would buy a second opinion or a
+council is not available there. Ghost mode wins over depth, Auto routing and
+the decision gate alike: a ghost turn is one lead inference, full stop. Dig
+deeper in a ghost conversation therefore does not add models and does not
+promise findings that will not come; it just asks the same private model to go
+further. See [Ghost mode](GHOST_MODE.md).
+
 ## Signed-out visitors
 
 Without an account Digby answers with the standard two-model shape and waits

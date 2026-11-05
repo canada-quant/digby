@@ -211,6 +211,10 @@ function makeCtx(overrides: Partial<ToolContext> = {}) {
     emit: (event: string, data: any) => { emitted.push({ event, data }); }, alwaysAllow: new Set<string>(),
     // Fixtures simulate a REAL USER TURN — pass userTurnAt: undefined for a machine run.
     userTurnAt: new Date(),
+    // Stage legs model a Dig-deeper rung (a human turn that re-runs an EARLIER
+    // ask and therefore cards) — the same gate WORK_TOOLS_NO_CARD_DISABLED held
+    // open until RSW-1 retired it.
+    escalation: true,
     requestApproval: async () => 'allow' as const,
     execShell: async () => ({ stdout: '', stderr: '' }),
     agentSurface: 'chat',
@@ -274,7 +278,7 @@ beforeEach(() => {
   imessageSvc.isOnline.mockImplementation(() => false);
   rateLimitSvc.checkDeepResearchQuota.mockImplementation(async () => ({ allowed: true, used: 1, limit: 5, remaining: 4 }));
   sharingSvc.createOrReactivateChatShareLink.mockImplementation(async ({ chatId }: any) => ({
-    ok: true, shareToken: 'tok', shareUrl: `https://digby.example.com/shared/chat/tok`, isActive: true, expiresAt: null, createdAt: new Date(), reactivated: false, chatId,
+    ok: true, shareToken: 'tok', shareUrl: `https://digby.ai/shared/chat/tok`, isActive: true, expiresAt: null, createdAt: new Date(), reactivated: false, chatId,
   }));
   sharingSvc.revokeChatShareLink.mockImplementation(async () => ({ ok: true, revoked: true }));
   svc.getProjectAccess.mockImplementation(async (projectId: string) => (projectId === 'proj-1' ? { project: { id: 'proj-1', name: 'Launch' }, role: 'owner' } : null));
@@ -288,10 +292,11 @@ beforeEach(() => {
 // requested-work tools (start_coding_session, create_feed, own-chat schedule
 // tools, …) now execute WITHOUT a card. This suite pins the STAGING contract
 // itself (staging-time validation, WYSIWYG confirm, the card envelope), which
-// still governs machine turns and the kill switch — so it runs with the switch
-// set; the direct path is pinned by work-tools.test.ts.
-beforeAll(() => { process.env.WORK_TOOLS_NO_CARD_DISABLED = '1'; });
-afterAll(() => { delete process.env.WORK_TOOLS_NO_CARD_DISABLED; });
+// still governs machine turns and a Dig-deeper rung (ctx.escalation re-runs an
+// EARLIER ask, so it cards rather than re-running the work) — so its stage legs
+// pass escalation; the direct path is pinned by work-tools.test.ts.
+// (Until RSW-1 this suite reached the card by setting WORK_TOOLS_NO_CARD_DISABLED;
+// that kill switch is gone and escalation is the behaviour that actually stays.)
 
 describe('account tools registration', () => {
   it('all 17 are in PLATFORM_TOOL_SCHEMA and CODING_TOOL_SCHEMA, with no duplicates', () => {
@@ -381,7 +386,7 @@ describe('consequential account tools: confirmation gate', () => {
     expect(reg.summary).toMatch(/expires never/);
     expect(sharingSvc.createOrReactivateChatShareLink).toHaveBeenCalledWith({ chatId: 'chat-1', userId: 'u1', expiresInDays: undefined });
     const r = parse(out);
-    expect(r).toMatchObject({ ok: true, tool: 'create_share_link', chatId: 'chat-1', shareUrl: 'https://digby.example.com/shared/chat/tok', expiresAt: null });
+    expect(r).toMatchObject({ ok: true, tool: 'create_share_link', chatId: 'chat-1', shareUrl: 'https://digby.ai/shared/chat/tok', expiresAt: null });
     expect(r.ids).toMatchObject({ chatId: 'chat-1', shareToken: 'tok' });
   });
 
@@ -563,7 +568,7 @@ describe('notify_user — duplicate + dismissed-question guards (audit 2026-10-0
 
   it('a near-identical second push is refused (duplicate_notification, says why, no rate slot); the kill switch sends it', async () => {
     const { ctx } = makeCtx({ userTurnAt: undefined });
-    const msg = 'QB2 reached 42.7 tok/s on the bench — new best, PR #88 merged.';
+    const msg = 'node-a reached 42.7 tok/s on the bench — new best, PR #88 merged.';
     expect(parse(await executePlatformTool(ctx, 'notify_user', { message: msg }))).toMatchObject({ ok: true });
     redisMock.incr.mockClear();
     const again = parse(await executePlatformTool(ctx, 'notify_user', { message: `${msg} ` }));
@@ -625,10 +630,10 @@ describe('notify_user — duplicate + dismissed-question guards (audit 2026-10-0
 
 describe('send_email_as_digby', () => {
   it('happy path: delegates to the service with the sessionId, relays messageId + from', async () => {
-    emailSvc.sendDigbyEmail.mockResolvedValueOnce({ ok: true, messageId: '<m-1@digby.example.com>', from: 'digby@digby.example.com' });
+    emailSvc.sendDigbyEmail.mockResolvedValueOnce({ ok: true, messageId: '<m-1@digby.ai>', from: 'digby@digby.ai' });
     const { ctx } = makeCtx();
     const out = parse(await executePlatformTool(ctx, 'send_email_as_digby', { to: 'owner@example.com', subject: 'Nightly report', text: 'All green.' }));
-    expect(out).toMatchObject({ ok: true, tool: 'send_email_as_digby', to: 'owner@example.com', messageId: '<m-1@digby.example.com>', from: 'digby@digby.example.com' });
+    expect(out).toMatchObject({ ok: true, tool: 'send_email_as_digby', to: 'owner@example.com', messageId: '<m-1@digby.ai>', from: 'digby@digby.ai' });
     expect(emailSvc.sendDigbyEmail).toHaveBeenCalledWith(
       { to: 'owner@example.com', subject: 'Nightly report', text: 'All green.' },
       { sessionId: 'chat-1' },
@@ -652,12 +657,12 @@ describe('send_email_as_digby', () => {
     const desc = PLATFORM_TOOL_SCHEMA.find((x) => x.function.name === 'send_email_as_digby')!.function.description;
     expect(desc).toMatch(/never for mass\/bulk sends/);
     expect(desc).toMatch(/machine-triggered runs WITHOUT confirmation/);
-    expect(desc).toMatch(/digby@digby\.example\.com/);
+    expect(desc).toMatch(/digby@digby\.ai/);
     expect(desc).toMatch(/gmail_send_email/); // names the distinction from the user's Gmail tool
   });
 
   it('works in a MACHINE-triggered run (userTurnAt undefined) — the scheduled-digest case', async () => {
-    emailSvc.sendDigbyEmail.mockResolvedValueOnce({ ok: true, messageId: '<m-2@digby.example.com>', from: 'digby@digby.example.com' });
+    emailSvc.sendDigbyEmail.mockResolvedValueOnce({ ok: true, messageId: '<m-2@digby.ai>', from: 'digby@digby.ai' });
     const { ctx } = makeCtx({ userTurnAt: undefined });
     const out = parse(await executePlatformTool(ctx, 'send_email_as_digby', { to: 'owner@example.com', subject: 'Daily digest', text: '…' }));
     expect(out).toMatchObject({ ok: true });
@@ -1053,7 +1058,7 @@ describe('set_chat_instructions + revoke_share_link', () => {
 
 describe('get_account_overview + list_feeds', () => {
   it('returns the grounded snapshot and tolerates a failing read (that field → null, the rest intact)', async () => {
-    prismaMock.gitHubOAuthToken.findFirst.mockImplementation(async () => ({ username: 'canada-quant', scopes: ['repo'] }));
+    prismaMock.gitHubOAuthToken.findFirst.mockImplementation(async () => ({ username: 'example-org', scopes: ['repo'] }));
     prismaMock.googleOAuthToken.findFirst.mockImplementation(async () => ({ email: 'p@x.com', label: 'Work' }));
     prismaMock.googleOAuthToken.count.mockImplementation(async () => 2);
     prismaMock.telegramLink.findFirst.mockImplementation(async () => ({ username: 'paul' }));
@@ -1064,7 +1069,7 @@ describe('get_account_overview + list_feeds', () => {
     credsSvc.listShellCredentialNames.mockImplementation(async () => ['AWS_SECRET_ACCESS_KEY', 'CLOUDFLARE_API_TOKEN']);
     const { ctx } = makeCtx();
     const out = parse(await executePlatformTool(ctx, 'get_account_overview', {}));
-    expect(out.integrations.github).toEqual({ connected: true, username: 'canada-quant', repoScope: true });
+    expect(out.integrations.github).toEqual({ connected: true, username: 'example-org', repoScope: true });
     expect(out.integrations.google).toEqual({ connected: true, accounts: 2, label: 'Work' });
     expect(out.integrations.slack).toEqual({ connected: false, teamName: null });
     expect(out.telegram).toEqual({ configuredOnInstance: true, linked: true, username: 'paul' });
@@ -1085,7 +1090,12 @@ describe('get_account_overview + list_feeds', () => {
           state: 'unavailable',
           enabled: false,
           ready: false,
-          reason: 'not reported — the Digby agent on this device has never reported the unattended preset, so the fleet cannot say whether it is on; update the agent, then run `digby-agent unattended enable` on the device',
+          // TICKET 36d1c99f: the raw blocker tokens ride the verdict so a
+          // consumer (the guided enable flow) can branch on a SPECIFIC blocker
+          // instead of substring-matching the prose reason. An unavailable
+          // device reported nothing → no tokens.
+          blockers: [],
+          reason: 'not reported — the Digby agent on this device has never reported the unattended preset, so the fleet cannot say whether it is on; update the agent, then run `"$HOME/Library/Application Support/Digby/bin/digby-agent" unattended enable` on the device',
         },
         // 2026-10-28 (ticket c468f922): the typed PRE-LOGIN INPUT capability
         // rides every row. A row that never advertised the preset has no lock

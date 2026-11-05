@@ -86,7 +86,7 @@ export async function readLaneDriveFacts(
   const horizonMs = opts.horizonMs === undefined ? SELF_DRIVING_ARMED_HORIZON_MS : opts.horizonMs;
   const [runs, schedules] = await Promise.all([
     prisma.agentRun.findMany({ where: { sessionId: { in: ids }, status: { in: ['queued', 'running'] } }, select: { sessionId: true, status: true }, take: MAX_ROWS }),
-    prisma.codingSchedule.findMany({
+    prisma.chatSchedule.findMany({
       where: { sessionId: { in: ids }, enabled: true, ...(horizonMs === null ? {} : { nextRunAt: { lte: new Date(now.getTime() + horizonMs) } }) },
       select: { sessionId: true },
       take: MAX_ROWS,

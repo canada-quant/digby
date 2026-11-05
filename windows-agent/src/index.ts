@@ -51,7 +51,7 @@ import {
   DEFAULT_TUNNEL_CIDR,
 } from './remote-access';
 
-const DEFAULT_API_BASE = 'https://digby.example.com/api';
+const DEFAULT_API_BASE = 'https://digby.ai/api';
 
 function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);

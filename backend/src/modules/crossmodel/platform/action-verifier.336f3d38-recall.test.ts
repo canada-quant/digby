@@ -17,7 +17,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
@@ -81,7 +81,7 @@ describe('DETECTOR-RECALL REPLAY — ticket 336f3d38 residuals (PR #1789): the p
     // pinned (an ACTION-kind claim whose id is invented), and it must NOT
     // be demoted by the residuals' ACTION-class warn branch.
     const note = [
-      '**ctrl.example.com wake — gap matrix follow-up.**',
+      '**ctrl.cql.ca wake — gap matrix follow-up.**',
       'ACTIONS TAKEN',
       '- Dispatched a fresh lane for the gap matrix (receipt 77aabbcc)',
     ].join('\n');

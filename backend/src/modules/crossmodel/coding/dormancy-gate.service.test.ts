@@ -38,7 +38,7 @@ jest.mock('../../../config/database', () => ({
     projectTodo: { count: (...a: any[]) => mockTodoCount(...a) },
     agentRun: { count: (...a: any[]) => mockRunCount(...a) },
     watchedResource: { count: (...a: any[]) => mockWatchedCount(...a) },
-    codingSchedule: { count: (...a: any[]) => mockScheduleCount(...a) },
+    chatSchedule: { count: (...a: any[]) => mockScheduleCount(...a) },
   },
 }));
 

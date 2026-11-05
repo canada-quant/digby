@@ -98,11 +98,19 @@ describe('tool-executor search tools — not-configured render (ticket 6f4d42f2)
     expect(out).toBe(SEARCH_NOT_CONFIGURED_MSG);
   });
 
-  it('scrape_as_markdown keeps the existing failed-fetch wording when a backend is armed', async () => {
+  it('scrape_as_markdown keeps an honest not-found wording when a backend is armed (BS-1 D4)', async () => {
     recordSearchConfigState({ at: Date.now(), anyBackendArmed: true });
     const out = await runTool('scrape_as_markdown', { url: 'https://example.com/article' });
     expect(out).not.toBe(SEARCH_NOT_CONFIGURED_MSG);
-    expect(out).toMatch(/Failed to fetch|unavailable|blocked|rate-limited/i);
+    // BS-1 D4 (2026-11-02): this used to assert the "may be unavailable, blocked,
+    // or rate-limited" copy — i.e. "the SITE is down". That wording is the defect:
+    // an empty scrape is far more often a wrong/guessed PATH than a dead site
+    // (WRP-1 D5-R), and telling the model "the source is down" sends it to
+    // apologize or give up instead of re-checking the path. The transient-outage
+    // intent of this test is preserved below — what changed is that the copy now
+    // says NOT FOUND for the path, and may never say "rate-limited".
+    expect(out).toMatch(/Nothing was found|NOT the same as the site being down/i);
+    expect(out).not.toMatch(/rate-limited|unavailable, blocked/i);
   });
 
   it('BEFORE any callMcpTool (no recorded state), the legacy wording stands — never a false misconfiguration claim', async () => {
@@ -111,5 +119,85 @@ describe('tool-executor search tools — not-configured render (ticket 6f4d42f2)
     // misconfiguration from absent evidence.
     const out = await runTool('search_engine', { query: 'top AI news today' });
     expect(out).not.toBe(SEARCH_NOT_CONFIGURED_MSG);
+  });
+});
+
+describe('scrape_batch pre-flight (ticket 169d5080 residual)', () => {
+  // BS-1 D5 (2026-11-02) wired preflightUrl into scrape_as_markdown but NOT into
+  // its sibling, so ONE cut-off URL in a batch still reached the gateway verbatim
+  // and came back as a raw `400 ... "url" must be a valid uri`.
+  //
+  // The batch path CANNOT simply reuse the strict verdict: rule 2 ("last query
+  // param has no `=`") is lexically unable to tell a truncation (`?acti` cut out
+  // of `active_status`) from a COMPLETE bare-flag URL (`?amp`, `?print`,
+  // `?autoplay`). Refusing on rule 2 alone silently drops a page the model asked
+  // for and tells it, falsely, that its link was cut off; sharing the array with
+  // an ambiguous member lets one bad URL 400 the whole call. So the ambiguous
+  // members are dispatched ONE AT A TIME. These cases pin that three-way split.
+  beforeEach(() => {
+    jest.clearAllMocks();
+    __resetSearchConfigStateForTest();
+    recordSearchConfigState({ at: Date.now(), anyBackendArmed: true });
+  });
+
+  const TRUNCATED = 'https://www.facebook.com/ads/library/?acti';
+
+  it('a fully valid batch rides ONE call, unchanged, with no refusal note', async () => {
+    const { callMcpTool } = require('./mcp-search');
+    const urls = ['https://a.test/1', 'https://b.test/2'];
+    const out = await runTool('scrape_batch', { urls });
+    expect(callMcpTool).toHaveBeenCalledTimes(1);
+    expect(callMcpTool.mock.calls[0][1].urls).toEqual(urls);
+    expect(out).not.toMatch(/not fetched|could not fetch/i);
+  });
+
+  it('an AMBIGUOUS url (rule 2) is dispatched ALONE — it neither poisons the batch nor is silently dropped', async () => {
+    const { callMcpTool } = require('./mcp-search');
+    await runTool('scrape_batch', { urls: [TRUNCATED, 'https://a.test/1', 'https://b.test/2'] });
+    // The unambiguous pair rides one call; the ambiguous one gets its own.
+    expect(callMcpTool).toHaveBeenCalledTimes(2);
+    expect(callMcpTool.mock.calls[0][1].urls).toEqual(['https://a.test/1', 'https://b.test/2']);
+    expect(callMcpTool.mock.calls[1][1].urls).toEqual([TRUNCATED]);
+  });
+
+  it('an ambiguous url that comes back empty is reported alone, never as the whole batch failing', async () => {
+    const { callMcpTool } = require('./mcp-search');
+    const out = await runTool('scrape_batch', { urls: [TRUNCATED, 'https://a.test/1'] });
+    expect(callMcpTool).toHaveBeenCalledTimes(2);
+    // The member-scoped explanation, not a raw gateway 400 and not "the site is down".
+    expect(out).toMatch(/could not fetch/i);
+    expect(out).toMatch(/cut off|re-send/i);
+    expect(out).not.toMatch(/must be a valid uri/i);
+  });
+
+  it('an ambiguous member does NOT stop the other pages being fetched', async () => {
+    const { callMcpTool } = require('./mcp-search');
+    callMcpTool.mockImplementation(async (_tool: string, args: any) =>
+      args.urls[0] === TRUNCATED ? null : `CONTENT for ${args.urls.join(',')}`);
+    const out = await runTool('scrape_batch', { urls: [TRUNCATED, 'https://a.test/1'] });
+    expect(out).toContain('CONTENT for https://a.test/1');
+  });
+
+  it('shapes that can never be a real URL are refused OUTRIGHT — never dispatched', async () => {
+    const { callMcpTool } = require('./mcp-search');
+    const BAD = [
+      'https://example.com/page?',      // rule 1 — dangling ?
+      'https://example.com/page?q=a&',  // rule 1 — dangling &
+      'https://example.com/a%2',        // rule 3 — half a percent-escape
+      'polksheriff.org/news',           // rule 4 — no scheme
+      'https://example.com/a b',        // pasted mid-sentence
+    ];
+    const out = await runTool('scrape_batch', { urls: [...BAD, 'https://a.test/1'] });
+    // Only the valid one is dispatched; each bad one is named.
+    expect(callMcpTool).toHaveBeenCalledTimes(1);
+    expect(callMcpTool.mock.calls[0][1].urls).toEqual(['https://a.test/1']);
+    for (const b of BAD) expect(out).toContain(b);
+    expect(out).toMatch(/not fetched/i);
+  });
+
+  it('padded urls are trimmed before dispatch (a padded member re-creates the 400)', async () => {
+    const { callMcpTool } = require('./mcp-search');
+    await runTool('scrape_batch', { urls: ['  https://a.test/1  ', 'https://b.test/2\n'] });
+    expect(callMcpTool.mock.calls[0][1].urls).toEqual(['https://a.test/1', 'https://b.test/2']);
   });
 });

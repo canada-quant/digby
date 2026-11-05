@@ -77,9 +77,23 @@ beforeAll(() => {
 });
 afterAll(() => { delete process.env.DASHSCOPE_API_KEY; });
 
+/**
+ * The embed payload SENTINEL (ticket 945b0f69).
+ *
+ * These rows are checked for payload leakage by grepping the WHOLE serialized
+ * row (`JSON.stringify(rows)`), and every row also carries `callId` =
+ * randomUUID(), i.e. lowercase hex. So the sentinel must be impossible to spell
+ * in hex — the old 3-char sentinel 'abc' was ALL hex letters and reddened main
+ * on an unrelated commit when one uuid happened to contain `…-cabc-…`.
+ * Uppercase 'ZZZ' cannot appear in a v4 uuid (nor in any of the row's other
+ * fields), and staying 3 chars keeps the payload arithmetic below (30 / 6 / 36)
+ * exactly as the size-only contract pins it.
+ */
+const PAYLOAD_SENTINEL = 'ZZZ';
+
 /** The llm-cql rung: the route that actually hung in production. */
 const HUNG_TARGET = {
-  baseUrl: 'https://llm.example.com/v1',
+  baseUrl: 'https://llm.cql.ca/v1',
   model: 'Qwen3-Reranker-4B',
   apiKey: 'gateway-key',
   matryoshka: false,
@@ -109,7 +123,7 @@ describe('rerank ladder — a dead rung never ends the call (the silent-drop sha
       if (String(url).includes('dashscope-intl.aliyuncs.com')) {
         throw Object.assign(new Error('timeout of 9000ms exceeded'), { code: 'ECONNABORTED' });
       }
-      if (String(url).includes('llm.example.com')) {
+      if (String(url).includes('llm.cql.ca')) {
         return { data: { results: [{ index: 1, relevance_score: 0.9 }, { index: 0, relevance_score: 0.2 }] } };
       }
       throw new Error(`unexpected axios.post ${url}`);
@@ -124,7 +138,7 @@ describe('rerank ladder — a dead rung never ends the call (the silent-drop sha
     // Both rungs were tried, in RUNG ORDER (the built-in serves first).
     expect(calls).toHaveLength(2);
     expect(calls[0]).toContain('dashscope-intl.aliyuncs.com');
-    expect(calls[1]).toContain('llm.example.com');
+    expect(calls[1]).toContain('llm.cql.ca');
   });
 
   test('THE COST FIX (goal 79284e7f): when rung 1 serves, the custom rung is NEVER ASKED', async () => {
@@ -146,7 +160,7 @@ describe('rerank ladder — a dead rung never ends the call (the silent-drop sha
     expect(out).toEqual([{ index: 0, score: 0.8 }]);
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain('dashscope-intl.aliyuncs.com');
-    expect(calls.some(c => c.includes('llm.example.com'))).toBe(false);
+    expect(calls.some(c => c.includes('llm.cql.ca'))).toBe(false);
 
     // And exactly ONE attempt row — no dead-attempt row per call.
     await new Promise(r => setTimeout(r, 0));
@@ -289,7 +303,7 @@ describe('embeddings — one vector space per instance (rotation is a migration,
     // count is now the BOUNDED attempt budget (1 attempt + 1 retry) rather than
     // a single ask — the retry is same-provider, so the space never changes.
     expect(rag.embedAttemptRetries() + 1).toBe(calls.length);
-    expect(calls.every(c => c.includes('llm.example.com'))).toBe(true);
+    expect(calls.every(c => c.includes('llm.cql.ca'))).toBe(true);
   });
 
   test('a hung attempt is bounded by EMBED_ATTEMPT_TIMEOUT_MS, never the whole 30 s call budget', async () => {
@@ -345,7 +359,7 @@ describe('embeddings — one vector space per instance (rotation is a migration,
     mockedAxios.post.mockImplementation(async () => ({ data: { data: [{ index: 0, embedding: new Array(1536).fill(0.01) }] } }));
 
     // 12 inputs → two batches of 10 + 2, 3 chars each = 36 chars total.
-    const texts = new Array(12).fill('abc');
+    const texts = new Array(12).fill(PAYLOAD_SENTINEL);
     await rag.embedTexts(texts);
     await new Promise(r => setTimeout(r, 0));
 
@@ -359,6 +373,49 @@ describe('embeddings — one vector space per instance (rotation is a migration,
     expect(rollup).toHaveLength(1);
     expect(rollup[0].meta).toMatchObject({ batchChars: 36, batchCount: 2 });
     // Never the payload itself — a size only.
-    expect(JSON.stringify(rows)).not.toContain('abc');
+    expect(JSON.stringify(rows)).not.toContain(PAYLOAD_SENTINEL);
+  });
+
+  // Ticket 945b0f69 — the FLAKE this suite used to hand main's CI. The
+  // payload-leak assertion greps the WHOLE serialized row, and every row also
+  // carries `callId` = randomUUID() (rag.service.ts per-attempt call ids). A v4
+  // uuid is [0-9a-f], so a 3-char alphabetic sentinel can turn up inside its
+  // hex purely by luck: ci.yml run 41532057538 reddened an unrelated
+  // frontend-only commit because one uuid happened to read `…-cabc-…`. The
+  // sentinel is now non-hex, and this replay forces the EXACT uuid from that
+  // red run so the trap is exercised deterministically instead of 1-in-a-few-
+  // thousand. RED against the old sentinel ('abc'): the payload grep hits the
+  // uuid. GREEN now: the uuid is still in the row, but nothing matches.
+  test('ticket 945b0f69 REPLAY: a callId whose hex spells payload text cannot red the size-only assertion', async () => {
+    // The uuid from the red CI run. 'abc' is buried in the third group.
+    const FLAKE_UUID = 'f8a5b7b5-cabc-4ff8-a8d7-59d3eaeebf0b';
+    const cryptoMod = require('crypto');
+    const uuidSpy = jest.spyOn(cryptoMod, 'randomUUID').mockReturnValue(FLAKE_UUID as any);
+    try {
+      mockedOverrides.mockImplementation(async () => ({ embeddings: 'llm-cql:Qwen3-Embedding-8B' }));
+      mockedResolve.mockImplementation(async () => ({ ...HUNG_TARGET, model: 'Qwen3-Embedding-8B' }));
+      mockedAxios.post.mockImplementation(async () => ({ data: { data: [{ index: 0, embedding: new Array(1536).fill(0.01) }] } }));
+
+      const texts = new Array(12).fill(PAYLOAD_SENTINEL);
+      await rag.embedTexts(texts);
+      await new Promise(r => setTimeout(r, 0));
+
+      const rows = mockedMetric.mock.calls.map(c => c[0]).filter(r => r.kind === 'rag_embed_call');
+      // The trap is LIVE in this run: the uuid really is in the serialized rows
+      // and its hex really does spell the OLD sentinel. Under the old sentinel
+      // this whole-row grep was the red CI assertion on a green commit.
+      const serialized = JSON.stringify(rows);
+      expect(serialized).toContain(FLAKE_UUID);
+      expect(serialized).toContain('abc');
+
+      // The size-only contract is untouched by the correlator id.
+      const attemptRows = rows.filter(r => r.meta.unit === 'attempt');
+      expect(attemptRows.map(r => r.meta.chars)).toEqual([30, 6]);
+      expect(rows.filter(r => r.meta.unit !== 'attempt')[0].meta).toMatchObject({ batchChars: 36, batchCount: 2 });
+      // …and the payload text itself is still nowhere in the row.
+      expect(JSON.stringify(rows)).not.toContain(PAYLOAD_SENTINEL);
+    } finally {
+      uuidSpy.mockRestore();
+    }
   });
 });

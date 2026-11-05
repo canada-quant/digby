@@ -150,9 +150,31 @@ const HELPER_BLOCKER_TOKENS: ReadonlySet<string> = new Set(
 export const HELPER_OFF_REASON =
   'off — no pre-login helper is installed on this device (the default); the "Unattended / Autonomous use" preset keeps the session alive, which is what stops most devices reaching a login screen at all';
 
-/** The reason a device that never advertised reads. Unknown is NOT ready. */
+/** The reason a device that never advertised reads. Unknown is NOT ready.
+ *
+ *  TICKET e530220e — THE COPY USED TO POINT AT AN UPDATE THAT CANNOT HELP. It
+ *  read "an agent older than the release that introduced it … until the agent is
+ *  updated and the helper is installed", which asserts two things that are both
+ *  FALSE today: that some release introduced the advert, and that updating is
+ *  therefore the remedy. No agent build has ever emitted it — `preloginhelper`
+ *  has ZERO producers in `imessage-agent/src`, `windows-agent/src` and
+ *  `macos-app`, and zero occurrences inside the shipped 0.9.23 tarball (only the
+ *  poll/parse seams on the BACKEND side read it). So an owner on the current
+ *  release reads a sentence telling them to update, updates, and the row does
+ *  not move — one sentence, the wrong remedy, exactly the defect #2521 fixed for
+ *  the remote-channel row beside it.
+ *
+ *  What is true is a FLEET-SIDE gap, not a device fault: the verdict, the closed
+ *  vocabulary and the storage all shipped, but nothing on the device side emits
+ *  the advert because the signed daemon binary is a Mac-side build step
+ *  (docs/UNATTENDED_DEVICES.md §5.2a). The sentence therefore says that, and
+ *  stops implying a device action can change the row.
+ *
+ *  PINNED BY TEST so it cannot silently become a lie in the other direction:
+ *  `prelogin-capability.2026-10-28.test.ts` scans the agent trees for an
+ *  emitter and fails if one appears while this copy still claims there is none. */
 export const HELPER_UNKNOWN_REASON =
-  'the agent on this device never reported pre-login helper state (an agent older than the release that introduced it) — a locked or signed-out device cannot be driven until the agent is updated and the helper is installed';
+  'no agent release reports pre-login helper state yet — the fleet-side verdict, vocabulary and storage all exist, but the privilege-scoped helper that would emit the report is not shipped in any agent build, so updating the agent cannot change this row; until it ships, a locked or signed-out device cannot be driven (the "Unattended / Autonomous use" preset is what keeps a session alive)';
 
 // ── Advert shape ────────────────────────────────────────────────────────────
 

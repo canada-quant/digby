@@ -5,7 +5,6 @@
  */
 import {
   isDocsPath, classifyDocsOnly, listPrDiffFiles, docsOnlyPrBodyNote,
-  prGateAutoVerifyDisabled,
   prGateAutoVerifyDeadlineMs, withDeadline,
   PR_GATE_AUTO_VERIFY_DEADLINE_DEFAULT_MS, PR_GATE_AUTO_VERIFY_DEADLINE_MAX_MS,
 } from './pr-gate-docs-only';
@@ -105,23 +104,11 @@ describe('A5 pr-gate-docs-only: listPrDiffFiles', () => {
   });
 });
 
-describe('A5 pr-gate-docs-only: note + kill switches', () => {
-  const saved: Record<string, string | undefined> = {};
-  beforeEach(() => { for (const k of ['PR_GATE_AUTO_VERIFY_DISABLED']) { saved[k] = process.env[k]; delete process.env[k]; } });
-  afterEach(() => { for (const k of Object.keys(saved)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
-
+describe('A5 pr-gate-docs-only: note', () => {
   it('the PR-body note says docs-only + unverified and counts the files', () => {
     expect(docsOnlyPrBodyNote(1)).toContain('Docs-only change (1 file, all under docs/ or *.md)');
     expect(docsOnlyPrBodyNote(3)).toContain('(3 files,');
     expect(docsOnlyPrBodyNote(3)).toContain('unverified by design');
-  });
-
-  it('the auto-verify switch defaults OFF and reads only the literal "1"', () => {
-    expect(prGateAutoVerifyDisabled()).toBe(false);
-    process.env.PR_GATE_AUTO_VERIFY_DISABLED = 'true';
-    expect(prGateAutoVerifyDisabled()).toBe(false);
-    process.env.PR_GATE_AUTO_VERIFY_DISABLED = '1';
-    expect(prGateAutoVerifyDisabled()).toBe(true);
   });
 });
 

@@ -16,7 +16,7 @@ const mockPrisma: any = {
   projectTodo: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null) },
   projectGoal: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null) },
   agentRun: { groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []) },
-  codingSchedule: { groupBy: jest.fn(async () => []) },
+  chatSchedule: { groupBy: jest.fn(async () => []) },
   loopMetric: { groupBy: jest.fn(async () => []) },
   runToolReceipt: { findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
 };
@@ -67,7 +67,7 @@ beforeEach(() => {
   mockPrisma.projectGoal.findFirst.mockResolvedValue(null);
   mockPrisma.agentRun.groupBy.mockResolvedValue([]);
   mockPrisma.agentRun.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.groupBy.mockResolvedValue([]);
+  mockPrisma.chatSchedule.groupBy.mockResolvedValue([]);
   mockPrisma.loopMetric.groupBy.mockResolvedValue([]);
   mockPrisma.runToolReceipt.findMany.mockResolvedValue([]);
 });
@@ -238,7 +238,7 @@ describe('buildLaneIndex (mocked prisma)', () => {
     mockPrisma.projectTodo.findMany.mockResolvedValue([{ id: 'todo-1', goalId: 'goal-2', assigneeChatId: 'lane-1' }]);
     mockPrisma.agentRun.groupBy.mockResolvedValue([{ sessionId: 'lane-1', _count: { _all: 20 } }]);
     mockPrisma.agentRun.findMany.mockResolvedValue([{ sessionId: 'lane-1' }]);
-    mockPrisma.codingSchedule.groupBy.mockResolvedValue([{ sessionId: 'lane-1', _count: { _all: 2 } }]);
+    mockPrisma.chatSchedule.groupBy.mockResolvedValue([{ sessionId: 'lane-1', _count: { _all: 2 } }]);
     mockPrisma.loopMetric.groupBy.mockResolvedValueOnce([{ sessionId: 'lane-1', _count: { _all: 30 } }]).mockResolvedValueOnce([{ sessionId: 'lane-1', _count: { _all: 4 } }]);
     mockPrisma.runToolReceipt.findMany.mockResolvedValue([{ chatId: 'lane-1', createdAt: new Date(NOW.getTime() - 3600_000) }]);
     mockPrisma.projectGoal.findMany.mockResolvedValue([{ id: 'goal-1', title: 'G1' }, { id: 'goal-2', title: 'G2' }]);

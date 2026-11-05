@@ -227,7 +227,7 @@ export async function readLaneIdleFacts(laneChatId: string, now: Date, opts: { e
     prisma.hookEvent.count({ where: { status: { in: ['pending', 'delivering'] }, hook: { targetChatId: laneChatId, enabled: true } } }),
     prisma.ownerQuestion.count({ where: { chatId: laneChatId, status: 'open' } }),
     prisma.pendingConfirmation.count({ where: { chatId: laneChatId, status: 'pending', expiresAt: { gt: now } } }),
-    prisma.codingSchedule.findMany({
+    prisma.chatSchedule.findMany({
       where: { sessionId: laneChatId, enabled: true },
       select: { nextRunAt: true, kind: true, intervalSec: true },
       orderBy: { nextRunAt: 'asc' },

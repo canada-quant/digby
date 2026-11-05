@@ -261,10 +261,10 @@ export class CanvasController {
       const { token } = req.params;
       if (!/^[a-f0-9]{40}$/.test(String(token || ''))) return res.status(404).send('Not found');
       // SEPARATE-ORIGIN isolation (defense against on-brand phishing): user HTML
-      // runs sandboxed (no allow-same-origin → can't touch digby.example.com cookies/
+      // runs sandboxed (no allow-same-origin → can't touch digby.ai cookies/
       // storage), but arbitrary JS under the trusted apex URL is still a
       // social-engineering risk. When SHARED_CANVAS_HOST is set (e.g.
-      // usercontent.digby.example.com), serve ONLY from there and redirect apex hits —
+      // usercontent.digby.ai), serve ONLY from there and redirect apex hits —
       // the standard githubusercontent.com / googleusercontent.com pattern.
       const isolatedHost = process.env.SHARED_CANVAS_HOST;
       if (isolatedHost && req.hostname !== isolatedHost) {
@@ -277,7 +277,7 @@ export class CanvasController {
       if (!link || !link.isActive || !link.canvas) return res.status(410).send('This shared artifact is no longer available.');
       const c = link.canvas;
       // Isolate the page: scripts may run (that's the point of sharing an app)
-      // but the document gets no credentials/origin powers on digby.example.com.
+      // but the document gets no credentials/origin powers on digby.ai.
       res.setHeader('Content-Security-Policy', "sandbox allow-scripts allow-forms allow-popups allow-modals; frame-ancestors *");
       res.setHeader('X-Robots-Tag', 'noindex');
       res.setHeader('Referrer-Policy', 'no-referrer');

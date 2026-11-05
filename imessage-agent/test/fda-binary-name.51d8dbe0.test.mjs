@@ -148,7 +148,7 @@ test('51d8dbe0: onboarding + computer-use guidance name the actual executable, n
 });
 
 test('51d8dbe0: version lockstep — this tree is 0.9.1 (the Digby-named runtime release)', () => {
-  assert.match(SRC('src/config.ts'), /AGENT_VERSION = '0\.9\.19'/, 'config.ts AGENT_VERSION must be 0.9.19');
-  assert.equal(pkgJson.version, '0.9.19', 'package.json version must match AGENT_VERSION');
+  assert.match(SRC('src/config.ts'), /AGENT_VERSION = '0\.9\.23'/, 'config.ts AGENT_VERSION must be 0.9.23');
+  assert.equal(pkgJson.version, '0.9.23', 'package.json version must match AGENT_VERSION');
   assert.match(SRC('src/config.ts'), /51d8dbe0/, 'the release note cites the ticket');
 });

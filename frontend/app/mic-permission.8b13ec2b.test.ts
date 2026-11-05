@@ -121,7 +121,7 @@ describe('8b13ec2b — release contract (shell 0.1.12)', () => {
   });
 
   it('desktop-latest.json: still ≤0.1.10 (dmg not yet rebuilt) or ≥0.1.12 noting the mic fix', () => {
-    expect(FEED.url).toBe('https://digby.example.com/Digby.dmg');
+    expect(FEED.url).toBe('https://digby.ai/Digby.dmg');
     if (atLeast(FEED.version, '0.1.12')) {
       expect(FEED.notes).toMatch(/microphone|mic/i);
     } else {

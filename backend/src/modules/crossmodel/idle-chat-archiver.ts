@@ -20,7 +20,7 @@
  *   - is the Fleet Supervisor chat (isSupervisor) or a Project Supervisor
  *     chat (isProjectSupervisor) — pinned system rows, never auto-archived;
  *   - woke up since the scan (updatedAt moved inside the window);
- *   - has any ENABLED CodingSchedule (a cadence silently firing into a hidden
+ *   - has any ENABLED ChatSchedule (a cadence silently firing into a hidden
  *     chat is the surprise archiveChat's 409 blocks on the interactive path);
  *   - has an ACTIVE ChatShareLink — archiving does NOT deactivate share links
  *     today, so a publicly-shared chat stays live rather than becoming an
@@ -111,7 +111,7 @@ export async function runIdleChatArchiverOnce(): Promise<void> {
           if (!chat || chat.archivedAt || chat.updatedAt.getTime() > cutoff.getTime()) { skipped++; continue; }
           if (chat.isSupervisor || chat.isProjectSupervisor) { skipped++; continue; }
           const [enabledSchedules, shareLink, satellite] = await Promise.all([
-            prisma.codingSchedule.count({ where: { sessionId: chat.id, enabled: true } }),
+            prisma.chatSchedule.count({ where: { sessionId: chat.id, enabled: true } }),
             prisma.chatShareLink.findUnique({
               where: { chatId: chat.id },
               select: { isActive: true, expiresAt: true },

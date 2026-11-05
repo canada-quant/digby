@@ -54,7 +54,7 @@ const ALLOWLIST = [
     source: 'macos-app/README.md',
     slug: 'macos-app',
     category: 'iMessage & macOS',
-    description: 'The native Digby macOS desktop app — a signed WKWebView wrapper around digby.example.com.',
+    description: 'The native Digby macOS desktop app — a signed WKWebView wrapper around digby.ai.',
   },
   {
     source: 'docs/DIGBY_MCP.md',

@@ -32,7 +32,6 @@ import { AppError } from '../../../middleware/error-handler';
 import type { AgentAttachment } from '../chat-agent/chat-gate';
 import crossModelService from '../crossmodel.service';
 import { PatienceMode, AUTO_MODE, RoutableLevel, normalizePatienceMode, PATIENCE_MODES, storedModeToPreset } from '../types';
-import { routeMessageHeuristic } from './auto-router';
 // 2026-09-26 audit (unify-routing): THE per-send level resolver shared with the
 // stream controller and Telegram, plus the deep-research reserve for this seam.
 import { resolveSendMode, demoteForQuota, type SendRouting } from './send-mode';
@@ -48,6 +47,7 @@ import {
   toLegacyProject,
   CodingProjectShape,
   CodingSessionShape,
+  capabilityFrom,
 } from '../coding/coding-data.service';
 import {
   foldersInheritanceOn,
@@ -208,6 +208,15 @@ export type ListChatsFilters = {
   codeCapable?: boolean;
   /** Sidebar live refresh (ticket d6b2eef5): only rows with updatedAt ≥ this instant (DB-level). */
   updatedAfter?: Date;
+  /**
+   * SUPERVISION SCOPE (ticket 03d14b78) — projects to SUBTRACT from this read
+   * (DB-level, applied to every arm: default, archived and derived-filter).
+   * The Fleet Supervisor's machine-run tool reads pass the owner's opted-out
+   * (`supervised:false`) project ids here so an opted-out project's chats never
+   * reach a model-facing envelope. Absent/empty ⇒ byte-identical behaviour for
+   * every other caller (the REST API, sidebar polls, ordinary chats).
+   */
+  excludeProjectIds?: readonly string[];
 };
 
 /**
@@ -234,6 +243,11 @@ export async function listChats(opts: { userId: string; page?: number; limit?: n
     ...(opts.archived ? { archived: true } : {}), // Archived browse view; default excludes archived rows
     ...(opts.updatedAfter ? { updatedAfter: opts.updatedAfter } : {}), // sidebar delta poll watermark
     ...(opts.archivedAny ? { archivedAny: true } : {}), // sidebar delta poll sees just-archived rows (6201e0ee)
+    // SUPERVISION SCOPE (ticket 03d14b78) — MUST be projected here: this literal
+    // is the ONLY filter payload crossModelService.listChats ever sees, so a
+    // field declared on ListChatsFilters but missing from this object is
+    // silently dropped and the scope filter becomes a no-op (review finding 1).
+    ...(opts.excludeProjectIds?.length ? { excludeProjectIds: opts.excludeProjectIds } : {}),
   };
   const derivedActive = opts.running !== undefined || opts.codeCapable !== undefined || !!opts.status;
 
@@ -432,13 +446,17 @@ export async function getChatStatus(opts: { userId: string; chatId: string }) {
 
   // P5-B: the coding CAPABILITY rides the status DTO (FE/agent polling branches
   // on it — the retired mode='code' marker is gone). The satellite lookup above
-  // doubles as hasWorkspaceState; the folder-chain check only runs when no
-  // satellite exists (same rule as getChatCapability's preloadedState path).
-  let codeCapable = !!state;
-  if (!codeCapable && chat.projectId) {
+  // doubles as hasWorkspaceState; the folder-chain leg only runs when no
+  // satellite exists. MERGE-1 slice 1: the PREDICATE is no longer restated
+  // here — capabilityFrom is the single copy (this site drifted from the
+  // others once already, and drift is what the slice exists to prevent).
+  let folderCodeCapable = false;
+  if (!state && chat.projectId) {
     const { getNearestWorkspaceFolder } = await import('./folder-inheritance');
-    codeCapable = !!(await getNearestWorkspaceFolder(chat.projectId).catch(() => null));
+    folderCodeCapable = !!(await getNearestWorkspaceFolder(chat.projectId).catch(() => null));
   }
+  const capability = capabilityFrom(!!state, undefined, folderCodeCapable);
+  const codeCapable = capability.codeCapable;
 
   let plan: { goal: string; total: number; completed: number } | null = null;
   if (state) {
@@ -485,8 +503,8 @@ export async function getChatStatus(opts: { userId: string; chatId: string }) {
     const RECENT_DISABLE_MS = 24 * 60 * 60 * 1000;
     const now = new Date();
     const [enabledRows, recentlyDisabled] = await Promise.all([
-      prisma.codingSchedule.findMany({ where: { sessionId: chatId, enabled: true }, select: { id: true, nextRunAt: true, kind: true, runsCount: true, maxRuns: true, expiresAt: true } }),
-      prisma.codingSchedule.count({
+      prisma.chatSchedule.findMany({ where: { sessionId: chatId, enabled: true }, select: { id: true, nextRunAt: true, kind: true, runsCount: true, maxRuns: true, expiresAt: true } }),
+      prisma.chatSchedule.count({
         where: { sessionId: chatId, enabled: false, lastFiredAt: { gte: new Date(Date.now() - RECENT_DISABLE_MS) } },
       }),
     ]);
@@ -909,54 +927,29 @@ export async function sendChatMessage(opts: {
   // A turn runs the CODING harness iff a ChatCodingState satellite exists —
   // NEVER off folder capability. With auto-filing every chat sits in a capable
   // (user-space) project, so codeCapable now means exactly one thing:
-  // "attachable on demand". The old attach-on-every-send-to-a-capable-chat is
-  // REMOVED — it would route "what's the weather" to the durable worker. The
-  // send-time router (§4a) is the attach trigger evaluated HERE, BEFORE the
-  // satellite branch: owner + adult + non-supervisor + satellite-less +
-  // capable + a code-intent message → attach now, and the satellite branch
-  // then routes THIS message coding.
+  // "attachable on demand".
+  //
+  // MERGE-1 slice 2 (2026-11-03): the rule itself — capability read, owner /
+  // supervisor / escalation / kid guards, the code-intent trigger and the
+  // task-kind attach gate — moved into platform/send-profile.ts. It was
+  // re-implemented here AND at two controller seams, and the copies drifted
+  // (the GET ?message= start had no gate at all). One rule, three callers.
   {
-    const { getChatCapability } = await import('../coding/coding-data.service');
-    let capability = await getChatCapability(chat);
-    if (
-      !capability.hasWorkspaceState && capability.codeCapable
-      && chat.userId === userId && !chat.isSupervisor
-      // Rollout watch 2026-09-14: a PROJECT supervisor is a plain chat by design
-      // (profile/seat/state come from the flag). The Fleet Supervisor's first
-      // agent send into the spark + bench supervisors ("check chat X … resume")
-      // tripped the code-intent router and lazily attached a workspace — the
-      // supervisors then woke as coding runs on box C (worktree, worker slot,
-      // CodeSessionView). Never attach to a supervisor lane of either kind.
-      // (getChatById selects the flag since the 2026-09-14 hardening — no cast.)
-      && !chat.isProjectSupervisor
-      && routeMessageHeuristic({ content: body, hasWorkspace: capability.codeCapable }).needsWorkspace
-    ) {
-      // Kid chats are never capable (their user space is plain, §2), so this
-      // isChild read is belt-and-braces (§4c) — same select the supervisor's
-      // kid guard uses.
-      const sender = await prisma.user
-        .findUnique({ where: { id: userId }, select: { isChild: true } })
-        .catch(() => null);
-      // 2026-10-20: the keyword hit is a TRIGGER — the task_kind decision keeps a confidently non-code ask a chat
-      // (every chat is auto-filed into a capable project, so "fix my essay" converted ANY chat; workspace-attach-gate.ts).
-      const gate = sender?.isChild ? null : await import('./workspace-attach-gate').then((m) => m.shouldAttachWorkspace(body, {
-        chatId, origin: opts.origin?.kind ?? 'user', hasUploads: !!opts.queueUploadIds?.length,
-      }));
-      if (gate && !gate.attach) {
-        logger.info(`userspace: chat ${chatId.slice(0, 8)} kept a chat — "${gate.label}" keyword, ${gate.reason} (task kind ${gate.kind}, p ${gate.p?.toFixed(2)})`);
-      } else if (gate) {
-        const { ensureChatWorkspaceState } = await import('../coding/coding-data.service');
-        const attached = await ensureChatWorkspaceState(chat).catch(() => null);
-        if (attached) {
-          logger.info(`userspace: router attached workspace to chat ${chatId.slice(0, 8)} (code-intent send; ${gate.reason})`);
-          capability = { ...capability, hasWorkspaceState: true };
-        }
-      }
-    }
-    if (capability.hasWorkspaceState) {
+    const { resolveSendProfile } = await import('./send-profile');
+    const decision = await resolveSendProfile({
+      chat,
+      senderUserId: userId,
+      message: body,
+      origin: opts.origin?.kind ?? 'user',
+      hasUploads: !!opts.queueUploadIds?.length,
+    });
+    if (decision.profile === 'coding') {
       // Kid guard (§4c, defense in depth): coding stays an adult surface —
       // mirrors the streamChatRun / streamCapabilityRun 403s. Today reachable
       // only via REST on an already-capable chat (kid spaces are plain).
+      // NOTE: this gates the ROUTED path, not the attach — resolveSendProfile
+      // already refuses the probe for a child sender, so reaching here as a
+      // child means the chat ALREADY carried a satellite.
       const sender = await prisma.user
         .findUnique({ where: { id: userId }, select: { isChild: true } })
         .catch(() => null);
@@ -1690,7 +1683,7 @@ export async function archiveChat(opts: { userId: string; chatId: string; archiv
 
   if (archived) {
     if (state?.status === 'running') throw new AppError(409, 'Cannot archive while a run is active');
-    const enabledSchedules = await prisma.codingSchedule.count({
+    const enabledSchedules = await prisma.chatSchedule.count({
       where: { sessionId: chatId, enabled: true },
     });
     if (enabledSchedules > 0) {
@@ -1846,7 +1839,7 @@ async function cascadeChildBlocker(child: { id: string; isSupervisor: boolean; i
   const [state, liveRun, schedules, openTodo, recentRun, recentMsg, userRows, ownerQuestion, confirmation, family] = await Promise.all([
     (prisma as any).chatCodingState.findUnique({ where: { id: child.id }, select: { status: true } }),
     prisma.agentRun.findFirst({ where: { sessionId: child.id, status: { in: ['queued', 'running', 'interrupted'] } }, select: { id: true } }),
-    prisma.codingSchedule.count({ where: { sessionId: child.id, enabled: true } }),
+    prisma.chatSchedule.count({ where: { sessionId: child.id, enabled: true } }),
     prisma.projectTodo.findFirst({ where: { assigneeChatId: child.id, status: { in: ['pending', 'in_progress', 'blocked'] } }, select: { id: true } }),
     prisma.agentRun.findFirst({ where: { sessionId: child.id, updatedAt: { gte: quiet } }, select: { id: true } }),
     prisma.crossModelMessage.findFirst({ where: { chatId: child.id, createdAt: { gte: quiet } }, select: { id: true } }),
@@ -2342,6 +2335,10 @@ export async function getFolderTree(opts: { userId: string; archived?: boolean }
       // Management tab filter on — the platform's own project leaves the
       // user-facing tree and renders under Management → Framework instead.
       isFrameworkProject: isFrameworkProject(p),
+      // Fleet-supervision scope (ticket dca83b85): `supervised:false` removes
+      // the project from the Fleet's automated view. The framework project is
+      // PERMANENTLY supervised, so it always reads true here.
+      supervised: isFrameworkProject(p) ? true : (p.supervised ?? true),
       // One-Digby: the workspace fields tell the UI a project is a coding
       // project, so "new chat" there can create a coding session.
       repoUrl: p.repoUrl,
@@ -2368,6 +2365,8 @@ export async function getFolderTree(opts: { userId: string; archived?: boolean }
       projectSupervisorEnabled: p.projectSupervisorEnabled ?? false,
       // Framework surface (ticket 9471d338) — same marker as owned rows.
       isFrameworkProject: isFrameworkProject(p),
+      // Fleet-supervision scope (ticket dca83b85) — same contract as owned rows.
+      supervised: isFrameworkProject(p) ? true : (p.supervised ?? true),
       repoUrl: p.repoUrl,
       repoProvider: p.repoProvider,
       workspaceAt: p.workspaceAt,
@@ -2539,7 +2538,21 @@ export async function updateProject(opts: {
   if (opts.name !== undefined && isFrameworkProject(access.project)) {
     throw new AppError(403, frameworkProjectRefusal('rename'));
   }
-  const { name, description, systemPrompt, emoji, color, isPublic, supervised, crossProjectMemory, codingModel, spendCapUsdPerDay, selfMerge, projectSupervisorEnabled, autoArchiveIdleDays, autoIngestGmailAttachments } = opts;
+  // TICKET dca83b85 (owner ruling, requirement 1): the framework project is
+  // PERMANENTLY fleet-supervised — no write path may opt it out, and the
+  // Management surface renders no off control for it. Refused BEFORE the row
+  // update so nothing half-applies; `supervised: true` (or an unchanged value)
+  // still passes so a stale client re-sending its whole settings form works.
+  if (opts.supervised === false && isFrameworkProject(access.project)) {
+    throw new AppError(403, frameworkProjectRefusal('unsupervise'));
+  }
+  // Defence in depth: even a path that skips this function must never leave the
+  // framework row opted out — the identity is repo-derived, so a row that WAS
+  // flipped (a legacy row, a direct DB edit) is read back as supervised.
+  const supervisedRequested = opts.supervised === undefined
+    ? undefined
+    : (isFrameworkProject(access.project) ? true : opts.supervised);
+  const { name, description, systemPrompt, emoji, color, isPublic, supervised, crossProjectMemory, codingModel, spendCapUsdPerDay, selfMerge, projectSupervisorEnabled, autoArchiveIdleDays, autoIngestGmailAttachments } = { ...opts, supervised: supervisedRequested };
   // Project-supervisor toggle is OWNER-only (hardening 2026-09-14): the lane
   // is scaffolded AS the project's owner (ensureProjectSupervisor(updated.
   // userId) → grantFullAutonomy: start_coding_session with the owner's repo
@@ -2873,7 +2886,7 @@ export async function archiveProject(opts: { userId: string; projectId: string; 
     if (running > 0) {
       throw new AppError(409, `Cannot archive: ${running} coding session(s) in this folder are running — stop them first`);
     }
-    const enabledSchedules = await prisma.codingSchedule.count({
+    const enabledSchedules = await prisma.chatSchedule.count({
       // The project supervisor lane's OWN schedules don't block archiving —
       // the archive pauses the lane below (pause-never-delete), so they are
       // exactly what the pause disables. Every other schedule still 409s.
@@ -3529,7 +3542,7 @@ export const __installDependenciesForTest = installDependencies;
 // ── Schedules ─────────────────────────────────────────────────────────────────
 
 /**
- * Schedule a run against ANY chat (generalized CodingSchedule): mode='code'
+ * Schedule a run against ANY chat (generalized ChatSchedule): mode='code'
  * chats fire a coding run; other chats fire a detached chat-agent turn
  * (schedule.service sweeper owns the branch). OWNER-only — a firing executes
  * with the chat owner's identity/tools.
@@ -3667,7 +3680,7 @@ async function requireChatOwnerForSchedules(userId: string, chatId: string): Pro
 export async function cancelChatSchedule(opts: { userId: string; chatId: string; scheduleId: string }): Promise<{ cancelled: boolean; alreadyDisabled: boolean; warning: string | null }> {
   const { userId, chatId, scheduleId } = opts;
   await requireChatOwnerForSchedules(userId, chatId);
-  const row = await prisma.codingSchedule.findFirst({ where: { id: scheduleId, sessionId: chatId } });
+  const row = await prisma.chatSchedule.findFirst({ where: { id: scheduleId, sessionId: chatId } });
   if (!row) throw new AppError(404, 'Schedule not found');
   if (!row.enabled) return { cancelled: true, alreadyDisabled: true, warning: null };
   const ok = await cancelScheduleForSession(chatId, scheduleId);

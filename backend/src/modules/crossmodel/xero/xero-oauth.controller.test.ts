@@ -61,8 +61,8 @@ function mockRes() {
 const ENV = {
   XERO_CLIENT_ID: 'xero-cid',
   XERO_CLIENT_SECRET: 'xero-secret',
-  XERO_OAUTH_REDIRECT_URI: 'https://digby.example.com/api/crossmodel/xero/callback',
-  FRONTEND_URL: 'https://digby.example.com',
+  XERO_OAUTH_REDIRECT_URI: 'https://digby.ai/api/crossmodel/xero/callback',
+  FRONTEND_URL: 'https://digby.ai',
 };
 
 const ACCOUNT_ROW = {
@@ -88,7 +88,7 @@ describe('XeroOAuthController multi-account (ticket 64a25e8d)', () => {
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
     expect(res.redirect).toHaveBeenCalledWith(
-      'https://digby.example.com/account?tab=integrations&xero=auth_required',
+      'https://digby.ai/account?tab=integrations&xero=auth_required',
     );
   });
 
@@ -136,7 +136,7 @@ describe('XeroOAuthController multi-account (ticket 64a25e8d)', () => {
       where: { userId_label: { userId: 'u1', label: 'Work' } },
       create: expect.objectContaining({ label: 'Work', orgName: 'Acme Ltd', tenantId: 't1' }),
     }));
-    expect(res.redirect).toHaveBeenCalledWith('https://digby.example.com/account?tab=integrations&xero=connected');
+    expect(res.redirect).toHaveBeenCalledWith('https://digby.ai/account?tab=integrations&xero=connected');
   });
 
   it('handleCallback: legacy state without a label keeps orgName-derived labelling', async () => {

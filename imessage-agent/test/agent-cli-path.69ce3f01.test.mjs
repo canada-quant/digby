@@ -6,7 +6,7 @@
  * THE MISHAP, REPLAYED: the owner typed a line straight out of
  * docs/UNATTENDED_DEVICES.md §10.4.2 on the Mac mini and got nothing:
  *
- *   paulcozzolino@Pauls-Mac-mini ~ % sudo digby-agent remote-access enable
+ *   paulcozzolino@example-tailnet-peer ~ % sudo digby-agent remote-access enable
  *   sudo: digby-agent: command not found
  *
  * That is not a user error. package.json declares

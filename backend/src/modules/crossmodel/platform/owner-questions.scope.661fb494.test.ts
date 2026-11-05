@@ -69,7 +69,7 @@ jest.mock('../../../config/database', () => ({
     // here but referenced at call time — keep the shapes it expects).
     crossModelProject: { findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null) },
     projectTodo: { findMany: jest.fn(async () => []) },
-    codingSchedule: { findMany: jest.fn(async () => []) },
+    chatSchedule: { findMany: jest.fn(async () => []) },
     agentRun: { groupBy: jest.fn(async () => []) },
   },
 }));

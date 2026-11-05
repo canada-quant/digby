@@ -180,7 +180,7 @@ test('c44b19e9: denialFromErrorText — the exact error texts the owning suites 
     { kind: 'ax-block' },
   );
   // A non-permission error is not ours to judge.
-  assert.equal(denialFromErrorText('ENOTFOUND digby.example.com'), null);
+  assert.equal(denialFromErrorText('ENOTFOUND digby.ai'), null);
   assert.equal(denialFromErrorText(null), null);
   assert.equal(denialFromErrorText(''), null);
 });

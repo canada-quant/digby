@@ -17,7 +17,7 @@ const mockPrisma: any = {
   runToolReceipt: { findFirst: jest.fn(async () => null), count: jest.fn(async () => 0), findMany: jest.fn(async () => []), groupBy: jest.fn(async () => []) },
   agentRun: { count: jest.fn(async () => 0), groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null) },
   crossModelMessage: { count: jest.fn(async () => 0), groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null) },
-  codingSchedule: { count: jest.fn(async () => 0), groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []) },
+  chatSchedule: { count: jest.fn(async () => 0), groupBy: jest.fn(async () => []), findMany: jest.fn(async () => []) },
   chatCodingState: { findMany: jest.fn(async () => []) },
   projectTodo: { findMany: jest.fn(async () => []) },
   projectGoal: { findMany: jest.fn(async () => []) },
@@ -80,8 +80,8 @@ beforeEach(() => {
   mockPrisma.agentRun.findMany.mockResolvedValue([]);
   mockPrisma.agentRun.findFirst.mockResolvedValue(null);
   mockPrisma.crossModelMessage.count.mockResolvedValue(0);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
-  mockPrisma.codingSchedule.groupBy.mockResolvedValue([]);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.groupBy.mockResolvedValue([]);
   mockPrisma.chatCodingState.findMany.mockResolvedValue([]);
   mockPrisma.projectTodo.findMany.mockResolvedValue([]);
   mockPrisma.projectGoal.findMany.mockResolvedValue([]);
@@ -93,7 +93,7 @@ beforeEach(() => {
   mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
   mockPrisma.delegationTask.findMany.mockResolvedValue([]);
   mockPrisma.crossModelProject.findMany.mockResolvedValue([]);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.ownerQuestion.findMany.mockResolvedValue([]);
   mockPrisma.pendingConfirmation.findMany.mockResolvedValue([]);
   mockPrisma.contextStoreEntry.findMany.mockResolvedValue([]);
@@ -192,7 +192,7 @@ describe('runSessionTopologyOutcomesOnce', () => {
     // refused: a schedule was armed but the caller spawned a lane titled like the watch anyway ⇒ "spawn"
     jest.clearAllMocks();
     mockPrisma.loopMetric.findMany.mockResolvedValueOnce([row('s2', { verdict: 'schedule', rule: 'R4', refused: true, callerChatId: 'sup-1', projectId: 'proj-1', goalText: 'Bounty submission status' })]).mockResolvedValueOnce([]);
-    mockPrisma.codingSchedule.count.mockResolvedValue(1);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1);
     mockPrisma.crossModelChat.findMany.mockResolvedValue([{ title: 'Bounty submission status check' }]);
     await runSessionTopologyOutcomesOnce(NOW);
     expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ decisionKey: 's2', scheduleArmed: true, watchLaneSpawned24h: true, correct: false, actual: 'spawn' }) }));
@@ -200,7 +200,7 @@ describe('runSessionTopologyOutcomesOnce', () => {
     // refused, schedule armed, no re-spawn ⇒ correct
     jest.clearAllMocks();
     mockPrisma.loopMetric.findMany.mockResolvedValueOnce([row('s3', { verdict: 'schedule', rule: 'R4', refused: true, callerChatId: 'sup-1', projectId: 'proj-1', goalText: 'Bounty submission status' })]).mockResolvedValueOnce([]);
-    mockPrisma.codingSchedule.count.mockResolvedValue(1);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1);
     mockPrisma.crossModelChat.findMany.mockResolvedValue([{ title: 'Rewrite the Telegram webhook retry queue' }]);
     await runSessionTopologyOutcomesOnce(NOW);
     expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({ meta: expect.objectContaining({ decisionKey: 's3', scheduleArmed: true, watchLaneSpawned24h: false, correct: true, actual: 'schedule' }) }));

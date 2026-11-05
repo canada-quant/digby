@@ -20,8 +20,8 @@ jest.mock('../model-endpoints/model-roles.service', () => ({
 }));
 
 const REGISTRY: Record<string, any> = {
-  'cql:astra': { url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk', model: 'api-openai-gpt-6-astra', label: 'cql', supportsVision: false, coding: true, chatCapable: true, thinkingOff: false },
-  'cql:claude': { url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk', model: 'api-anthropic-claude-fable-5-1', label: 'cql', supportsVision: false, coding: true, chatCapable: true, thinkingOff: false },
+  'cql:astra': { url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk', model: 'api-openai-gpt-6-astra', label: 'cql', supportsVision: false, coding: true, chatCapable: true, thinkingOff: false },
+  'cql:claude': { url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk', model: 'api-anthropic-claude-fable-5-1', label: 'cql', supportsVision: false, coding: true, chatCapable: true, thinkingOff: false },
 };
 jest.mock('../model-endpoints/model-endpoints.service', () => ({
   __esModule: true,

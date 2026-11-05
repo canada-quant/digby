@@ -17,7 +17,7 @@ const mockPrisma: any = {
   userFeatureRequest: { count: jest.fn(async () => 0) },
 };
 // WI-M (2026-09-25): the live https probe is a module seam — never hit the network from a test.
-const mockProbe: jest.Mock = jest.fn(async () => ({ status: 'healthy', checkedAt: '2026-09-18T20:00:00.000Z', frontendCode: 200, backendCode: 200, baseUrl: 'https://digby.example.com', cached: false }));
+const mockProbe: jest.Mock = jest.fn(async () => ({ status: 'healthy', checkedAt: '2026-09-18T20:00:00.000Z', frontendCode: 200, backendCode: 200, baseUrl: 'https://digby.ai', cached: false }));
 jest.mock('./deploy-health', () => ({
   __esModule: true,
   ...jest.requireActual('./deploy-health'),
@@ -680,7 +680,7 @@ describe('deployHealth (WI-M 2026-09-25 — shared with the REST admin job-healt
     mockPrisma.userFeatureRequest.count.mockResolvedValue(1);
     const out: any = await fleetTelemetry({ view: 'jobHealth' }, { userId: 'u', now: NOW });
     expect(out.ok).toBe(true);
-    expect(out.deployHealth).toEqual({ status: 'healthy', checkedAt: '2026-09-18T20:00:00.000Z', frontendCode: 200, backendCode: 200, baseUrl: 'https://digby.example.com', cached: false });
+    expect(out.deployHealth).toEqual({ status: 'healthy', checkedAt: '2026-09-18T20:00:00.000Z', frontendCode: 200, backendCode: 200, baseUrl: 'https://digby.ai', cached: false });
     expect(out.note).toBeUndefined();
     expect(mockProbe).toHaveBeenCalledWith({ now: NOW });
     expect(out.errorSummary.last24h.error).toBe(2);
@@ -755,7 +755,7 @@ describe('view deploy — deployInterrupts24h (WI-G, 2026-09-25)', () => {
 
   it('a repo-scoped read carries no framework interrupt count (it is not that repo\'s fact)', async () => {
     mockPrisma.loopMetric.findMany.mockImplementation(byKind);
-    const out: any = await fleetTelemetry({ view: 'deploy', repo: 'canada-quant/example-repo' }, {
+    const out: any = await fleetTelemetry({ view: 'deploy', repo: 'example-org/optcg' }, {
       userId: 'owner', now: NOW, getGithubToken: async () => 'tok',
       fetchRepoRuns: async () => ({ ok: true, runs: [] } as any),
       fetchRepoHead: async () => null,
@@ -990,7 +990,7 @@ describe("view collab (owner 2026-09-19: which lanes work alone and offline)", (
     mockPrisma.crossModelChat.findMany.mockImplementation(async ({ where }: any) => {
       expect(where.userId).toBe('owner'); // the per-user gate rides the chat lookup
       return [
-        { id: 'lane-a', title: 'QB2 Qwen3.8 Speed Mission Successor', isSupervisor: false, isProjectSupervisor: false, project: { name: 'tt-rd' } },
+        { id: 'lane-a', title: 'node-a Qwen3.8 Speed Mission Successor', isSupervisor: false, isProjectSupervisor: false, project: { name: 'tt-rd' } },
         { id: 'lane-b', title: 'Hardening Bench', isSupervisor: false, isProjectSupervisor: false, project: { name: 'crossmodel' } },
         { id: 'sup-1', title: 'Fleet Supervisor', isSupervisor: true, isProjectSupervisor: false, project: null },
       ]; // 'foreign' is another user's chat — never named
@@ -1006,7 +1006,7 @@ describe("view collab (owner 2026-09-19: which lanes work alone and offline)", (
     expect(out.lanes[2]).toMatchObject({ kind: 'fleet-supervisor', runs: 1, alone: false, aloneRuns: 0 }); // spawn counts as collaboration
     expect(out.totals).toEqual({ runs: 8, memory: 4, web: 1, delegate: 1, spawn: 3 });
     expect(out.reading).toContain('1 of 1 active lane(s) (≥ 4 runs) worked ALONE');
-    expect(out.reading).toContain('lane-a "QB2 Qwen3.8 Speed Mission Successor"');
+    expect(out.reading).toContain('lane-a "node-a Qwen3.8 Speed Mission Successor"');
   });
 
   it('with no profile rows yet the reading says so instead of declaring the fleet alone', async () => {

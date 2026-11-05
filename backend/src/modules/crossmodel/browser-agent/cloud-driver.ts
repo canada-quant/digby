@@ -1,7 +1,7 @@
 /**
  * CloudBrowserDriver — the official BrightData browser via the Digby MCP gateway.
  *
- * The gateway (mcp.digby.example.com) runs @brightdata/mcp (PRO_MODE) and exposes the full
+ * The gateway (mcp.digby.ai) runs @brightdata/mcp (PRO_MODE) and exposes the full
  * scraping_browser_* suite (navigate / snapshot / click_ref / type_ref / get_text /
  * get_html / scroll / screenshot) plus scrape_as_markdown / scrape_as_html.
  *
@@ -39,8 +39,9 @@
  */
 
 import logger from '../../../utils/logger';
-import { callMcpTool } from '../mcp-search';
+import { callMcpTool, mcpBrowserGatewayTarget } from '../mcp-search';
 import { directScreenshotPng } from '../brightdata-direct';
+import { mcpSessions, browserMcpSessionKey } from '../mcp-session';
 import { BrowserAction, BrowserDriver, BrowserInteractionCapability, BrowserObservation, LiveViewFrame } from './types';
 import { webSearchStatus, webSearchProblemSuffix } from '../platform/instance-setup';
 
@@ -129,6 +130,16 @@ export class CloudBrowserDriver implements BrowserDriver {
   private mode: 'unknown' | 'cdp' | 'scrape' = 'unknown';
   private currentUrl = '';
   private lastContent = '';
+  /**
+   * THIS run's gateway MCP session key (ticket 5f69fdc4). The gateway holds one
+   * stdio child — and therefore ONE BrightData browser — per Mcp-Session-Id, so
+   * a private key here is what makes `navigate → snapshot → get_text →
+   * click_ref` hit the same page. A per-instance key (never a shared constant)
+   * keeps two concurrent runs from fighting over one page.
+   */
+  private readonly mcpSessionKey = browserMcpSessionKey();
+  /** ref → the snapshot line's human description (BrightData's required `element`). */
+  private refDescriptions = new Map<string, string>();
   /** URL of the last live-view render — the cloud page is a static fetch, so
    *  re-rendering the same URL on every get_content would only burn unlocker
    *  requests and time. */
@@ -197,9 +208,9 @@ export class CloudBrowserDriver implements BrowserDriver {
         case 'extract':
           return await this.getContent('text');
         case 'click':
-          return await this.click(action.ref || action.selector || '');
+          return await this.click(action.ref || action.selector || '', action.element);
         case 'type':
-          return await this.type(action.ref || action.selector || '', action.text || '');
+          return await this.type(action.ref || action.selector || '', action.text || '', action.element, action.submit);
         case 'scroll':
           return await this.scroll(action.direction || 'down', action.amount);
         case 'screenshot':
@@ -220,16 +231,32 @@ export class CloudBrowserDriver implements BrowserDriver {
   private async navigate(url: string): Promise<BrowserObservation> {
     if (!url) return this.fail('navigate', 'navigate requires a url');
     this.currentUrl = url;
+    // A navigation invalidates the previous document's refs (BrightData resolves
+    // refs against the CURRENT page), so the cached descriptions go with it.
+    this.refDescriptions.clear();
 
     if (CLOUD_BROWSER_CDP && this.mode !== 'scrape') {
-      const res = await callMcpTool('scraping_browser_navigate', { url }, CDP_NAV_TIMEOUT_MS);
+      const res = await this.cdp('scraping_browser_navigate', { url }, CDP_NAV_TIMEOUT_MS);
       if (!cdpUnavailable(res)) {
         this.mode = 'cdp';
         this.zoneBlocked = false; // a live CDP session disproves an earlier block (review F1)
-        const text = asText(await callMcpTool('scraping_browser_get_text', {}, CDP_TIMEOUT_MS));
-        this.lastContent = text;
-        const { content, truncated } = clip(text);
-        return { ok: true, driver: 'cloud', action: 'navigate', url, content, truncated };
+        const text = asText(await this.cdp('scraping_browser_get_text', {}, CDP_TIMEOUT_MS));
+        // 5f69fdc4 (2026-11-03): an EMPTY CDP read is NOT a successful
+        // navigation. Before this guard the driver returned ok:true with
+        // content '' whenever get_text yielded nothing, so an interactive
+        // session could silently serve a blank page and the caller had no way
+        // to tell it apart from a genuinely empty document. Fall through to
+        // the scrape path instead: it is the proven rendered-content path
+        // (criterion 5), so the worst case becomes a slower answer, never a
+        // blank one.
+        if (text.trim()) {
+          this.lastContent = text;
+          const { content, truncated } = clip(text);
+          return { ok: true, driver: 'cloud', action: 'navigate', url, content, truncated };
+        }
+        logger.warn(
+          'CloudBrowserDriver: CDP navigate returned EMPTY page text → falling back to the scrape path (never ok:true with 0 bytes)',
+        );
       }
       // A non-null zone-block TEXT names the cause (a swallowed null stays ambiguous
       // — capability 'unavailable', not 'zone-blocked'; feedback c3c06260).
@@ -262,9 +289,13 @@ export class CloudBrowserDriver implements BrowserDriver {
       const tool = format === 'html' ? 'scraping_browser_get_html'
         : format === 'snapshot' ? 'scraping_browser_snapshot'
         : 'scraping_browser_get_text';
-      const out = asText(await callMcpTool(tool, {}, CDP_TIMEOUT_MS));
+      const out = asText(await this.cdp(tool, {}, CDP_TIMEOUT_MS));
       if (!out || cdpUnavailable(out)) return this.fail('get_content', `Could not read the page (${format}).`);
       if (format !== 'html') this.lastContent = out;
+      // A snapshot carries the element refs the model needs AND their human
+      // descriptions — keep them so click/type can supply BrightData's required
+      // `element` without asking the model to retype it (ticket 5f69fdc4).
+      if (format === 'snapshot') this.indexSnapshotRefs(out);
       const { content, truncated } = clip(out);
       // For a snapshot, the content itself carries the element refs the model needs.
       return { ok: true, driver: 'cloud', action: 'get_content', url: this.currentUrl, content, truncated };
@@ -292,34 +323,108 @@ export class CloudBrowserDriver implements BrowserDriver {
   }
 
   // ── interact (ref-based, real Scraping Browser only) ────────────────────────────
-  private async click(ref: string): Promise<BrowserObservation> {
+  private async click(ref: string, element?: string): Promise<BrowserObservation> {
     if (this.mode !== 'cdp') { this.interactiveRefused = true; return this.fail('click', readOnlyMsg('click', this.refusalCause())); }
     if (!ref) return this.fail('click', 'click needs an element ref — call get_content with format="snapshot" first to get refs.');
-    const res = await callMcpTool('scraping_browser_click_ref', { ref }, CDP_TIMEOUT_MS);
+    // `element` is REQUIRED by BrightData's zod schema (no default): omitting it
+    // is a -32602 parameter-validation error and NO click happens. It is only a
+    // human-readable label — the target resolves from `ref` alone — so the
+    // snapshot's own description, then the ref itself, are safe fallbacks.
+    const res = await this.cdp('scraping_browser_click_ref', { ref, element: this.elementFor(ref, element) }, CDP_TIMEOUT_MS);
     if (isZoneBlockText(res)) this.zoneBlocked = true; // mid-session block (c3c06260)
     if (cdpUnavailable(res)) return this.fail('click', asText(res).slice(0, 160) || 'click failed');
     return { ok: true, driver: 'cloud', action: 'click', url: this.currentUrl };
   }
 
-  private async type(ref: string, text: string): Promise<BrowserObservation> {
+  private async type(ref: string, text: string, element?: string, submit?: boolean): Promise<BrowserObservation> {
     if (this.mode !== 'cdp') { this.interactiveRefused = true; return this.fail('type', readOnlyMsg('type', this.refusalCause())); }
     if (!ref) return this.fail('type', 'type needs an element ref — call get_content with format="snapshot" first to get refs.');
-    const res = await callMcpTool('scraping_browser_type_ref', { ref, text }, CDP_TIMEOUT_MS);
+    const res = await this.cdp(
+      'scraping_browser_type_ref',
+      { ref, element: this.elementFor(ref, element), text, ...(submit ? { submit: true } : {}) },
+      CDP_TIMEOUT_MS,
+    );
     if (isZoneBlockText(res)) this.zoneBlocked = true; // mid-session block (c3c06260)
     if (cdpUnavailable(res)) return this.fail('type', asText(res).slice(0, 160) || 'type failed');
     return { ok: true, driver: 'cloud', action: 'type', url: this.currentUrl };
   }
 
+  // ── MCP wire session (ticket 5f69fdc4) ──────────────────────────────────────
+  /**
+   * Every `scraping_browser_*` call rides THIS driver's own gateway session on
+   * the STATEFUL mount, so navigate → snapshot → get_text → click_ref reach the
+   * SAME BrightData browser. Without either half the gateway hands each
+   * tools/call a fresh stdio child — hence a fresh browser — and a successful
+   * navigate is followed by a snapshot of "Page: about:blank" (measured).
+   */
+  private cdp(toolName: string, args: Record<string, any>, timeoutMs: number): Promise<any> {
+    return callMcpTool(toolName, args, timeoutMs, {
+      sessionKey: this.mcpSessionKey,
+      gatewayUrl: mcpBrowserGatewayTarget().url,
+    });
+  }
+
+  /**
+   * The `element` label for a ref: the caller's own description wins (it may be
+   * richer than the snapshot's), then the snapshot line's description, then the
+   * ref. Never empty — an empty string would still satisfy zod but produce
+   * useless error text, and `undefined` would be a hard -32602.
+   */
+  private elementFor(ref: string, provided?: string): string {
+    const own = (provided || '').trim();
+    if (own) return own;
+    const fromSnapshot = (this.refDescriptions.get(ref) || '').trim();
+    if (fromSnapshot) return fromSnapshot;
+    return ref;
+  }
+
+  /**
+   * Index a snapshot's `ref → human description` pairs so click/type can supply
+   * BrightData's required `element` without the model having to retype it.
+   * Handles BOTH body variants `@brightdata/mcp` emits:
+   *   full     `- button "Submit" [ref=e8]`
+   *   filtered `[e8] button "Submit" -> https://…`
+   * A line matching neither is skipped — a parse miss only costs a fallback
+   * label (the ref itself), never a failed action.
+   */
+  private indexSnapshotRefs(snapshot: string): void {
+    for (const line of (snapshot || '').split('\n')) {
+      const full = /^-\s+(\S+)\s+"([^"]*)"(.*)\[ref=([^\]]+)\]/.exec(line);
+      if (full) {
+        const [, role, name, , ref] = full;
+        const desc = name.trim() ? `${role} "${name.trim()}"` : role;
+        this.refDescriptions.set(ref.trim(), desc);
+        continue;
+      }
+      const compact = /^\[([^\]]+)\]\s+(\S+)\s+"([^"]*)"/.exec(line.trim());
+      if (compact) {
+        const [, ref, role, name] = compact;
+        const desc = name.trim() ? `${role} "${name.trim()}"` : role;
+        this.refDescriptions.set(ref.trim(), desc);
+      }
+    }
+  }
+
   private async scroll(direction: string, amount?: number): Promise<BrowserObservation> {
     if (this.mode !== 'cdp') { this.interactiveRefused = true; return this.fail('scroll', readOnlyMsg('scroll', this.refusalCause())); }
-    const res = await callMcpTool('scraping_browser_scroll', { direction, ...(amount ? { pixels: amount } : {}) }, CDP_TIMEOUT_MS);
+    // MUST ride `this.cdp()` (ticket bbe53f95). Calling `callMcpTool` directly
+    // drops BOTH halves of the wire-session contract — `sessionKey` and the
+    // stateful `gatewayUrl` — so the call lands on the SHARED STATELESS `/mcp`
+    // mount, gets its own fresh stdio child (hence its own blank browser) and
+    // scrolls a page nobody is looking at. Measured on prod box A with
+    // CLOUD_BROWSER_CDP=1: open ok/1565 B and follow-link ok, but scroll hung
+    // 75 s to the 60 s SSE cap, while the SAME call hand-rolled onto the
+    // session answered in 380 ms. Every interactive action must go through
+    // `this.cdp()`.
+    const res = await this.cdp('scraping_browser_scroll', { direction, ...(amount ? { pixels: amount } : {}) }, CDP_TIMEOUT_MS);
     if (isZoneBlockText(res)) this.zoneBlocked = true; // mid-session block (c3c06260)
     return { ok: !cdpUnavailable(res), driver: 'cloud', action: 'scroll', url: this.currentUrl };
   }
 
   private async screenshot(): Promise<BrowserObservation> {
     if (this.mode !== 'cdp') { this.interactiveRefused = true; return this.fail('screenshot', readOnlyMsg('screenshot', this.refusalCause())); }
-    const raw = await callMcpTool('scraping_browser_screenshot', {}, CDP_TIMEOUT_MS);
+    // `this.cdp()` — same session contract as scroll (ticket bbe53f95).
+    const raw = await this.cdp('scraping_browser_screenshot', {}, CDP_TIMEOUT_MS);
     if (isZoneBlockText(raw)) this.zoneBlocked = true; // mid-session block (c3c06260)
     const b64 = typeof raw === 'string' && /^[A-Za-z0-9+/=\s]+$/.test(raw.slice(0, 64)) ? raw.replace(/\s+/g, '') : undefined;
     if (cdpUnavailable(raw) && !b64) return this.fail('screenshot', 'screenshot unavailable');
@@ -339,7 +444,10 @@ export class CloudBrowserDriver implements BrowserDriver {
     if (!url || url === this.liveViewUrl) return null;
     try {
       if (this.mode === 'cdp') {
-        const raw = await callMcpTool('scraping_browser_screenshot', {}, CDP_TIMEOUT_MS);
+        // `this.cdp()` — a live-view render of the SESSION's page. On the
+        // stateless mount this screenshots a throwaway browser (or times out),
+        // so the panel showed nothing even with CDP on (ticket bbe53f95).
+        const raw = await this.cdp('scraping_browser_screenshot', {}, CDP_TIMEOUT_MS);
         const b64 = typeof raw === 'string' && /^[A-Za-z0-9+/=\s]+$/.test(raw.slice(0, 64)) ? raw.replace(/\s+/g, '') : undefined;
         if (!b64) return null;
         this.liveViewUrl = url;
@@ -356,6 +464,21 @@ export class CloudBrowserDriver implements BrowserDriver {
   }
 
   async close(): Promise<void> {
-    /* scrape is stateless; the Scraping Browser CDP session auto-expires */
+    // Release this run's gateway session: supergateway stops that session's
+    // stdio child, which is what actually closes the BrightData browser. Left
+    // alone a run's cloud browser lingers until the gateway's 30-min idle
+    // reaper — the exact context leak the (d) probe discipline forbids.
+    // scrape mode holds no session, so release() is a no-op there.
+    try {
+      // The session was MINTED on the stateful browser mount, so it must be
+      // torn down there (ticket 5f69fdc4 follow-up). Handing `release()` the
+      // shared stateless target pointed the DELETE at a gateway that never
+      // held the id; the stdio child — and the BrightData browser behind it —
+      // survived until the 30-min idle reaper.
+      await mcpSessions.release(this.mcpSessionKey, mcpBrowserGatewayTarget());
+    } catch (e: any) {
+      logger.info(`CloudBrowserDriver: session release skipped: ${e?.message || e}`);
+    }
+    this.refDescriptions.clear();
   }
 }

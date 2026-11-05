@@ -19,14 +19,14 @@ describe('google-ads', () => {
   afterEach(() => { delete process.env.NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED; });
 
   it('the bootstrap is Google\'s snippet, configuring the ONE Ads account that owns the conversions (owner 2026-10-07)', () => {
-    expect(GOOGLE_ADS_ID).toBe('AW-00000000000');
-    expect(GOOGLE_ADS_SIGNUP_SEND_TO).toBe('AW-00000000000/cQctCLPgl5EdEKTwxsE9');
-    expect(GOOGLE_ADS_CONFIG_IDS).toEqual(['AW-00000000000']);
+    expect(GOOGLE_ADS_ID).toBe('AW-16512038948');
+    expect(GOOGLE_ADS_SIGNUP_SEND_TO).toBe('AW-16512038948/cQctCLPgl5EdEKTwxsE9');
+    expect(GOOGLE_ADS_CONFIG_IDS).toEqual(['AW-16512038948']);
     const b = googleAdsBootstrap();
     expect(b).toContain('window.dataLayer = window.dataLayer || [];');
     expect(b).toContain('function gtag(){dataLayer.push(arguments);}');
     expect(b).toContain("gtag('js', new Date());");
-    expect(b).toContain("gtag('config', 'AW-00000000000');");
+    expect(b).toContain("gtag('config', 'AW-16512038948');");
     // AW-11419212138 is removed everywhere (owner 2026-10-07) — it held no conversion action.
     expect(b).not.toContain('11419212138');
     expect(frontendSources().filter((f) => /['"`]AW-11419212138/.test(f.text)).map((f) => f.rel)).toEqual([]); // no code literal
@@ -36,7 +36,7 @@ describe('google-ads', () => {
     const win: any = {};
     reportGoogleAdsSignup(win);
     expect(win.dataLayer).toHaveLength(2);
-    expect(Array.from(win.dataLayer[0])).toEqual(['event', 'conversion', { send_to: 'AW-00000000000/cQctCLPgl5EdEKTwxsE9', value: 1.0, currency: 'USD' }]);
+    expect(Array.from(win.dataLayer[0])).toEqual(['event', 'conversion', { send_to: 'AW-16512038948/cQctCLPgl5EdEKTwxsE9', value: 1.0, currency: 'USD' }]);
     expect(Array.from(win.dataLayer[1])).toEqual(['event', 'sign_up', { method: 'email', send_to: 'G-NK7XPHC7FE' }]);
   });
 
@@ -79,7 +79,7 @@ describe('google-ads', () => {
   it('a child session that signs in after the tag loaded switches every id off', () => {
     const win: Record<string, unknown> = {};
     disableGoogleAds(win);
-    expect(win['ga-disable-AW-00000000000']).toBe(true);
+    expect(win['ga-disable-AW-16512038948']).toBe(true);
     expect(win['ga-disable-G-NK7XPHC7FE']).toBe(true);
   });
 
@@ -130,14 +130,14 @@ describe('Google Analytics GA4 on the ONE Google tag (ticket 4bb5fe23)', () => {
   it('gtag.js loads by the GA4 id (Google\'s GA snippet) and configures GA4 then the Ads account — one config per destination', () => {
     expect(GOOGLE_ANALYTICS_ID).toBe('G-NK7XPHC7FE');
     expect(googleTagLoaderId()).toBe('G-NK7XPHC7FE');
-    expect(googleTagConfigIds()).toEqual(['G-NK7XPHC7FE', 'AW-00000000000']);
+    expect(googleTagConfigIds()).toEqual(['G-NK7XPHC7FE', 'AW-16512038948']);
     const b = googleAdsBootstrap();
     expect(b).toBe([
       'window.dataLayer = window.dataLayer || [];',
       'function gtag(){dataLayer.push(arguments);}',
       "gtag('js', new Date());",
       "gtag('config', 'G-NK7XPHC7FE');",
-      "gtag('config', 'AW-00000000000');",
+      "gtag('config', 'AW-16512038948');",
     ].join('\n'));
   });
 
@@ -145,7 +145,7 @@ describe('Google Analytics GA4 on the ONE Google tag (ticket 4bb5fe23)', () => {
     const adsOnly = googleAdsBootstrap(GOOGLE_ADS_CONFIG_IDS);
     process.env.NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED = '1';
     expect(googleTagConfigIds()).toEqual(GOOGLE_ADS_CONFIG_IDS);
-    expect(googleTagLoaderId()).toBe('AW-00000000000');
+    expect(googleTagLoaderId()).toBe('AW-16512038948');
     expect(googleAdsBootstrap()).toBe(adsOnly);
     expect(googleAdsBootstrap()).not.toContain('G-NK7XPHC7FE');
   });

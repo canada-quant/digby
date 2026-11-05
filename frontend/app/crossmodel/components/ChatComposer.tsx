@@ -27,9 +27,10 @@
  */
 
 import type { ClipboardEvent, DragEvent, ReactNode, RefObject } from 'react';
-import { ArrowUp, ListEnd, Loader2, Square } from 'lucide-react';
+import { ArrowUp, CornerUpRight, ListEnd, Loader2, Square } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import ChatComposerTextarea, { type ChatComposerHandle } from './ChatComposerTextarea';
+import { INTERRUPT_AFFORDANCE, showInterruptControl } from '@/lib/queue-controls';
 
 export interface ChatComposerDragHandlers {
   onDragOver: (e: DragEvent<HTMLFormElement>) => void;
@@ -70,6 +71,13 @@ export interface ChatComposerProps {
   stopPending?: boolean;
   submitTitle?: string;
   stopTitle?: string;
+  /** Ticket b54efe5d: interrupting the live run is its own SMALL gesture, not a
+   *  mode. When the host passes `onInterrupt` (and there is a draft while a run
+   *  is live), a single icon button renders beside the send circle: press it to
+   *  stop the run and send the draft as the next turn immediately. The send
+   *  circle keeps exactly one meaning — queue (chat) / steer (code) — and no
+   *  state is left armed for the next send. Omit → no interrupt affordance. */
+  onInterrupt?: () => void;
   /** Rendered inside the form, above the composer box (chat: folder breadcrumb). */
   topContent?: ReactNode;
   /** Left side of the toolbar (attach + the effort control). */
@@ -127,6 +135,7 @@ export default function ChatComposer({
   stopPending,
   submitTitle,
   stopTitle,
+  onInterrupt,
   topContent,
   leftActions,
   rightActions,
@@ -136,6 +145,9 @@ export default function ChatComposer({
   dragHandlers,
 }: ChatComposerProps) {
   const isCode = variant === 'code';
+  // The interrupt control's words (it is icon-only; these are its accessible
+  // name + tooltip). One place, so UI and tests agree.
+  const interrupt = INTERRUPT_AFFORDANCE[isCode ? 'code' : 'chat'];
   const resolvedStopTitle = stopTitle ?? (isCode ? 'Stop the run' : 'Stop generating');
   // Mid-reply with an EMPTY draft: the send circle IS Stop. With a draft the
   // circle submits (queue / steer) and a ghost Stop sits beside it.
@@ -199,6 +211,28 @@ export default function ChatComposer({
                   aria-label={resolvedStopTitle}
                 >
                   {stopIcon}
+                </button>
+              )}
+              {/* Ticket b54efe5d: interrupting is a SMALL gesture, not a mode.
+                  This one icon button replaces the old two-word "Steer | Send
+                  now" pill's only useful case — stop the live run and send the
+                  draft right now — without taking a pill's width, without
+                  duplicating the queued-messages panel's per-row "Run now", and
+                  without leaving a sticky interrupt armed for the next send.
+                  It sits immediately left of the send circle (stop · send-now ·
+                  send) and appears only while it can DO something: a run is
+                  live and there is a draft. */}
+              {showInterruptControl({ streaming: !!isStreaming, hasDraft: !!canSubmit, canInterrupt: !!onInterrupt }) && (
+                <button
+                  type="button"
+                  onClick={onInterrupt}
+                  disabled={stopDisabled}
+                  className={STOP_GHOST_BTN}
+                  title={interrupt.title}
+                  aria-label={interrupt.label}
+                  data-interrupt-send
+                >
+                  <CornerUpRight className="size-[15px]" strokeWidth={2} />
                 </button>
               )}
               <button

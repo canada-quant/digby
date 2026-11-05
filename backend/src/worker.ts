@@ -52,6 +52,7 @@ import { READINESS_JOB_ID as DECISION_GATE_READINESS_JOB_ID, readinessIntervalSe
 import { LIVE_CHAT_AUDIT_JOB_ID, LIVE_CHAT_AUDIT_INTERVAL_SEC } from './modules/crossmodel/platform/live-chat-audit';
 import { WINDOW_CLOSER_JOB_ID as COMPUTE_POLICY_WINDOW_CLOSER_JOB_ID, WINDOW_CLOSER_INTERVAL_SEC as COMPUTE_POLICY_WINDOW_CLOSER_INTERVAL_SEC } from './modules/crossmodel/platform/compute-policy-window-closer';
 import { SESSION_TOPOLOGY_OUTCOMES_JOB_ID, SESSION_TOPOLOGY_OUTCOMES_INTERVAL_SEC } from './modules/crossmodel/platform/session-topology-outcomes';
+import { TODO_ASSIGNEE_AUDIT_JOB_ID, TODO_ASSIGNEE_AUDIT_INTERVAL_SEC } from './modules/crossmodel/platform/todo-assignee-audit';
 import { INTERVENTION_OUTCOMES_JOB_ID, INTERVENTION_OUTCOMES_INTERVAL_SEC } from './modules/crossmodel/platform/intervention-outcomes';
 import { ROLLOUT_JOB_ID as DECISION_GATE_ROLLOUT_JOB_ID, rolloutIntervalSec as decisionGateRolloutIntervalSec } from './modules/crossmodel/platform/decision-gate-rollout';
 import { DELEGATION_RECONCILE_JOB_ID, DELEGATION_RECONCILE_INTERVAL_SEC } from './modules/crossmodel/platform/delegation-tasks-reconcile';
@@ -163,6 +164,11 @@ const CRON_JOBS: ReadonlyArray<{ id: string; intervalSec: number }> = [
   { id: COMPUTE_POLICY_WINDOW_CLOSER_JOB_ID, intervalSec: COMPUTE_POLICY_WINDOW_CLOSER_INTERVAL_SEC },
   // session-topology-outcomes (2026-09-27): the +24 h label of every placement decision + the observe-only R6 retire scan.
   { id: SESSION_TOPOLOGY_OUTCOMES_JOB_ID, intervalSec: SESSION_TOPOLOGY_OUTCOMES_INTERVAL_SEC },
+  // todo-assignee-audit (TD-1, Cluster 5, 2026-11-03): the observe-only scan of
+  // `in_progress` todos with NO assignee — the population that must be
+  // understood BEFORE TODO_ASSIGNEE_REQUIRED_ENFORCE is flipped. Kill switch
+  // TODO_ASSIGNEE_AUDIT_DISABLED=1 (read inside).
+  { id: TODO_ASSIGNEE_AUDIT_JOB_ID, intervalSec: TODO_ASSIGNEE_AUDIT_INTERVAL_SEC },
   // supervisor-intervention-outcomes (INTERVENTION-OUTCOMES, 2026-10-20): the +6 h / +24 h label of every
   // supervisor lane intervention (≤ 150 labels a pass). DB-only — NOT volume-bound. Kill switch
   // SUPERVISOR_INTERVENTION_OUTCOMES_DISABLED=1 (read inside).
@@ -506,6 +512,12 @@ function buildCronHandlers(): Record<string, () => Promise<void | string>> {
       const a = await runSessionTopologyOutcomesOnce();
       const b = await runSessionTopologyRetireScanOnce();
       return `${a}; ${b}`.slice(0, 200);
+    },
+    [TODO_ASSIGNEE_AUDIT_JOB_ID]: async () => {
+      // TD-1 (Cluster 5, 2026-11-03): observe-only scan of `in_progress` todos
+      // with no assignee. Never mutates; TODO_ASSIGNEE_AUDIT_DISABLED=1 inside.
+      const { runTodoAssigneeAuditOnce } = await import('./modules/crossmodel/platform/todo-assignee-audit');
+      return runTodoAssigneeAuditOnce();
     },
     [INTERVENTION_OUTCOMES_JOB_ID]: async () => {
       // INTERVENTION-OUTCOMES (2026-10-20): +6 h / +24 h labels of supervisor lane interventions — kill switch inside.

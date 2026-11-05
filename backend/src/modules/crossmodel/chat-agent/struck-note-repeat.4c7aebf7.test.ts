@@ -1,5 +1,5 @@
 /**
- * Tickets 4c7aebf7 + 9a976d83 (2026-10-21, chat e03452f4 — the 'cql-agx-orin64 Supervisor'
+ * Tickets 4c7aebf7 + 9a976d83 (2026-10-21, chat e03452f4 — the 'cql-accelerator Supervisor'
  * project-supervisor chat). THE INCIDENT, in order:
  *   17:12:19Z  a machine-wake note claimed it drove the owner's Mac via computer_task (Tailscale
  *              ACL edit applied + saved, verify probe red) and headlined the FUTURE clock "17:25Z";
@@ -48,11 +48,11 @@ const ANNOTATION_HEADER = '[ACTION VERIFIER — OBSERVE-ONLY ANNOTATION]';
 
 /** The 17:12:19Z note as the model wrote it (headline clock 17:25Z — 13 min in the future). */
 const NOTE_1712 = [
-  '**cql-agx-orin64 — 17:25Z**',
+  '**cql-accelerator — 17:25Z**',
   '',
   "Drove the owner's Mac via computer_task: opened the Tailscale admin console → Access controls, applied the ACL edit (tag:agx → port 22 for the orin64 node) and clicked Save — the policy file saved without errors.",
   '',
-  'Verify probe: `tailscale ping cql-agx-orin64` from the gateway is still RED (timeout after 3 tries).',
+  'Verify probe: `tailscale ping cql-accelerator` from the gateway is still RED (timeout after 3 tries).',
   '',
   'Next: re-run the probe once the ACL propagates; if it stays red, check the node tags.',
 ].join('\n');
@@ -61,7 +61,7 @@ const NOTE_1712 = [
 const CLOCK_ANNOTATION = [
   ANNOTATION_HEADER,
   "This note was delivered as written. 1 clock reading(s) in it are written as observations but read LATER than this run's real clock (2026-10-21T17:12:19.000Z) — an observation cannot be in the future:",
-  '- "17:25Z" — 13 min ahead — in: "**cql-agx-orin64 — 17:25Z**"',
+  '- "17:25Z" — 13 min ahead — in: "**cql-accelerator — 17:25Z**"',
   'Treat those lines as unverified until a fresh tool result confirms them; nothing above was removed or changed.',
 ].join('\n');
 
@@ -73,7 +73,7 @@ const NOTE_1720 = NOTE_1712.replace('17:25Z', '17:14Z');
 
 /** What the Fleet Supervisor asked for — a genuinely new note doing STEP 1. */
 const NEW_NOTE = [
-  '**cql-agx-orin64 — step 1 (camera read)**',
+  '**cql-accelerator — step 1 (camera read)**',
   '',
   'Camera-read the Tailscale policy editor on the Mac (computer_task, screenshot only, no input): the saved policy JSON shows NO acl entry for tag:agx — the earlier "edit applied + saved" did not happen.',
   'Quoted: `"acls": [{"action": "accept", "src": ["group:admins"], "dst": ["*:*"]}]`.',
@@ -101,7 +101,7 @@ describe('struck-note repeat — the stored-note read (struckLaneOf / noteBodyFo
   it('the incident row (note + clock annotation + harness appendix) reads as struck/annotated; its body is the model\'s note alone', () => {
     expect(struckLaneOf(STORED_1712)).toBe('annotated');
     expect(noteBodyForRepeat(STORED_1712)).toBe(NOTE_1712);
-    expect(struckClaimLines(STORED_1712)).toEqual(['- "17:25Z" — 13 min ahead — in: "**cql-agx-orin64 — 17:25Z**"']);
+    expect(struckClaimLines(STORED_1712)).toEqual(['- "17:25Z" — 13 min ahead — in: "**cql-accelerator — 17:25Z**"']);
   });
 
   it('a replace-lane wrapper reads as struck/replaced; its body is the quoted original, unquoted', () => {
@@ -157,7 +157,7 @@ describe('struck-note repeat — the stored-note read (struckLaneOf / noteBodyFo
   it('a clock annotation beside the action-claims footnote IS struck — and its claims come from the strike block only', () => {
     const both = `${NOTE_1712}\n\n${CLOCK_ANNOTATION}\n\n${ACTION_FOOTNOTE}`;
     expect(struckLaneOf(both)).toBe('annotated');
-    expect(struckClaimLines(both)).toEqual(['- "17:25Z" — 13 min ahead — in: "**cql-agx-orin64 — 17:25Z**"']);
+    expect(struckClaimLines(both)).toEqual(['- "17:25Z" — 13 min ahead — in: "**cql-accelerator — 17:25Z**"']);
     expect(noteBodyForRepeat(both)).toBe(NOTE_1712);
   });
 });
@@ -297,7 +297,7 @@ describe('struck-note repeat — kill switches', () => {
 describe('round 2 — numbers and ids are load-bearing (finding 2)', () => {
   /** A templated supervisor status note — the shape the reviewer replayed (0.906 by words alone). */
   const status = (step: string, loss: string, tps: string, score: string) => [
-    '**cql-agx-orin64 bench lane — 17:25Z**',
+    '**cql-accelerator bench lane — 17:25Z**',
     '',
     `Training run on the orin64 node is healthy: step ${step} of 5000 done, loss ${loss}, throughput ${tps} tok/s on the gateway route, checkpoints saving on schedule to the shared volume.`,
     '',
@@ -370,7 +370,7 @@ describe('round 2 — the repeat annotation is not a strike (finding 3b)', () =>
   it('a row with a REAL strike beside the repeat annotation is struck — its claims come from the real strike only', () => {
     const both = `${NOTE_1720}\n\n${CLOCK_ANNOTATION}\n\n${renderRepeatAnnotation(v, PRIOR_STRUCK)}`;
     expect(struckLaneOf(both)).toBe('annotated');
-    expect(struckClaimLines(both)).toEqual(['- "17:25Z" — 13 min ahead — in: "**cql-agx-orin64 — 17:25Z**"']);
+    expect(struckClaimLines(both)).toEqual(['- "17:25Z" — 13 min ahead — in: "**cql-accelerator — 17:25Z**"']);
   });
 });
 

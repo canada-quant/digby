@@ -119,7 +119,7 @@ describe('61823826 — release contract (shell 0.1.13)', () => {
     // presence + accessibility|screen recording|re-grant) — append, never
     // replace, the accumulating release-phrase set. scripts/dmg-build-61823826.sh
     // encodes exactly this wording.
-    expect(FEED.url).toBe('https://digby.example.com/Digby.dmg');
+    expect(FEED.url).toBe('https://digby.ai/Digby.dmg');
     if (atLeast(FEED.version, '0.1.13')) {
       // The published 0.1.13+ DMG was built from a tree that had the
       // entitlement — its notes must say so (owner-facing: the fix finally

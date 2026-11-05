@@ -95,7 +95,7 @@ jest.mock('../platform/loop-metrics.service', () => ({
 }));
 // The gateway seat the audit measured: a registry model with NO contextWindow.
 const mockResolveRegistryModel: jest.Mock = jest.fn(async (spec: string) => (spec === 'cql-litellm:api-optimize-zai-glm-5.3'
-  ? { url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk-gw', model: 'api-optimize-zai-glm-5.3', label: 'cql-litellm', supportsVision: false, coding: true, chatCapable: true }
+  ? { url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk-gw', model: 'api-optimize-zai-glm-5.3', label: 'cql-litellm', supportsVision: false, coding: true, chatCapable: true }
   : null));
 jest.mock('../model-endpoints/model-endpoints.service', () => ({
   __esModule: true,

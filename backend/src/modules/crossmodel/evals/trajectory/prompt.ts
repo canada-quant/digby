@@ -112,5 +112,5 @@ export function buildTrialPrompt(c: TrajectoryCase): BuiltPrompt {
     playbook = leaf?.platformPlaybookBlock?.({ chatId, chatTitle: c.input.chatTitle ?? null, projectId: c.input.projectId ?? null, isSupervisor, hasUser }) ?? '';
     if (playbook) sources.push('playbook_leaf');
   } catch { /* none */ }
-  return { doctrine: ['You are Digby, the AI assistant at digby.example.com.', playbook, systemContext].filter(Boolean).join('\n\n'), sources };
+  return { doctrine: ['You are Digby, the AI assistant at digby.ai.', playbook, systemContext].filter(Boolean).join('\n\n'), sources };
 }

@@ -85,7 +85,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) }, // coding_sessions (ticket f1cb73ff lane)
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) }, // the ticket lane's existence + near-miss probes (b216475a)
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -201,8 +201,8 @@ beforeEach(() => {
   // The co-cited chats (de16063e, d92f90c0) are REAL rows — exonerated live.
   mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: `${REAL_CHAT_CHILD}-7355-4847-b17e-628d9ad15e6e` });
   mockPrisma.chatCodingState.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   // The co-cited ticket bf30c5d9 is a REAL row — exonerated live.
   mockPrisma.userFeatureRequest.findFirst.mockImplementation(async (args: any) =>
     JSON.stringify(args).includes(REAL_TICKET) ? { id: `${REAL_TICKET}-154d-49fb-8aef-b149b0ba0073` } : null);

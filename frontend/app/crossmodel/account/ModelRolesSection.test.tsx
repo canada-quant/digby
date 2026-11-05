@@ -415,13 +415,13 @@ describe('Laya via LiteLLM — the [typed decisions] model flag + the systemone_
   const ENDPOINTS = readSrc('./ModelEndpointsSection.tsx');
   const LIB = readSrc('../../../lib/decision-backends.ts');
 
-  it('the Endpoints dialog offers the [typed decisions] chip (decision "systemone_chat" ⇄ unset), shows the max-state-chars input for a flagged model, badges the card, and its copy names llm.example.com / agx-laya / ≈ 3800 / the [typed decisions] flag as the documented way', () => {
+  it('the Endpoints dialog offers the [typed decisions] chip (decision "systemone_chat" ⇄ unset), shows the max-state-chars input for a flagged model, badges the card, and its copy names llm.cql.ca / agx-laya / ≈ 3800 / the [typed decisions] flag as the documented way', () => {
     expect(ENDPOINTS).toContain("{ key: 'typed-decisions', label: 'typed decisions', on: m.decision === 'systemone_chat', flip: () => toggleTypedDecisions(i)");
     expect(ENDPOINTS).toContain("decision: m.decision === 'systemone_chat' ? undefined : 'systemone_chat'");
     expect(ENDPOINTS).toContain("(draft.providerShape === 'systemone' || draft.providerShape === 'systemone_chat' || m.decision === 'systemone_chat' || m.maxStateChars !== undefined) && (");
     expect(ENDPOINTS).toContain("{m.decision === 'systemone_chat' && ' · typed decisions'}");
     expect(ENDPOINTS).toContain('<option value="systemone_chat">Typed-decision proxy (LiteLLM /chat/completions + questions — decision models only)</option>');
-    for (const s of ['llm.example.com', 'agx-laya', '3800', '[typed decisions]', '1,024 input tokens']) expect(ENDPOINTS).toContain(s);
+    for (const s of ['llm.cql.ca', 'agx-laya', '3800', '[typed decisions]', '1,024 input tokens']) expect(ENDPOINTS).toContain(s);
     expect(ENDPOINTS).toContain('typed decisions = a DECISION model behind an OpenAI-compatible proxy');
     // The API type + the stripped-fields warning cover the new flag.
     expect(API).toContain("decision?: 'systemone_chat';");

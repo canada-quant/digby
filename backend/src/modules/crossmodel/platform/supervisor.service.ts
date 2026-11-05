@@ -13,7 +13,7 @@
  *     schedule cap (1440/day) — its machine-triggered runs (sweep schedule,
  *     hook wakes) can send messages / dispatch coding sessions / manage its
  *     own schedules without a user turn;
- *   - ONE recurring CodingSchedule (2h) — the sweep loop that wakes it to
+ *   - ONE recurring ChatSchedule (2h) — the sweep loop that wakes it to
  *     review the fleet even when no hook fires;
  *   - ONE WILDCARD EventHook (sourceChatId = NULL) → the supervisor, so EVERY
  *     chat the owner has — including chats created later — emits run
@@ -527,7 +527,7 @@ async function healStaleScheduleRefsInHook(existing: { id: string; promptTemplat
   const refs = scheduleRefsInTemplate(template);
   if (!refs.length) return;
   try {
-    const referenced = await prisma.codingSchedule.findMany({
+    const referenced = await prisma.chatSchedule.findMany({
       where: { userId, OR: refs.map((p) => ({ id: { startsWith: p } })) },
       select: { id: true, enabled: true, sessionId: true },
     });
@@ -538,7 +538,7 @@ async function healStaleScheduleRefsInHook(existing: { id: string; promptTemplat
       return hits.every((r) => r.sessionId === supervisorChatId); // a dead row of THIS chat — never another chat's id
     });
     if (!stale.length) return;
-    const live = await prisma.codingSchedule.findMany({
+    const live = await prisma.chatSchedule.findMany({
       where: { sessionId: supervisorChatId, kind: 'recurring', enabled: true },
       select: { id: true, prompt: true },
       orderBy: { createdAt: 'asc' },
@@ -770,7 +770,7 @@ function isStockFleetSweep(s: { prompt?: unknown }): boolean {
  * cadence. Machine/system-authored monitors never mask a dead stock sweep.
  */
 async function ensureSweepSchedule(supervisorChatId: string, userId: string): Promise<void> {
-  const sweeps = await prisma.codingSchedule.findMany({
+  const sweeps = await prisma.chatSchedule.findMany({
     where: { sessionId: supervisorChatId, kind: 'recurring', enabled: true },
     select: { id: true, prompt: true, kind: true, runsCount: true, promptSetBy: true },
     orderBy: { createdAt: 'asc' },
@@ -794,7 +794,7 @@ async function ensureSweepSchedule(supervisorChatId: string, userId: string): Pr
       // announce a row that never parked.
       let parkedOk = false;
       try {
-        await prisma.codingSchedule.update({
+        await prisma.chatSchedule.update({
           where: { id: row.id },
           data: { enabled: false, lastStatus: DORMANT_LAST_STATUS, cancelledBy: 'machine', disabledAt: new Date() },
         });
@@ -839,7 +839,7 @@ async function ensureSweepSchedule(supervisorChatId: string, userId: string): Pr
       } catch (err: any) {
         logger.warn(`fleet supervisor: schedule_disabled emission failed before dedupe (non-fatal): ${err?.message}`);
       }
-      await prisma.codingSchedule.deleteMany({
+      await prisma.chatSchedule.deleteMany({
         where: { id: { in: doomed.map((s: any) => s.id) } },
       });
       logger.warn(`fleet supervisor: deduped ${doomed.length} duplicate STOCK sweep schedule(s) on ${supervisorChatId.slice(0, 8)} (${sweeps.length - stock.length} non-stock recurring row(s) untouched)`);
@@ -851,7 +851,7 @@ async function ensureSweepSchedule(supervisorChatId: string, userId: string): Pr
     const keeper = stock[0];
     const current = buildFleetSweepPrompt();
     if (keeper.prompt !== current) {
-      await prisma.codingSchedule.update({ where: { id: keeper.id }, data: { prompt: current, promptSetBy: 'system' } })
+      await prisma.chatSchedule.update({ where: { id: keeper.id }, data: { prompt: current, promptSetBy: 'system' } })
         .catch((err: any) => logger.warn(`fleet supervisor: sweep-prompt heal failed for ${keeper.id.slice(0, 8)}: ${err?.message}`));
     }
     return;
@@ -867,14 +867,14 @@ async function ensureSweepSchedule(supervisorChatId: string, userId: string): Pr
   // project / chat / session creation).
   let parked: { id: string; runsCount: number | null } | null = null;
   try {
-    parked = await prisma.codingSchedule.findFirst({
+    parked = await prisma.chatSchedule.findFirst({
       where: { sessionId: supervisorChatId, kind: 'recurring', enabled: false, lastStatus: DORMANT_LAST_STATUS },
       orderBy: { createdAt: 'desc' },
       select: { id: true, runsCount: true },
     });
   } catch { parked = null; } // partial mocks / a read hiccup → create as before
   if (parked) {
-    await prisma.codingSchedule.update({
+    await prisma.chatSchedule.update({
       where: { id: parked.id },
       data: {
         enabled: true, lastStatus: 'resumed', cancelledBy: null, disabledAt: null,
@@ -887,7 +887,7 @@ async function ensureSweepSchedule(supervisorChatId: string, userId: string): Pr
     logger.info(`fleet supervisor: resumed the dormancy-parked stock sweep ${parked.id.slice(0, 8)} on ${supervisorChatId.slice(0, 8)} — the account has live work again`);
     return;
   }
-  await prisma.codingSchedule.create({
+  await prisma.chatSchedule.create({
     data: {
       sessionId: supervisorChatId,
       userId,

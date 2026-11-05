@@ -59,6 +59,10 @@ export interface PlaywrightPage {
   evaluate<T>(fn: string): Promise<T>;
   screenshot(opts?: Record<string, unknown>): Promise<Buffer>;
   setViewportSize(size: { width: number; height: number }): Promise<void>;
+  /** Optional so a test fake need not implement it. Real Playwright always
+   *  does — `settleAfterNavigate` uses it for the network-idle leg and falls
+   *  back to the DOM-stability poll when it is absent or times out. */
+  waitForLoadState?(state: string, opts?: { timeout?: number }): Promise<void>;
 }
 
 // ── Context manager ──────────────────────────────────────────────────────────
@@ -292,6 +296,14 @@ export class BrowserContextManager {
     // anything on the network is a leak.
     return { contexts: this.live.size };
   }
+
+  /** Is a secret configured? (BS-1 D3, 2026-11-02.) With no secret every token
+   *  check fails by construction, so the service can serve NOTHING — yet it
+   *  used to answer /health 200 and look perfectly healthy to a deploy wave.
+   *  The server renders this as an unhealthy /health instead. */
+  configured(): boolean {
+    return !!this.cfg.secret;
+  }
 }
 
 // ── Action execution (the driver-agnostic browser vocabulary) ────────────────
@@ -320,11 +332,281 @@ export interface ActionResponse {
   links?: Array<{ text: string; href: string }>;
   error?: string;
   truncated?: boolean;
+  /** Machine-readable failure reason (BS-1 D1, 2026-11-02). Present iff
+   *  `ok === false`; the HTTP status is derived from it, so a caller can
+   *  branch on a stable code instead of pattern-matching prose. */
+  errorCode?: ActionErrorCode;
+  /** How navigate settled the page (BS-1 D2) — absent on non-navigate actions. */
+  settle?: SettleResult;
+}
+
+/**
+ * Machine-readable failure codes (BS-1 D1, 2026-11-02).
+ *
+ * Before this existed, `send(res, out.ok || out.error ? 200 : 200, out)` sent
+ * BOTH branches to 200 — a failed navigate, a click that hit nothing and a
+ * too-large screenshot all came back HTTP 200 with the failure buried in the
+ * body, so every upstream branch on status code read a dead session as
+ * healthy. These codes are the stable vocabulary the status map keys on.
+ */
+export type ActionErrorCode =
+  | 'invalid_request'        // 400 — the action payload itself is unusable
+  | 'unsupported_action'     // 400 — action name not in the vocabulary
+  | 'selector_not_found'     // 422 — the element never appeared
+  | 'navigation_failed'      // 502 — the URL could not be loaded at all
+  | 'timeout'                // 504 — the page/action exceeded its budget
+  | 'screenshot_too_large'   // 413 — the payload would blow the API budget
+  | 'capacity'               // 503 — context cap reached, retry shortly
+  | 'browser_error';         // 500 — anything else from the driver
+
+/** Failure code → the HTTP status a caller (and a monitor) must see. */
+export const STATUS_FOR_ERROR_CODE: Record<ActionErrorCode, number> = {
+  invalid_request: 400,
+  unsupported_action: 400,
+  selector_not_found: 422,
+  navigation_failed: 502,
+  timeout: 504,
+  screenshot_too_large: 413,
+  capacity: 503,
+  browser_error: 500,
+};
+
+/** The real status for one action outcome — the whole point of D1. */
+export function statusForResponse(out: ActionResponse): number {
+  if (out.ok) return 200;
+  return STATUS_FOR_ERROR_CODE[out.errorCode ?? 'browser_error'] ?? 500;
+}
+
+/**
+ * Map a driver error into the machine-readable vocabulary (BS-1 D1).
+ * Playwright signals these classes in the MESSAGE, so classification is
+ * message-shaped; anything unrecognised is `browser_error` (never a 200).
+ */
+export function classifyActionError(msg: string): ActionErrorCode {
+  const m = String(msg ?? '');
+  if (/at capacity|too many contexts/i.test(m)) return 'capacity';
+  if (/timeout \d+ms exceeded|exceeded.*timeout|timed out/i.test(m)) {
+    // A selector timeout means the element was never there; a page timeout is
+    // the page's own budget. Both are honest failures, told apart for triage.
+    return /waiting for (?:selector|locator)/i.test(m) ? 'selector_not_found' : 'timeout';
+  }
+  if (/no node found for selector|failed to find element|element (?:is )?not (?:visible|attached)|strict mode violation/i.test(m)) {
+    return 'selector_not_found';
+  }
+  if (/net::ERR_|ERR_NAME_NOT_RESOLVED|ERR_CONNECTION_|ERR_SSL|ERR_CERT|navigating to|page\.goto/i.test(m)) {
+    return 'navigation_failed';
+  }
+  return 'browser_error';
 }
 
 const MAX_CONTENT_CHARS = 8000;
 const NAV_TIMEOUT_MS = 45_000;
 const ACT_TIMEOUT_MS = 20_000;
+
+// ── Render settle (BS-1 D2, 2026-11-02) ──────────────────────────────────────
+/**
+ * `navigate` used to resolve on `domcontentloaded`, which fires BEFORE a
+ * client-side app has rendered: `get_content` then captured the empty shell and
+ * reported success — exactly what the Facebook Ad Library returned.
+ *
+ * Navigating now settles the page before returning:
+ *   1. `waitForLoadState('networkidle')` — the in-flight XHR/fetch that
+ *      populates a JS app has finished; bounded and failure-tolerant.
+ *   2. A DOM-stability poll — sample a cheap document signature until it stops
+ *      changing (N consecutive equal samples). This is the documented fallback
+ *      for pages whose network never goes idle (websocket, polling feed, ad
+ *      SDK): `networkidle` alone times out on those and hands back the same
+ *      shell we started with.
+ *
+ * Total budget is bounded (RENDER_SETTLE_MS) so a settle can never turn a
+ * navigation into an unbounded wait. `BS_RENDER_SETTLE_DISABLED=1` restores the
+ * pre-fix domcontentloaded-only behaviour wholesale.
+ */
+const RENDER_SETTLE_MS = Number(process.env.BS_RENDER_SETTLE_MS || 8_000);
+const NETWORK_IDLE_TIMEOUT_MS = Number(process.env.BS_NETWORK_IDLE_TIMEOUT_MS || 6_000);
+const SETTLE_POLL_INTERVAL_MS = 250;
+const SETTLE_STABLE_SAMPLES = 2;
+/** Kill switch (BS-1 D2): =1 restores domcontentloaded-only navigation. */
+export const renderSettleDisabled = (): boolean => process.env.BS_RENDER_SETTLE_DISABLED === '1';
+
+export interface SettleResult {
+  /** Did any render evidence get observed (false = disabled, or no DOM at all)? */
+  settled: boolean;
+  /** How the settle concluded — surfaced on the navigate response for triage. */
+  via: 'disabled' | 'networkidle' | 'dom-stable' | 'budget-exhausted';
+  waitedMs: number;
+}
+
+/** Cheap, cheap-to-compare document signature: how much rendered text exists. */
+const DOM_SIGNATURE_EXPR =
+  `(() => { const b = document.body; if (!b) return '0';`
+  + ` const t = b.innerText || ''; return String(t.length) + ':' + String(b.children.length); })()`;
+
+// ── Settle after INTERACTION (BS-1 D2b, 2026-11-03) ──────────────────────────
+/**
+ * Resolving `navigate` on domcontentloaded was only HALF the D2 defect. A
+ * `click` that triggers a client-side route change navigates the page exactly
+ * like `goto` does — but nothing settled it, so the very next `get_content`
+ * captured the same empty shell, this time while reporting `ok:true`.
+ *
+ * Measured in production 2026-11-03 (box A, session `ab-click-…`), the same
+ * destination reached two ways:
+ *
+ *   navigate → https://quotes.toscrape.com/js/page/2/   read 3341 chars, 7 quotes
+ *   navigate → …/js/ then click `li.next a`             read   45 chars, 0 quotes
+ *   (…the same session re-read 2.5 s later)             read 3341 chars, 7 quotes
+ *
+ * so the content was always there — the read simply landed first. This is the
+ * owner's Facebook Ad Library symptom surviving through the interaction door.
+ *
+ * `click` / `type` / `type+submit` therefore settle AFTER acting. Two guards
+ * keep that honest and cheap:
+ *
+ *   1. PRE-CHECK — the settle budget is only spent when the page actually
+ *      navigated. We record the URL before acting and settle only if it changed
+ *      (or content went empty → something clearly replaced the document). A
+ *      click that merely toggles state must not cost every caller 8 seconds.
+ *   2. POST-POLL — after an observed navigation we give the new document a
+ *      bounded window to appear before settling, because at click-return the
+ *      document is often still empty. A url-only check would fire the settle
+ *      against that empty document, leg 2 would bail on three empty signatures
+ *      and we would be back to the shell.
+ *
+ * Detecting navigation with `page.url()` keeps the `PlaywrightPage` surface
+ * unchanged, so a test fake needs no new method.
+ */
+export interface InteractionSettle {
+  /** Did the page navigate as a result of the interaction? */
+  navigated: boolean;
+  /** The settle outcome when it navigated; absent when it did not. */
+  settle?: SettleResult;
+  /** Why it was skipped, for triage. */
+  skipped?: 'disabled' | 'no-navigation';
+}
+
+/** Kill switch (BS-1 D2b): =1 restores interaction-without-settle (pre-fix). */
+export const interactionSettleDisabled = (): boolean =>
+  renderSettleDisabled() || process.env.BS_INTERACTION_SETTLE_DISABLED === '1';
+
+/** Bound on waiting for a click-driven document to REPLACE the old one. Kept
+ *  well under RENDER_SETTLE_MS so the two legs together stay inside budget. */
+const NAV_SETTLE_WAIT_MS = Number(process.env.BS_INTERACTION_SETTLE_WAIT_MS || 3_000);
+const INTERACTION_POLL_MS = 150;
+
+/** Read the page URL without letting a hostile page throw. '' when unreadable. */
+function safeUrl(page: PlaywrightPage): string {
+  try { return page.url() || ''; } catch { return ''; }
+}
+
+/** Cheap "is there any rendered text?" probe. '' / '0:…' means empty document. */
+async function domSignature(page: PlaywrightPage): Promise<string> {
+  try {
+    const raw = await page.evaluate<string>(DOM_SIGNATURE_EXPR);
+    return raw == null ? '' : String(raw);
+  } catch {
+    return ''; // refused (cross-origin frame / torn-down page)
+  }
+}
+
+/** Signature of a document with no rendered text — leg 2 bails on these. */
+const isEmptySig = (sig: string): boolean => !sig || sig === '0' || sig === '0:0';
+
+/**
+ * Settle the page after an interaction that may have navigated it.
+ * Never throws: a settle failure must not turn a successful click into an error.
+ */
+export async function settleAfterInteraction(
+  page: PlaywrightPage,
+  opts: { act: () => Promise<void>; urlBefore?: string; settleOnEmpty?: boolean },
+): Promise<InteractionSettle> {
+  const disabled = interactionSettleDisabled();
+  const urlBefore = opts.urlBefore ?? safeUrl(page);
+
+  await opts.act();
+  if (disabled) return { navigated: false, skipped: 'disabled' };
+
+  const urlAfter = safeUrl(page);
+  const navigated = urlAfter !== urlBefore;
+
+  // PRE-CHECK: a same-URL interaction (a toggle, a tab, a modal) must not pay
+  // the settle budget. `settleOnEmpty` covers a document swap that keeps the
+  // URL (in-page routing) and a same-URL reload.
+  if (!navigated && !opts.settleOnEmpty) return { navigated: false, skipped: 'no-navigation' };
+
+  // POST-POLL: at click-return the new document is frequently still empty.
+  // Wait for it to appear (bounded) before handing over to the settle legs.
+  const deadline = Date.now() + NAV_SETTLE_WAIT_MS;
+  while (Date.now() < deadline && isEmptySig(await domSignature(page))) {
+    await new Promise((r) => setTimeout(r, INTERACTION_POLL_MS));
+  }
+
+  return { navigated: true, settle: await settleAfterNavigate(page) };
+}
+
+/** Settle a freshly navigated page. Never throws — a settle failure must not
+ *  turn a successful navigation into a failed one. */
+export async function settleAfterNavigate(page: PlaywrightPage): Promise<SettleResult> {
+  if (renderSettleDisabled()) return { settled: false, via: 'disabled', waitedMs: 0 };
+  const started = Date.now();
+  const deadline = started + RENDER_SETTLE_MS;
+
+  // Leg 1 — network idle. Absent on a fake/older page object → skip to leg 2.
+  let networkIdle = false;
+  if (typeof page.waitForLoadState === 'function') {
+    try {
+      await page.waitForLoadState('networkidle', {
+        timeout: Math.max(1, Math.min(NETWORK_IDLE_TIMEOUT_MS, deadline - Date.now())),
+      });
+      networkIdle = true;
+    } catch { /* the page never idles (websocket/poller) — leg 2 decides */ }
+  }
+
+  // Leg 2 — DOM stability. Runs even after a successful networkidle, because an
+  // idle network is not the same as a rendered frame (the app may still be on
+  // its first layout). Stops as soon as the signature repeats.
+  let last = '';
+  let stable = 0;
+  let sawDom = false;
+  let empty = 0;
+  while (Date.now() < deadline) {
+    let sig = '';
+    try {
+      const raw = await page.evaluate<string>(DOM_SIGNATURE_EXPR);
+      // Keep the raw value: String(null) is the TRUTHY "null", which would be
+      // mistaken for real DOM evidence. Only a genuine signature counts.
+      sig = raw == null ? '' : String(raw);
+    } catch {
+      sig = ''; // evaluation refused (cross-origin frame / torn-down page)
+    }
+    if (!sig || sig === '0' || sig === '0:0') {
+      // No body / no rendered DOM yet. Three consecutive empties means there is
+      // nothing to settle (about:blank, a PDF frame, a torn-down page) — bail
+      // instead of burning the whole budget waiting for a DOM that is not
+      // coming. `settled:false` tells the caller to treat content as unproven.
+      empty += 1;
+      if (empty >= 3) return { settled: false, via: 'dom-stable', waitedMs: Date.now() - started };
+      await new Promise((r) => setTimeout(r, SETTLE_POLL_INTERVAL_MS));
+      continue;
+    }
+    empty = 0;
+    sawDom = true;
+    if (sig === last) {
+      stable += 1;
+      if (stable >= SETTLE_STABLE_SAMPLES - 1) {
+        return { settled: sawDom, via: networkIdle ? 'networkidle' : 'dom-stable', waitedMs: Date.now() - started };
+      }
+    } else {
+      stable = 0;
+      last = sig;
+    }
+    await new Promise((r) => setTimeout(r, SETTLE_POLL_INTERVAL_MS));
+  }
+  return {
+    settled: sawDom,
+    via: networkIdle ? 'networkidle' : 'budget-exhausted',
+    waitedMs: Date.now() - started,
+  };
+}
 
 function clip(s: string): { content: string; truncated: boolean } {
   if (s.length <= MAX_CONTENT_CHARS) return { content: s, truncated: false };
@@ -357,11 +639,15 @@ export async function executeAction(
     switch (a.name) {
       case 'navigate': {
         if (!a.url || !/^https?:\/\//i.test(a.url)) {
-          return { ...base, error: 'navigate requires an http(s) url' };
+          return { ...base, error: 'navigate requires an http(s) url', errorCode: 'invalid_request' };
         }
         await page.goto(a.url, { waitUntil: 'domcontentloaded', timeout: NAV_TIMEOUT_MS });
+        // BS-1 D2: domcontentloaded fires BEFORE a client-side app renders, so
+        // reading the page right after it returns the empty shell. Settle first
+        // (network-idle + DOM-stability, both bounded), then persist + report.
+        const settle = await settleAfterNavigate(page);
         await mgr.persist(key);
-        return { ...base, ok: true, url: page.url() };
+        return { ...base, ok: true, url: page.url(), settle };
       }
       case 'get_content': {
         const html = await page.content();
@@ -374,17 +660,28 @@ export async function executeAction(
         return { ...base, ok: true, url: page.url(), ...c, links: extractLinks(html) };
       }
       case 'click': {
-        if (!a.selector) return { ...base, error: 'click requires a selector' };
-        await page.click(a.selector, { timeout: ACT_TIMEOUT_MS });
+        if (!a.selector) return { ...base, error: 'click requires a selector', errorCode: 'invalid_request' };
+        // BS-1 D2b: a click that routes the app must settle before the caller
+        // reads — otherwise get_content returns the empty shell with ok:true.
+        const inter = await settleAfterInteraction(page, {
+          act: () => page.click(a.selector as string, { timeout: ACT_TIMEOUT_MS }),
+        });
         await mgr.persist(key);
-        return { ...base, ok: true, url: page.url() };
+        return { ...base, ok: true, url: page.url(), ...(inter.settle ? { settle: inter.settle } : {}) };
       }
       case 'type': {
-        if (!a.selector || a.text == null) return { ...base, error: 'type requires selector + text' };
-        await page.fill(a.selector, a.text, { timeout: ACT_TIMEOUT_MS });
-        if (a.submit) await page.press(a.selector, 'Enter', { timeout: ACT_TIMEOUT_MS });
+        if (!a.selector || a.text == null) return { ...base, error: 'type requires selector + text', errorCode: 'invalid_request' };
+        // `submit` may navigate (a search form); a plain fill may not. The
+        // pre-check inside settleAfterInteraction decides, so `type` without
+        // submit pays nothing unless the page actually moved.
+        const inter = await settleAfterInteraction(page, {
+          act: async () => {
+            await page.fill(a.selector as string, a.text as string, { timeout: ACT_TIMEOUT_MS });
+            if (a.submit) await page.press(a.selector as string, 'Enter', { timeout: ACT_TIMEOUT_MS });
+          },
+        });
         await mgr.persist(key);
-        return { ...base, ok: true, url: page.url() };
+        return { ...base, ok: true, url: page.url(), ...(inter.settle ? { settle: inter.settle } : {}) };
       }
       case 'scroll': {
         const px = Math.max(0, Math.min(10_000, Math.floor(Number(a.amount ?? 800)) || 0)) || 800;
@@ -404,7 +701,7 @@ export async function executeAction(
         // page screenshot otherwise returns megabytes while text clips at 8k.
         const b64 = buf.toString('base64');
         if (b64.length > 4_000_000) {
-          return { ...base, ok: false, error: 'screenshot too large (>3MB raw) — reduce the viewport or scroll before capturing' };
+          return { ...base, ok: false, error: 'screenshot too large (>3MB raw) — reduce the viewport or scroll before capturing', errorCode: 'screenshot_too_large' };
         }
         return { ...base, ok: true, url: page.url(), screenshotBase64: b64 };
       }
@@ -413,11 +710,13 @@ export async function executeAction(
         return { ...base, ok: true };
       }
       default:
-        return { ...base, error: `unsupported action: ${a.name}` };
+        return { ...base, error: `unsupported action: ${a.name}`, errorCode: 'unsupported_action' };
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return { ...base, error: msg.slice(0, 500) };
+    // BS-1 D1: the catch-all carries a classified code so the HTTP status is
+    // the real one (never a 200 dressing up a failure).
+    return { ...base, error: msg.slice(0, 500), errorCode: classifyActionError(msg) };
   }
 }
 
@@ -469,7 +768,23 @@ export function createServer(mgr: BrowserContextManager): http.Server {
     try {
       if (url.pathname === '/health' && req.method === 'GET') {
         // Review M3: count only — no session keys (unauthenticated endpoint).
-        return send(res, 200, { ok: true, service: 'digby-browser-service', ...mgr.stats() });
+        //
+        // BS-1 D3 (2026-11-02): this endpoint used to answer 200 unconditionally,
+        // so a service with NO BROWSER_SERVICE_SECRET — which can never create a
+        // context because every token check fails — reported itself healthy and
+        // a deploy wave went green over a completely inert feature. Configured →
+        // 200 as before. Unconfigured → 503 with `inert:true`, so the container's
+        // own healthcheck (and anything else probing it) sees the truth.
+        if (!mgr.configured()) {
+          return send(res, 503, {
+            ok: false,
+            status: 'inert',
+            service: 'digby-browser-service',
+            reason: 'BROWSER_SERVICE_SECRET unset — every token check fails, so no context can ever be created (set the secret to activate)',
+            ...mgr.stats(),
+          });
+        }
+        return send(res, 200, { ok: true, status: 'ready', service: 'digby-browser-service', ...mgr.stats() });
       }
 
       if (url.pathname === '/v1/action' && req.method === 'POST') {
@@ -484,7 +799,12 @@ export function createServer(mgr: BrowserContextManager): http.Server {
           return send(res, 401, { error: 'invalid session token' });
         }
         const out = await executeAction(mgr, parsed);
-        return send(res, out.ok || out.error ? 200 : 200, out);
+        // BS-1 D1 (2026-11-02): this line used to read
+        //   send(res, out.ok || out.error ? 200 : 200, out)
+        // — both ternary branches were 200, so a failed navigate, a click that
+        // hit nothing and an over-cap screenshot all reported HTTP 200 with the
+        // error buried in the body. The status now comes from the outcome.
+        return send(res, statusForResponse(out), out);
       }
 
       if (url.pathname === '/v1/close' && req.method === 'POST') {

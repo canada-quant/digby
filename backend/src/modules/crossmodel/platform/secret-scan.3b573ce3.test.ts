@@ -2,7 +2,7 @@
  * Ticket 3b573ce3 (2026-10-30) — the owner-answer vault stored TWO credentials
  * CONCATENATED as ONE env var.
  *
- * THE LIVE INCIDENT: the owner answered a `ctrl.example.com` credential card with
+ * THE LIVE INCIDENT: the owner answered a `ctrl.cql.ca` credential card with
  * both halves of an S3 pair. The vault receipt said both were stored, and in
  * the lane's shell $CANLAW_CPT_S3_SECRET_ACCESS_KEY measured 60 chars with an
  * `AKIA` prefix — chars [0:20] byte-equal to $OWNER_ANSWER_OQ0E8265 (the

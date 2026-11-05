@@ -291,7 +291,7 @@ export async function readLaneFamilyFacts(ids: string[], opts: { restored?: bool
     if (descendants.length) {
       const [runs, schedules, satellites] = await Promise.all([
         readOrNull(() => prisma.agentRun.findMany({ where: { sessionId: { in: descendants }, status: { in: LIVE_RUN_STATUSES } }, select: { sessionId: true } })),
-        readOrNull(() => prisma.codingSchedule.findMany({ where: { sessionId: { in: descendants }, enabled: true }, select: { sessionId: true } })),
+        readOrNull(() => prisma.chatSchedule.findMany({ where: { sessionId: { in: descendants }, enabled: true }, select: { sessionId: true } })),
         readOrNull(() => (prisma as any).chatCodingState.findMany({ where: { id: { in: descendants }, status: { in: LIVE_SATELLITE_STATUSES } }, select: { id: true } }) as Promise<Array<{ id: string }>>),
       ]);
       if (!runs || !schedules || !satellites) return null;

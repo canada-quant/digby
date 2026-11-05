@@ -189,7 +189,7 @@ test('parseTrends24 rejects pages without a usable snapshot', () => {
 
 // Round-2 live repro (2026-09-23 00:00Z, box-A container diag): the SAME
 // https://trends24.in/ URL, fetched through the container's own JSON-RPC
-// tools/call to mcp.digby.example.com, arrives with heading markers and list numbering
+// tools/call to mcp.digby.ai, arrives with heading markers and list numbering
 // STRIPPED — bare date lines, bare '[name](url)' items, blank lines between
 // them, promo block intact. (The platform-side scrape_as_markdown tool
 // returns the RICH TRENDS24_MD shape above.) parseTrends24 accepted only the

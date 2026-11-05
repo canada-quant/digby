@@ -87,7 +87,7 @@ describe('shell bootstrap — a hang is VISIBLE, never a silent blank (2026-10-0
     // (user-initiated, not a boot failure) — the missing-runtime handler must
     // be a panel error state instead.
     expect(MAIN).toContain(
-      '"Digby uses the Microsoft Edge WebView2 runtime to display digby.example.com.\\n\\n"');
+      '"Digby uses the Microsoft Edge WebView2 runtime to display digby.ai.\\n\\n"');
     expect(MAIN).not.toMatch(
       /MessageBox\.Show\(\s*this,\s*"Digby needs the Microsoft Edge WebView2 runtime/);
     // ...and every boot failure (env create, ensure-core, scripts, missing
@@ -97,7 +97,7 @@ describe('shell bootstrap — a hang is VISIBLE, never a silent blank (2026-10-0
 
   it('a failed FIRST navigation shows the error state (NavigationCompleted wired)', () => {
     expect(MAIN).toContain('core.NavigationCompleted += OnNavigationCompleted');
-    expect(MAIN).toContain("Digby couldn't reach digby.example.com");
+    expect(MAIN).toContain("Digby couldn't reach digby.ai");
     // and the first SUCCESSFUL navigation dismisses the panel
     expect(MAIN).toContain('_startupPanel.Dismiss()');
   });

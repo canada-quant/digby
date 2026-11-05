@@ -9,7 +9,7 @@ describe('linkifyEntityRefs', () => {
       .toBe('start_coding_session → receipt [b3649334](#ref:receipt:b3649334), session [fbb5c9ca](#ref:session:fbb5c9ca) — lane spawned');
     expect(linkifyEntityRefs('todo_create ×3 → todos 536d5d52, 23014278, 63a8404a — restart'))
       .toBe('todo_create ×3 → todos [536d5d52](#ref:todo:536d5d52), [23014278](#ref:todo:23014278), [63a8404a](#ref:todo:63a8404a) — restart');
-    expect(linkifyEntityRefs('goal_create → goal 534c37aa — "QB2 64K"')).toContain('goal [534c37aa](#ref:goal:534c37aa)');
+    expect(linkifyEntityRefs('goal_create → goal 534c37aa — "node-a 64K"')).toContain('goal [534c37aa](#ref:goal:534c37aa)');
     expect(linkifyEntityRefs('the lane 1a2b3c4d and chat ids 9f8e7d6c')).toBe('the lane [1a2b3c4d](#ref:session:1a2b3c4d) and chat ids [9f8e7d6c](#ref:chat:9f8e7d6c)');
   });
 

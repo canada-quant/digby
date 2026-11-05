@@ -160,7 +160,7 @@ describe('the beacon budget is its own, and capped per client', () => {
 
 describe('helpers', () => {
   it('streamBoxMeta: BOX_NAME wins, else the 12-char hostname; BG_COLOR only when set', () => {
-    expect(streamBoxMeta({ BOX_NAME: 'digby-ca-app-b' } as any, 'abcdef0123456789')).toEqual({ host: 'digby-ca-app-b' });
+    expect(streamBoxMeta({ BOX_NAME: 'example-ca-app-b' } as any, 'abcdef0123456789')).toEqual({ host: 'example-ca-app-b' });
     expect(streamBoxMeta({} as any, 'abcdef0123456789')).toEqual({ host: 'abcdef012345' });
     expect(streamBoxMeta({ BG_COLOR: 'green' } as any, 'h')).toEqual({ host: 'h', colour: 'green' });
   });

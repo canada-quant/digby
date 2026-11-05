@@ -2,7 +2,7 @@
  * W3 (2026-09-25) — Windows client update feed pins.
  *
  * The Windows shell (windows-shell/UpdateCheck.cs) polls
- * https://digby.example.com/windows-latest.json — the Windows mirror of the macOS
+ * https://digby.ai/windows-latest.json — the Windows mirror of the macOS
  * desktop-latest.json feed (same shape: {version, url, notes}) — compares
  * dotted-numeric versions, and on a newer version offers to download the
  * installer at `url`. This suite pins the FEED CONTRACT at the source level
@@ -61,7 +61,7 @@ describe('W3 — windows-latest.json update feed', () => {
   });
 
   it('points at the Windows installer artifact', () => {
-    expect(FEED.url).toBe('https://digby.example.com/Digby-Setup.exe');
+    expect(FEED.url).toBe('https://digby.ai/Digby-Setup.exe');
   });
 
   it('the notes name the current release content so users know what they are downloading', () => {

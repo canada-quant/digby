@@ -271,6 +271,212 @@ export async function deletePending(id: string): Promise<void> {
 }
 
 /**
+ * CONSUME-AT-PERSIST — the MERGE-1 cutover kill-window fix (2026-11-05).
+ *
+ * THE DEFECT. Delivery of a queued row is two independent writes: the drain
+ * deletes `pending_chat_messages` (chat-agent.service drainChatQueue, right
+ * after `startDetachedChatRun` returns) and the detached run persists the
+ * transcript row later (runChatAgentTurnInner's user-row create). A blue-green
+ * cutover kills the old colour anywhere in between, so the handover had TWO
+ * reachable failure modes and no ordering fixes both:
+ *   · kill between the CLAIM and the DELETE -> the row survives, the run may
+ *     have persisted; once the Redis liveness key expires (LIVE_RUN_TTL_SEC =
+ *     60 s) the surviving colour peeks the same row and starts a SECOND run
+ *     for the same content => DUPLICATION;
+ *   · kill between the DELETE and the PERSIST -> the row is gone and the
+ *     content was never written => LOSS (the pre-existing order made this the
+ *     likelier of the two, because the delete is synchronous in the drain
+ *     while the persist runs detached).
+ * Deleting BEFORE the start converts duplication into loss (proved in
+ * message-queue.merge1-bluegreen.test.ts) — so neither order is safe. The
+ * writes must be ONE write.
+ *
+ * THE FIX. Create the transcript row(s) and delete the consumed pending rows
+ * in a single Postgres transaction. Then every kill point resolves safely:
+ *   · before the commit  -> nothing happened: the row survives, the message is
+ *     absent, the next drain delivers it (no loss, and not a duplication
+ *     because the content was never persisted);
+ *   · after the commit   -> both effects exist exactly once (no duplication,
+ *     because the row cannot outlive the persist).
+ * `deleteMany` (not `delete`) is deliberate: a row already removed by an
+ * unrelated deliberate-drop path is simply not matched, so the consume is
+ * idempotent and never throws on a row that is gone.
+ *
+ * Callers pass the ids of the rows whose CONTENT the messages carry. A caller
+ * with no ids keeps the plain create (no transaction is opened needlessly).
+ */
+export async function createMessagesConsumingPending(args: {
+  messages: Array<{ chatId: string; role: string; content: string; metadata?: object }>;
+  pendingIds: string[];
+}): Promise<Array<{ id: string; createdAt: Date }>> {
+  const { messages, pendingIds } = args;
+  if (!pendingIds.length) {
+    const rows = [];
+    for (const data of messages) rows.push(await prisma.crossModelMessage.create({ data }));
+    return rows as Array<{ id: string; createdAt: Date }>;
+  }
+  const rows = await prisma.$transaction(async (tx) => {
+    const created: Array<{ id: string; createdAt: Date }> = [];
+    for (const data of messages) created.push(await tx.crossModelMessage.create({ data }));
+    // Same transaction as the persist: the queue row and its content commit
+    // together or not at all.
+    await tx.pendingChatMessage.deleteMany({ where: { id: { in: pendingIds } } });
+    return created;
+  });
+  // The origin stash is Redis-only (best-effort by design) — cleared AFTER the
+  // durable consume, so a Redis hiccup leaves a stale stash (harmless) rather
+  // than dropping provenance for a message that is still queued.
+  await Promise.all(pendingIds.map((id) => redisClient.del(originStashKey(id)).catch(() => 0)));
+  // A delivered row starts with a clean attempt budget if it is ever re-queued.
+  await clearDrainAttempts(pendingIds);
+  return rows;
+}
+
+/**
+ * Consume the drained rows for a branch that persists NO transcript row of its
+ * own (a turn continuation: the harness prompt is never a user row). See
+ * createMessagesConsumingPending for the kill-window rationale — the point
+ * here is only that these rows still must not survive their delivery.
+ * Best-effort by contract: the caller's content is the harness's, so a failure
+ * leaves the row queued for one more round rather than losing owner content.
+ */
+export async function consumeDrainedPendingRows(pendingIds: string[] | undefined): Promise<void> {
+  const ids = Array.isArray(pendingIds) ? pendingIds.filter((x): x is string => typeof x === 'string' && x.length > 0) : [];
+  if (!ids.length) return;
+  await prisma.pendingChatMessage.deleteMany({ where: { id: { in: ids } } });
+  await Promise.all(ids.map((id) => redisClient.del(originStashKey(id)).catch(() => 0)));
+  await clearDrainAttempts(ids);
+}
+/**
+ * DRAIN ATTEMPT BOUND — companion to consume-at-persist (MERGE-1 kill-window
+ * fix, 2026-11-05). Consuming at persist is what makes a killed delivery LOSE
+ * nothing (the failed transaction rolls back and the row stays queued), but
+ * that also means a row whose persist keeps failing is re-drained by the
+ * finished run's own finally — which is a tight retry LOOP, not a recovery.
+ * This counts delivery attempts per row so the immediate chain gives up after
+ * a small number; the row stays QUEUED (never dropped) and the periodic
+ * sweeper/nudge still retries it later, so nothing is lost either way.
+ *
+ * FAIL-CLOSED FOR LOOP PREVENTION (2026-11-05 rework — the OOM defect).
+ * The first cut of this bound read the count ONLY from Redis and answered 0 on
+ * any Redis error ("fail-open, so a cache hiccup can never block a delivery").
+ * That polarity is WRONG for a bound whose entire job is to stop a hot loop: it
+ * is blind exactly when the system is unhealthy, which is when the loop fires.
+ * Measured (preemption.test.ts, source WITH the fix vs origin/main): 19/19
+ * passing in 4.078s without the fix, versus 0 tests in 173.66s with it — a jest
+ * worker SIGTERM at 4041.3 MB of a 4137.4 MB heap. Mechanism: the persist threw,
+ * the row was never consumed, the finished run's own finally re-drained the SAME
+ * head row, and the Redis-only counter (a mocked/degraded Redis answers 0) never
+ * tripped — an unbounded promise chain, no progress per cycle.
+ *
+ * The bound is therefore now IN-PROCESS AUTHORITATIVE: a plain Map cannot fail,
+ * so the immediate chain can never be unbounded. Redis is kept only as a
+ * cross-instance BACKSTOP with a short window; it is read, never required.
+ *
+ * PROGRESS MODEL: at most MAX_DRAIN_ATTEMPTS deliveries per row, then a bounded
+ * COOLDOWN during which the drain declines instantly (a Map lookup — no run
+ * started, no persist attempted) and the periodic sweeper/nudge retries later.
+ * The row is never dropped; a transient fault recovers without operator action
+ * and a permanent one cannot spin.
+ */
+const drainAttemptKey = (id: string) => `chat:pendingattempt:${id}`;
+/** Cross-instance backstop window (the local ledger is the authority). */
+const DRAIN_ATTEMPT_TTL_SEC = 60 * 5;
+/** Immediate-chain attempts before the drain stops starting runs for one row. */
+export const MAX_DRAIN_ATTEMPTS = 3;
+/** Quiet window after the bound trips — no run is started for the row. */
+const DRAIN_COOLDOWN_MS = 60_000;
+/**
+ * Local ledger entry lifetime. Must EXCEED a failing delivery cycle: if it were
+ * shorter than a typical failing run, the count would reset to 1 every cycle and
+ * only the Redis backstop would ever trip the bound (review 2026-11-05) — which
+ * is precisely the blindness this rework removes.
+ */
+const LOCAL_ATTEMPT_WINDOW_MS = 10 * 60_000;
+
+/**
+ * In-process ledger — the AUTHORITATIVE bound. `{ n }` counts attempts in the
+ * current window; `{ until }` is a tripped cooldown (a row that exhausted its
+ * budget). Pruned on every write so a long-lived worker cannot leak rows.
+ */
+const localDrainLedger = new Map<string, { n: number; at: number } | { until: number }>();
+let lastLocalPrune = 0;
+
+function pruneLocalLedger(now: number): void {
+  if (now - lastLocalPrune < 30_000) return;
+  lastLocalPrune = now;
+  for (const [id, entry] of localDrainLedger) {
+    const dead = 'until' in entry ? entry.until <= now : now - entry.at > LOCAL_ATTEMPT_WINDOW_MS;
+    if (dead) localDrainLedger.delete(id);
+  }
+}
+
+/**
+ * Is this row inside its post-bound cooldown? A Map lookup only — deliberately
+ * synchronous and failure-free, because this is the guard that must hold when
+ * everything else (Redis, the DB) is down.
+ */
+export function isDrainCoolingDown(id: string): boolean {
+  const entry = localDrainLedger.get(id);
+  if (!entry || !('until' in entry)) return false;
+  if (entry.until > Date.now()) return true;
+  localDrainLedger.delete(id);
+  return false;
+}
+
+/**
+ * Count one delivery attempt for a queued row; returns the new count.
+ * The LOCAL count is always incremented first and cannot fail, so the bound is
+ * guaranteed to trip; the Redis count is layered on when available.
+ */
+export async function noteDrainAttempt(id: string): Promise<number> {
+  const now = Date.now();
+  pruneLocalLedger(now);
+  const prior = localDrainLedger.get(id);
+  const local = (prior && 'n' in prior && now - prior.at <= LOCAL_ATTEMPT_WINDOW_MS ? prior.n : 0) + 1;
+  localDrainLedger.set(id, { n: local, at: now });
+  let remote = 0;
+  try {
+    const n = await redisClient.incr(drainAttemptKey(id));
+    if (n === 1) await redisClient.expire(drainAttemptKey(id), DRAIN_ATTEMPT_TTL_SEC).catch(() => 0);
+    remote = Number(n) || 0;
+  } catch {
+    remote = 0; // backstop only — the local count above is what enforces the bound
+  }
+  return Math.max(local, remote);
+}
+
+/**
+ * Trip the cooldown for a row that exhausted its budget. Resets BOTH counters
+ * so a later recovery starts from a clean slate instead of inheriting a
+ * lifetime tally (a permanently stuck row then costs one run-start per
+ * cooldown, never a hot loop, and a transient fault heals on the next sweep).
+ */
+export async function tripDrainCooldown(id: string): Promise<void> {
+  localDrainLedger.set(id, { until: Date.now() + DRAIN_COOLDOWN_MS });
+  await redisClient.del(drainAttemptKey(id)).catch(() => 0);
+}
+
+/** Clear the attempt budget for rows that were CONSUMED (a successful delivery). */
+async function clearDrainAttempts(ids: string[]): Promise<void> {
+  for (const id of ids) localDrainLedger.delete(id);
+  await Promise.all(ids.map((id) => redisClient.del(drainAttemptKey(id)).catch(() => 0)));
+}
+
+/**
+ * TEST-ONLY: drop the in-process ledger. It is module state, so a jest file
+ * that resets its id counter between cases mints the SAME row ids again and the
+ * attempts of an earlier case carry over (they accumulated 1→2→3→4 and tripped
+ * the cooldown, so later cases never reached the persist at all). Production
+ * ids are cuids and never collide; only fixtures need this. Not called by any
+ * production path.
+ */
+export function __resetDrainAttemptLedgerForTests(): void {
+  localDrainLedger.clear();
+  lastLocalPrune = 0;
+}
+
+/**
  * Release the enqueue's TTL pin after a SUCCESSFUL drain (ac65d51e, review
  * M2): the started run already owns the resolved content in memory, so the
  * 24h-stretched blobs are pure memory pressure from here. Best-effort — a

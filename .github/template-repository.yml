@@ -1,0 +1,26 @@
+# GitHub Template Repository Configuration
+# This file marks the repository as a template and defines cleanup rules
+
+# Files to exclude when using "Use this template"
+exclude:
+  # Remove memory-bank (project-specific documentation)
+  - memory-bank/activeContext.md
+  - memory-bank/progress.md
+  - memory-bank/phase2-plan.md
+  
+  # Keep these for reference
+  # - memory-bank/systemPatterns.md
+  # - memory-bank/techContext.md
+  # - memory-bank/productContext.md
+  # - memory-bank/projectbrief.md
+
+# Template instructions that appear when creating from template
+template:
+  name: "Admin Dashboard Template"
+  description: "Full-stack TypeScript admin dashboard with 8 ready-to-use modules"
+  
+  # Suggested repository name pattern
+  name_pattern: "{{org}}-admin-dashboard"
+  
+  # Default branch
+  default_branch: "main"

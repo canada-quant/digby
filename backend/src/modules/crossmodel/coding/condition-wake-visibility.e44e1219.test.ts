@@ -5,7 +5,7 @@
  * (the probe they already use) and in get_run_receipts (the receipt a
  * registration now mints). The prod specimens (2026-10-24, quoted from the
  * read-only box probe):
- *   store row  fd5159ce…:deploy:canada-quant/digby@b100c529973c
+ *   store row  fd5159ce…:deploy:example-org/crossmodel@b100c529973c
  *              createdAt 03:02:34.886Z, horizonAt 06:02:34.886Z, checks 7
  *   tool text  "Registered a CONDITION WAKE: the harness re-checks every 15 min
  *              and wakes this chat with [CONDITION MET — …]; backstop wake at
@@ -57,10 +57,10 @@ describe('ticket e44e1219: condition wakes become supervisor-visible', () => {
       const horizonAt = new Date(Date.now() + 3 * 3600_000).toISOString();
       storeListNamespace.mockResolvedValue([
         row(
-          `${CHAT}:deploy:canada-quant/digby@b100c529973c`,
+          `${CHAT}:deploy:example-org/crossmodel@b100c529973c`,
           {
             v: 1,
-            spec: { sha: 'b100c529973c', kind: 'deploy', repo: 'digby', owner: 'canada-quant' },
+            spec: { sha: 'b100c529973c', kind: 'deploy', repo: 'crossmodel', owner: 'example-org' },
             chatId: CHAT,
             createdAt: '2026-10-24T03:02:34.886Z',
             horizonAt,
@@ -74,17 +74,17 @@ describe('ticket e44e1219: condition wakes become supervisor-visible', () => {
       const wakes = await listOpenConditionWakesForChat(CHAT);
       expect(wakes).toHaveLength(1);
       expect(wakes[0].condition).toBe('deploy');
-      expect(wakes[0].repo).toBe('canada-quant/digby');
+      expect(wakes[0].repo).toBe('example-org/crossmodel');
       expect(wakes[0].sha).toBe('b100c529973c');
       expect(wakes[0].horizonAt).toBe(horizonAt);
       expect(wakes[0].checks).toBe(7);
-      expect(wakes[0].summary).toMatch(/deploy of canada-quant\/digby@b100c529973c concluded/);
+      expect(wakes[0].summary).toMatch(/deploy of example-org\/crossmodel@b100c529973c concluded/);
     });
 
     it('filters to THIS chat (other lanes\u2019 wakes are not mine) and skips rows past their horizon', async () => {
       storeListNamespace.mockResolvedValue([
-        row('65ab3672-0000-0000-0000-000000000000:deploy:canada-quant/digby@deadbeef123', { spec: { kind: 'deploy', owner: 'canada-quant', repo: 'digby', sha: 'deadbeef123' }, horizonAt: '2999-01-01T00:00:00.000Z' }, new Date()),
-        row(`${CHAT}:ci:canada-quant/digby@1234abcdef0`, { spec: { kind: 'ci', owner: 'canada-quant', repo: 'digby', sha: '1234abcdef0' }, horizonAt: '2000-01-01T00:00:00.000Z' }, new Date()),
+        row('65ab3672-0000-0000-0000-000000000000:deploy:example-org/crossmodel@deadbeef123', { spec: { kind: 'deploy', owner: 'example-org', repo: 'crossmodel', sha: 'deadbeef123' }, horizonAt: '2999-01-01T00:00:00.000Z' }, new Date()),
+        row(`${CHAT}:ci:example-org/crossmodel@1234abcdef0`, { spec: { kind: 'ci', owner: 'example-org', repo: 'crossmodel', sha: '1234abcdef0' }, horizonAt: '2000-01-01T00:00:00.000Z' }, new Date()),
       ]);
       const wakes = await listOpenConditionWakesForChat(CHAT);
       // The other chat's row is filtered; the past-horizon row is skipped
@@ -99,20 +99,20 @@ describe('ticket e44e1219: condition wakes become supervisor-visible', () => {
   });
 
   describe('await_condition registration mints a receipt', () => {
-    const ARGS = { condition: 'deploy', repo: 'canada-quant/digby', sha: 'b100c529973c' };
+    const ARGS = { condition: 'deploy', repo: 'example-org/crossmodel', sha: 'b100c529973c' };
 
     it('the not-met answer ("Registered a CONDITION WAKE: …") mints ok:true with the condition identity', () => {
-      const text = 'CONDITION NOT MET after 600s (deploy of canada-quant/digby@b100c529973c concluded) — last read: Deploy run 40055858118 is in_progress.\n'
+      const text = 'CONDITION NOT MET after 600s (deploy of example-org/crossmodel@b100c529973c concluded) — last read: Deploy run 40055858118 is in_progress.\n'
         + 'Registered a CONDITION WAKE: the harness re-checks every 15 min and wakes this chat with [CONDITION MET — …]; backstop wake at 06:02Z. '
         + 'This run is ending — write a one-line status and stop; do not poll.';
       const r = extractReceipt('await_condition', ARGS, text, new Date());
       expect(r).not.toBeNull();
       expect(r!.ok).toBe(true);
-      expect(r!.ids).toMatchObject({ condition: 'deploy', repo: 'canada-quant/digby', sha: 'b100c529973c' });
+      expect(r!.ids).toMatchObject({ condition: 'deploy', repo: 'example-org/crossmodel', sha: 'b100c529973c' });
     });
 
     it('the end-turn notice ("registered a CONDITION WAKE for: …") also mints ok:true', () => {
-      const text = '[HARNESS — WAITING ON A CONDITION] await_condition registered a CONDITION WAKE for: deploy of canada-quant/digby@b100c529973c concluded. '
+      const text = '[HARNESS — WAITING ON A CONDITION] await_condition registered a CONDITION WAKE for: deploy of example-org/crossmodel@b100c529973c concluded. '
         + 'The harness re-checks it every 15 min and wakes this chat with [CONDITION MET — …] the moment it is met (backstop wake at 06:02Z if it never is).';
       const r = extractReceipt('await_condition', ARGS, text, new Date());
       expect(r).not.toBeNull();
@@ -120,11 +120,11 @@ describe('ticket e44e1219: condition wakes become supervisor-visible', () => {
     });
 
     it('a met-in-tool answer registered NO wake — ok:false (the call ran; nothing was armed)', () => {
-      const text = 'CONDITION MET (deploy of canada-quant/digby@b100c529973c concluded; waited 240s harness-side, deadline-shielded): Deploy run 40055858118 for b100c529973c concluded SUCCESS.';
+      const text = 'CONDITION MET (deploy of example-org/crossmodel@b100c529973c concluded; waited 240s harness-side, deadline-shielded): Deploy run 40055858118 for b100c529973c concluded SUCCESS.';
       const r = extractReceipt('await_condition', ARGS, text, new Date());
       expect(r).not.toBeNull();
       expect(r!.ok).toBe(false);
-      expect(r!.ids).toMatchObject({ condition: 'deploy', repo: 'canada-quant/digby', sha: 'b100c529973c' });
+      expect(r!.ids).toMatchObject({ condition: 'deploy', repo: 'example-org/crossmodel', sha: 'b100c529973c' });
     });
 
     it('a thrown / aborted / refusal head is not-executed: ok:false with the identity kept', () => {
@@ -145,7 +145,7 @@ describe('ticket e44e1219: condition wakes become supervisor-visible', () => {
     it('receiptMatchesClaim: an ok wake receipt vouches NO deploy / pr_created / commit claim', () => {
       const wake = {
         id: 'r1', chatId: 'c1', runId: null, tool: 'await_condition', ok: true,
-        ids: { condition: 'deploy', repo: 'canada-quant/digby', sha: 'b100c529973c' },
+        ids: { condition: 'deploy', repo: 'example-org/crossmodel', sha: 'b100c529973c' },
         inputHash: 'x', outputHash: 'y', createdAt: new Date(),
       } as any;
       expect(receiptMatchesClaim({ kind: 'deploy', text: 'deploy 40055858118 concluded success' }, [wake])).toBe(false);

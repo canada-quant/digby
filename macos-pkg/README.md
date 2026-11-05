@@ -3,7 +3,7 @@
 Builds a **signed + notarized** `DigbyAgent.pkg` that bundles its own Node runtime,
 so end users need **nothing installed** and **never touch Terminal**:
 
-1. Download `DigbyAgent.pkg` from `https://digby.example.com/DigbyAgent.pkg`, double-click,
+1. Download `DigbyAgent.pkg` from `https://digby.ai/DigbyAgent.pkg`, double-click,
    click through the installer (no Gatekeeper warning — it's notarized).
 2. The agent starts automatically and shows a **native popup** asking for the
    pairing code (copied from Digby → Account → Integrations → iMessage).

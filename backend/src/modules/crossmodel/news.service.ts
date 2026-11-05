@@ -59,7 +59,7 @@ import { searchWithBrightData } from './mcp-search';
 // a "pipeline outage" ticket every window. Production is never "missing".
 import { webSearchMissingOnInstance } from './platform/instance-setup';
 let _loggedNewsUnconfigured = false;
-// Edge/self-host formatter hardening (2026-10-26, the digby.example.com outage):
+// Edge/self-host formatter hardening (2026-10-26, the digby.cql.ca outage):
 // the 2026-10-20 gate covered the no-SEARCH corner, but a gateway-only
 // self-host (all models via custom endpoints; no DEEPSEEK_API_KEY /
 // DASHSCOPE_API_KEY and no 'utility' seat override or custom fallback) has
@@ -1041,7 +1041,7 @@ async function runSchedulerTick(): Promise<void> {
   // CAPABILITY-keyed, not instance-kind-keyed (review F1, 2026-10-27): the
   // gate below is NOT conjunct-guarded on !prod — an Edge deployed without
   // DIGBY_INSTANCE reads as 'prod' and the tick must still skip (the
-  // reported digby.example.com box may be exactly that shape). Prod-safe on its
+  // reported digby.cql.ca box may be exactly that shape). Prod-safe on its
   // own: production's env keys make utilityChainUnconfigured() false before
   // any config read, and a read error fail-opens to false.
   if (await utilityChainUnconfigured()) {

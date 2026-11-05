@@ -50,7 +50,7 @@ const mockStaleFindMany = jest.fn(async (..._a: any[]): Promise<any[]> => []);
 const mockTransaction = jest.fn(async (fn: any) =>
   typeof fn === 'function'
     ? fn({
-        codingSchedule: {
+        chatSchedule: {
           create: (...a: any[]) => mockCreate(...a),
           findMany: (...a: any[]) => mockStaleFindMany(...a),
           updateMany: (...a: any[]) => mockUpdateMany(...a),
@@ -61,7 +61,7 @@ const mockTransaction = jest.fn(async (fn: any) =>
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       create: (...a: any[]) => mockCreate(...a),
       count: (...a: any[]) => mockCount(...a),
       findMany: (...a: any[]) => mockFindMany(...a),

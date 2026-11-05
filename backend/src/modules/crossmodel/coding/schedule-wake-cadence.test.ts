@@ -27,13 +27,13 @@ const mockChatFindUnique = jest.fn(async (..._a: any[]): Promise<any> => ({ user
 const mockPromptHistoryFindFirst = jest.fn(async (..._a: any[]): Promise<any> => null);
 const mockStaleFindMany = jest.fn(async (..._a: any[]): Promise<any[]> => []);
 const mockTransaction = jest.fn(async (fn: any) => (typeof fn === 'function'
-  ? fn({ codingSchedule: { create: (...a: any[]) => mockCreate(...a), findMany: (...a: any[]) => mockStaleFindMany(...a), updateMany: (...a: any[]) => mockUpdateMany(...a) } })
+  ? fn({ chatSchedule: { create: (...a: any[]) => mockCreate(...a), findMany: (...a: any[]) => mockStaleFindMany(...a), updateMany: (...a: any[]) => mockUpdateMany(...a) } })
   : Promise.all(fn)));
 
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       create: (...a: any[]) => mockCreate(...a),
       count: (...a: any[]) => mockCount(...a),
       findMany: (...a: any[]) => mockFindMany(...a),
@@ -148,7 +148,7 @@ const ENV_KEYS = [
 
 /** A due recurring row as the sweeper sees it (the tt-rd shape: machine-authored, 30 min, 500 cap). */
 const dueRow = (over: any = {}) => ({
-  id: 'sch_ttrd', sessionId: 's1', userId: 'u1', prompt: 'QB2 speed mission — run the next lever', kind: 'recurring',
+  id: 'sch_ttrd', sessionId: 's1', userId: 'u1', prompt: 'node-a speed mission — run the next lever', kind: 'recurring',
   intervalSec: 1800, nextRunAt: new Date(Date.now() - 1000), enabled: true,
   runsCount: 331, maxRuns: 500, expiresAt: new Date(Date.now() + 86_400_000),
   lastFiredAt: new Date(Date.now() - 1800_000), lastStatus: 'started', promptSetBy: 'machine', renewOnExhaustion: null,
@@ -212,7 +212,7 @@ describe('busy-steer dedupe + delta header (wake-cadence-1)', () => {
     mockRunFindFirst.mockResolvedValue(ACTIVE);
     mockIncr.mockResolvedValue(1);
     mockSteerActiveRun.mockResolvedValue({ steered: true });
-    const res = await fireScheduleTarget({ id: 'sch_ttrd', sessionId: 's1', prompt: 'QB2 speed mission — run the next lever (a very long stored prompt)'.repeat(20) });
+    const res = await fireScheduleTarget({ id: 'sch_ttrd', sessionId: 's1', prompt: 'node-a speed mission — run the next lever (a very long stored prompt)'.repeat(20) });
     expect(res).toEqual({ started: true, steered: true });
     const [, text] = mockSteerActiveRun.mock.calls[0];
     expect(text.startsWith(busyFiringSteerHeader('schedule', 'sch_ttrd'))).toBe(true);
@@ -350,7 +350,7 @@ describe('reconcileCadenceAtClaim (wake-cadence-3 stock project sweep backoff)',
 describe('reconcileCadenceAtClaim (todo 27c215d6 — open-ended block-streak backoff)', () => {
   // The baseline specimen class: the One Piece TCG prod-watch re-reporting the
   // suspended AWS account (ids/timestamps churn, tokens do not).
-  const TCG = (n: number) => `Check #${n} (2026-10-1${n}): AWS account 000000000000 remains suspended — provision is BLOCKED on the owner's account decision. No end date. Nothing else changed; task 4e8c22ab still pending.`;
+  const TCG = (n: number) => `Check #${n} (2026-10-1${n}): AWS account 123456789012 remains suspended — provision is BLOCKED on the owner's account decision. No end date. Nothing else changed; task 4e8c22ab still pending.`;
   const answers = (texts: string[]) => texts.map((content, i) => ({ content, createdAt: new Date(Date.now() - i * 3600_000) }));
   it('THE specimen: 3 consecutive near-identical blocked-no-end-date answers → 30 min doubles to 60, lastStatus blocked_streak:3', async () => {
     mockMsgFindMany.mockResolvedValue(answers([TCG(3), TCG(2), TCG(1)]));
@@ -419,9 +419,9 @@ describe('the claim carries the cadence write; the firing gets the stretch line;
   it('fireDue on the TCG specimen: claim writes intervalSec 3600 + lastStatus blocked_streak:3; [SCHEDULE STATE] carries the block-stretch line; block_streak_backoff + block_streak_observed metrics + Activity source block-streak-backoff land', async () => {
     mockFindMany.mockResolvedValue([dueRow()]);
     mockMsgFindMany.mockResolvedValue([
-      { content: `Check #3: AWS account 000000000000 remains suspended — provision is BLOCKED on the owner's account decision. No end date.`, createdAt: new Date(Date.now() - 3600_000) },
-      { content: `Check #2: AWS account 000000000000 remains suspended — provision is BLOCKED on the owner's account decision. No end date.`, createdAt: new Date(Date.now() - 2 * 3600_000) },
-      { content: `Check #1: AWS account 000000000000 remains suspended — provision is BLOCKED on the owner's account decision. No end date.`, createdAt: new Date(Date.now() - 3 * 3600_000) },
+      { content: `Check #3: AWS account 123456789012 remains suspended — provision is BLOCKED on the owner's account decision. No end date.`, createdAt: new Date(Date.now() - 3600_000) },
+      { content: `Check #2: AWS account 123456789012 remains suspended — provision is BLOCKED on the owner's account decision. No end date.`, createdAt: new Date(Date.now() - 2 * 3600_000) },
+      { content: `Check #1: AWS account 123456789012 remains suspended — provision is BLOCKED on the owner's account decision. No end date.`, createdAt: new Date(Date.now() - 3 * 3600_000) },
     ]);
     await fireDue();
     const claim = mockUpdateMany.mock.calls.find((c) => c[0]?.where?.nextRunAt !== undefined)!;
@@ -435,7 +435,7 @@ describe('the claim carries the cadence write; the firing gets the stretch line;
     process.env.BLOCK_STREAK_CARDS_ENABLED = '1';
     mockFindMany.mockResolvedValue([dueRow()]);
     mockMsgFindMany.mockResolvedValue([3, 2, 1].map((n) => (
-      { content: `Check #${n}: AWS account 000000000000 remains suspended — provision is BLOCKED on the owner's account decision. No end date.`, createdAt: new Date(Date.now() - n * 3600_000) }
+      { content: `Check #${n}: AWS account 123456789012 remains suspended — provision is BLOCKED on the owner's account decision. No end date.`, createdAt: new Date(Date.now() - n * 3600_000) }
     )));
     const before = Date.now();
     await fireDue();
@@ -449,10 +449,10 @@ describe('the claim carries the cadence write; the firing gets the stretch line;
   it('at the ceiling (no intervalSec change): the claim still writes the OBSERVED metric — the 7-day baseline accrues regardless of the backoff verdict', async () => {
     mockFindMany.mockResolvedValue([dueRow({ intervalSec: 24 * 60 * 60 })]);
     mockMsgFindMany.mockResolvedValue([
-      { content: `Check #4: AWS account 000000000000 remains suspended — provision is BLOCKED on the account decision. No end date.`, createdAt: new Date() },
-      { content: `Check #3: AWS account 000000000000 remains suspended — provision is BLOCKED on the account decision. No end date.`, createdAt: new Date() },
-      { content: `Check #2: AWS account 000000000000 remains suspended — provision is BLOCKED on the account decision. No end date.`, createdAt: new Date() },
-      { content: `Check #1: AWS account 000000000000 remains suspended — provision is BLOCKED on the account decision. No end date.`, createdAt: new Date() },
+      { content: `Check #4: AWS account 123456789012 remains suspended — provision is BLOCKED on the account decision. No end date.`, createdAt: new Date() },
+      { content: `Check #3: AWS account 123456789012 remains suspended — provision is BLOCKED on the account decision. No end date.`, createdAt: new Date() },
+      { content: `Check #2: AWS account 123456789012 remains suspended — provision is BLOCKED on the account decision. No end date.`, createdAt: new Date() },
+      { content: `Check #1: AWS account 123456789012 remains suspended — provision is BLOCKED on the account decision. No end date.`, createdAt: new Date() },
     ]);
     await fireDue();
     expect(metricsOf('block_streak_observed')[0]).toMatchObject({ meta: { scheduleId: 'sch_ttrd', streak: 4, escalatedCard: false } });

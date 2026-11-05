@@ -57,9 +57,9 @@ async function flushSideEffects(): Promise<void> {
 const mockPrisma: any = {
   crossModelProject: { findMany: jest.fn(), findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(async () => ({ count: 0 })), delete: jest.fn() },
   crossModelChat: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn(), update: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
-  crossModelMessage: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), upsert: jest.fn() },
+  crossModelMessage: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), upsert: jest.fn(), update: jest.fn() },
   chatCodingState: { findFirst: jest.fn(), findUnique: jest.fn(), findMany: jest.fn(), create: jest.fn(), update: jest.fn(), updateMany: jest.fn(), delete: jest.fn(), deleteMany: jest.fn() },
-  codingMessage: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn() },
+  codingMessage: { findMany: jest.fn(), findUnique: jest.fn(), count: jest.fn(), create: jest.fn(), update: jest.fn(), upsert: jest.fn() },
   agentRun: { findMany: jest.fn(), count: jest.fn(async () => 0), updateMany: jest.fn(async () => ({ count: 0 })) },
   activity: { create: jest.fn(async () => ({})) },
   projectMember: { findUnique: jest.fn(), findMany: jest.fn() },
@@ -355,7 +355,7 @@ describe('deleteCodingProjectData', () => {
     mockPrisma.chatCodingState.findMany.mockResolvedValue([{ id: 'c1' }, { id: 'c2' }]);
     mockPrisma.crossModelProject.findMany.mockResolvedValue([]);
     await deleteCodingProjectData('p1');
-    expect(mockPrisma.contextStoreEntry.deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { in: ['c1:thread', 'c1:supervisor-archive', 'c2:thread', 'c2:supervisor-archive'] } } });
+    expect(mockPrisma.contextStoreEntry.deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { in: ['c1:thread', 'c1:supervisor-archive', 'c1:background-report', 'c2:thread', 'c2:supervisor-archive', 'c2:background-report'] } } });
     expect(mockPrisma.contextStoreEntry.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(mockPrisma.crossModelProject.delete.mock.invocationCallOrder[0]);
   });
 
@@ -369,7 +369,7 @@ describe('deleteCodingProjectData', () => {
     await deleteCodingProjectData('p1');
     const calls = mockPrisma.contextStoreEntry.deleteMany.mock.calls;
     expect(calls).toHaveLength(2);
-    expect(calls[1]).toEqual([{ where: { namespacePath: { in: ['c1:thread', 'c1:supervisor-archive'] } } }]);
+    expect(calls[1]).toEqual([{ where: { namespacePath: { in: ['c1:thread', 'c1:supervisor-archive', 'c1:background-report'] } } }]);
     expect(mockPrisma.contextStoreEntry.deleteMany.mock.invocationCallOrder[1]).toBeGreaterThan(mockPrisma.crossModelProject.delete.mock.invocationCallOrder[0]);
   });
 
@@ -391,82 +391,99 @@ const MSG = {
   parts: [{ type: 'text', text: 'hi' }], createdAt: new Date('2026-07-03T00:00:00Z'),
 };
 
-/** Pin the two P5-A env flags per test (they're read per call, not at import). */
+/** Pin the transcript env flags per test (they're read per call, not at import). */
 function useTranscriptEnv() {
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
     jest.clearAllMocks();
     saved.d = process.env.TRANSCRIPT_DUAL_WRITE;
     saved.r = process.env.TRANSCRIPT_READ;
+    saved.w = process.env.TRANSCRIPT_WRITE;
     delete process.env.TRANSCRIPT_DUAL_WRITE;
     delete process.env.TRANSCRIPT_READ;
+    delete process.env.TRANSCRIPT_WRITE;
   });
   afterEach(() => {
     if (saved.d === undefined) delete process.env.TRANSCRIPT_DUAL_WRITE; else process.env.TRANSCRIPT_DUAL_WRITE = saved.d;
     if (saved.r === undefined) delete process.env.TRANSCRIPT_READ; else process.env.TRANSCRIPT_READ = saved.r;
+    if (saved.w === undefined) delete process.env.TRANSCRIPT_WRITE; else process.env.TRANSCRIPT_WRITE = saved.w;
   });
 }
 
-describe('P5-A dual-write', () => {
+describe('P5-A transcript writes (MERGE-1: merged is PRIMARY)', () => {
   useTranscriptEnv();
 
-  it('appendCodingMessage writes the legacy row AND the mirror in ONE transaction (id/parts/createdAt preserved)', async () => {
-    mockPrisma.codingMessage.create.mockResolvedValue(MSG);
+  it('appendCodingMessage writes crossmodel_messages ONLY by default — the legacy table is never touched (2026-11-04 DROP prep)', async () => {
+    mockPrisma.crossModelMessage.create.mockResolvedValue(MSG);
     const row = await appendCodingMessage({ chatId: 'c1', role: 'assistant', content: 'hi', parts: MSG.parts });
+    // The caller's row IS the merged row — the primary write target.
     expect(row).toEqual(MSG);
-    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingMessage.create).toHaveBeenCalledWith({
+    expect(mockPrisma.crossModelMessage.create).toHaveBeenCalledWith({
       data: { chatId: 'c1', role: 'assistant', content: 'hi', parts: MSG.parts },
     });
-    expect(mockPrisma.crossModelMessage.upsert).toHaveBeenCalledWith({
-      where: { id: 'm1' },
-      create: { id: 'm1', chatId: 'c1', role: 'assistant', content: 'hi', parts: MSG.parts, createdAt: MSG.createdAt },
-      update: { content: 'hi', parts: MSG.parts },
-    });
+    // THE DEFAULT NO LONGER MIRRORS. The blue-green overlap shape (merged primary +
+    // legacy mirror) existed only to keep TRANSCRIPT_READ=legacy an honest rollback;
+    // with that rollback retired the mirror was the table's last unconditional live
+    // writer, and it is exactly what blocks the DROP. No transaction, no legacy call.
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.codingMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.codingMessage.upsert).not.toHaveBeenCalled();
   });
 
-  it('omits parts on both sides when the message has none (nullable jsonb stays NULL)', async () => {
-    mockPrisma.codingMessage.create.mockResolvedValue({ ...MSG, id: 'm2', role: 'user', content: 'q', parts: null });
+  it('omits parts when the message has none (nullable jsonb stays NULL)', async () => {
+    mockPrisma.crossModelMessage.create.mockResolvedValue({ ...MSG, id: 'm2', role: 'user', content: 'q', parts: null });
     await appendCodingMessage({ chatId: 'c1', role: 'user', content: 'q' });
-    expect(mockPrisma.codingMessage.create).toHaveBeenCalledWith({ data: { chatId: 'c1', role: 'user', content: 'q' } });
-    const upsert = mockPrisma.crossModelMessage.upsert.mock.calls[0][0];
-    expect(upsert.create).toEqual({ id: 'm2', chatId: 'c1', role: 'user', content: 'q', createdAt: MSG.createdAt });
-    expect(upsert.create).not.toHaveProperty('parts');
+    expect(mockPrisma.crossModelMessage.create).toHaveBeenCalledWith({ data: { chatId: 'c1', role: 'user', content: 'q' } });
+    expect(mockPrisma.codingMessage.upsert).not.toHaveBeenCalled();
   });
 
-  it('skips the mirror entirely when TRANSCRIPT_DUAL_WRITE=off (no transaction, no upsert)', async () => {
-    process.env.TRANSCRIPT_DUAL_WRITE = 'off';
-    mockPrisma.codingMessage.create.mockResolvedValue(MSG);
+  it('TRANSCRIPT_WRITE=merged touches the merged table ONLY — the proof mode for writes with coding_messages absent', async () => {
+    // This is the mode the DROP rests on: if the legacy table were required, this
+    // write would fail on a box where it has been dropped. Nothing may reach it.
+    process.env.TRANSCRIPT_WRITE = 'merged';
+    mockPrisma.crossModelMessage.create.mockResolvedValue(MSG);
     const row = await appendCodingMessage({ chatId: 'c1', role: 'user', content: 'q' });
     expect(row).toEqual(MSG);
-    expect(mockPrisma.codingMessage.create).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.crossModelMessage.upsert).not.toHaveBeenCalled();
+    expect(mockPrisma.crossModelMessage.create).toHaveBeenCalledTimes(1);
+    // No transaction, and NOT ONE legacy-table call.
     expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.codingMessage.create).not.toHaveBeenCalled();
+    expect(mockPrisma.codingMessage.upsert).not.toHaveBeenCalled();
   });
 
-  it('updateCodingMessage mirrors the mutation via upsert in the same transaction (post-insert updates are covered)', async () => {
+  it('TRANSCRIPT_WRITE=merged on update touches the merged table ONLY', async () => {
+    process.env.TRANSCRIPT_WRITE = 'merged';
+    mockPrisma.crossModelMessage.update.mockResolvedValue(MSG);
+    const row = await updateCodingMessage('m1', { content: 'hi', parts: MSG.parts });
+    expect(row).toEqual(MSG);
+    expect(mockPrisma.crossModelMessage.update).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.codingMessage.update).not.toHaveBeenCalled();
+    expect(mockPrisma.codingMessage.upsert).not.toHaveBeenCalled();
+  });
+
+  // MERGE-1 step 9 (2026-11-04): the two legacy write arms that used to live here
+  // (`TRANSCRIPT_WRITE=legacy` restoring the pre-inversion direction, and
+  // `TRANSCRIPT_DUAL_WRITE=off` writing legacy-only) are GONE with the seam. Both
+  // targeted `coding_messages`, which is being dropped, so each would now fail on a
+  // missing relation. The write path has one shape: crossmodel_messages only. The
+  // merged-only behaviour they used to contrast against is the test above.
+
+  it('updateCodingMessage rewrites the merged row ONLY by default (no legacy mirror)', async () => {
     const updated = { ...MSG, content: 'hi there' };
-    mockPrisma.codingMessage.update.mockResolvedValue(updated);
+    mockPrisma.crossModelMessage.update.mockResolvedValue(updated);
     const row = await updateCodingMessage('m1', { content: 'hi there', parts: MSG.parts });
     expect(row).toEqual(updated);
-    expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingMessage.update).toHaveBeenCalledWith({ where: { id: 'm1' }, data: { content: 'hi there', parts: MSG.parts } });
-    // upsert (not update): a pre-dual-write row may have no mirror yet — it gets created.
-    expect(mockPrisma.crossModelMessage.upsert).toHaveBeenCalledWith({
-      where: { id: 'm1' },
-      create: { id: 'm1', chatId: 'c1', role: 'assistant', content: 'hi there', parts: MSG.parts, createdAt: MSG.createdAt },
-      update: { content: 'hi there', parts: MSG.parts },
-    });
+    expect(mockPrisma.crossModelMessage.update).toHaveBeenCalledWith({ where: { id: 'm1' }, data: { content: 'hi there', parts: MSG.parts } });
+    // Same flip as the append path: the default carries no mirror, so a DROP has no
+    // live writer racing it.
+    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
+    expect(mockPrisma.codingMessage.update).not.toHaveBeenCalled();
+    expect(mockPrisma.codingMessage.upsert).not.toHaveBeenCalled();
   });
 
-  it('updateCodingMessage touches only the legacy table when dual-write is off', async () => {
-    process.env.TRANSCRIPT_DUAL_WRITE = 'off';
-    mockPrisma.codingMessage.update.mockResolvedValue(MSG);
-    await updateCodingMessage('m1', { content: 'x', parts: MSG.parts });
-    expect(mockPrisma.codingMessage.update).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.crossModelMessage.upsert).not.toHaveBeenCalled();
-    expect(mockPrisma.$transaction).not.toHaveBeenCalled();
-  });
+  // MERGE-1 step 9 (2026-11-04): the `TRANSCRIPT_DUAL_WRITE=off` legacy-update arm that
+  // used to be pinned here is gone with the seam — it targeted `coding_messages`, which is
+  // being dropped. `updateCodingMessage` now has exactly one shape (asserted above).
 });
 
 describe('P5-A read-switch', () => {
@@ -509,15 +526,10 @@ describe('P5-A read-switch', () => {
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
-  it('TRANSCRIPT_READ=legacy forces the legacy table without touching the merged one', async () => {
-    process.env.TRANSCRIPT_READ = 'legacy';
-    mockPrisma.codingMessage.findMany.mockResolvedValue([MSG]);
-    const rows = await listCodingTranscript('c1');
-    expect(rows).toEqual([MSG]);
-    expect(mockPrisma.codingMessage.findMany).toHaveBeenCalledWith({ where: { chatId: 'c1' }, orderBy: { createdAt: 'asc' } });
-    expect(mockPrisma.crossModelMessage.count).not.toHaveBeenCalled();
-    expect(mockPrisma.crossModelMessage.findMany).not.toHaveBeenCalled();
-  });
+  // MERGE-1 step 9 (2026-11-04): the `TRANSCRIPT_READ=legacy` arm that used to be pinned
+  // here is gone with the seam. A read-switch over a dropped relation would be a runtime
+  // landmine, so every read now serves crossmodel_messages unconditionally — asserted by
+  // the two merged-mode cases above (with and without mirrored rows).
 
   it('listRecentCodingTranscript keeps the newest-first + take contract on the merged side', async () => {
     mockPrisma.crossModelMessage.count.mockResolvedValue(5);
@@ -966,23 +978,26 @@ describe('coding transcript persist 22P05 strip (FO firing 20)', () => {
   const PAIR = '🥨'; // U+1F968 — valid pair, must survive
 
   it('appendCodingMessage strips lone surrogates from content/parts before create', async () => {
-    mockPrisma.codingMessage.create.mockClear();
-    mockPrisma.crossModelMessage.upsert.mockClear();
+    mockPrisma.crossModelMessage.create.mockClear();
+    mockPrisma.codingMessage.upsert.mockClear();
     (mockPrisma.$transaction as jest.Mock).mockClear();
-    mockPrisma.codingMessage.create.mockResolvedValue({ id: 'm9', chatId: 'c1', role: 'assistant', content: 'x', parts: null, metadata: null, createdAt: new Date(0) });
+    mockPrisma.crossModelMessage.create.mockResolvedValue({ id: 'm9', chatId: 'c1', role: 'assistant', content: `ab ${PAIR}`, parts: [{ type: 'text', text: 'pq' }], metadata: null, createdAt: new Date(0) });
     await appendCodingMessage({ chatId: 'c1', role: 'assistant', content: `a${LONE}b ${PAIR}`, parts: [{ type: 'text', text: `p${LONE}q` }] } as any);
-    const arg = (mockPrisma.codingMessage.create as jest.Mock).mock.calls[0][0];
+    // The DEFAULT write is the merged table alone (2026-11-04) — the strip must
+    // happen before it, and no legacy mirror is written at all.
+    const arg = (mockPrisma.crossModelMessage.create as jest.Mock).mock.calls[0][0];
     expect(arg.data.content).toBe(`ab ${PAIR}`);
     expect(arg.data.parts[0].text).toBe('pq');
+    expect(mockPrisma.codingMessage.upsert).not.toHaveBeenCalled();
   });
 
   it('updateCodingMessage (the final-transcript persist seam) strips before update', async () => {
-    mockPrisma.codingMessage.update.mockClear();
+    mockPrisma.crossModelMessage.update.mockClear();
     (mockPrisma.$transaction as jest.Mock).mockClear();
-    mockPrisma.codingMessage.update.mockResolvedValue({ id: 'm1', chatId: 'c1', role: 'assistant', content: 'x', parts: null, metadata: null, createdAt: new Date(0) });
-    mockPrisma.crossModelMessage.upsert.mockClear();
+    mockPrisma.crossModelMessage.update.mockResolvedValue({ id: 'm1', chatId: 'c1', role: 'assistant', content: 'x', parts: null, metadata: null, createdAt: new Date(0) });
+    mockPrisma.codingMessage.upsert.mockClear();
     await updateCodingMessage('m1', { content: `f${LONE}g`, parts: [{ type: 'text', text: PAIR }] });
-    const arg = (mockPrisma.codingMessage.update as jest.Mock).mock.calls[0][0];
+    const arg = (mockPrisma.crossModelMessage.update as jest.Mock).mock.calls[0][0];
     expect(arg.data.content).toBe('fg');
     expect(arg.data.parts[0].text).toBe(PAIR);
   });

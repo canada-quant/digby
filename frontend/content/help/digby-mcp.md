@@ -87,7 +87,7 @@ tokens get exactly the scopes they were minted with.
 ```bash
 cd digby-mcp
 npm ci && npm run build
-DIGBY_USER_TOKEN=dgt_… DIGBY_API_URL=https://digby.example.com node dist/server.js --stdio
+DIGBY_USER_TOKEN=dgt_… DIGBY_API_URL=https://digby.ai node dist/server.js --stdio
 # or: DIGBY_MCP_TRANSPORT=stdio … node dist/server.js
 ```
 
@@ -112,7 +112,7 @@ DIGBY_API_URL=http://localhost:4000 node dist/server.js   # listens on :8000 (MC
 
 Declared as `digby-mcp` in `docker-compose.base.yml` (host port `8206` →
 container `8000`), same shape as the other `*-mcp` services — except there is
-**no** `*_MCP_API_KEY`; only `DIGBY_API_URL` (default `https://digby.example.com` —
+**no** `*_MCP_API_KEY`; only `DIGBY_API_URL` (default `https://digby.ai` —
 the public URL: the ALB routes to the live blue-green color. NEVER pin
 `admin-backend-blue`/`admin-backend-green` — the losing color's containers
 are stopped after each flip):
@@ -139,7 +139,7 @@ clients):
       "args": ["/path/to/crossmodel/digby-mcp/dist/server.js", "--stdio"],
       "env": {
         "DIGBY_USER_TOKEN": "dgt_paste_your_agent_token_here",
-        "DIGBY_API_URL": "https://digby.example.com"
+        "DIGBY_API_URL": "https://digby.ai"
       }
     }
   }

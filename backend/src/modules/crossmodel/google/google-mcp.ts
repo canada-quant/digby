@@ -309,7 +309,7 @@ function firstSurfaced(errors: unknown[]): string {
  * This mirrors the multi-account fan-out pattern used by getCalendarEvents().
  *
  * Previously only queried the first connected account — users with multiple
- * Google accounts (e.g. paul@sunday.market) would never see emails from
+ * Google accounts (e.g. example-user@example.com) would never see emails from
  * non-primary accounts.
  */
 export async function getGmailMessages(

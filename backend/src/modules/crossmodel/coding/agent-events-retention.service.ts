@@ -38,9 +38,6 @@ import logger from '../../../utils/logger';
 import { recordLoopMetric, LOOP_METRIC_KINDS } from '../platform/loop-metrics.service';
 import { storeGet, storePut } from '../memory/context-store';
 import { hideReasoningDisabled } from './reasoning-wire';
-// MERGE-1 slice 1: the ONE read-switch seam. The retention lateral used to hard-code
-// coding_messages and so was the only transcript reader invisible to the switch.
-import { transcriptReadMode } from './transcript-source';
 
 export const AGENT_EVENTS_RETENTION_DISABLED_ENV = 'AGENT_EVENTS_RETENTION_DISABLED';
 export const AGENT_EVENTS_RETENTION_DRY_RUN_ENV = 'AGENT_EVENTS_RETENTION_DRY_RUN';
@@ -287,22 +284,18 @@ const STRIP_STMT = (tag: string, type: string, field: string) => ({
  * never detoasts a multi-MB transcript; run-executor always persists an array). Rides the transcript table's
  * (chat, createdAt) index backwards with LIMIT 1.
  *
- * MERGE-1 slice 1: the table is a PARAMETER, resolved through the existing read-switch
- * (`transcriptReadMode()` in coding-data.service.ts) by `compactionSql()`. Before this the
- * lateral hard-coded `coding_messages`, so it was the one reader invisible to the switch —
- * and after the drop it would have raised 42P01 on every range, been swallowed by the
- * retry/skip path, and silently stopped stripping `agent_events.payload.parts`.
- * `coding_messages` names the chat column `sessionId`; the mirror `crossmodel_messages`
- * names it `chatId` — the only two differences.
+ * MERGE-1 is complete (2026-11-04): `crossmodel_messages` is the ONLY transcript table, so the table name is
+ * hard-coded here rather than resolved through the retired read-switch. The lateral names the chat column
+ * `chatId` (the legacy `coding_messages` spelled it `sessionId`) — the one difference that mattered while both
+ * tables existed.
  */
 const TRANSCRIPT_TABLE = {
-  legacy: { table: 'coding_messages', chatCol: 'sessionId' },
   merged: { table: 'crossmodel_messages', chatCol: 'chatId' },
 } as const;
 type TranscriptSource = keyof typeof TRANSCRIPT_TABLE;
 
-const finalMessageLateral = (source: TranscriptSource): string => {
-  const { table, chatCol } = TRANSCRIPT_TABLE[source];
+const finalMessageLateral = (): string => {
+  const { table, chatCol } = TRANSCRIPT_TABLE.merged;
   return `CROSS JOIN LATERAL (
     SELECT cm.id FROM ${table} cm
     WHERE cm."${chatCol}" = r."sessionId" AND cm.role = 'assistant' AND cm.parts IS NOT NULL
@@ -311,12 +304,12 @@ const finalMessageLateral = (source: TranscriptSource): string => {
   ) m`;
 };
 /**
- * The tier statements for ONE transcript source. `merged` is the default and the
- * drop-safe shape; `legacy` is what every tier statement used before slice 1 and is
- * kept so `TRANSCRIPT_READ=legacy` behaves exactly as it does today.
+ * The tier statements. There is exactly one transcript source now (the merged
+ * table); the `source`-shaped registry above is kept only so the statement shapes
+ * stay named in one place.
  */
-export function compactionSql(source: TranscriptSource): Record<CompactionTier, { apply: string; dry: string }> {
-  const LATERAL = finalMessageLateral(source);
+export function compactionSql(): Record<CompactionTier, { apply: string; dry: string }> {
+  const LATERAL = finalMessageLateral();
   return {
     reasoning: DELETE_STMT('reasoning', `AND e.type IN ('reasoning', 'subagent:reasoning')`),
     // Every context row with a LATER context row in the same run goes — the (runId, seq) index answers the EXISTS.
@@ -329,8 +322,8 @@ export function compactionSql(source: TranscriptSource): Record<CompactionTier, 
     },
   };
 }
-/** Merged-shape statements (the default read switch) — kept as a named export for the suites that pin statement shape. */
-export const COMPACTION_SQL = compactionSql('merged');
+/** The compaction statements — one transcript source now, kept as a named export for the suites that pin statement shape. */
+export const COMPACTION_SQL = compactionSql();
 /** The event types each tier may touch (re-checked in SQL). */
 const TIER_TYPES: Record<CompactionTier, ReadonlySet<string>> = {
   reasoning: new Set(['reasoning', 'subagent:reasoning']),
@@ -401,11 +394,9 @@ export async function runAgentEventsCompactionOnce(now: Date = new Date()): Prom
 
   let stored: CursorRecord | null = null;
   try { stored = await storeGet<CursorRecord>(COMPACTION_CURSOR_NS, cursorKey); } catch { /* fresh walk */ }
-  // MERGE-1 slice 1: resolve the transcript source ONCE per tick through the existing
-  // read-switch, exactly as the routed transcript reads do. 'merged' (default) makes the
-  // complete tier's lateral read crossmodel_messages — the drop-safe shape; 'legacy' keeps
-  // today's coding_messages behaviour byte-for-byte.
-  const sql = compactionSql(transcriptReadMode() === 'legacy' ? 'legacy' : 'merged');
+  // `crossmodel_messages` is the only transcript table (MERGE-1 complete), so the
+  // complete tier's lateral is fixed — there is no source to resolve per tick.
+  const sql = compactionSql();
   let cursor = 0n;
   try { if (stored?.nextId) cursor = BigInt(stored.nextId); } catch { cursor = 0n; }
   const startCursor = cursor;

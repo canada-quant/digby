@@ -11,7 +11,7 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: 'https',
-        hostname: 'digby.example.com',
+        hostname: 'digby.ai',
       },
     ],
   },

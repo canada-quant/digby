@@ -41,6 +41,17 @@ export interface BrowserAction {
   selector?: string;
   /** click / type target on the cloud BrightData browser: an element ref from a snapshot (e.g. "e12") */
   ref?: string;
+  /**
+   * Human-readable description of the element a cloud `click`/`type` targets —
+   * the text after the role in a snapshot line (`- button "Submit" [ref=e8]`
+   * → `Submit`). BrightData's MCP tools REQUIRE it (`element` is in their zod
+   * schema with no default: omitting it is a -32602 parameter-validation error
+   * and no click happens — ticket 5f69fdc4). It is only a label: the browser
+   * resolves the target from `ref` alone. The cloud driver falls back to the
+   * snapshot's own description for that ref, then to the ref itself, so the
+   * param is never absent.
+   */
+  element?: string;
   /** type */
   text?: string;
   /** type — press Enter after typing (e.g. submit a search box) */

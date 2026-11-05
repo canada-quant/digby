@@ -12,7 +12,7 @@
  * the self-hosting guide at /help/self-host. Browser-side build flags (the
  * production ad tags) are reported here too, from the bundle's own env.
  *
- * Production reads all-ready; a self-host at digby.example.com sees exactly its
+ * Production reads all-ready; a self-host at digby.cql.ca sees exactly its
  * own gaps. Nothing here mutates — the fixes are .env edits + a restart.
  */
 

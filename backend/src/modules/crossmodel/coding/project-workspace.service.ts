@@ -177,7 +177,7 @@ export async function configureWorkspace(
  * connected GitHub account is a TIME BOMB — the bad pin lands silently at
  * configure/import time and only surfaces 5 h later at the first git op, when
  * the getValidToken label-miss fallback starts hot-looping its warn (the
- * 2026-10-18 canlegal-bench burst: imported 04:20Z with the dead "pasta_paul"
+ * 2026-10-18 canlegal-bench burst: imported 04:20Z with the dead "example-org"
  * pin, 73 warn rows 05:15–10:06Z). Non-blocking by design — the f121 fallback
  * keeps writes working whatever the pin says — but the mismatch is named AT
  * THE WRITE, with the recovery (re-pin or reconnect), so the next operator
@@ -279,7 +279,7 @@ async function withTempWorktree<T>(mirror: string, branch: string, fn: (wt: stri
   try {
     await git(['clone', '--no-hardlinks', mirror, wt], undefined, 120_000);
     await git(['config', 'user.name', 'Digby'], wt);
-    await git(['config', 'user.email', 'digby@digby.example.com'], wt);
+    await git(['config', 'user.email', 'digby@digby.ai'], wt);
     // Check out (or create) the target branch.
     const hasBranch = await git(['rev-parse', '--verify', `origin/${branch}`], wt).then(() => true).catch(() =>
       git(['rev-parse', '--verify', branch], wt).then(() => true).catch(() => false));
@@ -461,7 +461,7 @@ export async function snapshotBeforeReap(wt: string, message: string): Promise<'
   if (before === null) return 'unknown';
   if (!before) return 'clean';
   await git(['add', '-A'], wt).catch(() => {});
-  await git(['-c', 'user.name=Digby', '-c', 'user.email=digby@digby.example.com', 'commit', '--no-verify', '-m', message], wt).catch(() => {});
+  await git(['-c', 'user.name=Digby', '-c', 'user.email=digby@digby.ai', 'commit', '--no-verify', '-m', message], wt).catch(() => {});
   const after = await status();
   return after === '' ? 'saved' : 'unsaved';
 }
@@ -533,7 +533,7 @@ export async function reapIdleWorktrees(opts?: { idleMs?: number; take?: number;
   // default 7d bar is untouched. Fail-SAFE: a lookup error exempts everything
   // (uncertainty must not reap a live lane; disk gets the next pass).
   if (opts?.exemptScheduled && candidates.length) {
-    const scheduled = await prisma.codingSchedule
+    const scheduled = await prisma.chatSchedule
       .findMany({ where: { sessionId: { in: candidates.map(c => c.id) }, enabled: true }, select: { sessionId: true } })
       .catch((err: any) => {
         logger.warn(`worktree reaper: schedule-exemption lookup failed (${err.message}) — skipping this pressure batch`);
@@ -755,7 +755,7 @@ export async function pruneReinstallableArtifacts(opts?: { idleMs?: number; take
   // again — skip it rather than bill it a cold reinstall every pass. Fail-SAFE:
   // a lookup error skips the batch (uncertainty must not touch a live lane).
   if (opts?.exemptScheduled && idle.length) {
-    const scheduled = await prisma.codingSchedule.findMany({
+    const scheduled = await prisma.chatSchedule.findMany({
       where: { sessionId: { in: idle.map(c => c.id) }, enabled: true },
       select: { sessionId: true },
     }).catch((err: any) => {

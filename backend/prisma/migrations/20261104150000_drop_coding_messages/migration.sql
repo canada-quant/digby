@@ -1,0 +1,41 @@
+-- MERGE-1 step 10: DROP the legacy `coding_messages` transcript table.
+--
+-- Owner go: card oq_c87dc7a1 ("Drop now — wake the serial lane to execute the
+-- verified DROP and finish one-session convergence"), re-read 2026-11-04T15:07Z.
+--
+-- WHY THIS IS SAFE — the irreversible step was made a PURE REMOVAL before it ran:
+--
+--   1. ONE TRANSCRIPT TABLE. `crossmodel_messages` has been the only coding-transcript
+--      table since 7231cdb4 (step 9), which deleted `coding/transcript-source.ts` — the
+--      seam that could route a read or write to the legacy table — along with the 12
+--      `source === 'legacy'` read arms and both legacy write upserts. Verified on the
+--      merged tree: `prisma.codingMessage` production sites = 0.
+--
+--   2. NO LIVE WRITER. `transcriptWritePlan()` defaulted to `{primary:'merged',
+--      mirror:null}` at 6bff8539 (step 8), so a legacy row could not be written in any
+--      configuration even by a build that still carried the table. Measured on
+--      2026-11-04: legacy newest row 13:41:02.546Z while merged advanced to 15:05:21.889Z
+--      — the table sat quiescent for 85+ minutes across two deploys, with 6 legacy rows
+--      in the preceding 2 h proving the earlier flatness was the flip and not a quiet DB.
+--
+--   3. NO LOST MESSAGE. The DROP gate (scripts/framework-audit/transcript-drop-gate.js,
+--      a SUBSET check — every legacy id must have a mirror row in the SAME chat, not row
+--      equality) ran INSIDE the deployed 7231cdb4 container at 2026-11-04T15:07Z:
+--        missingInMirror 0 · chatsWithMissing 0 · legacyOnlyChats 0 · DROP_SAFE true
+--      across 400 sampled chats (89 mirroredMore, 311 equal, 0 mirroredLess).
+--
+--   4. NO DEPENDENT OBJECT. Probed 2026-11-04T15:11:26Z: pg_constraint rows with
+--      confrelid = coding_messages = [] and no view depends on it, so a bare DROP needs
+--      no CASCADE and cannot silently take another object with it. The table's own
+--      `coding_messages_sessionId_fkey` points AT coding_sessions and goes with it.
+--
+-- Table at drop time: 43,917 rows / 1,523 MB. All of them mirrored 1:1 by uuid.
+--
+-- ROLLBACK: there is none, by design — the data lives in `crossmodel_messages`, which is
+-- the table the application has served from since step 8. Restoring the legacy table
+-- would require a dump restore and a redeploy of a pre-7231cdb4 build; that path is
+-- retired deliberately, because keeping it alive is what kept two transcripts in the
+-- object model. The pre-DROP dump on box A (nightly, producer) is the disaster-recovery
+-- fallback, not an application rollback.
+
+DROP TABLE IF EXISTS "coding_messages";

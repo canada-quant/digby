@@ -68,7 +68,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) }, // coding_sessions (ticket f1cb73ff lane)
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) }, // the ticket lane's existence + near-miss probes (b216475a)
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) }, // the goal/todo citation lane (3ed139cd)
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
@@ -171,8 +171,8 @@ beforeEach(() => {
   // REAL rows — exonerated live on existence.
   mockPrisma.crossModelChat.findFirst.mockResolvedValue({ id: REAL_CHAT_PATHC });
   mockPrisma.chatCodingState.findFirst.mockResolvedValue({ id: REAL_CHAT_PATHC });
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue({ id: 'ff8cdc46-0000-4000-8000-000000000000' });
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue({ id: 'ff8cdc46-0000-4000-8000-000000000000' });
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockPrisma.userFeatureRequest.findFirst.mockResolvedValue(null);
   mockPrisma.userFeatureRequest.findMany.mockResolvedValue([]);
   // The cited fix-leg todo 733e1f5e is a REAL row (in_progress) — exonerated
@@ -362,7 +362,7 @@ describe('ticket 5a784ec2 sighting 2 — refutation-register over-conviction fix
     // Pre-fix the lanes probed these ids and found no rows (conviction); the
     // mocks stay on the NULL path so a mining regression re-convicts and the
     // pin goes red.
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
     mockPrisma.projectGoal.findFirst.mockResolvedValue(null);
     const note = `${S2_REFUTATION_LINE}\nThe rest of the board read-back matched its rows; no owner action needed.`;
 
@@ -377,7 +377,7 @@ describe('ticket 5a784ec2 sighting 2 — refutation-register over-conviction fix
 
   it('NO OVER-EXCLUSION: the SAME ids on an assertion-register line still convict both lanes (the fix narrows the register, not the arithmetic)', async () => {
     mockUtilityChat.mockResolvedValue(JSON.stringify({ claims: [] }) as never);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null); // no such schedule row
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null); // no such schedule row
     mockPrisma.projectGoal.findFirst.mockResolvedValue(null); // no such goal row
     const note = `Verification this wake: sched ${S2_SCHED} armed the comparison re-run (next 12:29Z future), and goal ${S2_GOAL} tracks the re-bench.`;
 
@@ -393,7 +393,7 @@ describe('ticket 5a784ec2 sighting 2 — refutation-register over-conviction fix
 
   it('PLURAL REGISTER: "do not exist" / "don\'t exist" exclude across the msg, sched, and goal lanes in one line', async () => {
     mockUtilityChat.mockResolvedValue(JSON.stringify({ claims: [] }) as never);
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
     mockPrisma.projectGoal.findFirst.mockResolvedValue(null);
     // One line carrying citations for THREE lanes, all refuted in the plural
     // register — the whole line is honesty prose and must be skipped.

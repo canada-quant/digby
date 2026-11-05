@@ -48,12 +48,12 @@ const mockRunCount = jest.fn(async (..._a: any[]): Promise<number> => 0);
 const mockCodingStateFindUnique = jest.fn(async (..._a: any[]): Promise<any> => null);
 const mockCodingStateFindMany = jest.fn(async (..._a: any[]): Promise<any[]> => []);
 
-// The create+collapse atomic unit: the tx exposes the same codingSchedule seam
+// The create+collapse atomic unit: the tx exposes the same chatSchedule seam
 // (the collapse re-reads INSIDE the transaction — ticket ae20da66).
 const mockTransaction = jest.fn(async (fn: any) =>
   typeof fn === 'function'
     ? fn({
-        codingSchedule: {
+        chatSchedule: {
           create: (...a: any[]) => mockCreate(...a),
           findMany: (...a: any[]) => mockFindMany(...a),
           updateMany: (...a: any[]) => mockUpdateMany(...a),
@@ -64,7 +64,7 @@ const mockTransaction = jest.fn(async (fn: any) =>
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       create: (...a: any[]) => mockCreate(...a),
       count: (...a: any[]) => mockCount(...a),
       findMany: (...a: any[]) => mockFindMany(...a),

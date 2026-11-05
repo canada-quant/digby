@@ -321,7 +321,7 @@ export class RelayCore {
 
   /**
    * The address peer relays use to forward requests to THIS relay.
-   * RELAY_ADVERTISE_ADDR wins outright (e.g. "10.0.0.22:4301"); else
+   * RELAY_ADVERTISE_ADDR wins outright (e.g. "10.0.0.11:4301"); else
    * RELAY_BOX_IP + RELAY_PUBLIC_PORT (prod boxes set these via the box-local
    * env-override channel); single-box default 127.0.0.1:<RELAY_PORT> — where
    * peer forwarding can never trigger because every tunnel is local.

@@ -76,7 +76,9 @@ import { PROGRESS_NOTE_MAX, progressNoteMax, clipProgressNote } from './progress
 import { isFullChatIdShape, nearMatchChatId, NEAR_MATCH_MAX_DISTANCE, NEAR_MATCH_PREFIX_CHARS } from './chat-id-near-match';
 import { healIdRef } from './id-ref';
 import { normalizePremises, premiseEvictionNotice, readPremises, type KpiRefusalReason } from './premise-register';
+import { decideTodoCreateAssignee, todoAssigneeRequiredEnforced } from './todo-assignee-policy';
 import { isKpiPremise } from './kpi-of-record';
+import { outOfScopeProjectRefusal } from './fleet-tool-scope';
 // GOAL-PRIORITY-SPEND (2026-10-20): the pure ranking rules (P1..P4, owner-set wins).
 import {
   parseGoalPriorityInput, parseGoalDueAtInput, decidePriorityWrite, priorityRefusalNote, ownerTextBacksRanking,
@@ -2848,8 +2850,17 @@ export async function listGoals(opts: {
   projectId?: string;
   includeDescendants?: boolean;
   status?: GoalStatus;
+  /**
+   * SUPERVISION SCOPE (ticket 03d14b78) — projects to SUBTRACT (account-wide
+   * form) or to REFUSE (explicit form: a lookup naming one throws a scope
+   * refusal instead of silently returning it). Fleet Supervisor machine runs
+   * pass the owner's opted-out project ids; every other caller omits it, so
+   * behaviour is byte-identical for them.
+   */
+  excludeProjectIds?: readonly string[];
 }): Promise<GoalView[]> {
   const { userId, projectId } = opts;
+  const excluded = new Set<string>((opts.excludeProjectIds ?? []).filter(Boolean));
   if (opts.status !== undefined && !(GOAL_STATUSES as readonly string[]).includes(String(opts.status))) {
     throw new AppError(400, `status must be one of: ${GOAL_STATUSES.join(', ')}`);
   }
@@ -2864,6 +2875,9 @@ export async function listGoals(opts: {
     // resolved id, query by raw input" trap).
     const scopeId = await canonicalProjectId(projectId, userId);
     const { project } = await requireScopedProjectRead(scopeId, projectId, userId);
+    // Supervision scope: an EXPLICIT read of an opted-out project is refused
+    // (not silently emptied) — resolved id, so an 8-char prefix cannot slip past.
+    if (excluded.has(project.id)) throw new AppError(403, outOfScopeProjectRefusal('goal_list'));
     projectNameById.set(project.id, project.name);
     projectIds = [project.id];
     if (opts.includeDescendants) {
@@ -2886,13 +2900,25 @@ export async function listGoals(opts: {
       projectIds = descendants.map((d: any) => d.id);
       for (const d of descendants) projectNameById.set(d.id, d.name);
       if (!projectIds.includes(project.id)) projectIds.push(project.id);
+      // Supervision scope: an opted-out DESCENDANT is subtracted from the
+      // subtree rather than refused — the caller's scope root is in scope, so
+      // the read proceeds minus the opted-out branches (no ids/names of them).
+      if (excluded.size) {
+        projectIds = projectIds.filter((id) => !excluded.has(id));
+        for (const id of excluded) projectNameById.delete(id);
+      }
     }
   } else {
     // Account-wide: OWNED projects only (direct + inherited-folder ownership —
     // see listOwnedProjectBriefs). Cross-user isolation lives in this filter —
     // goals in projects merely shared WITH the user never join the global
     // listing (they remain readable via the scoped projectId form).
-    const owned = await listOwnedProjectBriefs(userId);
+    let owned = await listOwnedProjectBriefs(userId);
+    if (!owned.length) return [];
+    // Supervision scope (03d14b78): subtract opted-out projects BEFORE the
+    // projectNameById map is built, so no name of an opted-out project can
+    // reach a row, a count, or an "unknown project" fallback.
+    if (excluded.size) owned = owned.filter((p) => !excluded.has(p.id));
     if (!owned.length) return [];
     projectIds = owned.map((p) => p.id);
     for (const p of owned) projectNameById.set(p.id, p.name);
@@ -2969,6 +2995,10 @@ export async function createTodo(opts: {
   actingChatId?: string;
   /** No real user turn anchors the create (2026-10-20 transition telemetry's actorKind only). */
   machineTriggered?: boolean;
+  /** TD-1 (Cluster 5, 2026-11-03): this row is INTENTIONALLY unowned (a backlog
+   *  item awaiting disposition). The explicit escape hatch — it keeps a silent
+   *  orphan from ever being the same code path as a deliberate one. */
+  deliberateUnassigned?: boolean;
 }): Promise<TodoView> {
   const { userId } = opts;
   const title = String(opts.title ?? '').trim();
@@ -3012,9 +3042,60 @@ export async function createTodo(opts: {
   // the SAME single-chat validation now carries the fleet 8-char prefix
   // idiom every sibling id path already resolves. What is written is what
   // was validated (the B1 trap).
+  //
+  // TD-1 (Cluster 5, 2026-11-03): an UNASSIGNED create is no longer silent.
+  // The policy leaf decides between keep / auto_assign (bind the caller lane)
+  // / unassigned (explicitly deliberate, or observe-only) / refuse (no lane to
+  // bind). Enforcement is off unless TODO_ASSIGNEE_REQUIRED_ENFORCE=1, so the
+  // default is byte-identical to the pre-fix behaviour and only records what
+  // it WOULD have done — the audit trail that justifies the flip. Every branch
+  // that is not `keep` records one TODO_CREATE_ASSIGNEE_POLICY row.
+  const assigneeDecision = decideTodoCreateAssignee({
+    assigneeChatId: opts.assigneeChatId,
+    actingChatId: opts.actingChatId,
+    deliberateUnassigned: opts.deliberateUnassigned === true,
+    enforced: todoAssigneeRequiredEnforced(),
+  });
+  if (assigneeDecision.kind === 'refuse') {
+    recordLoopMetric({
+      kind: LOOP_METRIC_KINDS.TODO_CREATE_ASSIGNEE_POLICY,
+      sessionId: opts.actingChatId,
+      meta: { decision: 'refuse', enforced: true, projectId: goal.projectId, goalId, title: title.slice(0, 120) },
+    });
+    throw new AppError(400, assigneeDecision.reason);
+  }
+  const effectiveAssignee = assigneeDecision.kind === 'keep'
+    ? String(assigneeDecision.assigneeChatId)
+    : assigneeDecision.kind === 'auto_assign'
+      ? String(assigneeDecision.assigneeChatId)
+      : '';
   let assignable: { assigneeChatId: string } | null = null;
-  if (opts.assigneeChatId) {
-    assignable = { assigneeChatId: await resolveAssignableChat(String(opts.assigneeChatId), goal.userId) };
+  if (effectiveAssignee) {
+    assignable = { assigneeChatId: await resolveAssignableChat(effectiveAssignee, goal.userId) };
+  }
+  if (assigneeDecision.kind === 'auto_assign') {
+    recordLoopMetric({
+      kind: LOOP_METRIC_KINDS.TODO_CREATE_ASSIGNEE_POLICY,
+      sessionId: opts.actingChatId,
+      meta: { decision: 'auto_assign', enforced: true, actingChatId: opts.actingChatId, projectId: goal.projectId, goalId },
+    });
+  } else if (assigneeDecision.kind === 'unassigned') {
+    recordLoopMetric({
+      kind: LOOP_METRIC_KINDS.TODO_CREATE_ASSIGNEE_POLICY,
+      sessionId: opts.actingChatId,
+      meta: {
+        decision: 'unassigned',
+        enforced: !assigneeDecision.observeOnly,
+        // Observe-only rows name what the ENFORCED policy would have done, so
+        // the flip decision reads off this one kind (no second measurement).
+        ...(assigneeDecision.observeOnly ? { wouldBe: String(opts.actingChatId ?? '').trim() ? 'auto_assign' : 'refuse' } : {}),
+        ...(assigneeDecision.observeOnly ? { reason: assigneeDecision.reason } : {}),
+        ...(opts.actingChatId ? { actingChatId: opts.actingChatId } : {}),
+        projectId: goal.projectId,
+        goalId,
+        title: title.slice(0, 120),
+      },
+    });
   }
   const todo = await prisma.$transaction(async (tx: any) => {
     const t = await tx.projectTodo.create({
@@ -3637,8 +3718,15 @@ export async function listTodos(opts: {
   goalId?: string;
   projectId?: string;
   status?: TodoStatus;
+  /**
+   * SUPERVISION SCOPE (ticket 03d14b78) — projects to SUBTRACT (account-wide
+   * form) or to REFUSE (explicit form). Fleet Supervisor machine runs pass the
+   * owner's opted-out project ids; every other caller omits it.
+   */
+  excludeProjectIds?: readonly string[];
 }): Promise<TodoView[]> {
   const { userId } = opts;
+  const excluded = new Set<string>((opts.excludeProjectIds ?? []).filter(Boolean));
   if (opts.goalId && opts.projectId) throw new AppError(400, 'Pass goalId OR projectId, not both');
   if (opts.status !== undefined && !(TODO_STATUSES as readonly string[]).includes(String(opts.status))) {
     throw new AppError(400, `status must be one of: ${TODO_STATUSES.join(', ')}`);
@@ -3659,6 +3747,9 @@ export async function listTodos(opts: {
     const goalId = await canonicalGoalId(opts.goalId, opts.userId);
     const goal = await getGoalRow(goalId, opts.userId);
     const { project } = await requireProjectRead(goal.projectId, userId);
+    // Supervision scope: an EXPLICIT read that lands on an opted-out project's
+    // goal is refused, not silently emptied.
+    if (excluded.has(project.id)) throw new AppError(403, outOfScopeProjectRefusal('todo_list'));
     projectNameById.set(project.id, project.name);
     where.goalId = goal.id;
   } else if (opts.projectId) {
@@ -3669,11 +3760,16 @@ export async function listTodos(opts: {
     // data-loss-shaped empty list instead of the project's todos.
     const scopeId = await canonicalProjectId(opts.projectId, userId);
     const { project } = await requireScopedProjectRead(scopeId, opts.projectId, userId);
+    if (excluded.has(project.id)) throw new AppError(403, outOfScopeProjectRefusal('todo_list'));
     projectNameById.set(project.id, project.name);
     where.projectId = project.id;
   } else {
     // Account-wide: OWNED projects only (cross-user isolation — see listGoals).
-    const owned = await listOwnedProjectBriefs(userId);
+    // Supervision scope (03d14b78): subtract opted-out projects BEFORE the name
+    // map is built, so no opted-out id or name reaches a row or a count.
+    let owned = await listOwnedProjectBriefs(userId);
+    if (!owned.length) return [];
+    if (excluded.size) owned = owned.filter((p) => !excluded.has(p.id));
     if (!owned.length) return [];
     for (const p of owned) projectNameById.set(p.id, p.name);
     where.projectId = { in: owned.map((p) => p.id) };

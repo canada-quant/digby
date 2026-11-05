@@ -380,6 +380,24 @@ export async function preTriageDrainBatch(input: {
     // byte-identical with the observation on and off.
     const observation: DrainTriageObservation = { segments: [], droppedRows: 0, rows: 0 };
     const state = buildDrainTriageState({ snapshot, flags, rows: input.rows, origins: input.origins, now: now.getTime(), observe: observation });
+    // SAA-1.3 PHASE 1 (todo 2ef2b254) — the RENDER half of the drain surface.
+    // Phase 0 could only measure; here the gate gets a way to FOLLOW what the
+    // cap cut. The change is additive and conditional by construction:
+    //   · `applied` is true ONLY in apply mode (and only when at least one
+    //     segment carries a read call — the existing ones do: each is
+    //     `get_chat_messages({chatId, messageId})` from buildDrainTriageState),
+    //     so a default box passes `state` through UNCHANGED, by reference — the
+    //     gate prompt stays byte-identical to Phase 0.
+    //   · When it does apply, the pointers are EMPTY-INPUT rendered
+    //     (renderSpillPointers('', plan).trim()) and ride ONE extra key, so the
+    //     state's own cap arithmetic and existing fields are untouched. `state`
+    //     itself is never mutated (see the fresh object below), because the
+    //     observation collector is filled by the same builder call and a later
+    //     reader must still see exactly what was built.
+    //   · Whole-row drops (droppedRows) carry NO segment — a skipped row has no
+    //     id in this batch to point at — so the pointer block honestly reflects
+    //     the clipped rows only; the dropped ones are counted on the metric row.
+    let stateForGate: Record<string, unknown> = state;
     try {
       const spill = await import('./inline-spill');
       const plan = spill.planInlineSpill({ surface: 'drain_triage', segments: observation.segments, droppedRows: observation.droppedRows });
@@ -390,9 +408,10 @@ export async function preTriageDrainBatch(input: {
           m.recordLoopMetric({ kind: m.LOOP_METRIC_KINDS?.INLINE_SPILL_OBSERVE ?? 'inline_spill_observe', sessionId: input.chatId, value: 1, meta });
         }
       }
-    } catch { /* observe-only: never blocks the drain */ }
+      if (plan.applied) stateForGate = { ...state, contextSpill: spill.renderSpillPointers('', plan).trim() };
+    } catch { /* observe-only / spill: never blocks the drain */ }
 
-    const decision = await decide(state, DRAIN_TRIAGE_QUESTIONS, {
+    const decision = await decide(stateForGate, DRAIN_TRIAGE_QUESTIONS, {
       purpose: 'drain_triage', timeoutMs: DRAIN_TRIAGE_TIMEOUT_MS, sessionId: input.chatId,
     });
     if (!decision) return NO_TRIAGE;

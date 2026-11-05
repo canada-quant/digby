@@ -19,7 +19,7 @@ const mockPrisma: any = {
   hookEvent: { count: jest.fn() },
   ownerQuestion: { count: jest.fn() },
   pendingConfirmation: { count: jest.fn() },
-  codingSchedule: { findMany: jest.fn() },
+  chatSchedule: { findMany: jest.fn() },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
 
@@ -77,7 +77,7 @@ beforeEach(() => {
   mockPrisma.hookEvent.count.mockResolvedValue(0);
   mockPrisma.ownerQuestion.count.mockResolvedValue(0);
   mockPrisma.pendingConfirmation.count.mockResolvedValue(0);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
   mockEnqueueDirectWake.mockResolvedValue({ ok: true, hookEventId: 'he-1' });
 });
 
@@ -130,14 +130,14 @@ describe('readLaneIdleFacts', () => {
     const f = await readLaneIdleFacts(LANE, NOW, { excludeRunId: 'run-1' });
     expect(f.todos.map((t) => t.id)).toEqual(['t-1111aaaa', 't-free']);
     expect(mockPrisma.agentRun.count).toHaveBeenCalledWith({ where: { sessionId: LANE, status: { in: ['queued', 'running'] }, NOT: { id: 'run-1' } } });
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { sessionId: LANE, enabled: true }, select: { nextRunAt: true, kind: true, intervalSec: true } }));
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { sessionId: LANE, enabled: true }, select: { nextRunAt: true, kind: true, intervalSec: true } }));
     expect(f).toMatchObject({ liveRun: false, pendingWake: false, ownerWait: false, scheduleDueSoon: false });
   });
 
   it('an hourly schedule 50 min out arms the lane; a one-shot tomorrow does not', async () => {
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ nextRunAt: min(20 * 60), kind: 'once', intervalSec: null }, hourly(50)]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ nextRunAt: min(20 * 60), kind: 'once', intervalSec: null }, hourly(50)]);
     expect((await readLaneIdleFacts(LANE, NOW)).scheduleDueSoon).toBe(true);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ nextRunAt: min(20 * 60), kind: 'once', intervalSec: null }]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ nextRunAt: min(20 * 60), kind: 'once', intervalSec: null }]);
     expect((await readLaneIdleFacts(LANE, NOW)).scheduleDueSoon).toBe(false);
   });
 
@@ -209,7 +209,7 @@ describe('maybeWakeSupervisorForIdleLane (run finalize)', () => {
 
   it('an hourly lane whose next firing is 40–55 min out is NOT idle (review fix: the 2 h / cadence horizon, not 20 min)', async () => {
     for (const due of [40, 55]) {
-      mockPrisma.codingSchedule.findMany.mockResolvedValue([hourly(due)]);
+      mockPrisma.chatSchedule.findMany.mockResolvedValue([hourly(due)]);
       expect(await run()).toBe('schedule_due');
     }
     expect(mockEnqueueDirectWake).not.toHaveBeenCalled();
@@ -226,7 +226,7 @@ describe('maybeWakeSupervisorForIdleLane (run finalize)', () => {
     ['live_run', () => mockPrisma.agentRun.count.mockResolvedValue(1)],
     ['pending_wake', () => mockPrisma.hookEvent.count.mockResolvedValue(2)],
     ['owner_wait', () => mockPrisma.ownerQuestion.count.mockResolvedValue(1)],
-    ['schedule_due', () => mockPrisma.codingSchedule.findMany.mockResolvedValue([hourly(30)])],
+    ['schedule_due', () => mockPrisma.chatSchedule.findMany.mockResolvedValue([hourly(30)])],
   ])('%s: something will wake the lane — no enqueue, one telemetry row', async (why, arrange) => {
     arrange();
     expect(await run()).toBe(why);
@@ -350,9 +350,9 @@ describe('revalidateLaneIdleWake (delivery)', () => {
     mockPrisma.agentRun.count.mockResolvedValue(1);
     expect(await revalidateLaneIdleWake(payload(), NOW)).toEqual({ action: 'suppress', reason: 'live_run' });
     mockPrisma.agentRun.count.mockResolvedValue(0);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([hourly(35)]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([hourly(35)]);
     expect(await revalidateLaneIdleWake(payload(), NOW)).toEqual({ action: 'suppress', reason: 'schedule_due' });
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.pendingConfirmation.count.mockResolvedValue(1);
     expect(await revalidateLaneIdleWake(payload(), NOW)).toEqual({ action: 'suppress', reason: 'owner_wait' });
     mockPrisma.pendingConfirmation.count.mockResolvedValue(0);

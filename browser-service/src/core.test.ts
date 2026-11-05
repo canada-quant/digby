@@ -14,7 +14,9 @@ import * as path from 'path';
 // `test` exists at RUNTIME (node --test) but the tsconfig pins types:["node"]
 // which excludes it in older @types/node; declare the shape we use.
 import { test } from 'node:test';
-import { BrowserContextManager, createServer, executeAction, extractLinks, htmlToText } from './core';
+import { BrowserContextManager, createServer, executeAction, extractLinks, htmlToText,
+  classifyActionError, settleAfterNavigate, settleAfterInteraction,
+  statusForResponse, STATUS_FOR_ERROR_CODE } from './core';
 
 // ── fake playwright ──────────────────────────────────────────────────────────
 
@@ -33,7 +35,7 @@ class FakePage {
   async click(sel: string) { this.clicks.push(sel); }
   async fill(sel: string, text: string) { this.fills.push({ sel, text }); }
   async press(sel: string) { this.clicks.push(`${sel}:Enter`); }
-  async evaluate(fn: string) { this.evaluates.push(fn); return null; }
+  async evaluate(fn: string): Promise<any> { this.evaluates.push(fn); return null; }
   async screenshot() { return Buffer.from('png'); }
   async setViewportSize() { /* noop */ }
 }
@@ -245,8 +247,11 @@ test('scroll amount is NaN/garbage-safe and clamped (review LOW)', async () => {
   const out = await executeAction(m, { sessionId: 'scroll1', action: { name: 'scroll', direction: 'down', amount: Number('800px') } });
   assert.strictEqual(out.ok, true);
   const page = await m.pageFor('scroll1') as unknown as FakePage;
-  assert.strictEqual(page.evaluates.length, 1);
-  assert.ok(!page.evaluates[0].includes('NaN'), `scrollBy saw NaN: ${page.evaluates[0]}`);
+  // The settle poll also calls evaluate() on navigate, so count only the
+  // scroll expression (the last one).
+  const scrollExprs = page.evaluates.filter((e) => e.includes('scrollBy'));
+  assert.strictEqual(scrollExprs.length, 1);
+  assert.ok(!scrollExprs[0].includes('NaN'), `scrollBy saw NaN: ${scrollExprs[0]}`);
 });
 
 // ── unit: actions ────────────────────────────────────────────────────────────
@@ -284,7 +289,8 @@ test('executeAction click/type/scroll hit the page API and persist', async () =>
   assert.deepStrictEqual(page.fills, [{ sel: '#q', text: 'digby' }]);
   assert.ok(page.clicks.includes('#go'));
   assert.ok(page.clicks.includes('#q:Enter'), 'submit presses Enter');
-  assert.strictEqual(page.evaluates.length, 1);
+  // Count only the scroll expression — navigate's settle poll also evaluates.
+  assert.strictEqual(page.evaluates.filter((e) => e.includes('scrollBy')).length, 1);
   assert.ok(fs.existsSync(m.statePath('s2')));
 });
 
@@ -417,4 +423,246 @@ test('extractLinks caps at 50 and pulls href + text', () => {
   const links = extractLinks(many);
   assert.strictEqual(links.length, 50);
   assert.strictEqual(links[0].href, 'https://t.test/0');
+});
+
+// ── BS-1 D1 (2026-11-02): a failure is NOT a 200 ─────────────────────────────
+//
+// The defect this pins: `send(res, out.ok || out.error ? 200 : 200, out)` — both
+// ternary branches were 200, so every failure reported HTTP 200 to anything
+// upstream that branches on status code.
+
+test('BS-1 D1: statusForResponse gives 200 only on ok, else the mapped code', () => {
+  assert.strictEqual(statusForResponse({ ok: true, action: 'navigate' }), 200);
+  assert.strictEqual(statusForResponse({ ok: false, action: 'navigate', errorCode: 'navigation_failed' }), 502);
+  assert.strictEqual(statusForResponse({ ok: false, action: 'click', errorCode: 'selector_not_found' }), 422);
+  assert.strictEqual(statusForResponse({ ok: false, action: 'navigate', errorCode: 'invalid_request' }), 400);
+  assert.strictEqual(statusForResponse({ ok: false, action: 'screenshot', errorCode: 'screenshot_too_large' }), 413);
+  assert.strictEqual(statusForResponse({ ok: false, action: 'navigate', errorCode: 'timeout' }), 504);
+  // An uncoded failure must still never be 200.
+  assert.strictEqual(statusForResponse({ ok: false, action: 'x' }), 500);
+  for (const code of Object.keys(STATUS_FOR_ERROR_CODE)) {
+    assert.notStrictEqual(STATUS_FOR_ERROR_CODE[code as keyof typeof STATUS_FOR_ERROR_CODE], 200, `${code} mapped to 200`);
+  }
+});
+
+test('BS-1 D1: driver errors classify into the machine-readable vocabulary', () => {
+  assert.strictEqual(classifyActionError('page.goto: net::ERR_NAME_NOT_RESOLVED at https://nope.invalid/'), 'navigation_failed');
+  assert.strictEqual(classifyActionError('page.click: Timeout 20000ms exceeded.\nwaiting for selector "#go"'), 'selector_not_found');
+  assert.strictEqual(classifyActionError('page.waitForLoadState: Timeout 45000ms exceeded.'), 'timeout');
+  assert.strictEqual(classifyActionError('strict mode violation: locator resolved to 3 elements'), 'selector_not_found');
+  assert.strictEqual(classifyActionError('browser at capacity: 16/16 contexts live'), 'capacity');
+  assert.strictEqual(classifyActionError('something entirely unexpected'), 'browser_error');
+});
+
+test('BS-1 D1: a FAILED action over HTTP is not 200 (the dead-ternary regression)', async () => {
+  const m = newMgr();
+  const { server, port } = await withServer(m);
+  try {
+    const tok = m.tokenFor('d1');
+    // Unsupported action → 400, with a machine-readable code in the body.
+    const unsupported = await post(port, '/v1/action', { sessionId: 'd1', action: { name: 'hover' } }, tok);
+    assert.notStrictEqual(unsupported.code, 200, 'a failed action answered 200 — the dead ternary is back');
+    assert.strictEqual(unsupported.code, 400);
+    assert.strictEqual(unsupported.json.errorCode, 'unsupported_action');
+
+    // A click that hits nothing (driver throws) → 422, not 200.
+    const live = await m.ensureContext('d1b');
+    class BoomPage extends FakePage { async click() { throw new Error('page.click: Timeout 20000ms exceeded.\nwaiting for selector "#nope"'); } }
+    live.page = new BoomPage() as any;
+    const failedClick = await post(port, '/v1/action', { sessionId: 'd1b', action: { name: 'click', selector: '#nope' } }, m.tokenFor('d1b'));
+    assert.strictEqual(failedClick.code, 422, `failed click got ${failedClick.code}`);
+    assert.strictEqual(failedClick.json.ok, false);
+    assert.strictEqual(failedClick.json.errorCode, 'selector_not_found');
+
+    // …and a SUCCESS is still a 200 with ok:true.
+    const good = await post(port, '/v1/action', { sessionId: 'd1b', action: { name: 'get_content' } }, m.tokenFor('d1b'));
+    assert.strictEqual(good.code, 200);
+    assert.strictEqual(good.json.ok, true);
+  } finally {
+    server.close();
+    await m.closeAll();
+  }
+});
+
+// ── BS-1 D2 (2026-11-02): settle before reading ──────────────────────────────
+//
+// The defect this pins: navigate resolved on `domcontentloaded`, which fires
+// BEFORE a client-side app renders, so get_content captured the empty shell and
+// reported success.
+
+test('BS-1 D2: settle waits for a client-rendered page instead of reading the shell', async () => {
+  // A JS app: the DOM is empty for the first polls, then renders and stabilizes.
+  class JsAppPage extends FakePage {
+    polls = 0;
+    async evaluate(fn: string) {
+      if (!fn.includes('innerText')) return null;
+      this.polls += 1;
+      if (this.polls <= 2) return '';   // domcontentloaded fired; app not rendered yet
+      return '1840:9';                  // the app rendered
+    }
+  }
+  const page = new JsAppPage();
+  const settle = await settleAfterNavigate(page as any);
+  assert.strictEqual(settle.settled, true, 'settle must observe rendered DOM');
+  assert.ok(page.polls >= 4, `settle returned before the app rendered (polls=${page.polls})`);
+  assert.notStrictEqual(settle.via, 'disabled');
+});
+
+test('BS-1 D2: a page that never renders bails out instead of burning the budget', async () => {
+  const page = new FakePage(); // evaluate() → null every time: no DOM at all
+  const started = Date.now();
+  const settle = await settleAfterNavigate(page as any);
+  const waited = Date.now() - started;
+  assert.strictEqual(settle.settled, false, 'no DOM evidence must report settled:false');
+  assert.ok(waited < 2_000, `an empty page took ${waited}ms — it must bail early`);
+});
+
+test('BS-1 D2: settle is bounded and never throws when the page refuses evaluation', async () => {
+  class HostilePage extends FakePage { async evaluate(): Promise<any> { throw new Error('Execution context was destroyed'); } }
+  const settle = await settleAfterNavigate(new HostilePage() as any);
+  assert.strictEqual(settle.settled, false);
+  assert.ok(settle.waitedMs >= 0);
+});
+
+test('BS-1 D2: BS_RENDER_SETTLE_DISABLED=1 restores domcontentloaded-only navigation (kill switch)', async () => {
+  const prev = process.env.BS_RENDER_SETTLE_DISABLED;
+  process.env.BS_RENDER_SETTLE_DISABLED = '1';
+  try {
+    class SpyPage extends FakePage { polls = 0; async evaluate(fn: string) { this.polls += 1; return '1:1'; } }
+    const page = new SpyPage();
+    const settle = await settleAfterNavigate(page as any);
+    assert.strictEqual(settle.via, 'disabled');
+    assert.strictEqual(page.polls, 0, 'the kill switch must do zero settle work');
+  } finally {
+    if (prev === undefined) delete process.env.BS_RENDER_SETTLE_DISABLED;
+    else process.env.BS_RENDER_SETTLE_DISABLED = prev;
+  }
+});
+
+test('BS-1 D2: navigate reports how the page settled', async () => {
+  const m = newMgr();
+  const nav = await executeAction(m, { sessionId: 'd2', action: { name: 'navigate', url: 'https://example.com/' } });
+  assert.strictEqual(nav.ok, true);
+  assert.ok(nav.settle, 'navigate must report its settle outcome');
+  assert.ok(['networkidle', 'dom-stable', 'budget-exhausted', 'disabled'].includes(nav.settle!.via));
+});
+
+// ── BS-1 D2b (2026-11-03): settle after an INTERACTION-driven navigation ─────
+//
+// The defect this pins: D2 settled `navigate` only. A click that routes the app
+// navigates the page exactly like goto() does, but nothing settled it, so the
+// next get_content captured the empty shell while reporting ok:true. Measured in
+// production 2026-11-03 (box A): same destination, navigate → 3341 chars /
+// 7 quotes; click → 45 chars / 0 quotes; the same session re-read 2.5 s later →
+// 3341 chars / 7 quotes.
+
+test('BS-1 D2b: a click that navigates settles before the caller reads', async () => {
+  class RoutingPage extends FakePage {
+    polls = 0;
+    async click(sel: string) {
+      this.clicks.push(sel);
+      this.urlValue = 'https://app.test/page/2'; // client-side route change
+    }
+    // NOTE: the override MUST stay generic — `PlaywrightPage.evaluate` is
+    // `evaluate<T>(fn: string): Promise<T>`, and a non-generic override makes
+    // this class structurally incompatible with PlaywrightPage (TS2345), which
+    // reds the browser-service build. Cast the values, never the method.
+    async evaluate<T>(fn: string): Promise<T> {
+      if (!fn.includes('innerText')) return null as unknown as T;
+      this.polls += 1;
+      if (this.polls <= 2) return '' as unknown as T; // new document: not rendered yet
+      return '3341:12' as unknown as T;               // it rendered
+    }
+  }
+  const page = new RoutingPage();
+  const inter = await settleAfterInteraction(page, { act: () => page.click('li.next a') });
+  assert.strictEqual(inter.navigated, true, 'the URL changed — the interaction navigated');
+  assert.ok(inter.settle, 'a navigating click must report a settle outcome');
+  assert.strictEqual(inter.settle!.settled, true, 'settle must observe the rendered document');
+  assert.ok(page.polls >= 4, `settle returned before the app rendered (polls=${page.polls})`);
+});
+
+test('BS-1 D2b: a click that does NOT navigate pays no settle budget', async () => {
+  // The cheap-path guard: a toggle/tab/modal must not cost every caller the
+  // 8s settle budget.
+  const page = new FakePage(); // click() leaves the URL alone
+  const inter = await settleAfterInteraction(page, { act: () => page.click('button.menu') });
+  assert.strictEqual(inter.navigated, false);
+  assert.strictEqual(inter.skipped, 'no-navigation');
+  assert.strictEqual(page.evaluates.length, 0, 'no-navigation must do zero DOM polling');
+});
+
+test('BS-1 D2b: BS_INTERACTION_SETTLE_DISABLED=1 restores interaction-without-settle', async () => {
+  const prev = process.env.BS_INTERACTION_SETTLE_DISABLED;
+  process.env.BS_INTERACTION_SETTLE_DISABLED = '1';
+  try {
+    class RoutingPage extends FakePage {
+      async click(sel: string) { this.clicks.push(sel); this.urlValue = 'https://app.test/p2'; }
+    }
+    const page = new RoutingPage();
+    const inter = await settleAfterInteraction(page, { act: () => page.click('li.next a') });
+    assert.strictEqual(inter.skipped, 'disabled');
+    assert.strictEqual(page.clicks.length, 1, 'the kill switch must still perform the action');
+    assert.strictEqual(page.evaluates.length, 0, 'the kill switch must do zero settle work');
+  } finally {
+    if (prev === undefined) delete process.env.BS_INTERACTION_SETTLE_DISABLED;
+    else process.env.BS_INTERACTION_SETTLE_DISABLED = prev;
+  }
+});
+
+test('BS-1 D2b: a non-navigating click through the HTTP action path carries no settle', async () => {
+  const m = newMgr();
+  const res = await executeAction(m, { sessionId: 'd2b', action: { name: 'click', selector: 'a' } });
+  assert.strictEqual(res.ok, true);
+  assert.strictEqual(res.settle, undefined, 'a no-navigation click must not report/spend a settle');
+});
+
+// ── BS-1 D3 (2026-11-02): inert must not read healthy ────────────────────────
+//
+// The defect this pins: with no BROWSER_SERVICE_SECRET the service starts,
+// /health answers 200, and EVERY token check fails — health-green but
+// completely inert, so a deploy wave goes green over a dead feature.
+
+test('BS-1 D3: with NO secret /health reports 503 inert, not a healthy 200', async () => {
+  const m = newMgr({ secret: '' });
+  assert.strictEqual(m.configured(), false);
+  const { server, port } = await withServer(m);
+  try {
+    const health = await new Promise<{ code: number; body: any }>((res, rej) => {
+      http.get({ host: '127.0.0.1', port, path: '/health' }, (r) => {
+        let raw = '';
+        r.on('data', (c) => { raw += c; });
+        r.on('end', () => res({ code: r.statusCode!, body: JSON.parse(raw) }));
+      }).on('error', rej);
+    });
+    assert.strictEqual(health.code, 503, 'an INERT service answered /health 200 — the trap is back');
+    assert.strictEqual(health.body.status, 'inert');
+    assert.strictEqual(health.body.ok, false);
+    assert.match(health.body.reason, /BROWSER_SERVICE_SECRET/);
+    // Still no session keys on the unauthenticated endpoint.
+    assert.ok(!('keys' in health.body));
+  } finally {
+    server.close();
+    await m.closeAll();
+  }
+});
+
+test('BS-1 D3: with a secret /health stays a healthy 200', async () => {
+  const m = newMgr();
+  assert.strictEqual(m.configured(), true);
+  const { server, port } = await withServer(m);
+  try {
+    const health = await new Promise<{ code: number; body: any }>((res, rej) => {
+      http.get({ host: '127.0.0.1', port, path: '/health' }, (r) => {
+        let raw = '';
+        r.on('data', (c) => { raw += c; });
+        r.on('end', () => res({ code: r.statusCode!, body: JSON.parse(raw) }));
+      }).on('error', rej);
+    });
+    assert.strictEqual(health.code, 200);
+    assert.strictEqual(health.body.status, 'ready');
+  } finally {
+    server.close();
+    await m.closeAll();
+  }
 });

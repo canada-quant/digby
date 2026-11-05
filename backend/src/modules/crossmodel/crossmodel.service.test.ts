@@ -35,7 +35,7 @@ const mockPrisma: any = {
   user: { findMany: jest.fn() }, // messageAuthors resolution (f89d1213)
   chatFile: { findMany: jest.fn() }, // chip → ChatFile fileId injection (c6e8edda)
   pendingChatMessage: { findMany: jest.fn() }, // queued-user-message enrichment (c0b2b0c8)
-  codingSchedule: { groupBy: jest.fn() },
+  chatSchedule: { groupBy: jest.fn() },
   activity: { create: jest.fn(async () => ({})) },
   $transaction: jest.fn(async (arg: any) => (typeof arg === 'function' ? arg(mockPrisma) : Promise.all(arg))),
 };
@@ -399,7 +399,7 @@ describe('updateChat — project moves (coding-chat re-homing)', () => {
   // prisma.crossModelProject.findUnique (the production identity leg).
   it('chat → framework project (repoUrl = own repo): 403, nothing written', async () => {
     mockPrisma.crossModelProject.findUnique.mockImplementation(async ({ where }: any) => (
-      where?.id === 'fw-proj' ? { id: 'fw-proj', repoUrl: 'canada-quant/digby' } : null
+      where?.id === 'fw-proj' ? { id: 'fw-proj', repoUrl: 'example-org/crossmodel' } : null
     ));
 
     await expect(crossModelService.updateChat(CHAT.id, OWNER, { projectId: 'fw-proj' }))
@@ -412,7 +412,7 @@ describe('updateChat — project moves (coding-chat re-homing)', () => {
 
   it('a framework lane (chat filed in the framework project) cannot move OUT: 400, nothing written', async () => {
     mockChatAccess({ ...CHAT, projectId: 'fw-proj' }, null);
-    mockPrisma.crossModelProject.findUnique.mockResolvedValue({ id: 'fw-proj', repoUrl: 'https://github.com/canada-quant/digby' });
+    mockPrisma.crossModelProject.findUnique.mockResolvedValue({ id: 'fw-proj', repoUrl: 'https://github.com/example-org/crossmodel' });
 
     await expect(crossModelService.updateChat(CHAT.id, OWNER, { projectId: 'plain-2' }))
       .rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining('Framework lanes') });
@@ -424,7 +424,7 @@ describe('updateChat — project moves (coding-chat re-homing)', () => {
 
   it('negative control: a plain repoUrl project still moves in freely (guard scoped to the framework row)', async () => {
     mockPrisma.crossModelProject.findUnique.mockImplementation(async ({ where }: any) => (
-      where?.id === 'other-repo-proj' ? { id: 'other-repo-proj', repoUrl: 'canada-quant/schooltime' } : null
+      where?.id === 'other-repo-proj' ? { id: 'other-repo-proj', repoUrl: 'example-org/schooltime' } : null
     ));
 
     await crossModelService.updateChat(CHAT.id, OWNER, { projectId: 'other-repo-proj' });
@@ -1008,7 +1008,7 @@ describe('updateChat — destination-project authorization', () => {
 // ── listChats — hasActiveSchedule sidebar flag ────────────────────────────────
 //
 // The sidebar's schedule indicator is merged into the chat-list serializer via
-// ONE batched codingSchedule.groupBy over the page's chat ids (the chat list is
+// ONE batched chatSchedule.groupBy over the page's chat ids (the chat list is
 // a hot path — never a per-chat query). True only for chats with an ENABLED
 // schedule row; a lookup failure degrades every row to false (never a 500).
 
@@ -1037,12 +1037,12 @@ describe('listChats — hasActiveSchedule sidebar flag', () => {
   });
 
   it('true only for chats with an ENABLED schedule — ONE batched groupBy, no N+1', async () => {
-    mockPrisma.codingSchedule.groupBy.mockResolvedValue([{ sessionId: 'c2' }]);
+    mockPrisma.chatSchedule.groupBy.mockResolvedValue([{ sessionId: 'c2' }]);
 
     const r = await crossModelService.listChats('u1', 1, 20);
 
-    expect(mockPrisma.codingSchedule.groupBy).toHaveBeenCalledTimes(1);
-    expect(mockPrisma.codingSchedule.groupBy).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.groupBy).toHaveBeenCalledTimes(1);
+    expect(mockPrisma.chatSchedule.groupBy).toHaveBeenCalledWith({
       by: ['sessionId'],
       where: { sessionId: { in: ['c1', 'c2', 'c3'] }, enabled: true },
     });
@@ -1053,7 +1053,7 @@ describe('listChats — hasActiveSchedule sidebar flag', () => {
   });
 
   it('a schedule-lookup failure degrades every chat to false (the list never 500s on it)', async () => {
-    mockPrisma.codingSchedule.groupBy.mockRejectedValue(new Error('db hiccup'));
+    mockPrisma.chatSchedule.groupBy.mockRejectedValue(new Error('db hiccup'));
 
     const r = await crossModelService.listChats('u1', 1, 20);
 
@@ -1181,7 +1181,7 @@ describe('listChats ↔ getChatAccess — visibility-scope parity (feedback 2378
       return Promise.resolve(role ? { role } : null);
     });
     mockPrisma.chatCodingState.findMany.mockResolvedValue([]);
-    mockPrisma.codingSchedule.groupBy.mockResolvedValue([]);
+    mockPrisma.chatSchedule.groupBy.mockResolvedValue([]);
     mockGetChatCapability.mockResolvedValue({ codeCapable: false, hasWorkspaceState: false });
     mockGetBusyChatIds.mockResolvedValue(new Set<string>());
     mockGetPendingAttentionMap.mockResolvedValue(new Map());
@@ -1533,7 +1533,7 @@ describe('searchChatsAndMessages — deep search', () => {
     ]);
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([
       { chatId: '7b595cbd-1', role: 'user', content: 'is the best balance going to be Both at once: 128k + 2 lanes fits?', createdAt: new Date('2026-10-06T22:03:00Z'), chat: { title: 'Maxing GPU on', projectId: 'p-ttrd', archivedAt: new Date('2026-10-07T15:46:00Z') } },
-      { chatId: 'c-live', role: 'assistant', content: '128k allocated context on QB2', createdAt: new Date('2026-10-08T17:58:00Z'), chat: { title: 'StAnne', projectId: 'p-arch', archivedAt: null } },
+      { chatId: 'c-live', role: 'assistant', content: '128k allocated context on node-a', createdAt: new Date('2026-10-08T17:58:00Z'), chat: { title: 'StAnne', projectId: 'p-arch', archivedAt: null } },
       { chatId: 'c-live2', role: 'assistant', content: '128k is set', createdAt: new Date('2026-10-08T17:59:00Z'), chat: { title: 'tt-rd PS', projectId: null, archivedAt: null } },
     ]);
     const { results } = await crossModelService.searchChatsAndMessages('u1', '128k', { includeArchived: true });
@@ -1694,7 +1694,7 @@ describe('listChats — lineage completion + updatedAfter (ticket d6b2eef5)', ()
     mockPrisma.crossModelProject.findMany.mockResolvedValue([]);
     mockPrisma.crossModelChat.count.mockResolvedValue(2);
     mockPrisma.chatCodingState.findMany.mockResolvedValue([]);
-    mockPrisma.codingSchedule.groupBy.mockResolvedValue([]);
+    mockPrisma.chatSchedule.groupBy.mockResolvedValue([]);
     mockGetChatCapability.mockResolvedValue({ codeCapable: false, hasWorkspaceState: false });
     mockGetBusyChatIds.mockResolvedValue(new Set<string>());
     mockGetPendingAttentionMap.mockResolvedValue(new Map());
@@ -1819,7 +1819,7 @@ describe('listChats — the row select carries isProjectSupervisor (ghost contro
     mockPrisma.crossModelProject.findMany.mockResolvedValue([]);
     mockPrisma.crossModelChat.count.mockResolvedValue(1);
     mockPrisma.chatCodingState.findMany.mockResolvedValue([]);
-    mockPrisma.codingSchedule.groupBy.mockResolvedValue([]);
+    mockPrisma.chatSchedule.groupBy.mockResolvedValue([]);
     mockGetChatCapability.mockResolvedValue({ codeCapable: false, hasWorkspaceState: false });
     mockGetBusyChatIds.mockResolvedValue(new Set<string>());
     mockGetPendingAttentionMap.mockResolvedValue(new Map());
@@ -1881,7 +1881,7 @@ describe('listChats — display parent (2026-10-21)', () => {
     mockPrisma.crossModelProject.findMany.mockResolvedValue([]);
     mockPrisma.crossModelChat.count.mockResolvedValue(1);
     mockPrisma.chatCodingState.findMany.mockResolvedValue([]);
-    mockPrisma.codingSchedule.groupBy.mockResolvedValue([]);
+    mockPrisma.chatSchedule.groupBy.mockResolvedValue([]);
     mockGetChatCapability.mockResolvedValue({ codeCapable: false, hasWorkspaceState: false });
     mockGetBusyChatIds.mockResolvedValue(new Set<string>());
     mockGetPendingAttentionMap.mockResolvedValue(new Map());

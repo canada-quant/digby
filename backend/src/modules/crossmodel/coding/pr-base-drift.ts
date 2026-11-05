@@ -66,12 +66,27 @@ export interface BlobProbe {
   baseBlob: string | null;
   /** Blob ids P has had ON THE BASE's history (may be capped). */
   historyBlobs: string[];
+  /**
+   * Only meaningful when `mergedBlob` is null (the merge DROPS a path the base
+   * tracks). TRUE when this branch has a commit of its OWN that deletes the
+   * path — a deliberate removal (a cleanup, or a rename git reports as one),
+   * which is legitimate. FALSE when no commit on the branch ever deleted it,
+   * so the removal can only have come from a merge RESOLUTION that dropped
+   * another lane's file. null / undefined = unknown ⇒ fail open.
+   */
+  deletedByBranch?: boolean | null;
 }
 
 export interface BaseDriftVerdict {
   reverting: boolean;
   /** Paths whose MERGED blob is an older base snapshot — the revert set. */
   revertingFiles: string[];
+  /**
+   * Paths the MERGE would DELETE although the branch never deleted them itself
+   * (policy pr-diff-base-drift, ticket 7445695d) — the sibling of a revert: the
+   * file does not land on an older snapshot, it disappears outright.
+   */
+  deletedFiles: string[];
   /** True when a candidate could not be probed (lookup failed / merge conflicted). */
   incomplete: boolean;
   probedFiles: number;
@@ -86,7 +101,8 @@ export const STATE_PATH_RE = /^\.digby\//;
 
 /**
  * Decide whether merging HEAD would leave any path sitting on a snapshot the
- * base has already moved past.
+ * base has already moved past — or make a path the branch never deleted
+ * disappear outright.
  *
  * @param candidates the PR-diff files the caller chose to probe
  * @param probes     one probe result per candidate path (null = unprobed)
@@ -99,23 +115,40 @@ export function detectBaseDrift(
     (c): c is DriftCandidate => !!c && typeof c.path === 'string' && c.path.length > 0,
   );
   const revertingFiles: string[] = [];
+  const deletedFiles: string[] = [];
   let incomplete = false;
   let probed = 0;
   for (const c of rows) {
     const p = probes instanceof Map ? probes.get(c.path) : null;
     if (!p) { incomplete = true; continue; }
     probed += 1;
-    const { mergedBlob, baseBlob, historyBlobs } = p;
-    // Nothing to judge: the merge removed the path, base never tracked it, or
-    // the merge conflicted (git owns that outcome).
-    if (!mergedBlob || !baseBlob) continue;
+    const { mergedBlob, baseBlob, historyBlobs, deletedByBranch } = p;
+    // Base never tracked the path, or the merge CONFLICTED (git owns that
+    // outcome): nothing for this guard to judge.
+    if (!baseBlob) continue;
+    // ── THE MERGE DROPS A FILE THE BASE TRACKS (ticket 7445695d) ────────────
+    // The sibling of a revert, and the case the merged-blob rule cannot see:
+    // the path does not land on an older snapshot, it VANISHES. That is always
+    // another lane's merged file disappearing — UNLESS this branch deleted it
+    // itself, in which case the removal is the lane's own deliberate cleanup
+    // (or a rename git reports as one) and must open.
+    if (!mergedBlob) {
+      // An UNKNOWN deleter read (shallow history, a git that could not answer)
+      // must still surface as `incomplete` — the pre-change code reported this
+      // candidate as unprobed, and dropping that would silently hide the blind
+      // spot the ticket exists to expose (review finding 5).
+      if (deletedByBranch !== false && deletedByBranch !== true) { incomplete = true; continue; }
+      if (deletedByBranch === false) deletedFiles.push(c.path);
+      continue;
+    }
     // Base's work SURVIVES the merge — the single most important case, and the
     // one every earlier mechanism got wrong.
     if (mergedBlob === baseBlob) continue;
     // The revert: after merging, the file is an older base snapshot.
     if (Array.isArray(historyBlobs) && historyBlobs.includes(mergedBlob)) revertingFiles.push(c.path);
   }
-  return { reverting: revertingFiles.length > 0, revertingFiles: revertingFiles.sort(), incomplete, probedFiles: probed };
+  const drifting = revertingFiles.length > 0 || deletedFiles.length > 0;
+  return { reverting: drifting, revertingFiles: revertingFiles.sort(), deletedFiles: deletedFiles.sort(), incomplete, probedFiles: probed };
 }
 
 /** Parse `git log --raw --no-abbrev --format=` output into that path's blob ids. */
@@ -132,6 +165,64 @@ export function historyBlobsFromRaw(raw: string | null | undefined): string[] {
 
 /** A git runner: `(args, timeoutMs) => { stdout }` — injected so this leaf stays import-free. */
 export type GitRunner = (args: string[], timeoutMs: number) => Promise<{ stdout: string }>;
+
+/**
+ * The commits on `headRef` — and NOT on the merge-base with `baseRef` — that
+ * delete `path`.
+ *
+ * `--no-merges` is the whole point (ticket 7445695d): a deletion that arrived
+ * because the lane merged the base and then RESOLVED away a file another lane
+ * had just landed appears only on the merge commit, never on a commit of the
+ * lane's own work. Measured on real git: a lane that merges `main` and resolves
+ * by dropping `relay-operator-viewer.ts` yields NOTHING here (`--full-history`
+ * included), while the same lane deleting the file itself yields its commit.
+ *
+ * Three deliberate coarsenings, each erring toward OPEN (a false positive would
+ * refuse honest lanes fleet-wide — the one outcome this guard must never cause):
+ *   • `--no-renames`: with rename detection on, a path that disappears as the
+ *     SOURCE of a pairing can be reported as `R`, not `D`, so an honest lane's
+ *     own rename/replacement would read as "no deleter" and be refused. Asking
+ *     git for the coarser "some non-merge commit removed this path" is the
+ *     question we actually want.
+ *   • `:(literal)` — a GitHub filename is a literal path, but git treats a bare
+ *     pathspec as a glob, so a file named `a[xy].ts` / `q?.ts` / `star*.ts`
+ *     could match nothing and be falsely refused for the lane's own cleanup.
+ *   • SHALLOW: `git log` exits 0 with an EMPTY result when the deleter sits
+ *     beyond a shallow boundary, which would read as a confident "no deleter".
+ *     Mirrors heal best-effort (a failed unshallow stays shallow), so
+ *     an empty answer under `--is-shallow-repository` is UNKNOWN, not false.
+ *
+ * KNOWN MISS (deliberate, review finding 3): if the lane ITSELF deleted the path
+ * earlier and the base has since RESTORED it, that stale deleter commit sits in
+ * the range, so a later merge resolution that drops the restored copy reads as
+ * the lane's own intent and is waved through. Tightening it (e.g. "the last
+ * commit touching the path must be a D") is exactly the kind of clever rule this
+ * file has refuted three times over; a false positive refuses honest lanes
+ * fleet-wide, so this guard accepts the miss and fails open.
+ *
+ * Returns null when git cannot answer (fail open).
+ */
+async function branchDeletionCommits(
+  run: GitRunner, baseRef: string, headRef: string, path: string,
+): Promise<string[] | null> {
+  try {
+    const { stdout: mb } = await run(['merge-base', baseRef, headRef], 15_000);
+    const base = String(mb ?? '').trim();
+    if (!/^[0-9a-f]{40}$/.test(base)) return null;
+    const { stdout } = await run(
+      ['log', '--no-renames', '--no-merges', '--diff-filter=D', '--format=%H', `${base}..${headRef}`, '--', `:(literal)${path}`],
+      20_000,
+    );
+    const commits = String(stdout ?? '').split('\n').map((s) => s.trim()).filter((s) => /^[0-9a-f]{40}$/.test(s));
+    if (commits.length) return commits;
+    // An EMPTY answer is only trustworthy when history is complete.
+    try {
+      const { stdout: shallow } = await run(['rev-parse', '--is-shallow-repository'], 10_000);
+      if (String(shallow ?? '').trim() === 'true') return null;   // unknown ⇒ fail open
+    } catch { return null; }
+    return commits;
+  } catch { return null; }
+}
 
 /**
  * Probe ONE path: compute the merge of base and head, then read that path's
@@ -159,7 +250,13 @@ export async function probeBaseBlobs(
   } catch { return null; }
   if (!/^[0-9a-f]{40}$/.test(mergedTree)) return null;
   const mergedBlob = await revParse(`${mergedTree}:${path}`);
-  if (!mergedBlob) return null;
+  // ── THE MERGE DROPS A FILE THE BASE TRACKS (ticket 7445695d) ──────────────
+  // Was the removal the branch's OWN doing, or did a merge resolution shed
+  // another lane's file? Same spur as the revert probe, so it rides this one.
+  if (!mergedBlob) {
+    const commits = await branchDeletionCommits(run, baseRef, headRef, path);
+    return { mergedBlob: null, baseBlob, historyBlobs: [], deletedByBranch: commits ? commits.length > 0 : null };
+  }
   // Base's work survived: skip the (expensive) history read entirely.
   if (mergedBlob === baseBlob) return { mergedBlob, baseBlob, historyBlobs: [baseBlob] };
   let raw = '';
@@ -180,9 +277,21 @@ const filesList = (files: string[], cap = 4): string => {
 
 /** The one-line diagnosis both the refusal and the override notice carry. */
 export function renderBaseDriftDiagnosis(v: BaseDriftVerdict, base: string): string {
-  return `merging this branch would leave ${v.revertingFiles.length} file${v.revertingFiles.length === 1 ? '' : 's'} `
-    + `(${filesList(v.revertingFiles)}) on a snapshot ${base} has already moved past — `
-    + `the branch was built on a stale base and merging it would silently REVERT that merged work.`;
+  const parts: string[] = [];
+  const reverted = Array.isArray(v.revertingFiles) ? v.revertingFiles : [];
+  const deleted = Array.isArray(v.deletedFiles) ? v.deletedFiles : [];
+  if (reverted.length) {
+    parts.push(`leave ${reverted.length} file${reverted.length === 1 ? '' : 's'} (${filesList(reverted)}) `
+      + `on a snapshot ${base} has already moved past — the branch was built on a stale base and merging it `
+      + `would silently REVERT that merged work`);
+  }
+  if (deleted.length) {
+    parts.push(`DELETE ${deleted.length} file${deleted.length === 1 ? '' : 's'} (${filesList(deleted)}) that ${base} `
+      + `tracks and this branch never deleted itself — merging it would silently remove another lane's merged work`);
+  }
+  const total = reverted.length + deleted.length;
+  return `merging this branch would ${parts.join('; and it would ')} `
+    + `[${total} file${total === 1 ? '' : 's'} affected].`;
 }
 
 /** The pre-flight refusal. Names the drift, the base, the remedy and the override. */
@@ -190,8 +299,9 @@ export function renderBaseDriftRefusal(v: BaseDriftVerdict, base: string): strin
   return `PR REFUSED (base drift): ${renderBaseDriftDiagnosis(v, base)} `
     + `The branch is pushed; nothing was opened. `
     + `Remedy: rebase onto the current base (git fetch origin && git rebase origin/${base}), resolve any `
-    + `conflicts, re-run verify, then open again. If the reversion is genuinely intended, re-call `
-    + `open_pull_request with allowBaseDrift:true.`;
+    + `conflicts, re-run verify, then open again. If a listed file is missing because a MERGE RESOLUTION `
+    + `dropped it, restore it — do NOT delete another lane's file to make the merge apply. `
+    + `If the reversion is genuinely intended, re-call open_pull_request with allowBaseDrift:true.`;
 }
 
 /** The override notice — the lane proceeded knowingly. */

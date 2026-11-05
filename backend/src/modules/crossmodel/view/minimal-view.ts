@@ -87,7 +87,15 @@ function isMachineAssistant(row: Row): boolean {
 /** A wake that opens a turn whose reply IS for the owner (owner-armed schedule, an owner ask). */
 function wakeIsOwnerFacing(row: Row): boolean {
   const m = md(row);
-  return m.scheduleOwnerArmed === true || m.ownerAskReply === true;
+  // Child-session result (ticket 739e8191, owner report 2026-11-02 in chat
+  // 99e63f86: "you don't seem to communicate with the user/human after you get a
+  // message from a sub session"). A sub-session reporting back — and the
+  // parent's reply folding its result in — is delivered content the owner is
+  // waiting on, exactly like an owner-armed digest or an owner-ask answer.
+  // Before this, md() already flattened childResult (line 43) but NOTHING here
+  // consumed it: the wake stub stayed `hidden` and its reply was hidden too, so
+  // a minimal viewer never saw that the work had finished.
+  return m.scheduleOwnerArmed === true || m.ownerAskReply === true || m.childResult === true;
 }
 
 const CONTINUATION_MARKERS = ['[HARNESS CONTINUATION', '[RESUME AFTER PROVIDER LIMIT'];
@@ -257,6 +265,10 @@ export function minimalMessages<T extends Row>(rows: T[]): T[] {
   if (!Array.isArray(rows)) return rows;
   let inMachineTurn = false;
   let turnOwnerFacing = false;
+  // The turn delivered a sub-session RESULT (ticket 739e8191): either the
+  // result-hook wake or a child session's relay row. Tracked so the REPLY can
+  // be kept even though it inherits the turn's machine origin stamp.
+  let turnDeliveredResult = false;
   // A background continuation of the person's OWN ask (the harness finishing it after the turn ended) is theirs:
   // it stays visible while the chain since their last message is unbroken by any other machine turn.
   let humanChain = false;
@@ -264,13 +276,22 @@ export function minimalMessages<T extends Row>(rows: T[]): T[] {
     if (!row || typeof row !== 'object') return row;
     if (row.role === 'user') {
       const kind = classifyUserRow(row);
-      if (kind === 'human') { inMachineTurn = false; turnOwnerFacing = false; humanChain = true; return row; }
+      if (kind === 'human') { inMachineTurn = false; turnOwnerFacing = false; turnDeliveredResult = false; humanChain = true; return row; }
       inMachineTurn = true;
       const continuation = kind === 'wake' && isContinuationWake(row);
       if (!continuation) humanChain = false;
-      turnOwnerFacing = kind === 'wake' && (wakeIsOwnerFacing(row) || (continuation && humanChain));
+      // A sub-session's delivered RESULT (ticket 739e8191): the result-hook
+      // wake carries metadata.childResult, and the fleet thread flattens the
+      // same marker onto a child session's [AGENT-SENT MESSAGE] relay row.
+      // Either way the turn's answer IS for the owner.
+      const deliversResult = md(row).childResult === true;
+      turnOwnerFacing = (kind === 'wake' && (wakeIsOwnerFacing(row) || (continuation && humanChain))) || deliversResult;
+      turnDeliveredResult = deliversResult;
       if (kind === 'agent') {
         const from = agentSenderTitle(contentOf(row));
+        // A child session reporting its finished work keeps the readable
+        // sender note (the owner must still see WHO reported) — it is simply
+        // no longer the ONLY thing that survives the turn.
         return stub(row, { note: 'message_from', label: from || 'another session' });
       }
       return stub(row, { hidden: true });
@@ -279,7 +300,16 @@ export function minimalMessages<T extends Row>(rows: T[]): T[] {
       if (inMachineTurn && isQuietReply(row)) return stub(row, { hidden: true });
       if (isOwnerFacingAssistant(row)) return keepAssistant(row);
       if (isMachineAssistant(row) || inMachineTurn) {
-        return turnOwnerFacing && !isMachineAssistant(row) ? keepAssistant(row) : stub(row, { hidden: true });
+        // Child-result turn (ticket 739e8191, review finding): the reply
+        // INHERITS the wake/relay's own machine origin — chat-agent stamps the
+        // assistant row with the turn's origin (chat-agent.service.ts:~7806,
+        // run-executor.ts:~973), so isMachineAssistant() is TRUE by
+        // construction and would re-hide the very reply this exemption exists
+        // to surface. Keep it when the turn is owner-facing because it
+        // delivered a sub-session result. (A quiet reply already returned
+        // above, so a "nothing new" watch stays hidden.)
+        if (turnOwnerFacing && (!isMachineAssistant(row) || turnDeliveredResult)) return keepAssistant(row);
+        return stub(row, { hidden: true });
       }
       return keepAssistant(row);
     }

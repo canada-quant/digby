@@ -59,7 +59,7 @@ const mockPrisma: any = {
   crossModelMessage: { create: jest.fn(async () => ({})), findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   crossModelChat: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   chatCodingState: { findFirst: jest.fn(async () => null) },
-  codingSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectGoal: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   projectTodo: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
@@ -167,7 +167,7 @@ beforeEach(() => {
   mockGetRecentChatReceipts.mockResolvedValue([]);
   // The miscopied id exists nowhere (existence checks unchanged) — the
   // conviction must still stand.
-  for (const model of [mockPrisma.crossModelMessage, mockPrisma.crossModelChat, mockPrisma.codingSchedule, mockPrisma.userFeatureRequest, mockPrisma.projectGoal, mockPrisma.projectTodo]) {
+  for (const model of [mockPrisma.crossModelMessage, mockPrisma.crossModelChat, mockPrisma.chatSchedule, mockPrisma.userFeatureRequest, mockPrisma.projectGoal, mockPrisma.projectTodo]) {
     model.findFirst.mockResolvedValue(null);
     model.findMany.mockResolvedValue([]);
   }

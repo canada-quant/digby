@@ -49,7 +49,7 @@ class FakeSlotRedis implements VerifySlotRedis {
   zset(k: string): Map<string, number> { let m = this.z.get(k); if (!m) { m = new Map(); this.z.set(k, m); } return m; }
   async eval(script: string, { keys, arguments: a }: { keys: string[]; arguments: string[] }): Promise<unknown> {
     this.evals += 1;
-    if (this.mode === 'throw') throw new Error('connect ECONNREFUSED 10.0.0.22:7856');
+    if (this.mode === 'throw') throw new Error('connect ECONNREFUSED 10.0.0.11:7856');
     if (this.mode === 'hang') return new Promise(() => { /* never answers */ });
     const now = Date.now();
     const [H, Q, S] = keys.map(k => this.zset(k));

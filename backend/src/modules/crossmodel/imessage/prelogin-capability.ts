@@ -128,22 +128,49 @@ export interface PreloginInputCapability {
 }
 
 /** The single reason string for "this device is sitting at a lock screen and
- *  has no helper". */
+ *  cannot be typed at".
+ *
+ *  TICKET e530220e — the "no pre-login helper is installed on this device" half
+ *  is REMOVED for the same reason as the two standing reasons below: no agent
+ *  build emits the `preloginhelper` advert, so the fleet has never measured
+ *  that fact on any device. The lock state here IS measured (the agent's own
+ *  console probe rode the poll as the `locked` token — that is the only way this
+ *  branch is reached at all), so the sentence states the measured half and the
+ *  two real ways out, and stops asserting an install state it cannot see. */
 export const PRELOGIN_LOCKED_REASON =
-  'the device is at a lock / login screen right now — no pre-login helper is installed on this device, so Digby cannot type there; dispatch work that needs input would burn the run without landing a single event; unlock the device once, or enable the device preset ("Unattended / Autonomous use") so the session never ends';
+  'the device is at a lock / login screen right now — Digby cannot type there, so dispatch work that needs input would burn the run without landing a single event; unlock the device once, or enable the device preset ("Unattended / Autonomous use") so the session never ends';
 
 /** The reason for the standing (not-currently-locked) case on a device whose
  *  user has NOT opted into the preset — actionable, because enabling it is the
- *  fix. */
+ *  fix.
+ *
+ *  TICKET e530220e — THE PARENTHETICAL WAS A DEVICE FACT THE FLEET CANNOT KNOW.
+ *  It read "(no pre-login helper installed)", which asserts a probe result for a
+ *  row that carries none: no agent build emits the `preloginhelper` advert, so
+ *  every device reads `unavailable` and the fleet has measured NOTHING. Saying
+ *  "no helper is installed" turns an unknown into a device accusation — the same
+ *  class as the removed "your Mac is missing administrator rights". What the
+ *  fleet does know is stated instead, and the actionable half (enable the
+ *  preset, which is the (b) half of the owner's ruling and genuinely prevents a
+ *  device reaching a login screen) is unchanged. */
 export const PRELOGIN_STANDING_REASON =
-  'pre-login input is unavailable on this device (no pre-login helper installed): a locked or signed-out device cannot be driven, so a device that can end up at a login screen should have the "Unattended / Autonomous use" preset enabled';
+  'pre-login input is unavailable on this device — no agent release reports pre-login helper state yet, so this is a fleet-side gap and nothing on the device can change it; a locked or signed-out device cannot be driven either way, so a device that can end up at a login screen should have the "Unattended / Autonomous use" preset enabled';
 
 /** The reason for a device that HAS the preset enabled and is not locked now.
  *  Deliberately NOT a nag: `unattendedReady` already owns "is this device set
  *  up", and repeating "enable the preset" at a device that enabled it is the
- *  card-spam class the verdict module exists to end. */
+ *  card-spam class the verdict module exists to end.
+ *
+ *  TICKET e530220e — THIS IS THE SENTENCE THE OWNER ACTUALLY SAW. Their Macs all
+ *  report `unattended.enabled: true`, so `preloginInputFor()` selects THIS
+ *  branch, not the helper verdict's reason. It said "(no pre-login helper
+ *  installed)" — a device fact the fleet has never measured, since no agent
+ *  build emits the advert — and it never told them the row was unactionable, so
+ *  the natural next step (update the agent) changed nothing. It now names the
+ *  fleet-side gap, and keeps the true half: the preset is what stops the console
+ *  reaching a lock screen at all. */
 export const PRELOGIN_OPTED_IN_REASON =
-  'pre-login input is unavailable on this device (no pre-login helper installed) — the device preset keeps the session alive, so the console does not reach a lock screen';
+  'pre-login input is unavailable on this device — no agent release reports pre-login helper state yet, so this row cannot change on the device or by updating the agent; the "Unattended / Autonomous use" preset is enabled here and keeps the session alive, so the console does not reach a lock screen';
 
 /** The reason for a device whose helper IS installed and loaded (option (d)
  *  shipped) and which is not locked right now. */

@@ -123,7 +123,7 @@ export interface ChatWebhookRecord {
 
 /** The public webhook URL handed to the owner (share-link host convention). */
 export function webhookFireUrl(chatId: string): string {
-  const host = (process.env.FRONTEND_URL ?? 'https://digby.example.com').split(',')[0].replace(/\/$/, '');
+  const host = (process.env.FRONTEND_URL ?? 'https://digby.ai').split(',')[0].replace(/\/$/, '');
   return `${host}/api/crossmodel/webhooks/${chatId}/fire`;
 }
 

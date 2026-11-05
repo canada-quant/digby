@@ -97,7 +97,7 @@ export const INFRA_PROBE_SUBJECT_RE = /\b(?:box|tailnet|remote host)\b/i;
 //
 // The incident class (found by the verifier-strike surface probe, explorer
 // bg1-378g, and verified first-hand): DEPLOY_ALT_RE extracts a `deploy` claim
-// from pure OBSERVATION lines — "health check 200", "prod green", "digby.example.com
+// from pure OBSERVATION lines — "health check 200", "prod green", "digby.ai
 // healthy" — but every deploy evidence tier bound ONLY to the external-action
 // class (run_command|git_|open_pull_request|github_/merge_pull_request). A
 // lane that follows the deploy doctrine's OWN mandated verification reads —
@@ -123,12 +123,12 @@ export const INFRA_PROBE_SUBJECT_RE = /\b(?:box|tailnet|remote host)\b/i;
 // (PR-merge/deploy-completion claims keep the full external-action tier; the
 // 680dd00a/4df4bb41 zero-tool incident class convicts unchanged). The
 // boundary predicate mirrors DEPLOY_ALT_RE exactly (health check | prod |
-// digby.example.com + green|200|healthy) and must fire only on lines WITHOUT the
+// digby.ai + green|200|healthy) and must fire only on lines WITHOUT the
 // deploy verb — isDeployObservationClaimText is the single site both
 // consumers (guard + receipts) call, so the twins can never drift again.
 
 /** The deploy-observation predicate — the guard's DEPLOY_ALT_RE, verbatim (single shared home). */
-export const DEPLOY_HEALTH_SURFACE_RE = /\b(?:health\s?check|prod|digby\.example\.com)\b[^\n]*\b(?:green|200|healthy)\b/i;
+export const DEPLOY_HEALTH_SURFACE_RE = /\b(?:health\s?check|prod|digby\.ai)\b[^\n]*\b(?:green|200|healthy)\b/i;
 /**
  * The deploy-ACTION verb — a line carrying it asserts the run DID the deploy
  * (never widens). F2 (review): covers the full deploy word-family
@@ -140,7 +140,7 @@ export const DEPLOY_HEALTH_SURFACE_RE = /\b(?:health\s?check|prod|digby\.example
  */
 export const DEPLOY_ACTION_VERB_RE = /\b(?:(?:re)?deploy\w*|shipped|rolled\s+out|went\s+live|pushed\s+to\s+prod)\b/i;
 
-/** True when a `deploy` claim line is the pure OBSERVATION shape (no deploy verb): "health check 200", "prod green", "digby.example.com healthy". */
+/** True when a `deploy` claim line is the pure OBSERVATION shape (no deploy verb): "health check 200", "prod green", "digby.ai healthy". */
 export function isDeployObservationClaimText(text?: string): boolean {
   if (!text) return false;
   return DEPLOY_HEALTH_SURFACE_RE.test(text) && !DEPLOY_ACTION_VERB_RE.test(text);

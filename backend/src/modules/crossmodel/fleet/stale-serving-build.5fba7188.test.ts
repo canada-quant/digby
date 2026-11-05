@@ -33,7 +33,7 @@ jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPr
 jest.mock('./deploy-health', () => ({
   __esModule: true,
   ...jest.requireActual('./deploy-health'),
-  probeDeployHealth: jest.fn(async () => ({ status: 'healthy', checkedAt: '2026-10-31T04:00:00.000Z', frontendCode: 200, backendCode: 200, baseUrl: 'https://digby.example.com', cached: false })),
+  probeDeployHealth: jest.fn(async () => ({ status: 'healthy', checkedAt: '2026-10-31T04:00:00.000Z', frontendCode: 200, backendCode: 200, baseUrl: 'https://digby.ai', cached: false })),
 }));
 jest.mock('../platform/loop-metrics.service', () => ({
   __esModule: true,

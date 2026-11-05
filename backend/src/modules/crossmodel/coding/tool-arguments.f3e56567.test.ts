@@ -68,7 +68,7 @@ import { parseToolArguments } from './tool-arguments';
 const mockPost = (axios as any).post as jest.Mock;
 
 const GW: ProviderConfig = {
-  url: 'https://llm.example.com/v1/chat/completions',
+  url: 'https://llm.cql.ca/v1/chat/completions',
   apiKey: 'sk',
   model: 'api-optimize-xiaomi-mimo-v2.6-pro',
   spec: 'llm-cql:api-optimize-xiaomi-mimo-v2.6-pro',

@@ -1304,6 +1304,18 @@ export interface LoopMetricEmbedAttributionReport {
   /** failures that cannot name bucket+leg — THE KPI VALUE */
   unattributed: number;
   totalFailures: number;
+  /**
+   * DIAGNOSTIC (supervisor ruling 2026-11-04, consistency limb): failure rows
+   * that carry a TYPED abort but no leg.
+   *
+   * This is the number a naive "unattributed == typed-abort-but-legless" check
+   * would compare against the numerator, and since the gatewayless carve-out it
+   * is deliberately GREATER: a `provider_error` on a proven gatewayless lane is
+   * attributed even though it has no leg. Keeping the counter visible is what
+   * lets a reader tell "the rule attributed those rows on purpose" apart from
+   * "the numerator lost rows". Never the KPI value.
+   */
+  typedAbortNoLeg: number;
   /** per-surface breakdown (the diagnostic, never the KPI) */
   surfaces: LoopMetricEmbedAttributionRow[];
   /** the distinct buckets seen, for a drift read on the closed enum */
@@ -1326,6 +1338,7 @@ export function normalizeEmbedAttribution(
   const legs: Record<string, number> = {};
   let unattributed = 0;
   let totalFailures = 0;
+  let typedAbortNoLeg = 0;
   for (const row of input || []) {
     let meta: any = row?.meta;
     if (typeof meta === 'string') {
@@ -1344,6 +1357,16 @@ export function normalizeEmbedAttribution(
         agg.unattributed++;
         unattributed++;
       }
+      // DIAGNOSTIC (consistency limb): a typed abort with no leg. Since the
+      // gatewayless carve-out this is legitimately >= the numerator — the gap
+      // is exactly the rows the widened rule attributed on a PROVEN direct
+      // lane. Recording it keeps "attributed on purpose" distinguishable from
+      // "silently dropped".
+      const legs = typeof meta?.leg === 'string' && meta.leg.trim();
+      if (!legs && (meta?.abort === 'caller_timeout' || meta?.abort === 'network'
+        || meta?.abort === 'provider_error' || meta?.abort === 'parse_failure')) {
+        typedAbortNoLeg++;
+      }
     }
     if (isKnownEmbedBucket(meta?.bucket)) agg.bucketed++;
     if (typeof meta?.leg === 'string' && meta.leg) agg.legged++;
@@ -1357,6 +1380,7 @@ export function normalizeEmbedAttribution(
     hours,
     unattributed,
     totalFailures,
+    typedAbortNoLeg,
     surfaces: [...bySurface.values()].sort((a, b) => b.unattributed - a.unattributed || b.total - a.total),
     buckets,
     legs,

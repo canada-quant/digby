@@ -1,6 +1,6 @@
 /**
  * Digby email service (ticket 54f237bf) — send emails AS Digby from its own
- * address (digby@digby.example.com), over SMTP.
+ * address (digby@digby.ai), over SMTP.
  *
  * This is Digby's OWN sender identity — NOT the user's connected Gmail
  * (gmail_send_email, which sends from the user's account and is
@@ -10,7 +10,7 @@
  * without a user turn.
  *
  * Transport: nodemailer against the Gmail workspace SMTP relay
- * (smtp.gmail.com:587 STARTTLS, user digby@digby.example.com + an app password — the
+ * (smtp.gmail.com:587 STARTTLS, user digby@digby.ai + an app password — the
  * OWNER provisions the app password; this module only reads env).
  *
  * Env config (ALL optional; without user+pass the service reports
@@ -18,9 +18,9 @@
  * crash, never a hang):
  *   DIGBY_SMTP_HOST  (default smtp.gmail.com)
  *   DIGBY_SMTP_PORT  (default 587)
- *   DIGBY_SMTP_USER  (the mailbox, e.g. digby@digby.example.com)
+ *   DIGBY_SMTP_USER  (the mailbox, e.g. digby@digby.ai)
  *   DIGBY_SMTP_PASS  (the Gmail workspace app password)
- *   DIGBY_SMTP_FROM  (default digby@digby.example.com — the From: address)
+ *   DIGBY_SMTP_FROM  (default digby@digby.ai — the From: address)
  *
  * Safety:
  *   - NEVER throws to the caller: every path returns {ok:true, messageId} or
@@ -66,7 +66,7 @@ export function digbyEmailConfig(): DigbyEmailConfig | null {
     pass,
     // The From address defaults to the MAILBOX itself, never to Digby's production
     // address (self-host setup hardening 2026-10-20): production sets
-    // DIGBY_SMTP_FROM=digby@digby.example.com explicitly (docker-compose.app.yml), so it is
+    // DIGBY_SMTP_FROM=digby@digby.ai explicitly (docker-compose.app.yml), so it is
     // unchanged; a self-host sends as the account it configured.
     from: process.env.DIGBY_SMTP_FROM?.trim() || user,
   };

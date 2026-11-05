@@ -21,7 +21,7 @@ import logger from '../../../utils/logger';
  * firing — it is the only thing that keeps pushes/PRs/merges working after a
  * connector disconnect+reconnect renames the account labels. But the warn
  * used to log on EVERY getValidToken call: six projects pinned the dead
- * "pasta_paul" label and a busy coding lane hot-looped 73 warn rows in 5 h
+ * "example-org" label and a busy coding lane hot-looped 73 warn rows in 5 h
  * (RULE 1 recurrence: 6 distinct hours), all byte-identical, all from ONE
  * standing degraded state.
  *

@@ -31,7 +31,7 @@ jest.mock('../../utils/logger', () => ({
 const mockPrisma: any = {
   crossModelProject: { findMany: jest.fn(async () => []) },
   crossModelChat: { findMany: jest.fn(async () => []), findUnique: jest.fn(async () => null), update: jest.fn() },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   chatShareLink: { findUnique: jest.fn(async () => null) },
   chatCodingState: { findUnique: jest.fn(async () => null) },
 };
@@ -79,7 +79,7 @@ beforeEach(() => {
   mockPrisma.crossModelProject.findMany.mockResolvedValue([]);
   mockPrisma.crossModelChat.findMany.mockResolvedValue([]);
   mockPrisma.crossModelChat.findUnique.mockResolvedValue(null);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.chatShareLink.findUnique.mockResolvedValue(null);
   mockPrisma.chatCodingState.findUnique.mockResolvedValue(null);
   mockArchiveChat.mockResolvedValue({ id: 'x', archived: true });
@@ -154,9 +154,9 @@ describe('per-candidate archiving', () => {
 
   it('(d) a chat with an ENABLED schedule is skipped', async () => {
     wireProject(['chat-1']);
-    mockPrisma.codingSchedule.count.mockResolvedValue(1);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1);
     await runIdleChatArchiverOnce();
-    expect(mockPrisma.codingSchedule.count).toHaveBeenCalledWith({ where: { sessionId: 'chat-1', enabled: true } });
+    expect(mockPrisma.chatSchedule.count).toHaveBeenCalledWith({ where: { sessionId: 'chat-1', enabled: true } });
     expect(mockArchiveChat).not.toHaveBeenCalled();
   });
 
@@ -227,7 +227,7 @@ describe('per-candidate archiving', () => {
       if (where.id === 'supervisor') return { ...liveChat('supervisor', idle), isSupervisor: true };
       return liveChat(where.id, idle);
     });
-    mockPrisma.codingSchedule.count.mockImplementation(async ({ where }: any) => (where.sessionId === 'scheduled' ? 2 : 0));
+    mockPrisma.chatSchedule.count.mockImplementation(async ({ where }: any) => (where.sessionId === 'scheduled' ? 2 : 0));
     mockPrisma.chatShareLink.findUnique.mockImplementation(async ({ where }: any) =>
       where.chatId === 'shared' ? { isActive: true, expiresAt: null } : null);
     await runIdleChatArchiverOnce();

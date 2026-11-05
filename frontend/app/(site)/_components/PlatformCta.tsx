@@ -22,7 +22,7 @@ const DOWNLOADS = {
  * for that platform's installer. Phones keep the browser link (installing is
  * "Add to Home Screen", explained on the page).
  */
-export default function PlatformCta({ fallbackHref, fallbackLabel, className, installers = true }: { fallbackHref: string; fallbackLabel: string; className: string; /** false on a self-host: the served installers sign into digby.example.com, so keep the browser link. */ installers?: boolean }) {
+export default function PlatformCta({ fallbackHref, fallbackLabel, className, installers = true }: { fallbackHref: string; fallbackLabel: string; className: string; /** false on a self-host: the served installers sign into digby.ai, so keep the browser link. */ installers?: boolean }) {
   const [platform, setPlatform] = useState<Platform>(null);
   useEffect(() => { if (installers) setPlatform(detectPlatform(navigator.userAgent, navigator.maxTouchPoints)); }, [installers]);
   const target = platform ? DOWNLOADS[platform] : { href: fallbackHref, label: fallbackLabel };

@@ -5,7 +5,7 @@ import { cleanPathFor, proxy } from './proxy';
 /** Clean-URL proxy pins (owner 2026-10-14: no public /crossmodel URLs). */
 
 const req = (path: string, headers: Record<string, string> = {}, method = 'GET') =>
-  new NextRequest(new URL(path, 'https://digby.example.com'), { headers, method });
+  new NextRequest(new URL(path, 'https://digby.ai'), { headers, method });
 
 describe('cleanPathFor', () => {
   it('maps legacy paths to their clean twins', () => {
@@ -27,9 +27,9 @@ describe('proxy', () => {
   it('308s a document load of a legacy URL, keeping the query', () => {
     const res = proxy(req('/crossmodel?chatId=abc'));
     expect(res.status).toBe(308);
-    expect(res.headers.get('location')).toBe('https://digby.example.com/?chatId=abc');
+    expect(res.headers.get('location')).toBe('https://digby.ai/?chatId=abc');
     const r2 = proxy(req('/crossmodel/account?tab=integrations&google=connected'));
-    expect(r2.headers.get('location')).toBe('https://digby.example.com/account?tab=integrations&google=connected');
+    expect(r2.headers.get('location')).toBe('https://digby.ai/account?tab=integrations&google=connected');
   });
 
   it('client navigations to a legacy URL get the same 308 (the app router follows it)', () => {
@@ -42,9 +42,9 @@ describe('proxy', () => {
   });
 
   it('rewrites the root and app screens to their internal routes', () => {
-    expect(proxy(req('/')).headers.get('x-middleware-rewrite')).toBe('https://digby.example.com/crossmodel');
-    expect(proxy(req('/account?tab=x')).headers.get('x-middleware-rewrite')).toBe('https://digby.example.com/crossmodel/account?tab=x');
-    expect(proxy(req('/shared/chat/t')).headers.get('x-middleware-rewrite')).toBe('https://digby.example.com/crossmodel/shared/chat/t');
+    expect(proxy(req('/')).headers.get('x-middleware-rewrite')).toBe('https://digby.ai/crossmodel');
+    expect(proxy(req('/account?tab=x')).headers.get('x-middleware-rewrite')).toBe('https://digby.ai/crossmodel/account?tab=x');
+    expect(proxy(req('/shared/chat/t')).headers.get('x-middleware-rewrite')).toBe('https://digby.ai/crossmodel/shared/chat/t');
   });
 
   it('passes public site pages straight through (no prefix collisions)', () => {

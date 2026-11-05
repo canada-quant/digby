@@ -32,6 +32,7 @@ jest.mock('../../../utils/logger', () => ({
 
 import * as path from 'path';
 import { runVerifyChain, readDigbyConfig } from './verify.service';
+import { isExportTree } from '../../../utils/export-mode';
 
 // The chain runs a related-tests-first git listing before a 'test' stage;
 // answer it empty here (nothing derivable => the full stage runs as before) so
@@ -102,4 +103,28 @@ describe('verify environmental streak replay (ticket 9a0a4223 — infra reds mus
     expect(r.stages[0].terminated).toBeUndefined();
   });
 
+  it('ROOT-CAUSE pin (e4edffa3, PR #957): every jest the lane test stage can spawn is worker-capped --maxWorkers=2 (b73b1460: the cap moved from the config string into the verify-scoped wrapper)', async () => {
+    const root = path.resolve(__dirname, '../../../../..');
+    // EXPORT TREE (todo 13069ce2, 2026-11-05): `.digby/config.json` is dropped by
+    // the public export, so this read is null for a tree reason, not a verify
+    // regression. Assert the ABSENCE — that keeps a pin in both trees and fails
+    // if an export ever ships the private config.
+    if (isExportTree(root)) {
+      expect(await readDigbyConfig(root)).toBeNull();
+      return;
+    }
+    const config = await readDigbyConfig(root);
+    expect(config).not.toBeNull();
+    const testCmd = config?.commands?.test ?? '';
+    const testOneCmd = config?.commands?.testOne ?? '';
+    const typecheckCmd = config?.commands?.typecheck ?? '';
+    // The scoped chain: jest runs behind backend/src/scripts/verify-scoped.ts.
+    // The wrapper's spawn argsets (full/smoke/scoped) carry the cap — pinned in
+    // verify-scoped.test.ts; here pin that the chain really routes through the
+    // wrapper (a bare `npx jest` command string would be UNCAPPED again).
+    expect(testCmd).toContain('verify-scoped.ts --stage test');
+    expect(testCmd).not.toMatch(/\bnpx\s+jest\b/); // review F6: ANY bare npx jest in the config string would be an UNCAPPED spawn
+    expect(testOneCmd).not.toMatch(/maxWorkers/);
+    expect(typecheckCmd).not.toMatch(/maxWorkers/);
+  });
 });

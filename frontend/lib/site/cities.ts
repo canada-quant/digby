@@ -1,5 +1,5 @@
 /**
- * City × vertical landing pages for digby.example.com (2026-10-29 SEO wave, goal 252a1d17
+ * City × vertical landing pages for digby.ai (2026-10-29 SEO wave, goal 252a1d17
  * todo 75241c35).
  *
  * Ten Canadian metros × the three verticals with the clearest provincial

@@ -55,7 +55,6 @@ import {
 } from '../platform/decision-gate';
 import { evidenceToolCallCount, toolNamesCalled, tookPlatformAction } from '../platform/decision-outcome-labels';
 import { parkedMinutesWithBackoff } from './schedule-cadence';
-import { pickTranscriptSource } from './transcript-source';
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -159,20 +158,11 @@ export async function readFinishedRunFacts(s: ParkedFiringRow, now: Date): Promi
   });
   if (!run || !run.finishedAt) return null;
   const startedAt = run.startedAt ?? run.createdAt;
-  // MERGE-1 slice 1: resolve through the ONE read-switch seam instead of reading
-  // coding_messages directly — this was one of six readers invisible to TRANSCRIPT_READ.
-  const source = await pickTranscriptSource(s.sessionId);
-  const msg = source === 'legacy'
-    ? await prisma.codingMessage.findFirst({
-        where: { chatId: s.sessionId, role: 'assistant', createdAt: { gte: startedAt } },
-        orderBy: { createdAt: 'desc' },
-        select: { content: true, parts: true, metadata: true },
-      })
-    : await prisma.crossModelMessage.findFirst({
-        where: { chatId: s.sessionId, role: 'assistant', createdAt: { gte: startedAt } },
-        orderBy: { createdAt: 'desc' },
-        select: { content: true, parts: true, metadata: true },
-      });
+  const msg = await prisma.crossModelMessage.findFirst({
+    where: { chatId: s.sessionId, role: 'assistant', createdAt: { gte: startedAt } },
+    orderBy: { createdAt: 'desc' },
+    select: { content: true, parts: true, metadata: true },
+  });
   const input = (run.input && typeof run.input === 'object' ? run.input : {}) as Record<string, unknown>;
   const metadata = (msg?.metadata && typeof msg.metadata === 'object' ? msg.metadata : {}) as Record<string, unknown>;
   const toolNames = toolNamesCalled(msg?.parts);

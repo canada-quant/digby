@@ -59,11 +59,12 @@
  * ≤200-char summary string (the cron loop marks jobs failed on throw; a
  * summary is more useful).
  *
- * Kill-switches: SESSION_HISTORY_SYNC_DISABLED=1 (handler side, worker.ts —
+ * Kill-switch: SESSION_HISTORY_SYNC_DISABLED=1 (handler side, worker.ts —
  * the MEMORY_DREAM_DISABLED / PROJECT_DIGEST_DISABLED pattern) stops the
- * sweep; SESSION_HISTORY_SINGLE_BRANCH_DISABLED=1 restores the legacy
- * per-session branches (digby/session-history/<sessionId>, no pruning, no
- * migration — the fleet branch janitor also stops treating them as legacy).
+ * sweep. The single-branch mode is now unconditional: the old
+ * SESSION_HISTORY_SINGLE_BRANCH_DISABLED escape hatch was deleted on
+ * 2026-11-04 (cluster 42) — it was NF_INERT (no compose/Dockerfile ever
+ * forwarded it), so no build could reach the per-session-branch half.
  * The quarantine WINDOW itself is durable — a Redis key per project (SET NX EX
  * of the retry window) so worker reboots (every deploy) do not reset it
  * (ticket b6477bc7); a Redis outage degrades to the pre-fix per-process
@@ -82,7 +83,6 @@ import { assertRepoTargetAllowed, IsolationBoundaryError } from '../platform/ins
 import { getValidToken } from '../github/token-manager';
 import { getRecentJournalEntries } from './run-journal.service';
 import { redactUrlCredentials } from '../../../utils/redact-credentials';
-import { pickTranscriptSource } from './transcript-source';
 
 /** Cron cadence — mirrored by the CRON_JOBS entry in worker.ts. */
 export const SESSION_HISTORY_SYNC_INTERVAL_SEC = 600;
@@ -96,8 +96,6 @@ export const LEGACY_SESSION_HISTORY_PREFIX = 'digby/session-history/';
 const LEGACY_SESSION_HISTORY_REF_PREFIX = `refs/heads/${LEGACY_SESSION_HISTORY_PREFIX}`;
 /** A legacy per-session ref on origin (exactly one path segment after the prefix). */
 const LEGACY_REMOTE_REF_RE = /^refs\/heads\/digby\/session-history\/[^/]+$/;
-/** Kill switch env (read per call): =1 restores per-session branches. */
-export const SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV = 'SESSION_HISTORY_SINGLE_BRANCH_DISABLED';
 /** How long a quarantined repo is skipped before it gets ONE fresh attempt
  *  (the credential may have been fixed or the project re-pointed). */
 export const SESSION_HISTORY_PUSH_RETRY_MS = 6 * 60 * 60 * 1000;
@@ -245,10 +243,7 @@ const LEGACY_DELETE_BATCH = 25;
 
 type SessionRow = Prisma.ChatCodingStateGetPayload<{ include: { project: true } }>;
 
-/** True unless SESSION_HISTORY_SINGLE_BRANCH_DISABLED=1 (read per call). */
-export function sessionHistorySingleBranchEnabled(): boolean {
-  return process.env[SESSION_HISTORY_SINGLE_BRANCH_DISABLED_ENV] !== '1';
-}
+
 
 /**
  * A push failure that can NEVER succeed on retry as-is: git's terminal auth
@@ -383,10 +378,7 @@ function sessionIdFromPath(treePath: string): string | null {
   return m ? m[1] : null;
 }
 
-/** LEGACY: the branch (and full ref) a session's history lives on. */
-function legacyHistoryRef(sessionId: string): string {
-  return `${LEGACY_SESSION_HISTORY_REF_PREFIX}${sessionId}`;
-}
+
 
 const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim();
 
@@ -432,22 +424,13 @@ async function buildHistoryMarkdown(s: SessionRow): Promise<string> {
     if (e.failures.length) journalLines.push(`  Failures: ${e.failures.join('; ')}`);
   }
 
-  // MERGE-1 slice 1: read the transcript through the read-switch, not coding_messages
-  // directly — a mirror-only chat's markdown transcript was silently empty here.
-  const msgSource = await pickTranscriptSource(s.id);
-  const messages = msgSource === 'legacy'
-    ? await prisma.codingMessage.findMany({
-        where: { chatId: s.id },
-        orderBy: { createdAt: 'desc' },
-        take: TRANSCRIPT_TAKE,
-        select: { role: true, content: true },
-      })
-    : await prisma.crossModelMessage.findMany({
-        where: { chatId: s.id },
-        orderBy: { createdAt: 'desc' },
-        take: TRANSCRIPT_TAKE,
-        select: { role: true, content: true },
-      });
+  // `crossmodel_messages` is the only transcript table (MERGE-1 complete).
+  const messages = await prisma.crossModelMessage.findMany({
+    where: { chatId: s.id },
+    orderBy: { createdAt: 'desc' },
+    take: TRANSCRIPT_TAKE,
+    select: { role: true, content: true },
+  });
   let transcriptLines = messages.reverse().map(m => {
     const c = collapse(m.content);
     return `${m.role}: ${c.length > TRANSCRIPT_LINE_CAP ? `${c.slice(0, TRANSCRIPT_LINE_CAP - 1)}…` : c}`;
@@ -890,82 +873,6 @@ async function syncRepoHistory(projectId: string, sessions: SessionRow[], pruneS
 }
 
 /* ====================================================================
- * LEGACY per-session branches (SESSION_HISTORY_SINGLE_BRANCH_DISABLED=1)
- * ==================================================================== */
-
-/**
- * Build `tree + commit` for one HISTORY.md blob at the tree root over
- * `parent` (null = root commit) using a TEMP index. Returns the commit sha;
- * the caller owns the update-ref.
- */
-async function buildLegacyTreeAndCommit(
-  mirror: string,
-  blobSha: string,
-  parent: string | null,
-  indexPath: string,
-  message: string,
-): Promise<string> {
-  const env = { GIT_INDEX_FILE: indexPath };
-  await git(parent ? ['read-tree', `${parent}^{tree}`] : ['read-tree', '--empty'], mirror, 120_000, env);
-  await git(['update-index', '--add', '--cacheinfo', `100644,${blobSha},${HISTORY_FILE}`], mirror, 120_000, env);
-  const treeSha = (await git(['write-tree'], mirror, 120_000, env)).stdout.trim();
-  const commitArgs = ['commit-tree', treeSha, ...(parent ? ['-p', parent] : []), '-m', message];
-  return (await git(commitArgs, mirror)).stdout.trim();
-}
-
-/**
- * LEGACY: sync ONE session onto its own digby/session-history/<sessionId>
- * branch. Returns 'unchanged' when the branch tip already holds the same
- * blob (no commit, no push). Throws on failure — the sweep's per-session
- * catch counts it.
- */
-async function syncSessionHistoryLegacy(s: SessionRow): Promise<'synced' | 'unchanged'> {
-  const mirror = repoMirrorPath(s.projectId);
-  const ref = legacyHistoryRef(s.id);
-  const content = await buildHistoryMarkdown(s);
-
-  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'digby-history-'));
-  try {
-    const contentPath = path.join(tmpDir, HISTORY_FILE);
-    const indexPath = path.join(tmpDir, 'index');
-    await fs.writeFile(contentPath, content, 'utf8');
-
-    const parent = await resolveSha(mirror, ref);
-    const blobSha = (await git(['hash-object', '-w', '--no-filters', contentPath], mirror)).stdout.trim();
-
-    if (parent) {
-      // rev-parse <tip>:HISTORY.md throws when the path is absent → null.
-      let oldBlob: string | null = null;
-      try {
-        oldBlob = (await git(['rev-parse', `${parent}:${HISTORY_FILE}`], mirror)).stdout.trim() || null;
-      } catch { oldBlob = null; }
-      if (oldBlob === blobSha) return 'unchanged';
-    }
-
-    const commitSha = await buildLegacyTreeAndCommit(mirror, blobSha, parent, indexPath, historyCommitMessage());
-    await git(['update-ref', ref, commitSha, parent ?? ''], mirror);
-
-    const remote = await pushRemoteFor(s.project);
-    const remoteGit = remoteGitFor(mirror);
-    try {
-      await remoteGit(['push', remote, ref]);
-    } catch (firstPushErr: any) {
-      const fetched = await remoteGit(['fetch', remote, ref]).then(() => true).catch(() => false);
-      const remoteTip = fetched ? await resolveSha(mirror, 'FETCH_HEAD') : null;
-      if (remoteTip && remoteTip !== commitSha) {
-        const rebased = await buildLegacyTreeAndCommit(mirror, blobSha, remoteTip, indexPath, historyCommitMessage());
-        await git(['update-ref', ref, rebased, commitSha], mirror);
-      }
-      await remoteGit(['push', remote, ref]);
-      logger.warn(`session history sync: push for session ${s.id} needed a retry (${firstPushErr?.message ?? firstPushErr})`);
-    }
-    return 'synced';
-  } finally {
-    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-  }
-}
-
-/* ====================================================================
  * The sweep
  * ==================================================================== */
 
@@ -1031,69 +938,37 @@ export async function runSessionHistorySyncOnce(): Promise<string> {
   let pruned = 0;
   let legacyDeleted = 0;
 
-  if (!sessionHistorySingleBranchEnabled()) {
-    for (const s of live) {
-      // Quarantine is per-REPO: skip every session of an auth-refused project
-      // (the legacy mode pushes per-session refs, but the refusal is the
-      // repo's credential, not the ref's). The DURABLE auth-disable streak
-      // (ticket 5eb035d6) sits above it: N consecutive refusals stop the job
-      // until the daily re-probe.
-      if (await isAuthDisabled(s.projectId)) { pushDenied++; continue; }
-      if (await isPushQuarantined(s.projectId)) { pushDenied++; continue; }
-      try {
-        if ((await syncSessionHistoryLegacy(s)) === 'synced') {
-          synced++;
-          // A landed push proves the credential works — clear BOTH the
-          // quarantine and the durable streak (review F1: the legacy path
-          // clears symmetrically with the consolidated path below).
-          await clearPushQuarantine(s.projectId);
-          await clearAuthDisable(s.projectId);
-        } else unchanged++;
-      } catch (err: any) {
-        if (err instanceof IsolationBoundaryError || isPermanentPushAuthError(err)) {
-          // See the consolidated path: once the durable disable governs
-          // (noteAuthRefused TRUE) the warn is suppressed — the ticket's
-          // acceptance is that the warn class stops appearing.
-          if (!(await noteAuthRefused(s.projectId))) await notePushQuarantined(s.projectId, err);
-          pushDenied++; continue;
-        }
-        failed++;
-        logger.warn(`session history sync: session ${s.id} failed (next pass retries): ${err?.message ?? err}`);
-      }
-    }
-  } else {
-    const groups = new Map<string, SessionRow[]>();
-    for (const s of live) {
-      const g = groups.get(s.projectId);
-      if (g) g.push(s); else groups.set(s.projectId, [s]);
-    }
-    // A capped enumeration did not see every live session — pruning on a
-    // partial view would delete live files; skip pruning this pass.
-    const pruneSafe = sessions.length < SESSION_TAKE;
-    if (!pruneSafe) logger.warn(`session history sync: enumeration hit the ${SESSION_TAKE}-session cap — pruning skipped this pass`);
-    for (const [projectId, group] of groups) {
-      // DURABLE auth-disable streak (ticket 5eb035d6): N consecutive
-      // terminal-auth refusals ⇒ the repo's sync is STOPPED (one info log at
-      // the crossing, silent skip after) until the daily re-probe. This is
-      // the owner's oq_fd533d0a "STOP THE JOB": no per-window warn loop.
-      if (await isAuthDisabled(projectId)) { pushDenied += group.length; continue; }
-      if (await isPushQuarantined(projectId)) { pushDenied += group.length; continue; }
-      const r = await syncRepoHistory(projectId, group, pruneSafe);
-      synced += r.synced;
-      unchanged += r.unchanged;
-      failed += r.failed;
-      noMirror += r.noMirror;
-      pushDenied += r.pushDenied;
-      pruned += r.pruned;
-      legacyDeleted += r.legacyDeleted;
-      // ANY landed push — updates or prune-only — is proof the credential
-      // works again: forget the quarantine window AND the durable streak
-      // (review F4: keying off synced>0 alone left a prune-only landing or
-      // a quiescent repo disabled another 24h).
-      if (r.synced > 0 || r.pruned > 0 || r.legacyDeleted > 0) {
-        await clearPushQuarantine(projectId);
-        await clearAuthDisable(projectId);
-      }
+  const groups = new Map<string, SessionRow[]>();
+  for (const s of live) {
+    const g = groups.get(s.projectId);
+    if (g) g.push(s); else groups.set(s.projectId, [s]);
+  }
+  // A capped enumeration did not see every live session — pruning on a
+  // partial view would delete live files; skip pruning this pass.
+  const pruneSafe = sessions.length < SESSION_TAKE;
+  if (!pruneSafe) logger.warn(`session history sync: enumeration hit the ${SESSION_TAKE}-session cap — pruning skipped this pass`);
+  for (const [projectId, group] of groups) {
+    // DURABLE auth-disable streak (ticket 5eb035d6): N consecutive
+    // terminal-auth refusals ⇒ the repo's sync is STOPPED (one info log at
+    // the crossing, silent skip after) until the daily re-probe. This is
+    // the owner's oq_fd533d0a "STOP THE JOB": no per-window warn loop.
+    if (await isAuthDisabled(projectId)) { pushDenied += group.length; continue; }
+    if (await isPushQuarantined(projectId)) { pushDenied += group.length; continue; }
+    const r = await syncRepoHistory(projectId, group, pruneSafe);
+    synced += r.synced;
+    unchanged += r.unchanged;
+    failed += r.failed;
+    noMirror += r.noMirror;
+    pushDenied += r.pushDenied;
+    pruned += r.pruned;
+    legacyDeleted += r.legacyDeleted;
+    // ANY landed push — updates or prune-only — is proof the credential
+    // works again: forget the quarantine window AND the durable streak
+    // (review F4: keying off synced>0 alone left a prune-only landing or
+    // a quiescent repo disabled another 24h).
+    if (r.synced > 0 || r.pruned > 0 || r.legacyDeleted > 0) {
+      await clearPushQuarantine(projectId);
+      await clearAuthDisable(projectId);
     }
   }
 

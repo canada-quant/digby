@@ -72,13 +72,13 @@ const SCHEDULE_ID_PREFIX_MIN = 8;
 export async function resolveOwnedScheduleTarget(userId: string, idOrPrefix: string): Promise<{ sessionId: string } | null> {
   const id = String(idOrPrefix || '').trim();
   if (!id) return null;
-  const exact = await prisma.codingSchedule.findFirst({
+  const exact = await prisma.chatSchedule.findFirst({
     where: { id, userId },
     select: { sessionId: true },
   });
   if (exact) return exact;
   if (id.length < SCHEDULE_ID_PREFIX_MIN) return null;
-  const matches = await prisma.codingSchedule.findMany({
+  const matches = await prisma.chatSchedule.findMany({
     where: { userId, id: { startsWith: id } },
     select: { id: true, sessionId: true },
     take: 2,
@@ -112,15 +112,15 @@ export type ScheduleForCaller =
 async function resolveOwnedScheduleId(userId: string, idOrPrefix: string): Promise<string | null> {
   const id = String(idOrPrefix || '').trim();
   if (!id) return null;
-  const exact = await prisma.codingSchedule.findFirst({ where: { id, userId }, select: { id: true } });
+  const exact = await prisma.chatSchedule.findFirst({ where: { id, userId }, select: { id: true } });
   if (exact) return exact.id;
   if (id.length < SCHEDULE_ID_PREFIX_MIN) return null;
-  const matches = await prisma.codingSchedule.findMany({ where: { userId, id: { startsWith: id } }, select: { id: true }, take: 2 });
+  const matches = await prisma.chatSchedule.findMany({ where: { userId, id: { startsWith: id } }, select: { id: true }, take: 2 });
   return Array.isArray(matches) && matches.length === 1 ? matches[0].id : null;
 }
 
 export async function listCallerSchedules(userId: string, callerChatId: string): Promise<CallerScheduleCandidate[]> {
-  const rows = await prisma.codingSchedule.findMany({
+  const rows = await prisma.chatSchedule.findMany({
     where: { userId, sessionId: callerChatId },
     orderBy: [{ enabled: 'desc' }, { createdAt: 'desc' }],
     take: 5,
@@ -261,6 +261,41 @@ export const AUTONOMY_GRANTABLE_TOOLS = [
   'set_chat_instructions', 'configure_workspace', 'import_repo',
 ] as const;
 
+/**
+ * EXPLICIT-GRANT-ONLY tools (owner ruling oq_d45410a4, ticket d53eed71).
+ *
+ * These are consequential tools that the owner MAY name in a grant, but that NO
+ * auto-provisioning path may ever put there for them:
+ *   - create_chat_webhook MINTS A BEARER TOKEN that later grants external POST
+ *     access to a chat as its owner (#32), so the confirmation card is the
+ *     credential boundary.
+ *
+ * Deliberately NOT members of AUTONOMY_GRANTABLE_TOOLS, because FOUR paths
+ * spread that whole array into a stored grant with nobody explicitly naming a
+ * tool — grantFullAutonomy (supervisor seats), syncAutonomyWithAgentMode
+ * (every auto-mode coding chat), selfGrantSubsetVerdict's modeAuthority leg and
+ * supervisorDelegationVerdict's modeAuthority leg. Adding a bearer-minting tool
+ * to that array would make it card-free for every auto-mode lane and both
+ * supervisor seats — the exact inverse of the ruling, which asked for card-free
+ * ONLY where the grant is explicit.
+ *
+ * So the split is: GRANTABLE_TOOL_NAMES (below) = what set_chat_autonomy ACCEPTS;
+ * AUTONOMY_GRANTABLE_TOOLS = the subset auto-provisioning may write. A tool in
+ * this list reaches a row only when a human (or a supervisor delegating within
+ * authority it itself was explicitly granted) types it into allowedTools.
+ */
+export const EXPLICIT_GRANT_ONLY_TOOLS = ['create_chat_webhook'] as const;
+
+/**
+ * Every tool `set_chat_autonomy` accepts (the validation set + the error text):
+ * the auto-grantable set PLUS the explicit-only tools. Runtime enforcement for
+ * the explicit-only half lives in the platform-tools gate
+ * (EXPLICIT_GRANT_ONLY_TOOLS limb) — a row naming one of them bypasses the
+ * per-call card, and NOTHING else (no mode waiver, no implicit parent→child)
+ * does.
+ */
+export const GRANTABLE_TOOL_NAMES = [...AUTONOMY_GRANTABLE_TOOLS, ...EXPLICIT_GRANT_ONLY_TOOLS] as const;
+
 export const DEFAULT_SCHEDULE_CAP = 48;
 // 2026-08-08 (owner directive, feedback 5fd3ada5: "i don't want caps, digby
 // coding needs to be fully autonomous"): ceiling raised 288 → 1440. With the
@@ -364,13 +399,17 @@ export async function setChatAutonomy(opts: {
       access === 'none' ? 'Chat not found' : 'Only the chat owner can grant autonomy for it');
   }
 
-  // allowedTools ⊆ the grantable consequential tools (deduped, order-stable).
-  const grantable = new Set<string>(AUTONOMY_GRANTABLE_TOOLS);
+  // allowedTools ⊆ the NAMABLE consequential tools (deduped, order-stable).
+  // GRANTABLE_TOOL_NAMES, not AUTONOMY_GRANTABLE_TOOLS: an explicit-only tool
+  // (create_chat_webhook) is refused by the auto-provisioning spreads above but
+  // must still be TYPEABLE here — that typed grant is the whole point of the
+  // owner ruling oq_d45410a4.
+  const grantable = new Set<string>(GRANTABLE_TOOL_NAMES);
   const allowedTools: string[] = [];
   for (const raw of opts.allowedTools ?? []) {
     const t = String(raw);
     if (!grantable.has(t)) {
-      throw new AppError(400, `Invalid tool "${t}" — allowedTools must be a subset of: ${AUTONOMY_GRANTABLE_TOOLS.join(', ')}`);
+      throw new AppError(400, `Invalid tool "${t}" — allowedTools must be a subset of: ${GRANTABLE_TOOL_NAMES.join(', ')}`);
     }
     if (!allowedTools.includes(t)) allowedTools.push(t);
   }

@@ -25,9 +25,12 @@ import {
   normalizeUnattended,
   unattendedVerdict,
   unattendedReadyFor,
+  unattendedEnableCmd,
+  MAC_AGENT_CLI_PATH,
   reasonForBlocker,
   BLOCKER_PRIORITY,
 } from './unattended-verdict';
+import { REMOTE_BLOCKER_PRIORITY } from './remote-access-verdict';
 
 // backend/src/modules/crossmodel/imessage → the repo root is five levels up.
 const REPO = join(__dirname, '..', '..', '..', '..', '..');
@@ -108,6 +111,10 @@ describe('unattendedVerdict — what a lane reads before filing an unlock card',
       enabled: true,
       ready: true,
       reason: '',
+      // TICKET 36d1c99f: the raw tokens are part of the contract now. A ready
+      // verdict carries none — and `toEqual` here is deliberate: it fails if a
+      // future blocker leaks into a ready row.
+      blockers: [],
     });
   });
 
@@ -119,7 +126,23 @@ describe('unattendedVerdict — what a lane reads before filing an unlock card',
     // FileVault outranks a reverted lock setting: it is the one that makes the
     // others moot (no auto-login at all on a FileVault volume).
     expect(v.reason).toMatch(/FileVault/);
-    expect(v.reason).toMatch(/turn FileVault off/);
+    // The reason must stay scoped to AUTO-LOGIN. FileVault does not block the
+    // remote-control channel (REMOTE_BLOCKER_PRIORITY has no `filevault`
+    // token), so copy that reads as "Digby needs your disk unencrypted to
+    // reach this Mac" is wrong — that was feedback ticket 539a99c3.
+    expect(v.reason).toMatch(/auto-login at boot/i);
+    expect(v.reason).toMatch(/does NOT need FileVault off/);
+  });
+
+  it('the filevault reason scopes itself to auto-login (ticket 539a99c3)', () => {
+    // The pairing that makes the copy honest: this blocker exists on the
+    // AUTO-LOGIN preset, and the remote-control vocabulary deliberately does
+    // not carry it. If someone adds `filevault` to REMOTE_BLOCKER_PRIORITY,
+    // this test tells them the two paths have been conflated again.
+    expect(BLOCKER_PRIORITY.map((b) => b.token)).toContain('filevault');
+    expect(REMOTE_BLOCKER_PRIORITY.map((b) => b.token)).not.toContain('filevault');
+    const reason = reasonForBlocker('filevault');
+    expect(reason).toMatch(/remote-control channel does NOT need FileVault off/);
   });
 
   it('every blocker token has a human reason naming what to do', () => {
@@ -150,7 +173,7 @@ describe('ticket 11b6974f — "not enabled" must not be reported as "never repor
     // The defect: this used to read "never reported by this build — update the
     // agent" for every device, including devices whose owner HAD enabled it.
     expect(v.reason).not.toMatch(/update the agent/);
-    expect(v.reason).toContain('digby-agent unattended enable');
+    expect(v.reason).toContain('unattended enable');
   });
 
   it('an ABSENT advert is still the agent-gap reading (absence is not a claim)', () => {
@@ -164,9 +187,40 @@ describe('ticket 11b6974f — "not enabled" must not be reported as "never repor
       'digby-win-agent unattended enable',
     );
     expect(unattendedVerdict(normalizeUnattended('off'), 'darwin').reason).toContain(
-      'digby-agent unattended enable',
+      'unattended enable',
     );
     expect(unattendedVerdict(undefined, 'windows').reason).toContain('digby-win-agent unattended enable');
+  });
+
+  // ── Ticket 36d1c99f ───────────────────────────────────────────────────────
+  // The reason strings used to print the BARE `digby-agent …`. A stock install
+  // never puts that name on PATH (both installers write the shim under
+  // ~/Library/Application Support/Digby/bin and nothing adds it to PATH), so the
+  // printed remedy failed with `command not found` — the owner concluded the
+  // feature did not exist. The command must therefore be self-sufficient: the
+  // owner copies it verbatim into Terminal with no PATH edit first.
+  it('the macOS remedy is an ABSOLUTE path, never a bare command that needs PATH first', () => {
+    const mac = unattendedEnableCmd('darwin');
+    // The exact shim path the .pkg postinstall and the one-line installer write
+    // (macos-pkg/scripts/postinstall:54, install.sh) — not a guess.
+    expect(mac).toContain(`${MAC_AGENT_CLI_PATH}`);
+    expect(mac).toContain('/Library/Application Support/Digby/bin/digby-agent');
+    expect(mac).toContain('unattended enable');
+    // A bare `digby-agent …` (optionally `sudo`-prefixed) is the broken form.
+    expect(mac).not.toMatch(/^(sudo\s+)?digby-agent\s/);
+    // Quoted: the path contains spaces, so an unquoted copy-paste would split it
+    // into two shell words and fail a SECOND way.
+    expect(mac.startsWith('"')).toBe(true);
+  });
+
+  it('every macOS reason that names a command names the absolute one', () => {
+    // Both the measured-off and the never-reported readings print a remedy.
+    // Pinning only `off` would let the `unavailable` text regress alone.
+    for (const advert of [normalizeUnattended('off'), undefined]) {
+      const reason = unattendedVerdict(advert, 'darwin').reason;
+      if (!reason.includes('unattended enable')) continue;
+      expect(reason).not.toMatch(/(^|[\s`])digby-agent unattended enable/);
+    }
   });
 
   it('`off,locked` stays off and keeps the live-lock fact without going ready', () => {

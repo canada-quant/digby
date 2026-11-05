@@ -33,8 +33,8 @@ describe('supervisor-switch helpers', () => {
   });
 
   it('describeSwitchTarget: OFF carries since / by / skipped (n/a when unreadable; boot/env when never set); ON says since or default', () => {
-    expect(describeSwitchTarget(t({ enabled: false, since: '2026-09-26T17:30:00Z', updatedBy: 'paul@sunday.market', skipped: 7, source: 'setting' })))
-      .toBe('OFF since 2026-09-26 17:30Z by paul@sunday.market — wakes skipped: 7');
+    expect(describeSwitchTarget(t({ enabled: false, since: '2026-09-26T17:30:00Z', updatedBy: 'example-user@example.com', skipped: 7, source: 'setting' })))
+      .toBe('OFF since 2026-09-26 17:30Z by example-user@example.com — wakes skipped: 7');
     expect(describeSwitchTarget(t({ enabled: false, skipped: null }))).toBe('OFF since boot (env FLEET_SUPERVISOR_ENABLED) — wakes skipped: n/a');
     expect(describeSwitchTarget(t({ enabled: true, since: '2026-09-26T18:00:00Z', updatedBy: 'admin@example.com', source: 'setting' }))).toBe('ON since 2026-09-26 18:00Z by admin@example.com');
     expect(describeSwitchTarget(t())).toBe('ON (default, env FLEET_SUPERVISOR_ENABLED)');

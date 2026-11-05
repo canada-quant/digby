@@ -8,6 +8,39 @@ const http = require('http');
 
 const PORT = parseInt(process.env.AUTH_PROXY_PORT || '8000');
 const UPSTREAM_PORT = parseInt(process.env.SUPERGATEWAY_PORT || '8001');
+// Second, STATEFUL supergateway for the interactive cloud browser (ticket
+// 5f69fdc4). Kept on its OWN port+path so the shared /mcp stays stateless —
+// a stateful instance answers session-less POSTs with 400, and x-mcp is a live
+// session-less client of /mcp (measured on supergateway 4.2.1, 2026-11-03).
+const UPSTREAM_BROWSER_PORT = parseInt(process.env.SUPERGATEWAY_BROWSER_PORT || '8002');
+/** Public path that routes to the stateful browser gateway. */
+const BROWSER_PATH_PREFIX = '/browser/mcp';
+
+/** Which upstream port serves a given request path. */
+function upstreamPortFor(url) {
+  const path = String(url || '').split('?')[0];
+  if (path === BROWSER_PATH_PREFIX || path.startsWith(`${BROWSER_PATH_PREFIX}/`)) {
+    return UPSTREAM_BROWSER_PORT;
+  }
+  return UPSTREAM_PORT;
+}
+
+/**
+ * Rewrite the public browser path to the upstream's own mount. The stateful
+ * supergateway serves at --streamableHttpPath /mcp, so the public
+ * `/browser/mcp` must arrive upstream as `/mcp` (strip only the `/browser`
+ * prefix, keeping any sub-path and the query string).
+ */
+function upstreamPathFor(url) {
+  const raw = String(url || '/');
+  const [path, query] = raw.split('?');
+  if (path === BROWSER_PATH_PREFIX || path.startsWith(`${BROWSER_PATH_PREFIX}/`)) {
+    const rest = path.slice('/browser'.length);
+    return `${rest}${query ? `?${query}` : ''}`;
+  }
+  return raw;
+}
+
 const API_KEY = process.env.MCP_API_KEY;
 
 if (!API_KEY) {
@@ -124,12 +157,13 @@ const server = http.createServer((req, res) => {
   }
 
   // Forward to supergateway
+  const upstreamPort = upstreamPortFor(req.url);
   const options = {
     hostname: '127.0.0.1',
-    port: UPSTREAM_PORT,
-    path: req.url,
+    port: upstreamPort,
+    path: upstreamPathFor(req.url),
     method: req.method,
-    headers: { ...req.headers, host: `127.0.0.1:${UPSTREAM_PORT}` }
+    headers: { ...req.headers, host: `127.0.0.1:${upstreamPort}` }
   };
 
   const proxy = http.request(options, (proxyRes) => {

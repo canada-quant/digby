@@ -74,13 +74,13 @@ describe('Meta ClickID (fbc)', () => {
     expect(fbcFromSearch('?fbclid=<script>')).toBeNull();
   });
 
-  it('writes _fbc on the digby.example.com domain when missing or for a new click, and leaves a matching cookie alone', async () => {
+  it('writes _fbc on the digby.ai domain when missing or for a new click, and leaves a matching cookie alone', async () => {
     const { persistFbcFromUrl, currentFbc } = await import('./meta-pixel');
     const writes: string[] = [];
     const doc = { _c: '', get cookie() { return this._c; }, set cookie(v: string) { writes.push(v); this._c = v.split(';')[0]; } };
-    const win = { location: { search: '?fbclid=IwAR0abc_DEF-123', hostname: 'digby.example.com', protocol: 'https:' }, document: doc };
+    const win = { location: { search: '?fbclid=IwAR0abc_DEF-123', hostname: 'digby.ai', protocol: 'https:' }, document: doc };
     expect(persistFbcFromUrl(win as any, 1791400000000)).toBe('fb.1.1791400000000.IwAR0abc_DEF-123');
-    expect(writes[0]).toBe('_fbc=fb.1.1791400000000.IwAR0abc_DEF-123; Max-Age=7776000; Path=/; SameSite=Lax; Domain=.digby.example.com; Secure');
+    expect(writes[0]).toBe('_fbc=fb.1.1791400000000.IwAR0abc_DEF-123; Max-Age=7776000; Path=/; SameSite=Lax; Domain=.digby.ai; Secure');
     expect(currentFbc(doc as any)).toBe('fb.1.1791400000000.IwAR0abc_DEF-123');
     persistFbcFromUrl(win as any, 1791500000000);
     expect(writes).toHaveLength(1); // same click → untouched (keeps the original click time)

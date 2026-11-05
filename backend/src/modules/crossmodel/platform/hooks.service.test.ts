@@ -46,6 +46,12 @@ const mockPrisma: any = {
   activity: { create: jest.fn(async () => ({})) },
   // The atomic claim (UPDATE…RETURNING) — deliverHookGroup rides this raw query.
   $queryRaw: jest.fn(),
+  // SAA-1.1 Phase 1 (2026-11-03): the admission policy asks whether the run that
+  // emitted this run_completed actually DID anything, by reading its tool
+  // receipts. Default = no receipts ⇒ the run is provably quiet ⇒ ignore stays
+  // available (the pre-existing pins below depend on that). A mutated run is
+  // simulated per-test by returning a mutating tool name here.
+  runToolReceipt: { findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
 
@@ -116,6 +122,7 @@ jest.mock('./loop-metrics.service', () => ({
     HOOK_STALE_SUPPRESSED: 'hook_stale_suppressed', // Review 2026-09-13 issue 1
     HOOK_QUIET_EVENT_SHED: 'hook_quiet_event_shed', // Project-supervisor preflight 2026-09-14
     HOOK_SIBLING_DRAIN: 'hook_sibling_drain', // hardening loop 2026-09-24
+    HOOK_SOURCE_POLICY_OBSERVE: 'hook_source_policy_observe', // SAA-1.1 Phase 1
   },
 }));
 
@@ -174,6 +181,7 @@ import {
   lookupWakeSourceLanes,
   hookRowNotYetDue,
   fleetRollupEventKey,
+  sourceRunMutated,
 } from './hooks.service';
 import { setWakeTriageControlSampler } from './wake-triage-request';
 import logger from '../../../utils/logger';
@@ -962,6 +970,48 @@ describe('sweepHookEvents — delivery', () => {
     expect(prompt).not.toContain('Source chat id: c-b');
     expect(prompt.indexOf('### Beta')).toBeLessThan(prompt.indexOf('### Alpha'));
     expect(updatesWith((d) => d?.status === 'delivered')[0]).toMatchObject({ where: { id: { in: ['e1', 'e2', 'e3'] } } });
+  });
+
+  it('THREAD-KEY CONTINUITY: a group carrying TWO threads is delivered to the SUBSCRIBED target, never to one thread owner (SAA-1.2 residual)', async () => {
+    // The sweep groups pending rows by hookId ALONE, so a wildcard supervisor
+    // group fans in from many chats at once (the test above proves the digest
+    // renders "multiple (see per-source headers)"). Routing used to derive ONE
+    // source chat from rows[0] and let that thread's owner decide the whole
+    // group — so c-b's owning lane would receive c-a's events too. Measured
+    // live shape: this is the ordinary multi-source supervisor wake.
+    setPendingRows([
+      // rows[0] is the thread that HAS a live, same-account parent.
+      eventRow({ id: 'e1', payload: { eventType: 'run_completed', sourceChatId: 'c-b', sourceChatTitle: 'Beta', summary: 'b done', depth: 0 } }),
+      eventRow({ id: 'e2', payload: { eventType: 'run_failed', sourceChatId: 'c-a', sourceChatTitle: 'Alpha', summary: 'a failed', depth: 0 } }),
+    ]);
+    // A WILDCARD hook aimed at a supervisor: the only interceptable class.
+    mockPrisma.eventHook.findUnique.mockResolvedValue(hookRow({ id: 'hw', sourceChatId: null, targetChatId: 'c-sup', debounceSec: 0 }));
+    mockPrisma.crossModelChat.findMany = jest.fn().mockResolvedValue([
+      { id: 'c-a', userId: 'u1', projectId: null, project: null },
+      { id: 'c-b', userId: 'u1', projectId: null, project: null },
+    ]);
+    // c-b's lineage resolves to a PERFECTLY deliverable lane — which is exactly
+    // what made the old code re-target. The supervisor target is a supervisor.
+    mockPrisma.crossModelChat.findUnique.mockImplementation(async (args: any) => {
+      const id = args?.where?.id;
+      if (id === 'c-sup') return { userId: 'u1', archivedAt: null, isSupervisor: true, isProjectSupervisor: false, codingState: null, projectId: null, project: null };
+      if (id === 'c-b') return { parentChatId: 'thread-owner' };
+      if (id === 'thread-owner') return { archivedAt: null, userId: 'u1' };
+      return { userId: 'u1', archivedAt: null, isSupervisor: false, isProjectSupervisor: false, codingState: null, projectId: null, project: null };
+    });
+
+    await sweepHookEvents();
+
+    // ONE wake, at the SUBSCRIBED target — c-a's event did not ride to c-b's owner.
+    expect(mockFireScheduleTarget).toHaveBeenCalledTimes(1);
+    expect(mockFireScheduleTarget.mock.calls[0][0]).toMatchObject({ sessionId: 'c-sup', origin: 'hook' });
+    expect(mockFireScheduleTarget.mock.calls[0][0].sessionId).not.toBe('thread-owner');
+    // And no "the wake moved" row is written for a route that did not move.
+    expect(mockRecordLoopMetric).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'hook_thread_passthrough_observe' }),
+    );
+    // Both threads' events still delivered, in one wake.
+    expect(updatesWith((d) => d?.status === 'delivered')[0]).toMatchObject({ where: { id: { in: ['e1', 'e2'] } } });
   });
 
   it('an empty source title falls back to an "unknown chat" header (grouped wake)', async () => {
@@ -1804,14 +1854,35 @@ describe('loop-metrics wake telemetry (audit #12 close-out)', () => {
   });
 
   it('a delivered wake records wake_delivered with the event class + hook id', async () => {
-    setPendingRows([eventRow()]);
+    // SAA-1.1 Phase 1 (2026-11-03): the batch names its source run, so the policy
+    // asks whether that run actually DID anything. No receipt (the mockPrisma
+    // default) is NOT proof of quiet — receipts cover only 21 of the 91 mutating
+    // tools — so the guard answers UNKNOWN and the batch stays a candidate. That
+    // is the whole point of the review fix: silence is never read as innocence.
+    const row = eventRow();
+    row.payload = { ...row.payload, runId: 'r1' };
+    setPendingRows([row]);
     mockPrisma.eventHook.findUnique.mockResolvedValue(hookRow());
     await sweepHookEvents();
-    expect(mockRecordLoopMetric).toHaveBeenCalledTimes(1);
+    expect(mockRecordLoopMetric).toHaveBeenCalledTimes(2);
+    // SAA-1.1 Phase 1a (todo 03bcf00f): the delivery row also carries the DURABLE
+    // batch key so the labelled outcome row can join it exactly, with no time
+    // window. Its absence here would mean the label side never matches.
     expect(mockRecordLoopMetric).toHaveBeenCalledWith({
       kind: 'wake_delivered', sessionId: 'c-tgt', value: 1,
-      meta: { eventType: 'run_completed', hookId: 'h1', capBypassed: false, drained: 0 },
+      meta: { eventType: 'run_completed', hookId: 'h1', capBypassed: false, drained: 0, hookBatch: 'h1|e1' },
     });
+    // SAA-1.1 Phase 1: the deterministic admission policy emits BESIDE the wake
+    // telemetry (observe-only). This batch reaches the routine branch and is turned
+    // away by the SOURCE-RUN GUARD, so it is recorded as candidate/source_run_mutated
+    // — a CANDIDATE, never a suppression, never in precision. Recording the guard's
+    // own verdict is what keeps Phase 1 a denominator for run_completed at all: if
+    // this row vanished, every batch the guard touched would go unmeasured and a
+    // future "precision 1.0" could not be told apart from "numerator shrank to 0".
+    expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'hook_source_policy_observe', sessionId: 'c-tgt', value: 1,
+      meta: expect.objectContaining({ decision: 'candidate', reason: 'source_run_mutated', rows: 1 }),
+    }));
   });
 
   it('an alarm cap-bypass delivery records wake_delivered {capBypassed:true}', async () => {
@@ -1821,7 +1892,7 @@ describe('loop-metrics wake telemetry (audit #12 close-out)', () => {
     await sweepHookEvents();
     expect(mockRecordLoopMetric).toHaveBeenCalledWith({
       kind: 'wake_delivered', sessionId: 'c-tgt', value: 1,
-      meta: { eventType: 'attention_needed', hookId: 'h1', capBypassed: true, drained: 0 },
+      meta: { eventType: 'attention_needed', hookId: 'h1', capBypassed: true, drained: 0, hookBatch: 'h1|a1' },
     });
   });
 
@@ -1830,10 +1901,16 @@ describe('loop-metrics wake telemetry (audit #12 close-out)', () => {
     mockPrisma.eventHook.findUnique.mockResolvedValue(hookRow({ eventTypes: ['attention_needed'] }));
     mockFireScheduleTarget.mockResolvedValue({ started: false, reason: 'busy' });
     await sweepHookEvents();
-    expect(mockRecordLoopMetric).toHaveBeenCalledTimes(1);
+    expect(mockRecordLoopMetric).toHaveBeenCalledTimes(2);
     expect(mockRecordLoopMetric).toHaveBeenCalledWith({
       kind: 'wake_parked', sessionId: 'c-tgt', value: 1, meta: { reason: 'busy' },
     });
+    // An alarm batch is the policy's `respond` side — recorded too, so the 48 h
+    // readout has the false-negative denominator and not just the suppressions.
+    expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'hook_source_policy_observe',
+      meta: expect.objectContaining({ decision: 'respond', reason: 'alarm_class' }),
+    }));
   });
 
   it('a non-alarm drop at the cap records NO metric (drop-at-cap is not a wake)', async () => {
@@ -2481,7 +2558,12 @@ describe('2026-10-04 wake_triage ACT control sample', () => {
     expect(mockRecordLoopMetric).toHaveBeenCalledWith(expect.objectContaining({ kind: 'wake_parked', meta: expect.objectContaining({ reason: 'triage' }) }));
     expect(needsTurnRows()).toHaveLength(1);
     expect(needsTurnRows()[0][2]).toMatchObject({ actual: null, acted: true });
-    expect(needsTurnRows()[0][2]).not.toHaveProperty('extra');
+    // The park path stamps NO control-sample extra. Phase 1a's durable batch key
+    // DOES ride here (it is the correlation handle the label side needs), so the
+    // assertion is on the control flag specifically, not on the whole object —
+    // pinning the whole object would make an unrelated telemetry key look like a
+    // control-sample regression.
+    expect(needsTurnRows()[0][2].extra ?? {}).not.toHaveProperty('control');
   });
 
   it('ACT + confident quiet + the draw hits ⇒ the wake DELIVERS with an act-mode stash stamped extra {control:true, controlReason:sample}; no park, no acted row, no refund', async () => {
@@ -2523,7 +2605,9 @@ describe('2026-10-04 wake_triage ACT control sample', () => {
     await sweepHookEvents();
     expect(sampler).not.toHaveBeenCalled();
     expect(mockFireScheduleTarget.mock.calls[0][0].decision).toMatchObject({ mode: 'act' });
-    expect(mockFireScheduleTarget.mock.calls[0][0].decision).not.toHaveProperty('extra');
+    // No CONTROL stamp — but Phase 1a's durable batch key legitimately rides the
+    // stash, so assert on the control flag, not on the presence of `extra`.
+    expect((mockFireScheduleTarget.mock.calls[0][0].decision as any).extra ?? {}).not.toHaveProperty('control');
 
     jest.clearAllMocks(); reseed();
     // A SHADOW answer (shadow mode / an uncalibrated backend) never draws — it delivers with a plain stash.
@@ -2532,7 +2616,7 @@ describe('2026-10-04 wake_triage ACT control sample', () => {
     await sweepHookEvents();
     expect(sampler).not.toHaveBeenCalled();
     expect(mockFireScheduleTarget.mock.calls[0][0].decision).toMatchObject({ mode: 'shadow' });
-    expect(mockFireScheduleTarget.mock.calls[0][0].decision).not.toHaveProperty('extra');
+    expect((mockFireScheduleTarget.mock.calls[0][0].decision as any).extra ?? {}).not.toHaveProperty('control');
   });
 
   it('kill switch WAKE_TRIAGE_CONTROL_SAMPLE_DISABLED=1 ⇒ park every time, even when the sampler would hit', async () => {
@@ -3999,5 +4083,82 @@ describe('LANE-IDLE-WAKE — delayed direct wakes + lane_idle delivery revalidat
     mockPrisma.hookEvent.updateMany.mockResolvedValue({ count: 1 });
     expect(await unparkHookEventsForTarget('c-sup')).toBe(1);
     expect(mockPrisma.hookEvent.updateMany).toHaveBeenLastCalledWith({ where: { id: { in: ['p-busy'] }, status: 'pending' }, data: { retryAt: null } });
+  });
+});
+
+/* ====================================================================
+ * SAA-1.1 Phase 1 — THE SOURCE-RUN MUTATION GUARD (todo eb328629).
+ *
+ * These pin `sourceRunMutated` itself, which nothing exercised before: the
+ * policy suite pinned the `sourceRunMutated` INPUT but never the derivation that
+ * produces it, so the 2026-11-03 review's blocker (a receipt MISS read as
+ * "provably quiet") was invisible to the whole chain even with CI green.
+ *
+ * THE CONTRACT UNDER TEST: this function may PROVE a run mutated; it may NEVER
+ * prove a run was quiet. Receipt rows exist for only 21 of the 91 mutating tools
+ * (`RECEIPT_TOOLS` vs `PLATFORM_MUTATING_TOOLS`), so a miss means "cannot rule it
+ * out" → null → the policy delivers. Suppression is only on proof.
+ * ==================================================================== */
+describe('sourceRunMutated — proof of action, never proof of quiet', () => {
+  const completedRow = (over: any = {}) => ({
+    id: 'e1', eventType: 'run_completed',
+    payload: { sourceChatId: 'c-src', summary: 'Run finished fine', runId: 'r1' },
+    ...over,
+  });
+
+  beforeEach(() => {
+    mockPrisma.runToolReceipt.findMany.mockReset();
+    mockPrisma.runToolReceipt.findMany.mockResolvedValue([]);
+  });
+
+  it('a mutating receipt PROVES the run acted', async () => {
+    mockPrisma.runToolReceipt.findMany.mockResolvedValue([{ tool: 'todo_update' }]);
+    expect(await sourceRunMutated([completedRow()])).toBe(true);
+  });
+
+  it('NO receipts is UNKNOWN, not quiet — the blocker this guard shipped with', async () => {
+    // The failure this pins: a run whose ONLY action was a non-receipted tool
+    // (hook_subscribe / infra_action / set_session_model / delete_chat …) leaves
+    // zero receipt rows. Returning `false` here reads that run as "provably
+    // quiet" and suppresses the wake — the ORIGINAL defect through a new door.
+    mockPrisma.runToolReceipt.findMany.mockResolvedValue([]);
+    expect(await sourceRunMutated([completedRow()])).toBeNull();
+  });
+
+  it('a row with no runId is UNKNOWN, not quiet', async () => {
+    const r = completedRow();
+    r.payload = { sourceChatId: 'c-src', summary: 'no run id here' };
+    expect(await sourceRunMutated([r])).toBeNull();
+    expect(mockPrisma.runToolReceipt.findMany).not.toHaveBeenCalled();
+  });
+
+  it('a throwing lookup is UNKNOWN (fail-safe = deliver, never suppress)', async () => {
+    mockPrisma.runToolReceipt.findMany.mockRejectedValue(new Error('db down'));
+    expect(await sourceRunMutated([completedRow()])).toBeNull();
+  });
+
+  it('the lookup is scoped to the SOURCE run id the batch names', async () => {
+    await sourceRunMutated([completedRow(), completedRow({ id: 'e2', payload: { runId: 'r2' } })]);
+    expect(mockPrisma.runToolReceipt.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ runId: { in: ['r1', 'r2'] } }),
+    }));
+  });
+
+  it('non-run_completed rows contribute no run id (todo_done carries no source run)', async () => {
+    await sourceRunMutated([completedRow({ eventType: 'todo_done' })]);
+    expect(mockPrisma.runToolReceipt.findMany).not.toHaveBeenCalled();
+  });
+
+  it('a bounded, name-restricted query — the cap cannot be starved by observe tools', async () => {
+    // The pre-review query was `{ runId: { in } , ok: true }, take: 500` with no
+    // orderBy: in any run busier than the cap, arbitrary heap order could drop
+    // the one real action. Restricting to mutating names bounds MATCHING rows.
+    await sourceRunMutated([completedRow()]);
+    const arg = mockPrisma.runToolReceipt.findMany.mock.calls[0][0];
+    expect(arg.take).toBe(50);
+    expect(arg.where.tool.in).toContain('todo_update');
+    // `ok` is deliberately NOT filtered: a staged/refused delete_chat still
+    // proves the run reached for a mutation.
+    expect(arg.where.ok).toBeUndefined();
   });
 });

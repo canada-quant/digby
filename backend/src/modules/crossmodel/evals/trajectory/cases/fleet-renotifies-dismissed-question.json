@@ -33,7 +33,7 @@
         "content": "[Owner inbox] The owner dismissed this flagged question — stop raising it: \"AGX rebuild — one 2-minute hands-on step only you can do. The JetPack 6.2.3 reflash is DONE and verified, and every machine-side input is staged. But the first-boot setup wizard on the AGX's screen has been parked ~4 hours waiting for physical input — no agent can reach the box until it's finished. How do you want to unblock it?\""
       }
     ],
-    "message": "[MACHINE-TRIGGERED RUN — a hook wake (run_completed), NOT a human-typed message. Current time: 2026-10-06T00:49:30Z — this is the ONLY trustworthy clock.]\n\nrun_completed: chat b92ef13f-c3f8-487e-8267-767e56543150 \"Nightly R&D queue\" (crossmodel) — the nightly pass closed: ticket 2bae9728 (spawned sessions never receive their first instruction) is pinned to code with a fix handoff; 1 of 6 queue steps shipped.\nrun_completed: chat 88ced668-5686-4af4-86e3-3c04f43379da \"AGX rebuild\" (cql-agx-orin64) — waiting on the first-boot wizard; watcher armed on the flash host.\n\nOwner questions open: see list_owner_questions."
+    "message": "[MACHINE-TRIGGERED RUN — a hook wake (run_completed), NOT a human-typed message. Current time: 2026-10-06T00:49:30Z — this is the ONLY trustworthy clock.]\n\nrun_completed: chat b92ef13f-c3f8-487e-8267-767e56543150 \"Nightly R&D queue\" (crossmodel) — the nightly pass closed: ticket 2bae9728 (spawned sessions never receive their first instruction) is pinned to code with a fix handoff; 1 of 6 queue steps shipped.\nrun_completed: chat 88ced668-5686-4af4-86e3-3c04f43379da \"AGX rebuild\" (cql-accelerator) — waiting on the first-boot wizard; watcher armed on the flash host.\n\nOwner questions open: see list_owner_questions."
   },
   "fixtures": [
     {

@@ -212,19 +212,14 @@ describe('ensureRepoMirror shallow-mirror heal (ticket b3a35131)', () => {
     expect(c.some((a) => a[0] === 'fetch' && a[1] === '--unshallow')).toBe(false);
   });
 
-  it('kill-switch WORKSPACE_UNSHALLOW_DISABLED=1 skips the unshallow FETCH but keeps the probe (d6110694: the prune reads the same probe result)', async () => {
-    process.env.WORKSPACE_UNSHALLOW_DISABLED = '1';
-    try {
-      execFileMock.mockImplementation((_cmd: string, args: string[], _opts: any, cb: any) =>
-        cb(null, { stdout: 'true\n', stderr: '' }),
-      );
-      await ensureRepoMirror(PROJECT, 'https://github.com/a/x.git', null);
-      const c = calls();
-      expect(c.some((a) => a[1] === '--is-shallow-repository')).toBe(true);
-      expect(c.some((a) => a[1] === '--unshallow')).toBe(false);
-    } finally {
-      delete process.env.WORKSPACE_UNSHALLOW_DISABLED;
-    }
+  it('a SHALLOW mirror is probed and healed by a single unshallow FETCH, then the residue prune runs (d6110694: the prune reads the same probe result)', async () => {
+    execFileMock.mockImplementation((_cmd: string, args: string[], _opts: any, cb: any) =>
+      cb(null, { stdout: 'true\n', stderr: '' }),
+    );
+    await ensureRepoMirror(PROJECT, 'https://github.com/a/x.git', null);
+    const c = calls();
+    expect(c.some((a) => a[1] === '--is-shallow-repository')).toBe(true);
+    expect(c.some((a) => a[1] === '--unshallow')).toBe(true);
   });
 });
 
@@ -236,7 +231,7 @@ describe('ensureRepoMirror shallow-mirror heal (ticket b3a35131)', () => {
 // killed) is the same one, so callers still branch on it.
 describe('git() rethrows a credential-scrubbed error (T7)', () => {
   const FAKE_GHO = 'gho_' + 'FAKEfakeFAKEfakeFAKEfakeFAKEfake9012';
-  const AUTHED = `https://x-access-token:${FAKE_GHO}@github.com/canada-quant/repo.git`;
+  const AUTHED = `https://x-access-token:${FAKE_GHO}@github.com/example-org/repo`;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -260,7 +255,7 @@ describe('git() rethrows a credential-scrubbed error (T7)', () => {
     try { await git(['remote', 'set-url', 'origin', AUTHED], '/tmp/mirror'); } catch (e) { caught = e; }
     expect(caught).toBeInstanceOf(Error);
     expect(caught.message).not.toContain(FAKE_GHO);
-    expect(caught.message).toContain('https://***@github.com/canada-quant/repo.git');
+    expect(caught.message).toContain('https://***@github.com/example-org/repo');
     expect(caught.message).toContain("No such remote 'origin'");
     expect(caught.cmd).not.toContain(FAKE_GHO);
     expect(caught.code).toBe(2);

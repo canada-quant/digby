@@ -53,7 +53,9 @@
  *                   answer in what is left (round 4).
  *   stallConfirmed: the STRONG signal — a timeout inside a saturated window, or wireLateMs ≥
  *                   stallConfirmLateMs(budget) = max(DECISION_STALL_CONFIRM_LATE_MIN_MS,
- *                   DECISION_STALL_CONFIRM_LATE_SHARE × budget). Only this exempts a row from the streak / sweep, and
+ *                   DECISION_STALL_CONFIRM_LATE_SHARE × budget), or (round 5) a timeout whose OWN window was too short
+ *                   to judge while the ASK's whole leg phase was saturated. Only this exempts a row from the streak /
+ *                   sweep, and
  *                   (round 4) only this buys a retry while a later leg could still answer: a 50 ms-late timer says the
  *                   loop was blocked for 50 ms, not that the other ~1,950 ms of a 2,000 ms budget went unanswered
  *                   because of it.
@@ -80,7 +82,8 @@
  *     An HTTP error, a refused connection, a parse error or a timeout on a free loop is never retried.
  *   - an ask whose every timed-out leg is a CONFIRMED stall (and nothing else failed) still writes its all_legs_failed
  *     row, with cause 'stall'. It does not advance the streak alert, and the infra-watch sweep does not count it
- *     either (the sweep re-checks the evidence on the row). A process that stalls is not a backend that is down; a
+ *     either (the sweep re-checks the evidence on the row, and reads the row's own ask window for a leg the stall
+ *     starved — round 5). A process that stalls is not a backend that is down; a
  *     backend that hangs on a free loop is, and counts (cause egress / mixed) exactly as before.
  * Pure leaf (perf_hooks, plus the one setImmediate of the dispatch probe): decide() and the
  * infra-watch sweep share one verdict and one switch.
@@ -261,6 +264,36 @@ function loopSaturated(busy: LoopBusy | null | undefined): boolean {
   return !!busy && busy.activeMs >= DECISION_STALL_BUSY_MIN_MS && busy.utilization >= DECISION_STALL_BUSY_UTILIZATION;
 }
 
+/** Round 5 (ticket 91912bee): the ask's WHOLE leg phase, as decide() already records it on the row (loopBusyMs /
+ *  loopBusy) — the same meter and the same two thresholds as a leg window, read over the ask instead of one leg. */
+export interface AskLoopWindow {
+  /** Event-loop active ms across the ask's leg phase. */
+  activeMs?: number;
+  /** activeMs / window, 0..1. */
+  utilization?: number;
+}
+
+/** Pure: the ask's leg phase was saturated (≥ DECISION_STALL_BUSY_MIN_MS active, ≥ DECISION_STALL_BUSY_UTILIZATION busy). */
+export function askWindowSaturated(w: AskLoopWindow | null | undefined): boolean {
+  if (!w || typeof w !== 'object') return false;
+  const a = w.activeMs;
+  const u = w.utilization;
+  return typeof a === 'number' && Number.isFinite(a) && a >= DECISION_STALL_BUSY_MIN_MS
+    && typeof u === 'number' && Number.isFinite(u) && u >= DECISION_STALL_BUSY_UTILIZATION;
+}
+
+/** Round 5: the leg's own window is structurally too SHORT for the per-leg rule to judge — its measured active ms never
+ *  reached DECISION_STALL_BUSY_MIN_MS (so `loopSaturated` can only ever answer false however hot it ran), or the window
+ *  was never measured. A leg the stall itself starved lands here: it was handed a residual under its own minimum, so
+ *  its whole life fits inside the floor. A leg with a REAL window that was NOT saturated is judged by its own evidence
+ *  and never covered by the ask — that is a backend that hung on a free-ish loop and still counts as egress. */
+function legWindowUnjudgeable(leg: { busyMs?: number }, askStalled: boolean): boolean {
+  if (!askStalled) return false;
+  const active = leg?.busyMs;
+  if (typeof active !== 'number' || !Number.isFinite(active)) return true;
+  return active < DECISION_STALL_BUSY_MIN_MS;
+}
+
 /** Pure, the cheap signal: a timeout is stall-explained when it landed late or the loop was saturated over the leg window. */
 export function stallExplains(failure: LegFailure, lateMs: number, busy: LoopBusy | null | undefined): boolean {
   if (failure !== 'timeout') return false;
@@ -387,6 +420,27 @@ export function stallRetryDeadline(input: StallRetryInput): number | null {
   return Math.min(deadlineAt, now + share);
 }
 
+/** Round 5 (ticket 91912bee): is THIS timed-out leg a confirmed event-loop stall, reading the leg's own window and —
+ *  when that window cannot answer — the ask's? THREE ways to confirm, all from the same meter and thresholds:
+ *    · the leg's own window was saturated (round 2, unchanged);
+ *    · its timer fired late past max(200 ms, 25 % of its budget) from dispatch (round 3, unchanged);
+ *    · ROUND 5: the ask's whole leg phase was saturated AND this leg's window was too short to judge (unmeasured, or
+ *      less than DECISION_STALL_BUSY_MIN_MS active, so `loopSaturated` could only ever answer false).
+ *  Why the third is not a weakening: a leg the stall itself STARVED lands there structurally. The first leg's late timer
+ *  eats the shared deadline, so every later leg is handed a residual under its own minimum and its entire life fits
+ *  inside the 200 ms floor — it can never be "saturated" no matter how hot the loop ran. Measured on the 2026-11-04
+ *  burst (four prod rows, ask windows 100 % busy for 1154 / 1282 / 1242 / 1270 ms): the timed-out legs that read
+ *  unconfirmed had windows of 136 / 169 / 190 / 199 ms, every one at busy 1.0 — the 199 ms one missed the floor by ONE
+ *  millisecond — so the ask classified 'mixed', a pure event-loop stall advanced the streak 1→4, and the
+ *  decision-backend-down alert fired. A leg with a REAL window that was NOT saturated keeps its own verdict: a backend
+ *  that hung on a free-ish loop is still egress and still counts (the 238 ms leg at busy 1.0 in the same burst was
+ *  already confirmed by its own evidence and is unchanged by this round). */
+export function legStallConfirmedUnderAsk(leg: { failure?: string; stallConfirmed?: boolean; busyMs?: number } | null | undefined, askWindow?: AskLoopWindow | null): boolean {
+  if (!leg || typeof leg !== 'object' || leg.failure !== 'timeout') return false;
+  if (leg.stallConfirmed === true) return true;
+  return legWindowUnjudgeable(leg, askWindowSaturated(askWindow));
+}
+
 /**
  * Why EVERY leg of an ask failed:
  *   stall    — every leg that called timed out and every one of those timeouts is a CONFIRMED stall;
@@ -396,14 +450,16 @@ export function stallRetryDeadline(input: StallRetryInput): number | null {
  *   mixed    — timeouts next to provider errors, or confirmed-stall timeouts next to unconfirmed ones;
  *   budget   — no leg got to call at all (the deadline was gone before the first post).
  * Only 'stall' is exempt from the streak alert. A mixed burst still counts.
+ * `askWindow` (round 5) is the ask's own loop reading — decide() already records it on the row. Without it (the
+ * pre-round-5 calls, the tests that pass legs only) every leg is judged by its own window exactly as before.
  */
 export type AllFailedCause = 'stall' | 'egress' | 'provider' | 'mixed' | 'budget';
-export function classifyAllLegsFailed(legs: ReadonlyArray<Pick<LegTiming, 'failure' | 'stallConfirmed'>>, latchedSkips = 0): AllFailedCause {
+export function classifyAllLegsFailed(legs: ReadonlyArray<Pick<LegTiming, 'failure' | 'stallConfirmed' | 'busyMs'>>, latchedSkips = 0, askWindow?: AskLoopWindow | null): AllFailedCause {
   const timeouts = legs.filter(l => l.failure === 'timeout');
   const providerSide = legs.filter(l => l.failure === 'error').length + Math.max(0, latchedSkips);
   if (!timeouts.length) return providerSide > 0 ? 'provider' : 'budget';
   if (providerSide > 0) return 'mixed';
-  const stalled = timeouts.filter(l => l.stallConfirmed).length;
+  const stalled = timeouts.filter(l => legStallConfirmedUnderAsk(l, askWindow)).length;
   if (stalled === timeouts.length) return 'stall';
   if (stalled === 0) return 'egress';
   return 'mixed';
@@ -421,13 +477,18 @@ export function isStallRetryLegError(entry: unknown): boolean {
 /** Pure: a stored decision_gate_backend_down row that must NOT count toward the all-failed streak (the infra-watch
  *  sweep's twin of decide()'s in-process exemption). Round 2: the sweep re-checks the evidence on the row — cause
  *  'stall' AND legTimings carrying at least one timed-out attempt, every one of them `stallConfirmed: true` — so a
- *  row without the confirming measurement counts. Honours the kill switch of the reading process. */
+ *  row without the confirming measurement counts. Round 5 (ticket 91912bee): the row's OWN ask reading (loopBusyMs /
+ *  loopBusy, which decide() has always recorded) confirms a timed-out leg whose window was too short to judge — the
+ *  same rule decide() applies, so the sweep and the in-process streak can never disagree about one row. Honours the
+ *  kill switch of the reading process. */
 export function isStallExemptAllFailedRow(meta: any, env: NodeJS.ProcessEnv = process.env): boolean {
   if (decisionStallRecoveryDisabled(env)) return false;
   if (!meta || typeof meta !== 'object' || meta.event !== 'all_legs_failed' || meta.cause !== 'stall') return false;
   const legs: any[] = Array.isArray(meta.legTimings) ? meta.legTimings : [];
   const timeouts = legs.filter(l => l && typeof l === 'object' && l.failure === 'timeout');
-  return timeouts.length > 0 && timeouts.every(l => l.stallConfirmed === true);
+  if (!timeouts.length) return false;
+  const askWindow: AskLoopWindow = { activeMs: meta.loopBusyMs, utilization: meta.loopBusy };
+  return timeouts.every(l => legStallConfirmedUnderAsk(l, askWindow));
 }
 
 /** The short clause the all-failed alert / log line carries for a cause. */

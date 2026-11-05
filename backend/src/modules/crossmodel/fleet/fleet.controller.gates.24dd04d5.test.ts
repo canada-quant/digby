@@ -39,8 +39,8 @@ jest.mock('../../../middleware/error-handler', () => ({
 jest.mock('../../../config/redis', () => ({ __esModule: true, default: { get: jest.fn(async () => null), set: jest.fn(async () => 'OK') } }));
 jest.mock('../../../config/database', () => ({ __esModule: true, default: {} }));
 
-// view-mode's debug-emails bypass: default allowlist = claudebot@digby.example.com.
-process.env.VIEW_MODE_DEBUG_EMAILS = 'claudebot@digby.example.com';
+// view-mode's debug-emails bypass: default allowlist = claudebot@digby.ai.
+process.env.VIEW_MODE_DEBUG_EMAILS = 'claudebot@digby.ai';
 
 const service = {
   getFleetLog: jest.fn(),
@@ -139,7 +139,7 @@ describe('GET /fleet/log — minimal view filters harness chrome (ticket 24dd04d
     service.getFleetLog.mockResolvedValue({ messages: [logRow({ summary: STRUCK_SUMMARY })], hasMore: false });
     const { res } = await call(
       controller.getLog.bind(controller),
-      { id: 'u4', role: 'USER', email: 'claudebot@digby.example.com' },
+      { id: 'u4', role: 'USER', email: 'claudebot@digby.ai' },
       {},
       { 'x-digby-view': 'full' },
     );

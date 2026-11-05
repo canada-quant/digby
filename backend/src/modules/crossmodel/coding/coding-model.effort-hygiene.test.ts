@@ -36,7 +36,7 @@ import { __resetLearnedToolLimitsForTests } from './provider-limits';
 const mockPost = (axios as any).post as jest.Mock;
 
 const EFFORT_400 = "litellm.BadRequestError: OpenAIException - Function tools with reasoning_effort are not supported for gpt-6-astra in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.";
-const CUSTOM: ProviderConfig = { url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk-cql', model: 'api-openai-gpt-6-astra', label: 'cql-litellm (custom endpoint)', extra: { reasoning_effort: 'high', thinking: { type: 'enabled' } }, reasoningEffort: 'auto' };
+const CUSTOM: ProviderConfig = { url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk-cql', model: 'api-openai-gpt-6-astra', label: 'cql-litellm (custom endpoint)', extra: { reasoning_effort: 'high', thinking: { type: 'enabled' } }, reasoningEffort: 'auto' };
 const BUILTIN: ProviderConfig = { url: 'https://api.z.ai/api/paas/v4/chat/completions', apiKey: 'k', model: 'glm-5.3', label: 'ZAI direct', extra: { thinking: { type: 'enabled' }, reasoning_effort: 'max' } };
 const tool = (name: string) => ({ type: 'function', function: { name, description: name, parameters: { type: 'object', properties: {} } } });
 const http400 = (body: string) => Object.assign(new Error('Request failed with status code 400'), { response: { status: 400, data: Readable.from([`{"error":{"message":${JSON.stringify(body)}}}`]) } });

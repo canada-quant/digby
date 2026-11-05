@@ -254,9 +254,18 @@ export class CrossModelService {
     userId: string,
     page: number = 1,
     limit: number = 20,
-    filters?: { q?: string; projectId?: string; mode?: string; archived?: boolean; updatedAfter?: Date; archivedAny?: boolean },
+    filters?: { q?: string; projectId?: string; mode?: string; archived?: boolean; updatedAfter?: Date; archivedAny?: boolean; excludeProjectIds?: readonly string[] },
   ) {
     const skip = (page - 1) * limit;
+
+    // SUPERVISION SCOPE (ticket 03d14b78): the Fleet Supervisor's machine-run
+    // reads subtract the owner's opted-out projects at the WHERE level, so
+    // pagination/totals stay honest (a post-filter would leave a page short and
+    // a `total` that counts rows the caller may not see). Empty ⇒ no clause.
+    // An explicit projectId naming an opted-out project is refused at the TOOL
+    // layer; here the AND-ed exclusion simply yields zero rows, so no caller can
+    // ever widen past the scope by passing a projectId.
+    const excludedProjectIds = (filters?.excludeProjectIds ?? []).filter(Boolean);
 
     const memberProjectIds = (
       await prisma.projectMember.findMany({
@@ -291,6 +300,13 @@ export class CrossModelService {
               : {}
             : chatArchiveExclusion(hiddenProjectIds)),
         };
+    // Supervision scope (03d14b78): subtract opted-out projects on BOTH arms.
+    // `notIn` alone would drop the ungrouped (projectId null) chats — SQL NULL
+    // never satisfies NOT IN — so the null arm is spelled out explicitly.
+    if (excludedProjectIds.length) {
+      const scopeClause = { OR: [{ projectId: null }, { projectId: { notIn: excludedProjectIds } }] };
+      whereClause.AND = [...(Array.isArray(whereClause.AND) ? whereClause.AND : whereClause.AND ? [whereClause.AND] : []), scopeClause];
+    }
     // The bare visibility scope (before any narrowing filter) — the lineage
     // completion below re-uses it so a pulled-in ancestor is exactly as
     // visible to the caller as any listed row.
@@ -456,7 +472,7 @@ export class CrossModelService {
       // Sidebar schedule indicator: ONE batched query for the whole page (never
       // per-chat — the chat list is a hot path). Chats with at least one ENABLED
       // schedule row get hasActiveSchedule.
-      prisma.codingSchedule.groupBy({
+      prisma.chatSchedule.groupBy({
         by: ['sessionId'],
         where: { sessionId: { in: pageIds }, enabled: true },
       }).catch(() => [] as Array<{ sessionId: string }>),

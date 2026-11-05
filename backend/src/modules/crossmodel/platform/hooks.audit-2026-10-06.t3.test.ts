@@ -39,7 +39,7 @@ const mockPrisma: any = {
     count: jest.fn(async () => 0),
   },
   projectTodo: { findUnique: jest.fn(), count: jest.fn(async () => 1) },
-  codingSchedule: { count: jest.fn(async () => 1) },
+  chatSchedule: { count: jest.fn(async () => 1) },
   crossModelProject: { findUnique: jest.fn() },
   crossModelChat: { findUnique: jest.fn(), findMany: jest.fn(async () => []), update: jest.fn(async () => ({})) },
   crossModelMessage: { create: jest.fn(async () => ({})), findMany: jest.fn(async () => []) },

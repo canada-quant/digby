@@ -55,6 +55,7 @@ jest.mock('../platform/loop-metrics.service', () => ({
 
 import * as path from 'path';
 import { runVerifyChain, readDigbyConfig } from './verify.service';
+import { isExportTree } from '../../../utils/export-mode';
 
 const TSC_KILLED = { stdout: 'Killed\n__DIGBY_EXIT__ 137', stderr: '' };
 
@@ -133,4 +134,22 @@ describe('verify environmental streak replay (ticket 9c1ed093 — the exit-137 t
     expect(exec).toHaveBeenCalledTimes(1);  // the reap only — zero doomed legs
   });
 
+  it('ROOT-CAUSE pin (e4edffa3 / PR #957): the repo verify config caps the full-jest stage at --maxWorkers=2 (b73b1460: the cap moved into the verify-scoped wrapper — pinned here by the wrapper route)', async () => {
+    const root = path.resolve(__dirname, '../../../../..');
+    // EXPORT TREE (todo 13069ce2, 2026-11-05): this pin reads `.digby/config.json`,
+    // which the public export drops wholesale — so in an export the read returns
+    // null for a reason that is NOT a verify-config regression. Assert the
+    // ABSENCE rather than skipping outright: that keeps a real pin in both
+    // trees (a dropped config must read as null, not throw), and it fails if a
+    // future exporter ever ships the private config by accident.
+    if (isExportTree(root)) {
+      expect(await readDigbyConfig(root)).toBeNull();
+      return;
+    }
+    const config = await readDigbyConfig(root);
+    expect(config).not.toBeNull();
+    const testCmd = config?.commands?.test ?? '';
+    expect(testCmd).toContain('verify-scoped.ts --stage test');
+    expect(testCmd).not.toMatch(/\bnpx\s+jest\b/); // review F6: ANY bare npx jest in the config string would be an UNCAPPED spawn
+  });
 });

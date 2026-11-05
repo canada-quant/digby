@@ -32,7 +32,6 @@
  * dedupe and the metric are shared; the metric row says `delivery:'card'`
  * and one `handoff_parent_wake_skipped {reason:'failed_card_flipped'}` row
  * is recorded. Fail-open: a row-post failure falls back to the wake.
- * TASK_CARD_DISABLED=1 falls back to the wake too.
  */
 
 import prisma from '../../../config/database';
@@ -161,7 +160,6 @@ async function deliverPlainParentFailure(
 ): Promise<{ messageId: string; cardFlipped: boolean } | null> {
   const handoff = await import('./deliverable-handoff');
   const te = await import('../chat-agent/task-events');
-  if (te.taskCardDisabled()) return null;
   const cause = String(input.cause ?? '').replace(/\s+/g, ' ').replace(/^Coding run failed:\s*/i, '').trim().slice(0, 300);
   const payload = te.buildTaskEvent({
     taskId: handoff.taskIdForSession(child.id),

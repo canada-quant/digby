@@ -717,6 +717,31 @@ export async function recentAutoDemotes(days = ROLLOUT_DEMOTE_WINDOW_DAYS, now =
 }
 
 /**
+ * Pure: the "next readiness firing" clause appended to the waiting line
+ * (FO 2026-11-05). The waiting branch fires on EVERY hourly rollout pass that
+ * falls between the readiness job's own firings — the job's default cadence is
+ * 360 min, so five passes in six land here — and the bare "waiting for a fresher
+ * readiness report" line reads as a STALL. It has now cost two investigations
+ * while the job was demonstrably healthy: the 2026-10-04 one (FO firing 78,
+ * which added the liveness stamp below) and a supervisor escalation on
+ * 2026-11-05 whose only finding was that `cron_jobs['decision-gate-readiness']`
+ * was enabled with lastFiredAt 00:37:39Z and nextRunAt 06:37:39Z. Naming the
+ * due time makes a healthy idle legible without changing what the pass DOES.
+ *
+ * Pure and total: an absent/unparseable timestamp or a nonsense interval yields
+ * '' so the waiting line stays exactly as it was before this clause existed
+ * (fail-open — a status string must never be able to break the pass).
+ */
+export function readinessNextDueSummary(computedAt: string | null | undefined, intervalSec: number): string {
+  if (!computedAt || !Number.isFinite(intervalSec) || intervalSec <= 0) return '';
+  const t = Date.parse(computedAt);
+  if (Number.isNaN(t)) return '';
+  const due = new Date(t + intervalSec * 1000);
+  if (Number.isNaN(due.getTime())) return '';
+  return `; next readiness firing due ${due.toISOString()}`;
+}
+
+/**
  * ONE pass. Returns a ≤ 200-char summary for cron_jobs.lastStatus. NEVER throws.
  */
 export async function runDecisionGateRolloutOnce(opts: RolloutRunOptions = {}): Promise<string> {
@@ -735,12 +760,12 @@ export async function runDecisionGateRolloutOnce(opts: RolloutRunOptions = {}): 
       await writeRolloutState(state).catch(() => {});
       return state.lastSummary;
     }
-    const { readReadinessStamp, readLatestReadinessReport } = await import('./decision-gate-readiness');
+    const { readReadinessStamp, readLatestReadinessReport, readinessIntervalSec } = await import('./decision-gate-readiness');
     const [modes, stamp, report] = await Promise.all([getDecisionModeConfig(opts.primaryOpts), readReadinessStamp(), readLatestReadinessReport()]);
     const computedAt = report?.computedAt ?? null;
     // Once per readiness firing: a report the previous pass already judged is a no-op.
     if (computedAt && state.lastReadinessComputedAt && computedAt <= state.lastReadinessComputedAt) {
-      const s = `waiting for a fresher readiness report (last judged ${state.lastReadinessComputedAt})`;
+      const s = `waiting for a fresher readiness report (last judged ${state.lastReadinessComputedAt}${readinessNextDueSummary(computedAt, readinessIntervalSec())}) — normal between readiness firings, not a stall`;
       // Liveness heartbeat (FO firing 78, 2026-10-04): this early-return used to
       // skip writeRolloutState entirely, so the status surface froze lastRunAt at
       // the last JUDGING pass while the job kept firing hourly — a healthy idle

@@ -359,11 +359,9 @@ describe('compaction v2 honesty (P6 — v1#18/v1#34)', () => {
     (storeFindings as jest.Mock).mockResolvedValue(1);
     (utilityChat as jest.Mock).mockClear();
     (utilityChat as jest.Mock).mockResolvedValue('RECAP: explored the repo, edited a.ts, ran tests (green).');
-    delete process.env.COMPACTION_V2_DISABLED;
   });
-  afterEach(() => { delete process.env.COMPACTION_V2_DISABLED; });
 
-  test('v1#18d: constants pinned; trigger at 70% of budget, kill switch restores the 100% cliff', () => {
+  test('v1#18d: constants pinned; trigger at 70% of budget', () => {
     const {
       COMPACTION_TRIGGER_RATIO, COMPACT_OLDEST_FRACTION, MAX_OFFLOAD_ITEMS_PER_COMPACTION,
       OFFLOAD_ITEM_TARGET_CHARS, SUMMARIZER_TAIL_CHARS, SUMMARIZER_HEAD_SAMPLE_CHARS,
@@ -377,8 +375,6 @@ describe('compaction v2 honesty (P6 — v1#18/v1#34)', () => {
     expect(SUMMARIZER_HEAD_SAMPLE_CHARS).toBe(2000);
     expect(STRIP_RECAP_MIN_STORED_RATIO).toBe(0.8);
     expect(compactionTriggerChars(100_000)).toBe(70_000);
-    process.env.COMPACTION_V2_DISABLED = '1';
-    expect(compactionTriggerChars(100_000)).toBe(100_000);
   });
 
   test('v1#18a: a huge middle offloads as MULTIPLE head+tail items (not one head-only 40k cut), bounded per compaction', async () => {
@@ -461,28 +457,6 @@ describe('compaction v2 honesty (P6 — v1#18/v1#34)', () => {
     expect(String(out![1].content)).toContain('NEWEST REAL QUESTION');
     expect(String(out![1].content)).not.toContain('OLD WAKE PROMPT');
     expect(String(out![1].content)).not.toContain('HARNESS NOTICE');
-  });
-
-  test('kill switch COMPACTION_V2_DISABLED=1 restores the v1 shape byte-for-byte: single offload item, oldest-user pin', async () => {
-    process.env.COMPACTION_V2_DISABLED = '1';
-    const msgs: any[] = [sys, user('the first user message')];
-    for (let i = 0; i < 6; i++) { msgs.push(asstCall(`t${i}`)); msgs.push(toolRes(`result ${i}`)); }
-    msgs.push(user('a newer user message'));
-    for (let i = 0; i < 6; i++) { msgs.push(asstCall(`u${i}`)); msgs.push(toolRes(`later result ${i}`)); }
-    const out = await compactMessages(msgs, 'sess-v1');
-    expect(out).not.toBeNull();
-    // v1 pinned messages[1] — the FIRST user message.
-    expect(String(out![1].content)).toBe('the first user message');
-    // v1 offload: exactly ONE item with the legacy ref, no opts.
-    const offload = (storeFindings as jest.Mock).mock.calls.find(
-      (c: any[]) => c[2]?.[0]?.ref === 'compacted earlier-run transcript');
-    expect(offload).toBeDefined();
-    expect(offload![2]).toHaveLength(1);
-    expect(offload![3]).toBeUndefined();
-    // v1 recap phrasing (no stored-counts note).
-    const recap = String(out!.find(m => typeof m.content === 'string' && String(m.content).startsWith('[EARLIER IN THIS RUN'))!.content);
-    expect(recap).not.toMatch(/stored [\d,]+ of/);
-    expect(recap).toContain('embedded to session memory');
   });
 });
 

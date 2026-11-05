@@ -24,7 +24,7 @@ const mockPrisma: any = {
   supervisorState: { findUnique: jest.fn(), upsert: jest.fn() },
   crossModelChat: { findUnique: jest.fn(), findFirst: jest.fn(async () => null) },
   projectTodo: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null) },
   agentRun: { groupBy: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null) },

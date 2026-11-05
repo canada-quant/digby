@@ -2,7 +2,7 @@
  * REPLAY — ticket 51ff7e93 "Deploy telemetry only covers the framework repo —
  * project lanes can't verify their own deploys".
  *
- * The mishap: the One Piece TCG publish lane (repo canada-quant/example-repo, prod
+ * The mishap: the One Piece TCG publish lane (repo example-org/optcg, prod
  * deckpose.com) called get_fleet_telemetry view 'deploy' to verify its own
  * deploy and got the FRAMEWORK repo's runs back (DEPLOY_REPO is hardcoded),
  * so it fell back to probing production directly — weaker evidence, per-lane
@@ -44,7 +44,7 @@ import {
 import { fetchRepoActionRuns, fetchRepoHead, DEPLOY_REPO, type RepoRunsResult } from './infra-watch.service';
 
 const NOW = new Date('2026-09-24T11:00:00.000Z');
-const OPTCG = 'canada-quant/example-repo';
+const OPTCG = 'example-org/optcg';
 
 const mkRun = (over: Record<string, any> = {}) => ({
   id: 35980000001,
@@ -54,7 +54,7 @@ const mkRun = (over: Record<string, any> = {}) => ({
   display_title: 'publish deckpose.com',
   created_at: '2026-09-24T09:40:00Z',
   updated_at: '2026-09-24T09:47:00Z',
-  html_url: 'https://github.com/canada-quant/example-repo/actions/runs/35980000001',
+  html_url: 'https://github.com/example-org/optcg/actions/runs/35980000001',
   path: '.github/workflows/publish.yml',
   name: 'publish',
   ...over,
@@ -77,7 +77,7 @@ describe('51ff7e93 · clampTelemetryArgs repo/ref validation', () => {
   });
 
   it('rejects anything that is not a plain owner/name slug (no path traversal, no query, no protocol)', () => {
-    for (const bad of ['canada-quant/example-repo/actions/runs', '../etc', 'https://api.github.com/x', 'DROP TABLE', 'canada-quant', 'a/b/c', 'owner/name?per_page=100']) {
+    for (const bad of ['example-org/optcg/actions/runs', '../etc', 'https://api.github.com/x', 'DROP TABLE', 'example-org', 'a/b/c', 'owner/name?per_page=100']) {
       expect(clampTelemetryArgs({ view: 'deploy', repo: bad })).toMatchObject({ error: expect.stringContaining("repo must be a GitHub slug 'owner/name'") });
     }
   });
@@ -108,7 +108,7 @@ describe('51ff7e93 · repo-scoped deploy view', () => {
     expect(out.runs[0]).toMatchObject({ id: 35980000001, sha: 'abcd1234', status: 'completed', conclusion: 'success', workflow: 'publish.yml' });
     expect(out.inFlight).toBe(false);
     expect(out.boxes).toBeUndefined(); // box_health rows are the FRAMEWORK's boxes — never shown against a foreign repo
-    expect(out.reading).toContain('canada-quant/example-repo main head is abcd1234.');
+    expect(out.reading).toContain('example-org/optcg main head is abcd1234.');
     expect(out.reading).toContain('Last completed Actions run: abcd1234 (publish.yml) → success');
   });
 
@@ -123,7 +123,7 @@ describe('51ff7e93 · repo-scoped deploy view', () => {
 
   it('an inaccessible repo is an ACCESS ERROR, never a silent empty run list', async () => {
     const out: any = await fleetTelemetry(
-      { view: 'deploy', repo: 'canada-quant/private-not-yours' },
+      { view: 'deploy', repo: 'example-org/repo' },
       {
         userId: 'owner', now: NOW,
         getGithubToken: async () => 'tok',
@@ -132,7 +132,7 @@ describe('51ff7e93 · repo-scoped deploy view', () => {
       },
     );
     expect(out.ok).toBe(false);
-    expect(out.error).toContain('cannot read Actions runs for canada-quant/private-not-yours');
+    expect(out.error).toContain('cannot read Actions runs for example-org/repo');
     expect(out.error).toContain('no access');
     expect(out.error).toContain('not "no runs"');
     expect(out.runs).toBeUndefined();
@@ -209,13 +209,13 @@ describe('51ff7e93 · fetchers (URL construction + error discrimination)', () =>
     const r = await fetchRepoActionRuns('tok', OPTCG, { perPage: 6, ref: 'main' });
     expect(r).toEqual({ ok: true, runs: [expect.objectContaining({ id: 35980000001 })] });
     const url = String(spy.mock.calls[0][0]);
-    expect(url).toBe(`https://api.github.com/repos/canada-quant/example-repo/actions/runs?per_page=6&branch=main`);
+    expect(url).toBe(`https://api.github.com/repos/example-org/optcg/actions/runs?per_page=6&branch=main`);
     expect(url).not.toContain('deploy.yml'); // a project repo may deploy through ANY workflow file
   });
 
   it('fetchRepoActionRuns discriminates 404 (access) and 403 from an empty list', async () => {
     fetchSpy(404, { message: 'Not Found' });
-    const missing = await fetchRepoActionRuns('tok', 'canada-quant/does-not-exist', {});
+    const missing = await fetchRepoActionRuns('tok', 'example-org/repo', {});
     expect(missing.ok).toBe(false);
     if (!missing.ok) {
       expect(missing.status).toBe(404);
@@ -250,7 +250,7 @@ describe('51ff7e93 · readRepoDeployPicture', () => {
       { id: 2, sha: 'aaaaaaaa', status: 'completed', conclusion: 'success', title: '', createdAt: '', updatedAt: '', url: '', workflow: 'publish.yml' },
     ];
     const text = readRepoDeployPicture(OPTCG, 'main', { sha: 'bbbbbbbb' }, runs as any);
-    expect(text).toContain('canada-quant/example-repo main head is bbbbbbbb.');
+    expect(text).toContain('example-org/optcg main head is bbbbbbbb.');
     expect(text).toContain('1 Actions run(s) in flight (bbbbbbbb publish.yml in_progress)');
     expect(text).not.toContain('box-a');
   });
@@ -260,7 +260,7 @@ describe('51ff7e93 · readRepoDeployPicture', () => {
       { id: 1, sha: 'cccccccc', status: 'completed', conclusion: 'failure', title: '', createdAt: '', updatedAt: '', url: '', workflow: 'publish.yml' },
     ];
     const text = readRepoDeployPicture(OPTCG, 'main', { sha: 'cccccccc' }, runs as any);
-    expect(text).toContain('No successful Actions run at all for canada-quant/example-repo');
+    expect(text).toContain('No successful Actions run at all for example-org/optcg');
     expect(text).toContain('main head cccccccc is NOT verified as deployed');
   });
 

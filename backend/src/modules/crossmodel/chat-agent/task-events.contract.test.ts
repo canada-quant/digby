@@ -11,8 +11,7 @@
  *     its content as a text part, the compact copy mirrored on metadata.task)
  *     and NEVER invents a row: the anchor is `messageId` or a row that already
  *     carries the task (review fixer 2026-09-28 — "the newest assistant row"
- *     is the wrong row once the user has sent another message);
- *   · TASK_CARD_DISABLED=1 makes both helpers inert.
+ *     is the wrong row once the user has sent another message).
  *
  * Named `.contract.test.ts` because branch B ships its own task-events.test.ts
  * (its module's internals); both suites run against the merged module.
@@ -57,7 +56,6 @@ function payload(over: Partial<TaskEventPayload> = {}): TaskEventPayload {
 
 afterEach(() => {
   jest.clearAllMocks();
-  delete process.env.TASK_CARD_DISABLED;
 });
 
 describe('parseTaskEvent — the shared contract', () => {
@@ -126,18 +124,6 @@ describe('emitTaskEvent — one `task` frame on the chat live run', () => {
     startLiveRun(key);
     try { expect(emitTaskEvent(CHAT, payload({ kind: 'nope' as any }))).toBe(false); }
     finally { endLiveRun(key); }
-  });
-
-  it('is inert under TASK_CARD_DISABLED=1', () => {
-    process.env.TASK_CARD_DISABLED = '1';
-    const key = `chat:${CHAT}`;
-    startLiveRun(key);
-    const seen: string[] = [];
-    const unsub = subscribeRun(key, (e) => seen.push(e.type));
-    try {
-      expect(emitTaskEvent(CHAT, payload())).toBe(false);
-      expect(seen).not.toContain(TASK_EVENT_TYPE);
-    } finally { unsub?.(); endLiveRun(key); }
   });
 });
 
@@ -211,14 +197,10 @@ describe('persistTaskCard — ONE task part per taskId on the assistant row', ()
     expect(mockPrisma.crossModelMessage.update).not.toHaveBeenCalled();
   });
 
-  it('returns null on no row / DB failure / switch off — never throws', async () => {
+  it('returns null on no row or DB failure — never throws', async () => {
     mockPrisma.crossModelMessage.findMany.mockResolvedValue([]);
     await expect(persistTaskCard(CHAT, payload())).resolves.toBeNull();
     mockPrisma.crossModelMessage.findMany.mockRejectedValue(new Error('db down'));
     await expect(persistTaskCard(CHAT, payload())).resolves.toBeNull();
-    process.env.TASK_CARD_DISABLED = '1';
-    mockPrisma.crossModelMessage.findFirst.mockResolvedValue({ id: 'r', content: 'c', parts: [], metadata: null });
-    await expect(persistTaskCard(CHAT, payload(), { messageId: 'r' })).resolves.toBeNull();
-    expect(mockPrisma.crossModelMessage.update).not.toHaveBeenCalled();
   });
 });

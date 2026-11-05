@@ -52,7 +52,7 @@ export type Channel =
   | 'google_ads' | 'facebook_ads' | 'bing_ads' | 'tiktok_ads' | 'linkedin_ads' | 'other_paid'
   | 'organic_search' | 'social_organic' | 'email' | 'referral' | 'other_campaign' | 'direct';
 
-const OWN_HOST_RE = /(^|\.)digby\.example\.com$|^localhost$|^127\.0\.0\.1$/;
+const OWN_HOST_RE = /(^|\.)digby\.ai$|^localhost$|^127\.0\.0\.1$/;
 const SEARCH_HOST_RE = /(^|\.)(google\.[a-z.]+|bing\.com|duckduckgo\.com|search\.yahoo\.[a-z.]+|yahoo\.[a-z.]+|yandex\.[a-z.]+|baidu\.com|ecosia\.org|search\.brave\.com|startpage\.com|qwant\.com|naver\.com|seznam\.cz|kagi\.com)$/;
 const SOCIAL_HOST_RE = /(^|\.)(facebook\.com|fb\.com|fb\.me|instagram\.com|messenger\.com|t\.co|twitter\.com|x\.com|linkedin\.com|lnkd\.in|reddit\.com|youtube\.com|youtu\.be|tiktok\.com|pinterest\.[a-z.]+|threads\.net|bsky\.app|tumblr\.com|snapchat\.com|whatsapp\.com|discord\.com|news\.ycombinator\.com|quora\.com|mastodon\.social)$/;
 const WEBMAIL_HOST_RE = /^(mail\.google\.com|outlook\.live\.com|outlook\.office\.com|outlook\.office365\.com|mail\.yahoo\.com|mail\.proton\.me|app\.fastmail\.com|mail\.aol\.com)$/;

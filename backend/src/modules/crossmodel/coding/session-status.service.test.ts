@@ -16,9 +16,8 @@ jest.mock('../../../utils/logger', () => ({
 const mockPrisma: any = {
   crossModelChat: { findMany: jest.fn() },
   crossModelMessage: { findFirst: jest.fn(), create: jest.fn() },
-  codingMessage: { findFirst: jest.fn() },
   agentRun: { findMany: jest.fn() },
-  codingSchedule: { findMany: jest.fn() },
+  chatSchedule: { findMany: jest.fn() },
   ownerQuestion: { count: jest.fn(async () => 0) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
@@ -32,18 +31,10 @@ jest.mock('../platform/loop-metrics.service', () => ({
 
 const mockAppend: jest.Mock = jest.fn(async (d: any) => ({ id: 'msg-new', ...d }));
 const mockTouch: jest.Mock = jest.fn(async () => {});
-let mockDualWrite = true;
 jest.mock('./coding-data.service', () => ({
   __esModule: true,
   appendCodingMessage: (...a: any[]) => mockAppend(...a),
   touchChat: (...a: any[]) => mockTouch(...a),
-  transcriptDualWriteEnabled: () => mockDualWrite,
-  // MERGE-1 slice 1: the status card now resolves its table through the read-switch seam
-  // instead of keying on the dual-write flag. Driven by the SAME `mockDualWrite` toggle so
-  // both existing expectations keep their exact meaning: dual-write OFF means the mirror is
-  // empty and the real helper falls through to the legacy rows the writes land on, so the
-  // mock reports 'legacy'; dual-write ON serves the mirror ('merged').
-  pickTranscriptSource: async () => (mockDualWrite ? 'merged' : 'legacy'),
 }));
 const mockGetPlan: jest.Mock = jest.fn(async () => null);
 jest.mock('./plan.service', () => ({ __esModule: true, getPlan: (...a: any[]) => mockGetPlan(...a) }));
@@ -318,7 +309,7 @@ describe('emitSessionStatusUpdates — hourly, changed-only, appendCodingMessage
   function seed(opts: { runs?: any[]; prev?: any } = {}) {
     mockPrisma.crossModelChat.findMany.mockResolvedValue([chatRow]);
     mockPrisma.agentRun.findMany.mockResolvedValue(opts.runs ?? [{ sessionId: S1, status: 'completed', error: null, startedAt: SINCE, finishedAt: new Date(NOW.getTime() - 10 * 60_000) }]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findFirst.mockResolvedValue(opts.prev ?? null);
   }
 
@@ -346,16 +337,6 @@ describe('emitSessionStatusUpdates — hourly, changed-only, appendCodingMessage
     ] });
     expect(await emitSessionStatusUpdates({ now: NOW })).toEqual(expect.objectContaining({ candidates: 1, busy: 1, emitted: 0 }));
     expect(mockAppend).not.toHaveBeenCalled();
-  });
-
-  it('reads the previous card from coding_messages when the dual-write switch is off (same table the write targets)', async () => {
-    mockDualWrite = false;
-    try {
-      seed();
-      mockPrisma.codingMessage.findFirst.mockResolvedValue({ createdAt: new Date(NOW.getTime() - 20 * 60_000), metadata: { statusHash: 'x' } });
-      expect(await emitSessionStatusUpdates({ now: NOW })).toEqual(expect.objectContaining({ gated: 1, emitted: 0 }));
-      expect(mockPrisma.crossModelMessage.findFirst).not.toHaveBeenCalled();
-    } finally { mockDualWrite = true; }
   });
 
   it('idle sessions (no run touching the hour) get nothing; the 60-min gate suppresses; an unchanged status writes nothing', async () => {
@@ -390,7 +371,7 @@ describe('emitSessionStatusUpdates — hourly, changed-only, appendCodingMessage
       { sessionId: S1, status: 'completed', error: null, startedAt: SINCE, finishedAt: NOW },
       { sessionId: S2, status: 'completed', error: null, startedAt: SINCE, finishedAt: NOW },
     ]);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
     mockPrisma.crossModelMessage.findFirst.mockResolvedValue(null);
     mockAppend.mockImplementation(async (d: any) => { if (d.chatId === S1) throw new Error('boom'); return { id: 'ok', ...d }; });
     const r = await emitSessionStatusUpdates({ now: NOW });
@@ -415,7 +396,7 @@ describe('status card — merged and docs-only PR counts (tt-rd audit 2026-09-27
       { tool: 'merge_pull_request', ok: true, ids: { prNumber: 841, mergeSha: 'abc' } },
     ]);
     const r = await renderSessionStatus({
-      chatId: S1, sessionTitle: 'QB2 Speed Mission Successor', projectName: 'tt-rd',
+      chatId: S1, sessionTitle: 'node-a Speed Mission Successor', projectName: 'tt-rd',
       runs: [{ sessionId: S1, status: 'completed', error: null, startedAt: SINCE, finishedAt: NOW }],
       schedules: [], attention: { approvals: [], questions: [] }, since: SINCE, now: NOW,
     });

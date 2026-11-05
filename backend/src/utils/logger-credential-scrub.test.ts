@@ -16,7 +16,7 @@ jest.mock('../config/env', () => ({ env: { NODE_ENV: 'test' } }));
 const { scrubCredentials } = require('./logger') as typeof import('./logger');
 
 const FAKE_GHO = 'gho_' + 'FAKEfakeFAKEfakeFAKEfakeFAKEfake5678';
-const AUTHED = `https://x-access-token:${FAKE_GHO}@github.com/canada-quant/repo.git`;
+const AUTHED = `https://x-access-token:${FAKE_GHO}@github.com/example-org/repo`;
 
 class MemoryTransport extends Transport {
   records: any[] = [];
@@ -47,7 +47,7 @@ describe('logger scrubCredentials format', () => {
     expect(mem.records).toHaveLength(1);
     const rec = mem.records[0];
     expect(rec.message).not.toContain(FAKE_GHO);
-    expect(rec.message).toContain('https://***@github.com/canada-quant/repo.git');
+    expect(rec.message).toContain('https://***@github.com/example-org/repo');
     expect(rec.message).toContain("No such remote 'origin'");
     expect(rec[Symbol.for('level')]).toBe('warn');
     expect(typeof rec[Symbol.for('message')]).toBe('string');
@@ -59,15 +59,15 @@ describe('logger scrubCredentials format', () => {
     const err = new Error(`fatal: unable to access ${AUTHED}`);
     logger.error('mirror failed', { url: AUTHED, nested: { list: [AUTHED] }, err });
     const rec = mem.records[0];
-    expect(rec.url).toBe('https://***@github.com/canada-quant/repo.git');
+    expect(rec.url).toBe('https://***@github.com/example-org/repo');
     expect(rec.nested.list[0]).not.toContain(FAKE_GHO);
     expect(JSON.stringify(rec)).not.toContain(FAKE_GHO);
   });
 
   it('a credential-free record is untouched', () => {
     const { logger, mem } = makeLogger();
-    logger.warn('plain warning about https://github.com/canada-quant/repo.git', { a: 1 });
-    expect(mem.records[0].message).toBe('plain warning about https://github.com/canada-quant/repo.git');
+    logger.warn('plain warning about https://github.com/example-org/repo', { a: 1 });
+    expect(mem.records[0].message).toBe('plain warning about https://github.com/example-org/repo');
     expect(mem.records[0].a).toBe(1);
   });
 });

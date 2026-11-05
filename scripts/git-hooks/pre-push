@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+# pre-push guard: protect AI model IDs from autopilot "downgrade" drift.
+#
+# The nightly autopilot (a Cline/LLM agent whose training predates the current
+# model IDs) repeatedly mis-flags the live model IDs as "stale / Model not
+# found" and rewrites them to older IDs (e.g. gemini-2.5-pro-preview-06-05),
+# which 404s in production ("I had trouble generating a response").
+#
+# Model IDs are HUMAN-MANAGED. This hook rejects any push whose integration
+# files no longer contain the canonical model IDs. It catches every push path
+# (Cline self-push, nightly-agent, kanban-bridge, manual).
+#
+# Activated per-host via:  git config core.hooksPath scripts/git-hooks
+# If a model GENUINELY changes, a human must update the canonical list below.
+# ─────────────────────────────────────────────────────────────────────────────
+set -uo pipefail
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo .)"
+B="$ROOT/backend/src/modules/crossmodel/integrations"
+U="$ROOT/backend/src/utils"
+
+# file | canonical model-ID substring that MUST be present
+CHECKS=(
+  "$B/gemini.integration.ts|gemini-3.1-flash-lite"
+  "$B/gemini.integration.ts|gemini-3.1-pro-preview"
+  "$B/deepseek.integration.ts|deepseek-v4-flash"
+  "$B/deepseek.integration.ts|deepseek-v4-pro"
+  "$B/glm.integration.ts|glm-5.2"
+  "$B/moonshot.integration.ts|kimi-k2p6"
+  "$U/utility-llm.ts|deepseek-v4-flash"
+)
+
+bad=0
+for c in "${CHECKS[@]}"; do
+  f="${c%%|*}"; needle="${c#*|}"
+  [ -f "$f" ] || continue
+  if ! grep -qF -- "$needle" "$f"; then
+    echo "❌ pre-push BLOCKED: canonical model ID \"$needle\" missing from ${f#$ROOT/}" >&2
+    bad=1
+  fi
+done
+
+if [ "$bad" -ne 0 ]; then
+  cat >&2 <<'MSG'
+
+  ── AI model-ID drift detected — push REJECTED ──────────────────────────────
+  These model IDs are current, correct, and HUMAN-MANAGED. The nightly autopilot
+  has a known false-positive where it treats them as "stale / Model not found"
+  and downgrades them, which breaks production.
+  If a model TRULY changed, a human must update scripts/git-hooks/pre-push.
+  ────────────────────────────────────────────────────────────────────────────
+MSG
+  exit 1
+fi
+
+# ── sw.js release-hygiene reminder (NON-BLOCKING) ────────────────────────────
+# The service-worker CACHE_NAME bump + VERSION_MESSAGE is what fires the
+# auto-update reload for installed clients. The convention silently lapsed
+# 2026-07-12→08-24 (overseer finding): frontend shipped, nobody bumped, users
+# kept stale assets. Warn when a push changes user-visible frontend code
+# without bumping CACHE_NAME. Warn-only — docs-only or invisible changes are
+# legitimate skips.
+while read -r _lref lsha _rref rsha; do
+  # skip branch deletes and brand-new branches (no remote base to diff)
+  [ "$lsha" = "0000000000000000000000000000000000000000" ] && continue
+  [ "$rsha" = "0000000000000000000000000000000000000000" ] && continue
+  changed="$(git diff --name-only "$rsha" "$lsha" 2>/dev/null || true)"
+  [ -z "$changed" ] && continue
+  if printf '%s\n' "$changed" | grep -qE '^frontend/(app|components|lib|hooks)/' \
+     && ! printf '%s\n' "$changed" | grep -qx 'frontend/public/sw.js'; then
+    cat >&2 <<'MSG'
+
+  ⚠️  pre-push reminder (non-blocking): user-visible frontend files changed
+  without a frontend/public/sw.js bump. If this ships user-facing behavior,
+  bump CACHE_NAME (digby-vNNN) + VERSION_MESSAGE or installed clients keep
+  stale assets (auto-update reload fires only on a version change).
+  ────────────────────────────────────────────────────────────────────────────
+MSG
+  fi
+done
+exit 0

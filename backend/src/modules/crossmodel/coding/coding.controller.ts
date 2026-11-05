@@ -289,9 +289,8 @@ class CodingController {
     const { id } = req.params;
     const session = await getSessionForUser(id, userId, 'read', { includeProject: true });
     if (!session) return res.status(404).json({ error: 'Session not found' });
-    // P5-A read-switch: transcript comes from crossmodel_messages (default) or
-    // coding_messages (TRANSCRIPT_READ=legacy, or per-chat fallback until the
-    // backfill catches up) — same row shape either way.
+    // The transcript comes from crossmodel_messages — the only transcript table
+    // since MERGE-1 completed (2026-11-04); the legacy table is never read.
     // Paged transcript (2026-08-31 session-open perf): `messageLimit` returns the
     // NEWEST N rows + hasMoreMessages/nextMessagesBefore (pass as
     // `messagesBefore` for the next older page) — the session view always pages,
@@ -367,13 +366,9 @@ class CodingController {
     if (!Number.isInteger(idx) || idx < 0 || String(idx) !== partIndex) {
       return res.status(400).json({ error: 'Invalid part index' });
     }
-    // The transcript read-switch can serve either table — the row id family is
-    // shared (mirrors keep the legacy id), so probe merged first, then legacy.
-    const merged = await prisma.crossModelMessage.findUnique({
-      where: { id: messageId },
-      select: { chatId: true, parts: true },
-    });
-    const row = merged ?? await prisma.codingMessage.findUnique({
+    // `crossmodel_messages` is the only transcript table (MERGE-1 complete), so
+    // the row id resolves there and nowhere else.
+    const row = await prisma.crossModelMessage.findUnique({
       where: { id: messageId },
       select: { chatId: true, parts: true },
     });

@@ -40,7 +40,7 @@ const PENDING_POLL_MS = 3_000;
 export function CloudLinkSection() {
   const [status, setStatus] = useState<CloudLinkStatus | null>(null);
   const [loading, setLoading] = useState(true);
-  const [cloudUrl, setCloudUrl] = useState('https://digby.example.com');
+  const [cloudUrl, setCloudUrl] = useState('https://digby.ai');
   const [pairingCode, setPairingCode] = useState('');
   const [pairing, setPairing] = useState(false);
   // Device activation: the code this instance minted, shown ONCE (the server
@@ -251,7 +251,7 @@ export function CloudLinkSection() {
               id="cl-url"
               value={cloudUrl}
               onChange={e => setCloudUrl(e.target.value)}
-              placeholder="e.g. digby.example.com or https://digby.example.com"
+              placeholder="e.g. digby.ai or https://digby.ai"
             />
           </div>
           <div className="flex justify-end">

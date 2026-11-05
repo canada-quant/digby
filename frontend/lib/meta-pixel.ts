@@ -101,7 +101,7 @@ export function persistFbcFromUrl(
     const existing = readCookie(win.document, FBC_COOKIE);
     if (existing && existing.endsWith(`.${fbclid}`)) return existing;
     const host = win.location.hostname;
-    const domain = /(^|\.)digby\.example\.com$/.test(host) ? '; Domain=.digby.example.com' : '';
+    const domain = /(^|\.)digby\.ai$/.test(host) ? '; Domain=.digby.ai' : '';
     const secure = win.location.protocol === 'https:' ? '; Secure' : '';
     win.document.cookie = `${FBC_COOKIE}=${fbc}; Max-Age=${FBC_MAX_AGE_S}; Path=/; SameSite=Lax${domain}${secure}`;
     return fbc;

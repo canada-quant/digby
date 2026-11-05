@@ -6,7 +6,7 @@
  * Before this leaf nothing told the admin WHICH features were dark or how to
  * light them: the Integrations tab rendered Connect buttons that 500'd, the
  * search tool told the model "No search results found", feeds failed with a
- * transient-looking error, the Mac installer paired against digby.example.com. This
+ * transient-looking error, the Mac installer paired against digby.ai. This
  * leaf is the ONE table of "feature X needs env/seat Y" the setup checklist,
  * the Integrations / Feeds tabs and the honest tool-result text all read.
  *
@@ -254,11 +254,11 @@ export function selfhostAdminEmailFor(email: string | null | undefined, env: Nod
   return !!want && want === String(email ?? '').trim().toLowerCase();
 }
 
-/** The hostname users know this instance by ("digby.example.com"), for copy that used to say "digby.example.com". */
+/** The hostname users know this instance by ("digby.cql.ca"), for copy that used to say "digby.ai". */
 export function instanceSiteLabel(env: NodeJS.ProcessEnv = process.env): string {
   const url = instancePublicUrl(env);
-  if (!url) return 'digby.example.com';
-  try { return new URL(url).host || 'digby.example.com'; } catch { return 'digby.example.com'; }
+  if (!url) return 'digby.ai';
+  try { return new URL(url).host || 'digby.ai'; } catch { return 'digby.ai'; }
 }
 
 /** Appended to the system context on an instance with no search backend (after the platform identity, which promises web search). */
@@ -672,7 +672,7 @@ export function computeInstanceSetup(env: NodeJS.ProcessEnv = process.env, enric
       state: 'off',
       configured: false,
       required: false,
-      summary: 'The installers this instance serves are the production builds: they sign into digby.example.com, not this instance. Use the browser here; the Mac agent still pairs from the one-liner on the Your Mac card.',
+      summary: 'The installers this instance serves are the production builds: they sign into digby.ai, not this instance. Use the browser here; the Mac agent still pairs from the one-liner on the Your Mac card.',
       help: HELP_ANCHORS.integrations,
       missing: [],
       present: [],

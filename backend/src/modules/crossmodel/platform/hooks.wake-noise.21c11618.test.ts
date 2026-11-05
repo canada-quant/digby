@@ -2,7 +2,7 @@
  * Audit 2026-10-16 item 3 (todo 21c11618) — WAKE NOISE, fixes A/B/C.
  *
  * Baseline (probe-21c11618, box A, 72 h window 10-13→10-15): 31 of 40
- * schedule_disabled hook rows were LANE SELF-CANCELS (codingSchedule
+ * schedule_disabled hook rows were LANE SELF-CANCELS (chatSchedule
  * .cancelledBy='machine' + the schedule living in the source chat); ALL 31
  * woke a supervisor — 16 via the owner-scope wildcard (Fleet Supervisor), 15
  * via project-scope hooks; every self-cancel wrote BOTH rows. Schooltime
@@ -50,7 +50,7 @@ const mockPrisma: any = {
     count: jest.fn(async () => 0),
   },
   projectTodo: { findUnique: jest.fn(), count: jest.fn(async () => 1) },
-  codingSchedule: { count: jest.fn(async () => 1) },
+  chatSchedule: { count: jest.fn(async () => 1) },
   crossModelProject: { findUnique: jest.fn() },
   crossModelChat: { findUnique: jest.fn(), findMany: jest.fn(async () => []), update: jest.fn(async () => ({})) },
   crossModelMessage: { create: jest.fn(async () => ({})), findMany: jest.fn(async () => []) },

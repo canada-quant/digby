@@ -52,7 +52,7 @@ const DISPATCH_SRC = fs.readFileSync(path.join(__dirname, 'ticket-dispatch.servi
 // description heads quoted verbatim, tails elided for the fixture).
 const RUN = '39441731823';
 const SHA = '51946acc';
-const REPO = 'canada-quant/digby';
+const REPO = 'example-org/crossmodel';
 const RUN_URL = `https://github.com/${REPO}/actions/runs/${RUN}`;
 const TITLE_A = `Deploy run ${RUN} failed (sha ${SHA}, CI also red) — fix and re-run`;
 const TITLE_B = `Deploy run ${RUN} failed on main head ${SHA} — fix and re-run`;
@@ -70,8 +70,8 @@ describe('fffacaee — the pure stable-key extractor (infra-alert-key.ts)', () =
   });
 
   it('extracts ci-red:<sha> from the CI-watch wake shape ([CI FAILED — owner/repo@sha12])', () => {
-    const title = `[CI FAILED — canada-quant/digby@1a2b3c4d5e6f] The commit this lane pushed is RED on GitHub`;
-    const body = `[CI FAILED — canada-quant/digby@1a2b3c4d5e6f] The commit this lane pushed (branch main · PR #123 · receipt ab12cd34) is RED on GitHub: shard 3/4.`;
+    const title = `[CI FAILED — example-org/crossmodel@1a2b3c4d5e6f] The commit this lane pushed is RED on GitHub`;
+    const body = `[CI FAILED — example-org/crossmodel@1a2b3c4d5e6f] The commit this lane pushed (branch main · PR #123 · receipt ab12cd34) is RED on GitHub: shard 3/4.`;
     const k = extractInfraAlertKey(title, body);
     expect(k).toEqual({ kind: 'ci-red', id: '1a2b3c4d5e6f', repo: REPO });
     expect(infraAlertKeyString(k!)).toBe(`ci-red:1a2b3c4d5e6f:${REPO}`);

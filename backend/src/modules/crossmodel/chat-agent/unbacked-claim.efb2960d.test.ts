@@ -5,7 +5,7 @@
  *  (a) bc618690 — Fleet Supervisor chat (c0e22e36), 2026-10-16 05:59:02Z,
  *      "Follow-through complete": a CONTINUATION round (machine-origin,
  *      args.continuation set) that made READ-ONLY tool calls yet cited
- *      receipt ids 6d75445d ("steer to ctrl.example.com supervisor") and 1d5a6905
+ *      receipt ids 6d75445d ("steer to ctrl.cql.ca supervisor") and 1d5a6905
  *      ("ping to deploy lane 24f1950e") — neither exists in its receipts —
  *      plus a dead chat link 99e63f86-69cf-4b09-90dc-b4f143d01942 rendered
  *      as if real. Every existing citation lane returns null the moment a
@@ -55,7 +55,7 @@ beforeEach(() => {
 /** Specimen (a) shape — the bc618690 follow-through note (continuation round, READ-ONLY tools present). */
 const SPECIMEN_BC618690 = `Follow-through complete.
 
-- Steered the supervisor on ctrl.example.com toward the new verify chain (receipt 6d75445d)
+- Steered the supervisor on ctrl.cql.ca toward the new verify chain (receipt 6d75445d)
 - Sent the ping to the deploy lane 24f1950e — 1d5a6905
 - Asked the owner question on the digest cadence (chat 99e63f86-69cf-4b09-90dc-b4f143d01942)
 
@@ -74,7 +74,7 @@ describe('citedOwnReceiptIds — the no-precondition citation detector (efb2960d
   });
 
   it('collects a first-person claim sentence carrying a bare id ("I steered the supervisor (receipt 6d75445d)" / prose without the receipt word)', () => {
-    expect(citedOwnReceiptIds('I steered the supervisor on ctrl.example.com toward the new chain — 6d75445d.')).toEqual(['6d75445d']);
+    expect(citedOwnReceiptIds('I steered the supervisor on ctrl.cql.ca toward the new chain — 6d75445d.')).toEqual(['6d75445d']);
   });
 
   it('does NOT collect ids inside quoted / relayed third-party content', () => {

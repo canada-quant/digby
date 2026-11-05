@@ -12,7 +12,7 @@ const mockFindMany = jest.fn(async (..._a: any[]): Promise<any[]> => []);
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: { update: (...a: any[]) => mockUpdate(...a), findMany: (...a: any[]) => mockFindMany(...a), findUnique: jest.fn(async () => null), count: jest.fn(async () => 0) },
+    chatSchedule: { update: (...a: any[]) => mockUpdate(...a), findMany: (...a: any[]) => mockFindMany(...a), findUnique: jest.fn(async () => null), count: jest.fn(async () => 0) },
     crossModelChat: { findUnique: jest.fn(async () => null) },
   },
 }));

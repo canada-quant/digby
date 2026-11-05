@@ -30,38 +30,85 @@ import {
   INLINE_SPILL_SURFACES,
   inlineSpillInjectionDisabled,
   inlineSpillMetricMeta,
+  inlineSpillMode,
   planInlineSpill,
+  renderSpillPointers,
   spillPointerLine,
   type SpillSegment,
 } from './inline-spill';
 import {
   RECALL_CHAIN_SURFACES,
   chainOfRecallDisabled,
+  chainOfRecallMode,
   planRecallChain,
   recallChainLine,
   recallChainMetricMeta,
+  renderRecallChain,
+  withRecallChainField,
 } from './chain-of-recall';
 
 const seg = (id: string, elidedChars: number): SpillSegment => ({ id, elidedChars, readCall: `get_chat_messages({messageId:"${id}"})` });
 
-describe('SAA-1.3 inline-and-spill — Phase 0 is observe-only BY TYPE', () => {
-  it('pins applied to the literal false: a `true` plan is not assignable', () => {
-    const plan = planInlineSpill({ surface: 'chat_messages', segments: [seg('m1', 900)] }, {});
-    // @ts-expect-error — Phase 1 must widen the type deliberately; this line is
-    // the compile-time tripwire that stops a call site from shipping a rewrite
-    // by accident, which is the whole Phase-0 safety claim.
-    const notApplied: true = plan.applied;
-    void notApplied;
-    expect(plan.applied).toBe(false);
+describe('SAA-1.3 inline-and-spill — Phase 1: the widen, and the property that MOVED with it', () => {
+  // PHASE 1 (todo 2ef2b254) — THIS CASE WAS REWRITTEN, DELIBERATELY. In Phase 0 it
+  // read `const notApplied: true = plan.applied` under a `@ts-expect-error`, pinning
+  // `applied` to the literal `false`. That tripwire has now fired on purpose: the
+  // type is `boolean`, and the safety property it protected did not disappear — it
+  // MOVED to "the DEFAULT mode never renders", which is what the cases below pin.
+  // Anything that lets a default box's text change without `apply` is still red.
+  it('applied is a real boolean and is TRUE only when a render actually happened', () => {
+    const applied = planInlineSpill({ surface: 'chat_messages', segments: [seg('m1', 900)] }, { INLINE_SPILL_INJECTION_DISABLED: 'apply' });
+    expect(applied.mode).toBe('apply');
+    expect(applied.applied).toBe(true);
+    // The type is genuinely widened, not just the runtime value: a `true` plan is
+    // now assignable, which is the exact line that used to fail to compile.
+    const widened: boolean = applied.applied;
+    expect(widened).toBe(true);
+    // …and it is TRUTHFUL, not a mode flag: the same mode over nothing to spill
+    // (or over a segment with no read call to follow) did NOT apply anything.
+    expect(planInlineSpill({ surface: 'chat_messages', segments: [] }, { INLINE_SPILL_INJECTION_DISABLED: 'apply' }).applied).toBe(false);
+    expect(planInlineSpill({ surface: 'decision_gate', segments: [{ id: 's', elidedChars: 10, readCall: '' }] }, { INLINE_SPILL_INJECTION_DISABLED: 'apply' }).applied).toBe(false);
   });
 
-  it('reports what a Phase-1 pointer WOULD add, and never a rewrite of the text', () => {
+  // THE PROPERTY THAT MOVED. Phase 0 got byte-identity from the type; Phase 1 has to
+  // get it from the render branch, so it is pinned here explicitly at the seam that
+  // produces the text an agent reads.
+  it('observe (the DEFAULT) renders byte-identical text; only apply rewrites it', () => {
+    const body = 'the injected text';
+    const plan = planInlineSpill({ surface: 'chat_messages', segments: [seg('m1', 900)] }, {});
+    expect(plan.mode).toBe('observe');
+    expect(renderSpillPointers(body, plan)).toBe(body);
+    // off is byte-identical too — the kill switch must restore the old text exactly.
+    const killed = planInlineSpill({ surface: 'chat_messages', segments: [seg('m1', 900)] }, { INLINE_SPILL_INJECTION_DISABLED: '1' });
+    expect(renderSpillPointers(body, killed)).toBe(body);
+    // apply is the ONLY shape that changes the bytes…
+    const on = planInlineSpill({ surface: 'chat_messages', segments: [seg('m1', 900)] }, { INLINE_SPILL_INJECTION_DISABLED: 'apply' });
+    const rendered = renderSpillPointers(body, on);
+    expect(rendered).not.toBe(body);
+    // …and it changes them by APPENDING a followable call, never by replacing what
+    // the surface already showed (the body is still a prefix of the result).
+    expect(rendered.startsWith(body)).toBe(true);
+    expect(rendered).toContain('read them: get_chat_messages({messageId:"m1"})');
+  });
+
+  it('renders ONE pointer per unique read call, so a cap cannot be re-defeated by its own fix', () => {
+    const sameCall: SpillSegment = { id: 'ignored', elidedChars: 10, readCall: 'get_chat_messages({chatId:"c"})' };
+    const plan = planInlineSpill({ surface: 'chat_messages', segments: [seg('m1', 100), seg('m2', 200), sameCall] }, { INLINE_SPILL_INJECTION_DISABLED: 'apply' });
+    const rendered = renderSpillPointers('x', plan);
+    expect(rendered.match(/read them: get_chat_messages\(\{chatId:"c"\}\)/g)).toHaveLength(1);
+    // The per-object pointers still each appear.
+    expect(rendered).toContain('messageId:"m1"');
+    expect(rendered).toContain('messageId:"m2"');
+  });
+
+  it('reports what a pointer WOULD add, and the plan itself carries no rendered text', () => {
     const plan = planInlineSpill({ surface: 'chat_messages', segments: [seg('m1', 900), seg('m2', 100)] }, {});
     expect(plan.mode).toBe('observe');
     expect(plan.segments).toHaveLength(2);
     expect(plan.elidedChars).toBe(1000);
     expect(plan.wouldAddChars).toBeGreaterThan(0);
-    // The pointer is REPORTED, not injected: the plan carries no rendered text.
+    // The pointers are REPORTED, not injected: no field of the plan is the rendered
+    // block, so a caller cannot accidentally return the plan instead of the text.
     expect(Object.keys(plan).sort()).toEqual(['applied', 'droppedRows', 'elidedChars', 'mode', 'segments', 'surface', 'wouldAddChars', 'wouldInject']);
   });
 
@@ -141,17 +188,81 @@ describe('SAA-1.3 inline-and-spill — Phase 0 is observe-only BY TYPE', () => {
   });
 });
 
-describe('SAA-1.4 chain-of-recall — Phase 0 is observe-only BY TYPE', () => {
-  it('pins applied to the literal false: a `true` chain is not assignable', () => {
-    const chain = planRecallChain({ surface: 'get_run_receipts', hops: [{ kind: 'goal', id: 'g1' }] }, {});
-    // @ts-expect-error — same tripwire as the spill plan; flipping this to ship
-    // Phase 1 must be a deliberate, reviewed type change.
-    const notApplied: true = chain.applied;
-    void notApplied;
-    expect(chain.applied).toBe(false);
+describe('SAA-1.4 chain-of-recall — Phase 1: the widen, and the property that MOVED with it', () => {
+  // PHASE 1 (todo 2ef2b254) — REWRITTEN DELIBERATELY, exactly like its SAA-1.3
+  // sibling above: the `@ts-expect-error` tripwire on the literal `false` has fired
+  // on purpose. What replaced it is the claim that actually has to hold now —
+  // the DEFAULT appends nothing, and only `apply` (with a real hop) appends.
+  it('applied is a real boolean, TRUE only when a line is actually appended', () => {
+    const on = planRecallChain({ surface: 'goal_get', hops: [{ kind: 'todo', id: 't1' }] }, { CHAIN_OF_RECALL_DISABLED: 'apply' });
+    expect(on.mode).toBe('apply');
+    expect(on.applied).toBe(true);
+    const widened: boolean = on.applied;
+    expect(widened).toBe(true);
+    // Truthful, not a mode flag: apply mode with nothing to append applied nothing.
+    expect(planRecallChain({ surface: 'goal_get', hops: [] }, { CHAIN_OF_RECALL_DISABLED: 'apply' }).applied).toBe(false);
   });
 
-  it('resolves hops but appends NO next: line', () => {
+  it('observe (the DEFAULT) appends nothing; apply appends the next: line; off does neither', () => {
+    const hops = [{ kind: 'goal' as const, id: 'g1' }, { kind: 'todo' as const, id: 't1' }];
+    const text = 'a memory answer';
+    const observing = planRecallChain({ surface: 'search_memory', hops }, {});
+    expect(observing.mode).toBe('observe');
+    expect(observing.wouldAppendHops).toBe(2);
+    // THE MOVED PROPERTY: the default renders byte-identical text, by reference.
+    expect(renderRecallChain(text, observing)).toBe(text);
+    expect(renderRecallChain(text, planRecallChain({ surface: 'search_memory', hops }, { CHAIN_OF_RECALL_DISABLED: '1' }))).toBe(text);
+    const applied = renderRecallChain(text, planRecallChain({ surface: 'search_memory', hops }, { CHAIN_OF_RECALL_DISABLED: 'apply' }));
+    expect(applied).toBe('a memory answer\nnext: goal g1 · todo t1');
+  });
+
+  // The JSON surfaces (goal_get / todo_get) parse from the first brace, so the hop
+  // must be an ADDITIVE FIELD, never a trailing prose line — this repo has already
+  // recorded the defect class that a suffix causes.
+  it('withRecallChainField is additive, and hands back the SAME object when nothing applied', () => {
+    const envelope = { id: 'g1', title: 'a goal' } as Record<string, unknown>;
+    const hops = [{ kind: 'todo' as const, id: 't1', label: 'step' }];
+    // observe ⇒ identity, so JSON.stringify output is byte-identical to before.
+    expect(withRecallChainField(envelope, planRecallChain({ surface: 'goal_get', hops }, {}))).toBe(envelope);
+    const withNext = withRecallChainField(envelope, planRecallChain({ surface: 'goal_get', hops }, { CHAIN_OF_RECALL_DISABLED: 'apply' }));
+    expect(withNext).not.toBe(envelope);
+    expect(withNext.next).toBe('next: todo t1 (step)');
+    // Nothing else moved: every original key survives unchanged, and the hop rides
+    // an additive field a first-brace parser never has to look at.
+    expect(withNext).toMatchObject({ id: 'g1', title: 'a goal' });
+  });
+
+  it('mode resolution is fail-safe: junk is observe, never apply', () => {
+    expect(chainOfRecallMode({})).toBe('observe');
+    expect(chainOfRecallMode({ CHAIN_OF_RECALL_DISABLED: '0' })).toBe('observe');
+    expect(chainOfRecallMode({ CHAIN_OF_RECALL_DISABLED: 'yes-please' })).toBe('observe');
+    expect(chainOfRecallMode({ CHAIN_OF_RECALL_DISABLED: 'apply' })).toBe('apply');
+    expect(chainOfRecallMode({ CHAIN_OF_RECALL_DISABLED: '1' })).toBe('off');
+    // Same shape for the spill switch — an unrecognised value must never START
+    // rewriting prompts, which is the whole reason observe is the floor.
+    expect(inlineSpillMode({})).toBe('observe');
+    expect(inlineSpillMode({ INLINE_SPILL_INJECTION_DISABLED: '0' })).toBe('observe');
+    expect(inlineSpillMode({ INLINE_SPILL_INJECTION_DISABLED: 'apply' })).toBe('apply');
+    expect(inlineSpillMode({ INLINE_SPILL_INJECTION_DISABLED: 'on' })).toBe('off');
+  });
+
+  // PHASE 1 REVIEW CATCH: the Phase-0 metric gate was `mode !== 'observe'`, correct
+  // only while observe was the sole live mode. Left alone it would go BLIND the
+  // moment the feature started changing prompts — the instrument switching itself
+  // off exactly when someone needs to read it.
+  it('the readout survives apply mode — it goes dark only on the kill switch', () => {
+    const hops = [{ kind: 'goal' as const, id: 'g1' }];
+    expect(recallChainMetricMeta(planRecallChain({ surface: 'goal_get', hops }, { CHAIN_OF_RECALL_DISABLED: 'apply' }))).not.toBeNull();
+    expect(recallChainMetricMeta(planRecallChain({ surface: 'goal_get', hops }, { CHAIN_OF_RECALL_DISABLED: '1' }))).toBeNull();
+    const segs = [seg('m1', 100)];
+    expect(inlineSpillMetricMeta(planInlineSpill({ surface: 'chat_messages', segments: segs }, { INLINE_SPILL_INJECTION_DISABLED: 'apply' }))).not.toBeNull();
+    expect(inlineSpillMetricMeta(planInlineSpill({ surface: 'chat_messages', segments: segs }, { INLINE_SPILL_INJECTION_DISABLED: '1' }))).toBeNull();
+    // …and the row now says WHICH it was, so "would have" cannot be mistaken for "did".
+    const observeRow: any = inlineSpillMetricMeta(planInlineSpill({ surface: 'chat_messages', segments: segs }, {}));
+    expect(observeRow.applied).toBe(false);
+  });
+
+  it('resolves hops and keeps its shape in observe', () => {
     const chain = planRecallChain({ surface: 'get_run_receipts', hops: [{ kind: 'goal', id: 'g1' }, { kind: 'todo', id: 't1' }] }, {});
     expect(chain.mode).toBe('observe');
     expect(chain.wouldAppendHops).toBe(2);
@@ -217,6 +328,23 @@ describe('SAA-1.4 chain-of-recall — Phase 0 is observe-only BY TYPE', () => {
     // stay byte-identical, and `input` is a large per-run blob.
     expect(src).toMatch(/const\s*\{\s*input:\s*_runInput,\s*\.\.\.rest\s*\}\s*=\s*r\s+as\s+any/);
     expect(src).not.toMatch(/\.\.\.r,\s*receipts:/);
+  });
+
+  // SAA-1.4 PHASE 1 (todo 2ef2b254) — the RENDER SITE, which Phase 0 lacked.
+  // Phase 0 computed the chain only to record what a Phase-1 `next:` field WOULD
+  // have offered: the metric fired and the envelope was never touched, so an
+  // ARMED box still got no `next:` key on this surface. The apply-mode canary
+  // caught it (probe-saa1-phase1-canary.js CHECK 5 classified get_run_receipts
+  // SILENT against 484 injectable hops in the 7 days to 2026-11-04).
+  // Source-pinned because the defect is a MISSING CALL, which no behavioural test
+  // on the pure leaf can see — the leaf was always correct.
+  it('pins the get_run_receipts envelope to RENDER the chain (not just observe it)', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const src = require('fs').readFileSync(require('path').join(__dirname, 'ops-tools.ts'), 'utf8') as string;
+    // The returned envelope must be the rendered one…
+    expect(src).toMatch(/return redactReadEnvelope\(ctx,\s*name,\s*chatId,\s*recallEnvelope\)/);
+    // …and it must actually be produced by the field renderer.
+    expect(src).toMatch(/recallEnvelope\s*=\s*chainMod\.withRecallChainField\(envelope,\s*chain\)/);
   });
 });
 

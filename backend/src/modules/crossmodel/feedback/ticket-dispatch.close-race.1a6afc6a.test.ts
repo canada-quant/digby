@@ -92,7 +92,7 @@ const mockPrisma: any = {
       && (!where.status?.in || where.status.in.includes(r.status))).length),
   },
   chatCodingState: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   contextStoreEntry: { findUnique: jest.fn(async () => null) },
 };
 withEmptyHouseRuleReads(mockPrisma);

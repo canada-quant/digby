@@ -14,7 +14,7 @@ const mockPrisma: any = {
   // The typed-evidence existence probe resolves 'session <id>' via findFirst — a real lane.
   crossModelChat: { findUnique: jest.fn(async () => null), findFirst: jest.fn(async () => ({ id: 'c90fed41-0000-4000-8000-000000000001' })) },
   projectTodo: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null) },
   agentRun: { groupBy: jest.fn(async () => []) },
   userFeatureRequest: { findFirst: jest.fn(async () => null) },
@@ -112,8 +112,8 @@ describe('applyStateUpdate — the observe-only mismatch warning', () => {
   });
 
   it('a related close is silent', async () => {
-    seed('Wire the MiMo gateway routes');
-    const r = await applyStateUpdate(CHAT, UID, { directives: [{ id: 'd1', status: 'done', evidence: 'session c90fed41 wrote the MiMo routes; gateway answered 200' }] });
+    seed('Wire the node-b gateway routes');
+    const r = await applyStateUpdate(CHAT, UID, { directives: [{ id: 'd1', status: 'done', evidence: 'session c90fed41 wrote the node-b routes; gateway answered 200' }] });
     await flush();
     expect(r.applied.join(' ')).not.toMatch(/shares NO id/);
     expect(mockRecordLoopMetric).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'directive_close_mismatch' }));

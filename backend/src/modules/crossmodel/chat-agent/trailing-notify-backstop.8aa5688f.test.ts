@@ -39,7 +39,7 @@ const mockPrisma: any = {
     updateMany: jest.fn(async () => ({ count: 1 })),
     findUnique: jest.fn(async () => ({ title: 'A proper existing title' })),
   },
-  codingSchedule: {
+  chatSchedule: {
     findUnique: jest.fn(async () => null),
   },
   pendingChatMessage: {
@@ -316,7 +316,7 @@ beforeEach(() => {
   (runCodingAgent as jest.Mock).mockReset().mockImplementation(async () => ({ finalText: DIGEST, parts: [{ type: 'text', text: DIGEST }], receipts: [] }));
   mockRecordLoopMetric.mockClear();
   mockExecuteAccountTool.mockReset().mockImplementation(async (...a: any[]) => NOTIFY_OK_ENVELOPE);
-  mockPrisma.codingSchedule.findUnique.mockReset().mockImplementation(async () => ({ prompt: WAKE_PROMPT, enabled: true }));
+  mockPrisma.chatSchedule.findUnique.mockReset().mockImplementation(async () => ({ prompt: WAKE_PROMPT, enabled: true }));
   mockPrisma.crossModelChat.findUnique.mockReset().mockImplementation(async () => ({ ...PLAIN_ROW }));
   mockPrisma.crossModelMessage.findUnique = jest.fn(async () => null);
   mockPrisma.crossModelMessage.findMany = jest.fn(async () => []);
@@ -1335,26 +1335,26 @@ describe('ticket 8aa5688f — the platform trailing-notify backstop at the final
     });
 
     it('stays silent when the stored prompt has no mandate', async () => {
-      mockPrisma.codingSchedule.findUnique.mockImplementationOnce(async () => ({ prompt: NO_MANDATE_PROMPT, enabled: true }));
+      mockPrisma.chatSchedule.findUnique.mockImplementationOnce(async () => ({ prompt: NO_MANDATE_PROMPT, enabled: true }));
       await scheduledWake();
       expect(notifyCalls()).toHaveLength(0);
     });
 
     it('stays silent on the doctrine-advice shape a supervisor might quote (review B3)', async () => {
       const doctrineQuoted = 'Post the digest as your chat reply.\n- check back / remind me / every morning / monitor → schedule_message on this chat (standalone prompt; to reach them outside the app end with "then notify_user with the result")';
-      mockPrisma.codingSchedule.findUnique.mockImplementationOnce(async () => ({ prompt: doctrineQuoted, enabled: true }));
+      mockPrisma.chatSchedule.findUnique.mockImplementationOnce(async () => ({ prompt: doctrineQuoted, enabled: true }));
       await scheduledWake();
       expect(notifyCalls()).toHaveLength(0);
     });
 
     it('stays silent on the negation shape (never call notify_user)', async () => {
-      mockPrisma.codingSchedule.findUnique.mockImplementationOnce(async () => ({ prompt: 'Post the digest as your chat reply, then post the summary. Never call notify_user for this digest.', enabled: true }));
+      mockPrisma.chatSchedule.findUnique.mockImplementationOnce(async () => ({ prompt: 'Post the digest as your chat reply, then post the summary. Never call notify_user for this digest.', enabled: true }));
       await scheduledWake();
       expect(notifyCalls()).toHaveLength(0);
     });
 
     it('stays silent when the schedule was disabled mid-run (owner pause)', async () => {
-      mockPrisma.codingSchedule.findUnique.mockImplementationOnce(async () => ({ prompt: WAKE_PROMPT, enabled: false }));
+      mockPrisma.chatSchedule.findUnique.mockImplementationOnce(async () => ({ prompt: WAKE_PROMPT, enabled: false }));
       await scheduledWake();
       expect(notifyCalls()).toHaveLength(0);
     });

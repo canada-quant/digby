@@ -34,7 +34,7 @@ import { compactMessages, isSteerMessage, STEER_PIN_PREFIX, STEER_PIN_MAX, MEMOR
 import { utilityChat } from '../../../utils/utility-llm';
 
 const sys = { role: 'system', content: 'SYSTEM PROMPT' };
-const task = { role: 'user', content: 'TASK: add the two Xiaomi MiMo routes to config.yaml, push, open a PR' };
+const task = { role: 'user', content: 'TASK: add the two Xiaomi node-b routes to config.yaml, push, open a PR' };
 let n = 0;
 const call = (name: string, id = `c${++n}`) => ({ role: 'assistant', content: '', tool_calls: [{ id, type: 'function', function: { name, arguments: '{}' } }] });
 const res = (id: string, t: string) => ({ role: 'tool', tool_call_id: id, content: t });
@@ -54,7 +54,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   delete process.env.COMPACTION_STEER_PIN_DISABLED;
   delete process.env.MEMORY_READ_REOFFLOAD_SKIP_DISABLED;
-  delete process.env.COMPACTION_V2_DISABLED;
 });
 
 describe('T1-3 — live steers survive compaction verbatim', () => {

@@ -39,7 +39,7 @@ const mockPrisma: any = {
     count: jest.fn(async () => 0),
   },
   projectTodo: { findUnique: jest.fn(), count: jest.fn(async () => 0) },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   crossModelProject: { findUnique: jest.fn() },
   crossModelChat: { findUnique: jest.fn(), update: jest.fn(async () => ({})) },
   crossModelMessage: { create: jest.fn(async () => ({})), findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null), update: jest.fn(async () => ({})) },
@@ -128,7 +128,6 @@ const mockPersistTaskCard: jest.Mock = jest.fn(async () => 'row-answer');
 const mockEmitTaskEvent: jest.Mock = jest.fn(() => true);
 jest.mock('../chat-agent/task-events', () => ({
   __esModule: true,
-  taskCardDisabled: () => process.env.TASK_CARD_DISABLED === '1',
   buildTaskEvent: (p: any) => ({ steps: { done: 0, total: 0 }, receipts: { ok: 0, total: 0 }, spendUsd: 0, artifacts: [], startedAt: 'now', ...p, updatedAt: 'now' }),
   persistTaskCard: (...a: any[]) => mockPersistTaskCard(...a),
   emitTaskEvent: (...a: any[]) => mockEmitTaskEvent(...a),
@@ -175,7 +174,6 @@ beforeEach(() => {
   jest.clearAllMocks();
   settings.clear();
   records.clear();
-  delete process.env.TASK_CARD_DISABLED;
   mockRedisGet.mockResolvedValue(null);
   mockRedisSet.mockResolvedValue('OK');
   mockRedisDel.mockResolvedValue(1);
@@ -187,7 +185,7 @@ beforeEach(() => {
   mockPrisma.eventHook.findFirst.mockResolvedValue(null);
   mockPrisma.hookEvent.updateMany.mockResolvedValue({ count: 1 });
   mockPrisma.hookEvent.count.mockResolvedValue(0);
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.projectTodo.count.mockResolvedValue(0);
   targetChat = { ...HUMAN_PARENT };
   mockPrisma.crossModelChat.findUnique.mockImplementation(({ where }: any) =>

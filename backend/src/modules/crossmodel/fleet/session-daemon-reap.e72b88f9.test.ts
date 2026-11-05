@@ -5,7 +5,7 @@
  * The incident shape (probe lane d66291a7, read-only report 2026-10-14T04:48Z):
  * pid 3763549, uid 1001, started 2026-09-11, launched from a FINISHED
  * session's worktree scratch dir
- * (/app/coding-workspaces/worktrees/a8976e11-…/.scratch-qb2key/ts-recovery/),
+ * (/app/coding-workspaces/worktrees/a8976e11-…/.scratch-node-a-key/ts-recovery/),
  * serving SOCKS5 on localhost:1057 — while the PLATFORM tailscaled (uid 0,
  * statedir /var/lib/digby-tailscale, ports 1055/1056) kept the real egress.
  * Its "General SOCKS server failure" answers fed a false wedged-egress
@@ -123,7 +123,7 @@ const DAY = 86400;
 // The incident cast (ps + cwd readings as the 2026-10-14 box presented them):
 const ORPHAN_PID = '3763549'; // the 33-day stray tailscaled (uid 1001, :1057)
 const ORPHAN_SESSION = 'a8976e11-77af-4b7c-8ca5-f2f3f31cb903'; // FINISHED session
-const ORPHAN_CWD = `/app/coding-workspaces/worktrees/${ORPHAN_SESSION}/.scratch-qb2key/ts-recovery`;
+const ORPHAN_CWD = `/app/coding-workspaces/worktrees/${ORPHAN_SESSION}/.scratch-node-a-key/ts-recovery`;
 const LIVE_PID = '4001'; // a daemon a LIVE session owns (in-flight run) — never a victim
 const LIVE_SESSION = '11111111-2222-3333-4444-555555555555';
 const LIVE_CWD = `/app/coding-workspaces/worktrees/${LIVE_SESSION}`;

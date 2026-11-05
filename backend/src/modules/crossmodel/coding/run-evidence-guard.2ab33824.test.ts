@@ -85,7 +85,7 @@ afterEach(() => {
  * probe outcomes. "box probe" + "healthy"/"active" and "probe" + "lines" are
  * the probe pair (PROBE_RE × PROBE_EVIDENCE_RE) on TWO lines — the filing's
  * "2 CLAIM LINE(S) REMOVED". The text deliberately carries no PR number, no
- * bare-sha + push verb, no deploy verb / health-check / prod / digby.example.com, and
+ * bare-sha + push verb, no deploy verb / health-check / prod / digby.ai, and
  * no ticket-id token, so the replay convicts probe ONLY — exactly the
  * filing's "zero-evidence completion claims: probe".
  */

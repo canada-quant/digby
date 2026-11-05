@@ -39,6 +39,8 @@ const pendingRows: Array<{
   mode: string | null; source: string; createdAt: Date; uploadIds?: string[];
 }> = [];
 let pendingSeq = 0;
+/** Transcript-row ids minted by the buffered $transaction mock. */
+let msgSeq = 0;
 
 /** In-memory crossmodel_messages table — only what the supersession marker
  *  (c6db9c72) reads: user rows of SOURCE chats (chatId/role/createdAt/metadata). */
@@ -62,6 +64,14 @@ const mockRedis = {
   exists: jest.fn(async (k: string) => (redisStore.has(k) ? 1 : 0)),
   mGet: jest.fn(async (keys: string[]) => keys.map((k) => redisStore.get(k) ?? null)),
   expire: jest.fn(async (..._a: any[]) => 1),
+  // MERGE-1 kill-window fix: noteDrainAttempt bounds the immediate redelivery
+  // chain after a failed persist. Without incr the call THROWS and the
+  // fail-open path returns 0, so the bound would never engage (a real spin).
+  incr: jest.fn(async (k: string) => {
+    const n = Number(redisStore.get(k) ?? 0) + 1;
+    redisStore.set(k, String(n));
+    return n;
+  }),
 };
 jest.mock('../../../config/redis', () => ({ __esModule: true, default: mockRedis }));
 
@@ -90,6 +100,18 @@ const mockPrisma: any = {
       if (i >= 0) pendingRows.splice(i, 1);
       return {};
     }),
+    // MERGE-1 cutover kill-window fix (2026-11-05): the drain no longer deletes
+    // right after the claim — the run's own persist consumes the rows via
+    // createMessagesConsumingPending, which uses deleteMany({ id: { in } }).
+    deleteMany: jest.fn(async ({ where }: any) => {
+      const ids: string[] = where?.id?.in ?? (where?.id ? [where.id] : []);
+      let count = 0;
+      for (const id of ids) {
+        const i = pendingRows.findIndex(r => r.id === id);
+        if (i >= 0) { pendingRows.splice(i, 1); count += 1; }
+      }
+      return { count };
+    }),
     // Full-queue coalesce (loop #15): the same sender's newest row absorbs the follow-up.
     update: jest.fn(async ({ where, data }: any) => {
       const r = pendingRows.find(x => x.id === where.id);
@@ -115,6 +137,41 @@ const mockPrisma: any = {
     updateMany: jest.fn(async () => ({ count: 1 })),
     findUnique: jest.fn(async () => ({ title: 'A proper existing title' })),
   },
+  // MERGE-1 cutover kill-window fix (2026-11-05): createMessagesConsumingPending
+// writes the transcript row and consumes the queued row in ONE transaction.
+// REAL all-or-nothing semantics: writes are buffered and applied only when the
+// callback resolves, so a transaction that fails leaves BOTH tables untouched
+// (an eager mock would make the atomicity claim unprovable).
+  $transaction: jest.fn(async (fn: any) => {
+    const created: any[] = [];
+    let consumedIds: string[] = [];
+    const tx = {
+      crossModelMessage: {
+        // Delegate to the SAME mock the non-transactional path uses, so tests
+        // asserting on crossModelMessage.create stay meaningful either way.
+        create: jest.fn(async (args: any) => {
+          const row = { id: `m${++msgSeq}`, createdAt: new Date(Date.now() + msgSeq), ...args.data };
+          created.push(row);
+          void mockPrisma.crossModelMessage.create(args);
+          return row;
+        }),
+      },
+      pendingChatMessage: {
+        deleteMany: jest.fn(async ({ where }: any) => {
+          consumedIds = where?.id?.in ?? (where?.id ? [where.id] : []);
+          return { count: consumedIds.length };
+        }),
+      },
+    };
+    const out = await fn(tx);
+    // COMMIT — both effects land together, or neither does.
+    for (const r of created) transcriptRows.push(r);
+    for (const id of consumedIds) {
+      const i = pendingRows.findIndex(r => r.id === id);
+      if (i >= 0) pendingRows.splice(i, 1);
+    }
+    return out;
+  }),
   // chat-busy's durable layer (worker-tier coding runs) — none in these tests.
   agentRun: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
 };
@@ -219,6 +276,17 @@ async function waitFor(pred: () => boolean, ms = 3000): Promise<void> {
   const t0 = Date.now();
   while (!pred() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 10));
   if (!pred()) throw new Error('timed out waiting for condition');
+}
+
+/**
+ * ASYNC variant of waitFor — for predicates that must AWAIT (a DB/count read).
+ * waitFor's predicate is SYNC, so passing an async one returns a Promise, which
+ * is always truthy: the wait passes vacuously on its first call. Anything that
+ * needs an await must come through here.
+ */
+async function waitUntil(pred: () => Promise<boolean>, ms = 3000): Promise<void> {
+  const t0 = Date.now();
+  while (!(await pred()) && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 10));
 }
 
 beforeEach(() => {
@@ -356,12 +424,20 @@ describe('drainChatQueue', () => {
     await waitFor(() => !isRunActive('chat:chat-dr'));
   });
 
-  it('idle chat: starts a run carrying the OLDEST message and deletes its row', async () => {
+  it('idle chat: starts a run carrying the OLDEST message and consumes its row at persist', async () => {
     await enqueueChatMessage({ chatId: 'chat-d3', userId: 'u1', content: 'oldest question', mode: 'single_thinking', source: 'agent' });
     await expect(drainChatQueue('chat-d3', 'u1')).resolves.toBe(true);
     expect(isRunActive('chat:chat-d3')).toBe(true);      // the run registered synchronously
-    expect(await countPending('chat-d3')).toBe(0);       // row deleted on dequeue
     await waitFor(() => mockRunCodingAgent.mock.calls.some(c => String(c[0]?.userMessage).includes('oldest question')));
+    // MERGE-1 kill-window fix (2026-11-05): the row is no longer deleted when
+    // the drain returns — it is consumed in the SAME transaction that persists
+    // the transcript row, which is what makes a cutover kill unable to
+    // duplicate (row survives + liveness expires) or lose (deleted, never
+    // persisted) the message. Asserted at persist, not at dequeue.
+    // NOTE: poll explicitly — waitFor takes a SYNC predicate, so an async one
+    // would be truthy on its first call and pass vacuously.
+    await waitUntil(async () => (await countPending('chat-d3')) === 0);
+    expect(await countPending('chat-d3')).toBe(0);
     await waitFor(() => !isRunActive('chat:chat-d3'));   // let the run finish cleanly
   });
 
@@ -502,6 +578,11 @@ describe('drainChatQueue', () => {
     mockRunCodingAgent.mockImplementationOnce(async () => { await gate; return { finalText: 'A'.repeat(500) }; });
     await expect(drainChatQueue('chat-p2', 'u1')).resolves.toBe(true);
     await waitFor(() => isRunActive('chat:chat-p2'));
+    // MERGE-1 kill-window fix (2026-11-05): the SEED row is now consumed at the
+    // run's persist, which lands AFTER isRunActive flips (the claim registers
+    // synchronously). Wait for that consume, otherwise the assertion below
+    // counts the seed row as well as the mid-run one.
+    await waitUntil(async () => (await countPending('chat-p2')) === 0);
 
     // The user types while the run is busy — the send path enqueues.
     await enqueueChatMessage({ chatId: 'chat-p2', userId: 'u1', content: 'typed while busy', mode: 'single_thinking', source: 'user' });

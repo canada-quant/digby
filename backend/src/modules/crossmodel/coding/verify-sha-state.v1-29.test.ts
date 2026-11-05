@@ -90,13 +90,22 @@ describe('v1#29: sha/tree-keyed verify state', () => {
   let wt: string;
   const g = (args: string[]) => execFileSync('git', args, { cwd: wt, stdio: 'pipe' }).toString();
 
-  // execShell only serves the verify chain here — always exit 0.
+  // execShell serves the verify CHAIN and also git plumbing (commit etc.), so
+// the counter filters to chain invocations only — by command, like the a5
+// suite does. STALE detection is now observed as "the gate re-runs the chain"
+// rather than as a refusal (auto-verify is unconditional since RSW-1 retired
+// the plain-refusal switch on 2026-11-12); a fresh pass takes the fast path
+// and runs nothing.
+  let chainRuns = 0;
   const mkCtx = (over: Partial<ToolContext> = {}) => ({
     worktree: wt, sessionId: 'sess-29', userId: 'u1', permissionMode: 'auto',
     provider: 'github', repoUrl: 'https://github.com/o/r', branch: 'digby/x', baseBranch: 'main',
     emit: jest.fn(), alwaysAllow: new Set<string>(),
     requestApproval: async () => 'allow' as const,
-    execShell: async () => ({ stdout: '__DIGBY_EXIT__ 0', stderr: '' }),
+    execShell: async (cmd: any) => {
+      if (String(cmd || '').includes('npm test')) chainRuns++;
+      return { stdout: '__DIGBY_EXIT__ 0', stderr: '' };
+    },
     getGithubToken: async () => null, // gate-pass is observed as the token failure
     userTurnAt: new Date(),
     ...over,
@@ -104,11 +113,12 @@ describe('v1#29: sha/tree-keyed verify state', () => {
 
   beforeEach(async () => {
     memStore.clear();
-    // A5 (2026-09-27): the gate now RE-RUNS the chain on a stale/unpassed state
+    chainRuns = 0;
+    // A5 (2026-09-27): the gate RE-RUNS the chain on a stale/unpassed state
     // instead of refusing (open-pull-request-verify-gate.a5.test.ts covers that
-    // arm). This suite pins the staleness DETECTION + the refusal text, so it
-    // runs with the auto-verify arm switched off.
-    process.env.PR_GATE_AUTO_VERIFY_DISABLED = '1';
+    // arm). This suite pins the staleness DETECTION that drives it: the gate
+    // still classifies the state as STALE, it just auto-verifies rather than
+    // refusing. (RSW-1 retired the switch that used to force the refusal path.)
     wt = await fs.mkdtemp(path.join(os.tmpdir(), 'v129-wt-'));
     g(['init', '-q', '-b', 'digby/x']);
     g(['config', 'user.email', 't@example.com']);
@@ -124,7 +134,6 @@ describe('v1#29: sha/tree-keyed verify state', () => {
 
   afterEach(async () => {
     await fs.rm(wt, { recursive: true, force: true });
-    delete process.env.PR_GATE_AUTO_VERIFY_DISABLED;
   });
 
   it('verify records the fingerprint (HEAD sha + content tree)', async () => {
@@ -147,32 +156,38 @@ describe('v1#29: sha/tree-keyed verify state', () => {
     expect(pr).not.toContain('PR blocked');
   });
 
-  it('PROOF (no explicit clearing needed): a write_file AFTER verify invalidates the pass — the PR gate blocks as STALE', async () => {
+  it('PROOF (no explicit clearing needed): a write_file AFTER verify invalidates the pass — the gate detects STALE and re-runs the chain', async () => {
     await executeCodingTool(mkCtx(), 'verify', {});
+    expect(chainRuns).toBe(1);
     // Mutate via the actual mutation tool — nothing clears the verify state.
     await executeCodingTool(mkCtx(), 'write_file', { path: 'b.txt', content: 'new content\n' });
     const pr = await executeCodingTool(mkCtx(), 'open_pull_request', { title: 't' });
-    expect(pr).toContain('PR blocked');
-    expect(pr).toContain('STALE');
-    expect(pr).toContain('Run verify again');
+    // STALE was detected: the gate did not take the fast path, it re-ran the chain.
+    expect(chainRuns).toBe(2);
+    expect(pr).toContain('No connected GitHub account/token');
   });
 
-  it('a NEW COMMIT with different content after verify also blocks as STALE', async () => {
+  it('a NEW COMMIT with different content after verify is also detected as STALE (the gate re-runs the chain)', async () => {
     await executeCodingTool(mkCtx(), 'verify', {});
+    expect(chainRuns).toBe(1);
     await fs.writeFile(path.join(wt, 'a.txt'), 'v3\n');
     g(['add', '.']);
     g(['commit', '-qm', 'c3']);
     const pr = await executeCodingTool(mkCtx(), 'open_pull_request', { title: 't' });
-    expect(pr).toContain('PR blocked');
-    expect(pr).toContain('STALE');
+    expect(chainRuns).toBe(2);
+    expect(pr).toContain('No connected GitHub account/token');
   });
 
-  it('a re-verify on the CURRENT state re-opens the gate', async () => {
+  it('a re-verify on the CURRENT state re-opens the gate: STALE re-runs the chain, fresh takes the fast path', async () => {
     await executeCodingTool(mkCtx(), 'verify', {});
     await executeCodingTool(mkCtx(), 'write_file', { path: 'b.txt', content: 'new\n' });
-    expect(await executeCodingTool(mkCtx(), 'open_pull_request', { title: 't' })).toContain('STALE');
+    const stale = await executeCodingTool(mkCtx(), 'open_pull_request', { title: 't' });
+    expect(chainRuns).toBe(2); // STALE detected ⇒ re-ran
+    expect(stale).toContain('No connected GitHub account/token');
     await executeCodingTool(mkCtx(), 'verify', {});
+    expect(chainRuns).toBe(3);
     const pr = await executeCodingTool(mkCtx(), 'open_pull_request', { title: 't' });
+    expect(chainRuns).toBe(3); // fresh pass ⇒ fast path, no extra run
     expect(pr).toContain('No connected GitHub account/token');
   });
 

@@ -34,10 +34,19 @@ beforeEach(() => { mockRedisStore.clear(); mockOwnerQuestions.length = 0; for (c
 
 describe('pure helpers', () => {
   it('tokens are normalized; the stored form is hashes only; Jaccard similarity', () => {
-    expect(notifyTokens('QB2 hit 42.7 tok/s — NEW best!')).toEqual(['qb2', 'hit', '42', '7', 'tok', 'new', 'best']);
-    const h = notifyTokenHashes('QB2 hit 42.7 tok/s');
+    // FIXTURE TOKEN, DELIBERATELY NOT A SCRUB TARGET (todo 13069ce2, 2026-11-05).
+    // This fixture used the internal host label. In a public export the scrub
+    // rewrote the INPUT ('node-a' -> 'node-a') while the expectation literal was a
+    // DIFFERENT spelling ('node-a'), so the pin failed for a reason that has
+    // nothing to do with notifyTokens — and worse, it could PASS VACUOUSLY the
+    // other way round (a redacted-away token cannot appear in storage no matter
+    // what the code does, so `.not.toContain(...)` would prove nothing). A
+    // neutral token keeps the pin tree-invariant: it proves the same thing in
+    // the private tree AND the export instead of being skipped in one of them.
+    expect(notifyTokens('BENCH hit 42.7 tok/s — NEW best!')).toEqual(['bench', 'hit', '42', '7', 'tok', 'new', 'best']);
+    const h = notifyTokenHashes('BENCH hit 42.7 tok/s');
     expect(h.every((x) => /^[0-9a-f]{10}$/.test(x))).toBe(true);
-    expect(JSON.stringify(h)).not.toContain('qb2');
+    expect(JSON.stringify(h)).not.toContain('bench');
     expect(notifySimilarity(notifyTokenHashes('a bb cc dd'), notifyTokenHashes('a bb cc dd'))).toBe(1);
     expect(notifySimilarity(notifyTokenHashes('lane x finished run 3 42.7 tok/s'), notifyTokenHashes('lane x finished run 4 43.1 tok/s'))).toBeLessThan(0.7);
   });
@@ -51,16 +60,16 @@ describe('pure helpers', () => {
 describe('near-duplicate window', () => {
   it('a repeat of a delivered push inside 6 h is a duplicate; a different push is not; the window and the kill switch apply', async () => {
     const t0 = Date.now();
-    await rememberNotify('u1', 'QB2 reached 42.7 tok/s on the bench — new best, PR #88 merged.', t0);
-    expect(mockRedisStore.get('notify:recent:u1')).not.toContain('QB2');
-    const dup = await findNotifyDuplicate('u1', 'QB2 reached 42.7 tok/s on the bench — new best! PR #88 merged', t0 + 11 * 60_000);
+    await rememberNotify('u1', 'node-a reached 42.7 tok/s on the bench — new best, PR #88 merged.', t0);
+    expect(mockRedisStore.get('notify:recent:u1')).not.toContain('node-a');
+    const dup = await findNotifyDuplicate('u1', 'node-a reached 42.7 tok/s on the bench — new best! PR #88 merged', t0 + 11 * 60_000);
     expect(dup).toMatchObject({ duplicate: true, similarity: 1 });
     expect(renderNotifyDuplicateRefusal(dup!)).toMatch(/Nothing was sent: a near-identical notification/);
     expect(await findNotifyDuplicate('u1', 'AGX box is back online; serving resumed at 18 tok/s.', t0 + 60_000)).toBeNull();
-    expect(await findNotifyDuplicate('u1', 'QB2 reached 42.7 tok/s on the bench — new best, PR #88 merged.', t0 + 7 * 3600_000)).toBeNull();
-    expect(await findNotifyDuplicate('u2', 'QB2 reached 42.7 tok/s on the bench — new best, PR #88 merged.', t0 + 60_000)).toBeNull();
+    expect(await findNotifyDuplicate('u1', 'node-a reached 42.7 tok/s on the bench — new best, PR #88 merged.', t0 + 7 * 3600_000)).toBeNull();
+    expect(await findNotifyDuplicate('u2', 'node-a reached 42.7 tok/s on the bench — new best, PR #88 merged.', t0 + 60_000)).toBeNull();
     process.env.NOTIFY_USER_DEDUPE_DISABLED = '1';
-    expect(await findNotifyDuplicate('u1', 'QB2 reached 42.7 tok/s on the bench — new best, PR #88 merged.', t0 + 60_000)).toBeNull();
+    expect(await findNotifyDuplicate('u1', 'node-a reached 42.7 tok/s on the bench — new best, PR #88 merged.', t0 + 60_000)).toBeNull();
   });
 });
 

@@ -39,10 +39,10 @@ function oauthConfigured(): boolean {
 function getConfig() {
   const clientId     = process.env.GITHUB_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GITHUB_OAUTH_CLIENT_SECRET;
-  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+  const frontendUrl  = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
   // The callback derives from THIS instance's public URL (self-host setup
   // hardening 2026-10-20); on production FRONTEND_URL's first entry is
-  // https://digby.example.com, so the derived value is byte-identical.
+  // https://digby.ai, so the derived value is byte-identical.
   const redirectUri  = process.env.GITHUB_OAUTH_REDIRECT_URI ||
     `${frontendUrl}/api/crossmodel/github/callback`;
 
@@ -124,7 +124,7 @@ export class GitHubOAuthController {
       if (!oauthConfigured()) {
         // Self-host setup hardening (2026-10-20): no OAuth app on this instance —
         // the tab offers the pasted-token path + the admin how-to, not a raw 500.
-        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
         logger.warn('GitHub OAuth: GITHUB_OAUTH_CLIENT_ID / GITHUB_OAUTH_CLIENT_SECRET not configured');
         res.redirect(`${frontendUrl}/account?tab=integrations&github=not_configured`);
         return;
@@ -249,7 +249,7 @@ export class GitHubOAuthController {
       // A completed consent that cannot be stored (no GITHUB_TOKEN_ENCRYPTION_KEY on
       // this instance) is a configuration fact, not "try again" (2026-10-20).
       if (error instanceof EncryptionKeyError) {
-        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+        const frontendUrl = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
         res.redirect(`${frontendUrl}/account?tab=integrations&github=not_configured&reason=encryption_key`);
         return;
       }

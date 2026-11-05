@@ -5,10 +5,14 @@ import { two } from '@/lib/site/strings';
 import { Breadcrumbs, JsonLd } from '../_components/SiteChrome';
 import { SiteShell } from '../_components/SiteShell';
 import { ChatCta, Hero, MEASURE } from '../_components/ContentBlocks';
+import { brandingFromEnv } from '@/lib/branding';
+
+// Shared branding core (todo d2d32b57): server component, resolved at build.
+const BRANDING = brandingFromEnv();
 
 export const metadata = pageMetadata({
   path: '/learn',
-  title: 'Learn — guides to private and sovereign AI in Canada · Digby',
+  title: `Learn — guides to private and sovereign AI in Canada · ${BRANDING.name}`,
   description: 'Plain-language guides on sovereign AI, data residency, open-weight models and using AI safely at work in Canada.',
   keywords: ['sovereign ai guide', 'private ai canada guide', 'ai data residency', 'open weight models'],
 });

@@ -30,7 +30,7 @@ describe('classifyChannel — the same table as the server', () => {
     [{ utm_source: 'twitter' }, 'social_organic'], [{ utm_source: 'podcast', utm_medium: 'audio' }, 'other_campaign'],
     [{ referrer: 'google.com' }, 'organic_search'], [{ referrer: 'google.co.uk' }, 'organic_search'], [{ referrer: 'duckduckgo.com' }, 'organic_search'],
     [{ referrer: 'facebook.com' }, 'social_organic'], [{ referrer: 't.co' }, 'social_organic'], [{ referrer: 'mail.google.com' }, 'email'],
-    [{ referrer: 'news.example.org' }, 'referral'], [{ referrer: 'digby.example.com' }, 'direct'], [{}, 'direct'], [null, 'direct'],
+    [{ referrer: 'news.example.org' }, 'referral'], [{ referrer: 'digby.ai' }, 'direct'], [{}, 'direct'], [null, 'direct'],
   ];
   it.each(cases)('%j → %s', (touch, expected) => {
     expect(classifyChannel(touch as any)).toBe(expected);
@@ -39,13 +39,13 @@ describe('classifyChannel — the same table as the server', () => {
 
 describe('readTouch / normalizePath / referrerHost', () => {
   it('reads utm + click ids + the external referrer host + the normalized landing path', () => {
-    const t = readTouch('https://digby.example.com/crossmodel?utm_source=google&utm_medium=cpc&utm_campaign=fall&gclid=Cj0&email=x@y.z', 'https://www.google.com/search?q=private', 5);
+    const t = readTouch('https://digby.ai/crossmodel?utm_source=google&utm_medium=cpc&utm_campaign=fall&gclid=Cj0&email=x@y.z', 'https://www.google.com/search?q=private', 5);
     expect(t).toEqual({ ts: 5, utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'fall', gclid: 'Cj0', landing: '/crossmodel', referrer: 'google.com' });
     expect(JSON.stringify(t)).not.toContain('private');
     expect(JSON.stringify(t)).not.toContain('x@y.z');
   });
   it('drops an internal referrer; a direct landing has no source', () => {
-    const t = readTouch('https://digby.example.com/', 'https://digby.example.com/login', 1);
+    const t = readTouch('https://digby.ai/', 'https://digby.ai/login', 1);
     expect(t.referrer).toBeUndefined();
     expect(hasSource(t)).toBe(false);
   });
@@ -67,7 +67,7 @@ function fakeEnv(opts: Partial<Omit<CaptureEnv, 'href' | 'referrer' | 'token'>> 
   let uuidN = 0;
   let token = tokenStr ?? null;
   const env: CaptureEnv = {
-    href: () => hrefStr ?? 'https://digby.example.com/',
+    href: () => hrefStr ?? 'https://digby.ai/',
     referrer: () => refStr ?? '',
     getCookie: (n) => cookies.get(n)?.value ?? null,
     setCookie: (n, v, maxAge) => { cookies.set(n, { value: v, maxAge }); },
@@ -91,7 +91,7 @@ describe('createVisitorCapture', () => {
   afterEach(() => { delete process.env.NEXT_PUBLIC_VISITOR_ANALYTICS_DISABLED; });
 
   it('mints ONE random visitor id in a 13-month first-party cookie + localStorage, and records the first touch', () => {
-    const f = fakeEnv({ href: 'https://digby.example.com/?fbclid=IwAR&utm_campaign=spring', referrer: 'https://l.facebook.com/' });
+    const f = fakeEnv({ href: 'https://digby.ai/?fbclid=IwAR&utm_campaign=spring', referrer: 'https://l.facebook.com/' });
     const cap = createVisitorCapture(f.env);
     cap.land();
     const id = f.cookies.get(VISITOR_KEY)!;
@@ -105,10 +105,10 @@ describe('createVisitorCapture', () => {
   });
 
   it('the FIRST touch is never overwritten; the LAST touch moves only on a landing that carries a source', () => {
-    const f1 = fakeEnv({ href: 'https://digby.example.com/?gclid=G1' });
+    const f1 = fakeEnv({ href: 'https://digby.ai/?gclid=G1' });
     createVisitorCapture(f1.env).land();
     // a later page load (new capture instance, same storage) from a facebook ad
-    const f2 = fakeEnv({ href: 'https://digby.example.com/?fbclid=F2' });
+    const f2 = fakeEnv({ href: 'https://digby.ai/?fbclid=F2' });
     for (const [k, v] of f1.cookies) f2.cookies.set(k, v);
     for (const [k, v] of f1.store) f2.store.set(k, v);
     createVisitorCapture(f2.env).land();
@@ -116,7 +116,7 @@ describe('createVisitorCapture', () => {
     expect(JSON.parse(decodeURIComponent(f2.cookies.get(LAST_TOUCH_KEY)!.value)).fbclid).toBe('F2');
     expect(f2.cookies.get(VISITOR_KEY)!.value).toBe(f1.cookies.get(VISITOR_KEY)!.value);
     // a direct revisit moves neither
-    const f3 = fakeEnv({ href: 'https://digby.example.com/crossmodel' });
+    const f3 = fakeEnv({ href: 'https://digby.ai/crossmodel' });
     for (const [k, v] of f2.cookies) f3.cookies.set(k, v);
     createVisitorCapture(f3.env).land();
     expect(JSON.parse(decodeURIComponent(f3.cookies.get(LAST_TOUCH_KEY)!.value)).fbclid).toBe('F2');
@@ -131,7 +131,7 @@ describe('createVisitorCapture', () => {
 
   it('queues page views and flushes ONE batch (fetch keepalive JSON, Bearer when signed in) after the delay', () => {
     const token = jwt({ userId: 'u', isChild: false });
-    const f = fakeEnv({ href: 'https://digby.example.com/?utm_source=google&utm_medium=cpc', token });
+    const f = fakeEnv({ href: 'https://digby.ai/?utm_source=google&utm_medium=cpc', token });
     const cap = createVisitorCapture(f.env);
     cap.land();
     cap.track('page_view', undefined, '/crossmodel?secret=1');
@@ -176,7 +176,7 @@ describe('createVisitorCapture', () => {
   });
 
   it('Digby Kids: a child token sends NOTHING and erases the visitor id + touches; an unreadable token fails closed', () => {
-    const f = fakeEnv({ href: 'https://digby.example.com/?gclid=G' });
+    const f = fakeEnv({ href: 'https://digby.ai/?gclid=G' });
     const cap = createVisitorCapture(f.env);
     cap.land();
     cap.track('page_view', undefined, '/');
@@ -199,7 +199,7 @@ describe('createVisitorCapture', () => {
 
   it('NEXT_PUBLIC_VISITOR_ANALYTICS_DISABLED=1: no id, no request', () => {
     process.env.NEXT_PUBLIC_VISITOR_ANALYTICS_DISABLED = '1';
-    const f = fakeEnv({ href: 'https://digby.example.com/?gclid=G' });
+    const f = fakeEnv({ href: 'https://digby.ai/?gclid=G' });
     const cap = createVisitorCapture(f.env);
     cap.land();
     cap.track('page_view', undefined, '/', { flush: true });

@@ -168,12 +168,12 @@ export const CLOSURE_MANIFEST: ReadonlyArray<ClosureEntry> = [
   {
     idPrefix: '7acaa7ba',
     adminNote: 'Fixed in PR #1123 (e18c15c4, 2026-09-28): shared workspaces for project members — honest errors instead of silent failures, sidebar nesting, ancestor-inherited access. Deploy run 36472901762 concluded success.',
-    evidence: { commitSha: 'e18c15c4', prUrl: 'https://github.com/canada-quant/digby/pull/1123', deployRunId: '36472901762' },
+    evidence: { commitSha: 'e18c15c4', prUrl: 'https://github.com/example-org/crossmodel/pull/1123', deployRunId: '36472901762' },
   },
   {
     idPrefix: 'd6110694',
     adminNote: 'Duplicate of user ticket 7acaa7ba (the same owner remark, captured from the supervisor chat) — fixed by the same PR #1123 (e18c15c4, 2026-09-28); the second dispatch lane it spawned was redundant.',
-    evidence: { commitSha: 'e18c15c4', prUrl: 'https://github.com/canada-quant/digby/pull/1123', deployRunId: '36472901762' },
+    evidence: { commitSha: 'e18c15c4', prUrl: 'https://github.com/example-org/crossmodel/pull/1123', deployRunId: '36472901762' },
     duplicateOf: '7acaa7ba',
   },
   // ── 2026-10-06 ticket catch-up: fixed by the production-audit wave (PR #1303, 7beac605, deploy run 37507532011 green)
@@ -181,17 +181,17 @@ export const CLOSURE_MANIFEST: ReadonlyArray<ClosureEntry> = [
   {
     idPrefix: '2bae9728',
     adminNote: 'Fixed in PR #1303 (7beac605, audit 2026-10-06 T5-2): start_coding_session with no prompt no longer reads as "work is running" — the spawn envelope + parent card say the child is IDLE until it gets a first message, and a charter-bound spawn delivers its first prompt. Deploy run 37507532011 concluded success.',
-    evidence: { commitSha: '7beac605', prUrl: 'https://github.com/canada-quant/digby/pull/1303', deployRunId: '37507532011' },
+    evidence: { commitSha: '7beac605', prUrl: 'https://github.com/example-org/crossmodel/pull/1303', deployRunId: '37507532011' },
   },
   {
     idPrefix: '4d64c70d',
     adminNote: 'Fixed in PR #1303 (7beac605, audit 2026-10-06 T2-3): a secure secret-intake path — the store_secret tool (human turn only) lifts the credential from the owner\'s own message server-side into their encrypted coding credentials, so every coding lane gets it as $ENVKEY in its shell; the model only ever sees the env var name, so "install this key" asks stay actionable while redaction keeps the value out of transcripts. Deploy run 37507532011 concluded success.',
-    evidence: { commitSha: '7beac605', prUrl: 'https://github.com/canada-quant/digby/pull/1303', deployRunId: '37507532011' },
+    evidence: { commitSha: '7beac605', prUrl: 'https://github.com/example-org/crossmodel/pull/1303', deployRunId: '37507532011' },
   },
   {
     idPrefix: 'ce94a30c',
     adminNote: 'Root cause fixed in PR #1303 (7beac605, audit 2026-10-06 T4-4): the [PROJECT SCHEDULES] DORMANT banner told the supervisor to "re-arm NOTHING" while its own one-shot chain told it to re-arm, so it claimed a re-arm it never made. The banner now recognises the supervisor\'s own follow-up chain, and dormancy reads live signals (T4-3). The action verifier had already stripped the invented id. Deploy run 37507532011 concluded success.',
-    evidence: { commitSha: '7beac605', prUrl: 'https://github.com/canada-quant/digby/pull/1303', deployRunId: '37507532011' },
+    evidence: { commitSha: '7beac605', prUrl: 'https://github.com/example-org/crossmodel/pull/1303', deployRunId: '37507532011' },
   },
   {
     idPrefix: '0087e649',
@@ -216,7 +216,7 @@ export const CLOSURE_MANIFEST: ReadonlyArray<ClosureEntry> = [
   {
     idPrefix: '92857a41',
     adminNote: 'Fixed (98879e4e PR #1318 + 4ece357b PR #1319) — run 37539254348 failed 2 NEW cases and both were suite over-strictness, not product bugs. 05-tools-create-document: the playbook\'s own row routes "a document they can open" to create_canvas, so the case accepts every real route (create_document preferred; a create_canvas tool call; an inline [CANVAS] block when the artifact landed) and hard-checks an artifact; the doctrine row also now names create_document for a downloadable FILE (md/docx/pdf/csv/xlsx, "save a file"), closing the no-row gap that made the tool pick seed-dependent luck. 13-tools-account-overview: the [YOUR INTEGRATION STATUS] block rides every signed-in turn, so a grounded no-tool answer passes (get_account_overview preferred only, read-only, the answer must name the state) — the same adjudication the integrations-category twin already had; post-fix the lead calls the tool outright. Verified live: nightly 37556487363 case 13 PASS with get_account_overview; case 05 artifact landed. Deploy run 37556477415 green, every box on 98879e4e.',
-    evidence: { commitSha: '4ece357b', prUrl: 'https://github.com/canada-quant/digby/pull/1319', deployRunId: '37556477415' },
+    evidence: { commitSha: '4ece357b', prUrl: 'https://github.com/example-org/crossmodel/pull/1319', deployRunId: '37556477415' },
   },
   {
     idPrefix: 'e294f9a4',

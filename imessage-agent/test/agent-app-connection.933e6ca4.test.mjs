@@ -255,7 +255,7 @@ test('933e6ca4 reviewer B1: the bundled helper NEVER retires its own job (identi
   // .pkg paths do not.
   assert.equal(runningIsBundledHelper('/Applications/Digby.app/Contents/Resources/imessage-agent/DigbyHelper'), true);
   assert.equal(runningIsBundledHelper('/Library/Digby/imessage-agent/DigbyAgent'), false);
-  assert.equal(runningIsBundledHelper('/Users/x/Library/Application Support/Digby/bin/DigbyAgent'), false);
+  assert.equal(runningIsBundledHelper('/Users/example/Library/Application Support/Digby/bin/DigbyAgent'), false);
   // And the startup wiring logs the self case instead of retiring (the source
   // escapes the apostrophe: app\'s).
   const idx = read('src/index.ts');
@@ -470,7 +470,7 @@ test('933e6ca4: the permission hint names the REAL binary and explains grant orp
 // ── 4. THE NAMING — the served bootstrap + the card ──────────────────────────
 
 test('933e6ca4: the served bootstrap installer warns about TCC + binary replacement', () => {
-  // The one-liner the card shows pipes THIS file from digby.example.com. It must warn
+  // The one-liner the card shows pipes THIS file from digby.ai. It must warn
   // BEFORE replacing the binary (fix c) and name the components (fix d).
   // Line-break-tolerant: the sentences span the installer's echo line breaks.
   assert.match(bootstrap, /updates the BACKGROUND AGENT only/);
@@ -494,8 +494,8 @@ test('933e6ca4: the frontend hint distinguishes app vs agent (wiring pins)', () 
 
 test('933e6ca4 → 405927c9: the fix is stamped — tree current (single-agent-convergence line 0.9.x)', () => {
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(pkg.version, '0.9.19');
-  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.19'/);
+  assert.equal(pkg.version, '0.9.23');
+  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.23'/);
   assert.match(read('src/config.ts'), /933e6ca4/);
   assert.match(read('src/config.ts'), /405927c9/);
 });

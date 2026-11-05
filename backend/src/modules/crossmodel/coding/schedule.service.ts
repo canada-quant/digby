@@ -441,7 +441,7 @@ async function resolveOnceChainLink(
     const parentId = String(input.chainedFromScheduleId);
     const rows = await loadOnceChainRows(input.sessionId);
     if (!rows.some((r) => r.id === parentId)) {
-      const parent = await prisma.codingSchedule.findFirst({ where: { id: parentId, sessionId: input.sessionId }, select: { id: true } });
+      const parent = await prisma.chatSchedule.findFirst({ where: { id: parentId, sessionId: input.sessionId }, select: { id: true } });
       if (!parent) return null;
     }
     const verdict = walkOnceChain(rows, parentId, Date.now());
@@ -492,7 +492,7 @@ async function oneSweepArmRefusal(input: CreateScheduleInput, prompt: string, in
     if (input.kind !== 'recurring' || input.promptSetBy !== 'machine' || !sweepShapedPrompt(prompt)) return null;
     const chat = await prisma.crossModelChat.findUnique({ where: { id: input.sessionId }, select: { isSupervisor: true, isProjectSupervisor: true } });
     if (!(chat as any)?.isSupervisor && !(chat as any)?.isProjectSupervisor) return null;
-    const rows = await prisma.codingSchedule.findMany({
+    const rows = await prisma.chatSchedule.findMany({
       where: { sessionId: input.sessionId, kind: 'recurring', enabled: true },
       orderBy: { createdAt: 'asc' },
     });
@@ -518,7 +518,7 @@ async function oneSweepArmRefusal(input: CreateScheduleInput, prompt: string, in
 export async function foldDuplicateSweepsAtFire(s: { id: string; sessionId: string; prompt: string; kind: string }): Promise<string[]> {
   try {
     if (supervisorOneSweepDisabled() || s.kind !== 'recurring' || !classifySweepPrompt(s.prompt)) return [];
-    const rows = await prisma.codingSchedule.findMany({
+    const rows = await prisma.chatSchedule.findMany({
       where: { sessionId: s.sessionId, kind: 'recurring', enabled: true, id: { not: s.id } },
       select: { id: true, prompt: true, kind: true, runsCount: true, promptSetBy: true, intervalSec: true },
     });
@@ -526,7 +526,7 @@ export async function foldDuplicateSweepsAtFire(s: { id: string; sessionId: stri
       && (r.promptSetBy === 'machine' || r.promptSetBy === 'system') && sweepShapedPrompt(r.prompt));
     const out: string[] = [];
     for (const r of doomed) {
-      const res = await prisma.codingSchedule.updateMany({
+      const res = await prisma.chatSchedule.updateMany({
         where: { id: r.id, enabled: true },
         data: { enabled: false, lastStatus: 'cancelled', cancelledBy: 'machine', disabledAt: new Date() },
       }).catch(() => ({ count: 0 }));
@@ -707,7 +707,7 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Create
     // A recurring-like chain link (finding B1) ALSO matches an enabled
     // RECURRING twin: a lane that already holds the recurring version of the
     // job must not stack one-shot links beside it.
-    const enabledRows = await prisma.codingSchedule.findMany({
+    const enabledRows = await prisma.chatSchedule.findMany({
       where: { sessionId: input.sessionId, kind: chainRecurringLike ? { in: ['once', 'recurring'] } : input.kind, enabled: true },
     });
     const want = normalizeArmPrompt(prompt);
@@ -730,7 +730,7 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Create
         const differs = JSON.stringify(storedBare ?? null) !== JSON.stringify(deltaGate);
         let row = dupe;
         if (differs) {
-          row = await prisma.codingSchedule.update({ where: { id: dupe.id }, data: { deltaGate: deltaGate as any } });
+          row = await prisma.chatSchedule.update({ where: { id: dupe.id }, data: { deltaGate: deltaGate as any } });
           logger.info(`coding schedule: delta gate (re)armed on deduped row ${dupe.id} (ticket 0b1dbe75)`);
         }
         const [schedule] = await enrichWithCapState([toView(row)], () => input.sessionId);
@@ -749,7 +749,7 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Create
   if (secondSweep) return secondSweep;
 
   // Cap active schedules per session.
-  const active = await prisma.codingSchedule.count({ where: { sessionId: input.sessionId, enabled: true } });
+  const active = await prisma.chatSchedule.count({ where: { sessionId: input.sessionId, enabled: true } });
   if (active >= MAX_ACTIVE_PER_SESSION) {
     return { ok: false, error: `Too many active schedules (${active}/${MAX_ACTIVE_PER_SESSION}) for this session. cancel_schedule one first.` };
   }
@@ -823,7 +823,7 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Create
   const collapseSkippedForStretch = stretchedFrom !== undefined && !durationFitCollapseStretched();
   const collapseSameCadence = input.kind === 'recurring' && input.promptSetBy === 'machine' && !collapseSkippedForStretch;
   const { row, superseded } = await prisma.$transaction(async (tx) => {
-    const created = await tx.codingSchedule.create({
+    const created = await tx.chatSchedule.create({
       data: {
         sessionId: input.sessionId,
         userId: input.userId,
@@ -850,7 +850,7 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Create
     if (collapseSameCadence) {
       // Re-read INSIDE the transaction (not the dedup guard's earlier read) so
       // a sibling run's same-cadence arm racing the create is seen too.
-      stale = await tx.codingSchedule.findMany({
+      stale = await tx.chatSchedule.findMany({
         where: {
           sessionId: input.sessionId,
           kind: 'recurring',
@@ -862,7 +862,7 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Create
         select: { id: true, runsCount: true },
       });
       if (stale.length) {
-        await tx.codingSchedule.updateMany({
+        await tx.chatSchedule.updateMany({
           where: { id: { in: stale.map((s) => s.id) } },
           data: { enabled: false, lastStatus: 'cancelled', cancelledBy: 'machine', disabledAt: new Date() },
         });
@@ -916,8 +916,8 @@ export async function createSchedule(input: CreateScheduleInput): Promise<Create
  *  carries the same fix for the status payload). Terminal history stays capped. */
 export async function listSchedules(sessionId: string): Promise<ScheduleView[]> {
   const [enabled, terminal] = await Promise.all([
-    prisma.codingSchedule.findMany({ where: { sessionId, enabled: true }, orderBy: { createdAt: 'desc' } }),
-    prisma.codingSchedule.findMany({ where: { sessionId, enabled: false }, orderBy: { createdAt: 'desc' }, take: 50 }),
+    prisma.chatSchedule.findMany({ where: { sessionId, enabled: true }, orderBy: { createdAt: 'desc' } }),
+    prisma.chatSchedule.findMany({ where: { sessionId, enabled: false }, orderBy: { createdAt: 'desc' }, take: 50 }),
   ]);
   // A row flipping enabled between the two parallel reads could land in BOTH
   // halves — dedup by id, active wins (same race handled in
@@ -934,9 +934,9 @@ export async function listSchedules(sessionId: string): Promise<ScheduleView[]> 
  *  explicit OWNER action), so the default attribution is 'owner'; a machine
  *  caller must say so via opts so the digest backstop can re-offer its lane. */
 export async function cancelSchedule(sessionId: string, id: string, opts?: { initiator?: 'owner' | 'machine'; actorChatId?: string | null }): Promise<boolean> {
-  const row = await prisma.codingSchedule.findFirst({ where: { id, sessionId } });
+  const row = await prisma.chatSchedule.findFirst({ where: { id, sessionId } });
   if (!row) return false;
-  await prisma.codingSchedule.update({
+  await prisma.chatSchedule.update({
     where: { id },
     data: { enabled: false, lastStatus: 'cancelled', cancelledBy: opts?.initiator ?? 'owner', disabledAt: new Date() },
   });
@@ -981,9 +981,9 @@ export async function pauseSchedulesForLaneArchive(
   // exactly them. The ticket dispatcher's call (no archiveRetire) is unchanged.
   const retire = actor.archiveRetire && !archivedTargetRetireDisabled() ? actor.archiveRetire : null;
   try {
-    const rows = await prisma.codingSchedule.findMany({ where: { sessionId, enabled: true } });
+    const rows = await prisma.chatSchedule.findMany({ where: { sessionId, enabled: true } });
     for (const row of rows) {
-      await prisma.codingSchedule.update({
+      await prisma.chatSchedule.update({
         where: { id: row.id },
         data: { enabled: false, lastStatus: retire ? ARCHIVED_SCHEDULE_LAST_STATUS : 'lane_archive', cancelledBy: 'machine', disabledAt: new Date() },
       });
@@ -1047,7 +1047,7 @@ export async function resumeSchedulesForRestoredChat(chatId: string): Promise<nu
     const rec = await store.storeGet<{ ids?: unknown }>(ARCHIVE_PAUSED_SCHEDULES_NS(chatId), 'ids');
     const ids = Array.isArray(rec?.ids) ? (rec!.ids as unknown[]).map(String).filter(Boolean) : [];
     if (!ids.length) return 0;
-    const rows = await prisma.codingSchedule.findMany({
+    const rows = await prisma.chatSchedule.findMany({
       where: { id: { in: ids }, sessionId: chatId, enabled: false, lastStatus: ARCHIVED_SCHEDULE_LAST_STATUS },
       select: { id: true },
     });
@@ -1108,7 +1108,7 @@ export async function emitScheduleDisabled(
   let remainingEnabled: number | undefined;
   if (reason === 'cancelled' || reason === 'paused' || reason === 'containment') {
     try {
-      remainingEnabled = await prisma.codingSchedule.count({ where: { sessionId: s.sessionId, enabled: true } });
+      remainingEnabled = await prisma.chatSchedule.count({ where: { sessionId: s.sessionId, enabled: true } });
       if (remainingEnabled === 0) {
         suffix = ' The chat now has NO enabled schedules — if it runs standing work (monitors, assigned goal todos), it is DEAF until a new schedule is armed.';
       }
@@ -1342,7 +1342,7 @@ export async function renewalChain(
 ): Promise<RenewalChainInfo> {
   let parentId: string | null | undefined = s.renewedFromId;
   if (parentId === undefined) {
-    const row = await prisma.codingSchedule.findUnique({ where: { id: s.id }, select: { renewedFromId: true } });
+    const row = await prisma.chatSchedule.findUnique({ where: { id: s.id }, select: { renewedFromId: true } });
     parentId = row?.renewedFromId ?? null;
   }
   if (!parentId) {
@@ -1359,7 +1359,7 @@ export async function renewalChain(
     if (seen.has(parentId)) break; // defensive — the UNIQUE key makes cycles impossible
     seen.add(parentId);
     const parent: { renewedFromId: string | null; promptSetBy?: string | null; renewOnExhaustion?: boolean | null } | null =
-      await prisma.codingSchedule.findUnique({ where: { id: parentId }, select: { renewedFromId: true, promptSetBy: true, renewOnExhaustion: true } });
+      await prisma.chatSchedule.findUnique({ where: { id: parentId }, select: { renewedFromId: true, promptSetBy: true, renewOnExhaustion: true } });
     last = parent;
     parentId = parent?.renewedFromId ?? null;
   }
@@ -1514,7 +1514,7 @@ export async function maybeRenewOnExhaustion(s: {
       logger.info(`coding schedule: successor renewal refused for ${s.id} — ${dormancy.reason}`);
       return null;
     }
-    const existing = await prisma.codingSchedule.findFirst({ where: { renewedFromId: s.id }, select: { id: true } });
+    const existing = await prisma.chatSchedule.findFirst({ where: { renewedFromId: s.id }, select: { id: true } });
     if (existing) return existing.id; // already renewed (earlier tick / peer instance)
     // Duplicate guard (ticket eb710676): a MANUAL/STEERED replacement stamps no
     // renewedFromId, so the idempotency key above cannot see it — without this
@@ -1531,7 +1531,7 @@ export async function maybeRenewOnExhaustion(s: {
     // ordering), so this row is still enabled:true in the scan above — the
     // clause is LOAD-BEARING, not defense-in-depth: without it the exhausted
     // row would ADOPT ITSELF as its own successor.
-    const enabledRows = await prisma.codingSchedule.findMany({
+    const enabledRows = await prisma.chatSchedule.findMany({
       where: { sessionId: s.sessionId, kind: 'recurring', enabled: true },
       // requiredProbes/expiresAt ride the select for the adoption repairs
       // below (ticket feaca3e8) — a bare adopt could otherwise carry the
@@ -1565,7 +1565,7 @@ export async function maybeRenewOnExhaustion(s: {
         repair.expiresAt = new Date(Date.now() + MAX_LIFETIME_MS);
       }
       if (Object.keys(repair).length > 0) {
-        await prisma.codingSchedule.update({ where: { id: dupe.id }, data: repair }).then(() => {
+        await prisma.chatSchedule.update({ where: { id: dupe.id }, data: repair }).then(() => {
           logger.info(`coding schedule: renewOnExhaustion repaired adopted ${dupe.id} (${Object.keys(repair).join('+')}, ticket feaca3e8)`);
         }).catch((err: any) => {
           logger.warn(`coding schedule: renewOnExhaustion adoption repair failed for ${dupe.id} (adopting anyway): ${err?.message ?? err}`);
@@ -1608,7 +1608,7 @@ export async function maybeRenewOnExhaustion(s: {
     const now = Date.now();
     const interval = s.intervalSec ?? MIN_INTERVAL_SEC;
     try {
-      const row = await prisma.codingSchedule.create({
+      const row = await prisma.chatSchedule.create({
         data: {
           sessionId: s.sessionId,
           userId: s.userId,
@@ -1647,7 +1647,7 @@ export async function maybeRenewOnExhaustion(s: {
     } catch (err: any) {
       if (err?.code === 'P2002') {
         // Race loser — the peer's successor won; report it.
-        const winner = await prisma.codingSchedule.findFirst({ where: { renewedFromId: s.id }, select: { id: true } }).catch(() => null);
+        const winner = await prisma.chatSchedule.findFirst({ where: { renewedFromId: s.id }, select: { id: true } }).catch(() => null);
         return winner?.id ?? null;
       }
       throw err;
@@ -1708,9 +1708,9 @@ async function resolveStoppedScheduleDecisionsSafe(sessionId: string, successorI
 export async function deafLaneWarningForUser(userId: string, id: string): Promise<string | null> {
   const scheduleId = await resolveScheduleIdForUser(userId, id);
   if (!scheduleId) return null;
-  const row = await prisma.codingSchedule.findFirst({ where: { id: scheduleId, userId }, select: { sessionId: true } });
+  const row = await prisma.chatSchedule.findFirst({ where: { id: scheduleId, userId }, select: { sessionId: true } });
   if (!row) return null;
-  const remaining = await prisma.codingSchedule.count({ where: { sessionId: row.sessionId, enabled: true } });
+  const remaining = await prisma.chatSchedule.count({ where: { sessionId: row.sessionId, enabled: true } });
   if (remaining > 0) return null;
   return `WARNING — chat ${row.sessionId} now has NO enabled schedules: if it runs standing work (monitors, assigned goal todos), it is DEAF until re-armed. Arm the replacement NOW with schedule_message — never defer a re-arm to a note or state doc (notes get compacted away; only an armed schedule fires).`;
 }
@@ -1759,7 +1759,7 @@ export type SetScheduleEnabledResult =
  * "Cancelled — Undo" affordance calls.
  */
 export async function setScheduleEnabledForChat(sessionId: string, scheduleId: string, enabled: boolean, opts?: { actorChatId?: string | null; restore?: boolean }): Promise<SetScheduleEnabledResult> {
-  const row = await prisma.codingSchedule.findFirst({ where: { id: scheduleId, sessionId } });
+  const row = await prisma.chatSchedule.findFirst({ where: { id: scheduleId, sessionId } });
   if (!row) return { ok: false, reason: 'not_found', error: 'Schedule not found' };
 
   if (row.enabled === enabled) {
@@ -1768,7 +1768,7 @@ export async function setScheduleEnabledForChat(sessionId: string, scheduleId: s
   }
 
   if (!enabled) {
-    const updated = await prisma.codingSchedule.update({ where: { id: row.id }, data: { enabled: false, lastStatus: 'paused', cancelledBy: 'owner', disabledAt: new Date() } });
+    const updated = await prisma.chatSchedule.update({ where: { id: row.id }, data: { enabled: false, lastStatus: 'paused', cancelledBy: 'owner', disabledAt: new Date() } });
     logger.info(`coding schedule: paused ${row.id} for session ${sessionId.slice(0, 8)}`);
     await emitScheduleDisabled(row, 'paused', row.runsCount, opts?.actorChatId ? { actorChatId: opts.actorChatId } : undefined);
     const [schedule] = await enrichWithCapState([toView(updated)], () => sessionId);
@@ -1792,7 +1792,7 @@ export async function setScheduleEnabledForChat(sessionId: string, scheduleId: s
       error: `Schedule already completed its run${row.maxRuns != null && row.maxRuns > 1 ? `s (${row.runsCount}/${row.maxRuns})` : ''} — it cannot resume; create a new schedule instead.`,
     };
   }
-  const active = await prisma.codingSchedule.count({ where: { sessionId, enabled: true } });
+  const active = await prisma.chatSchedule.count({ where: { sessionId, enabled: true } });
   if (active >= MAX_ACTIVE_PER_SESSION) {
     return {
       ok: false, reason: 'too_many_active',
@@ -1830,7 +1830,7 @@ export async function setScheduleEnabledForChat(sessionId: string, scheduleId: s
   if (!Number.isFinite(nextAt) || nextAt <= now) data.nextRunAt = new Date(now + (row.intervalSec ?? MIN_INTERVAL_SEC) * 1000);
   const expAt = row.expiresAt ? new Date(row.expiresAt as any).getTime() : null;
   if (expAt !== null && expAt <= now) data.expiresAt = new Date(now + MAX_LIFETIME_MS);
-  const updated = await prisma.codingSchedule.update({ where: { id: row.id }, data });
+  const updated = await prisma.chatSchedule.update({ where: { id: row.id }, data });
   logger.info(`coding schedule: resumed ${row.id} for session ${sessionId.slice(0, 8)}${data.nextRunAt ? ' (stale nextRunAt recomputed)' : ''}${data.expiresAt ? ' (lapsed expiry slid)' : ''}`);
   // Lane revival (SA0906): a resume closes the chat's open stopped-schedule
   // decisions — the re-enabled cadence IS the resolution. v1#12: only a
@@ -1957,7 +1957,7 @@ async function recordDeltaGateErrorStreak(scheduleId: string, sessionId: string,
     if (n >= DELTA_ERR_ALARM_THRESHOLD) {
       const clipped = detail.slice(0, 140);
       // digest-visible status — safe to repeat (same value every time)
-      await prisma.codingSchedule
+      await prisma.chatSchedule
         .update({ where: { id: scheduleId }, data: { lastStatus: 'alarm:delta_gate_errors' } })
         .catch(() => {});
       const claimed = await redisClient
@@ -2017,7 +2017,7 @@ export async function recordScheduleProviderFail(scheduleId: string, sessionId: 
       // Observe-only per the 2026-09-11 gate flip — the honest failed runs +
       // the counter + the attention event are the response.
       // (a) digest-visible status — safe to repeat (same value every time).
-      await prisma.codingSchedule
+      await prisma.chatSchedule
         .update({
           where: { id: scheduleId },
           data: { lastStatus: providerFailLastStatus(info) },
@@ -2195,12 +2195,12 @@ export async function recordScheduleProbeMiss(scheduleId: string, _sessionId: st
       return n;
     }
     // Threshold: pause the schedule + ONE owner card (NX-gated vs races/repeats).
-    const row = await prisma.codingSchedule.findUnique({
+    const row = await prisma.chatSchedule.findUnique({
       where: { id: scheduleId },
       select: { id: true, sessionId: true, kind: true, runsCount: true, userId: true, enabled: true, prompt: true },
     }).catch(() => null);
     if (!row || !row.enabled) return n; // already stopped by another path
-    await prisma.codingSchedule.update({
+    await prisma.chatSchedule.update({
       where: { id: scheduleId },
       data: { enabled: false, lastStatus: 'paused:required_probes', cancelledBy: 'machine', disabledAt: new Date() },
     }).catch(() => {});
@@ -2365,7 +2365,7 @@ export async function queueContinuationRun(opts: {
     // separate continuation only fires into a completed board later (the 173
     // dead skipped:obsolete once-rows in prod were exactly this). The caller
     // must treat 'recurring_lane' as terminal (no legacy fallback).
-    const recurringOwners = await prisma.codingSchedule.count({
+    const recurringOwners = await prisma.chatSchedule.count({
       where: { sessionId: opts.sessionId, enabled: true, kind: 'recurring' },
     }).catch(() => 0);
     if (recurringOwners > 0) return { ok: false, reason: 'recurring_lane' };
@@ -2495,7 +2495,7 @@ export async function armOwnerAnswerRetrySchedule(opts: {
       return { ok: false, reason: 'bad_marker' };
     }
     // Per-question dedupe: one live retry row per marker.
-    const existing = await prisma.codingSchedule.findFirst({
+    const existing = await prisma.chatSchedule.findFirst({
       where: { sessionId: opts.sessionId, enabled: true, prompt: { startsWith: marker } },
       select: { id: true },
     });
@@ -2516,7 +2516,7 @@ export async function armOwnerAnswerRetrySchedule(opts: {
     }
     const now = Date.now();
     const prompt = `${marker}\n${String(opts.prompt || '').trim()}`.slice(0, MAX_PROMPT_CHARS);
-    const row = await prisma.codingSchedule.create({
+    const row = await prisma.chatSchedule.create({
       data: {
         sessionId: opts.sessionId,
         userId: chat.userId,
@@ -2569,7 +2569,7 @@ export const MACHINE_RUN_DEADLINE_FLOOR_MS = 20 * 60 * 1000;
 export async function computeMachineRunDeadlineMs(sessionId: string): Promise<number | null> {
   if (process.env.RUN_DEADLINE_ENABLED !== '1') return null;
   try {
-    const rows = await prisma.codingSchedule.findMany({
+    const rows = await prisma.chatSchedule.findMany({
       where: { sessionId, enabled: true, kind: 'recurring', intervalSec: { not: null } },
       select: { intervalSec: true },
     });
@@ -2615,7 +2615,7 @@ export function scheduleFiringDeadlineMs(intervalSec: number): number {
 export async function computeScheduleFiringDeadlineMs(scheduleId: string | null | undefined): Promise<number | null> {
   if (process.env.SCHEDULE_DURATION_DEADLINE_ENABLED !== '1' || !scheduleId) return null;
   try {
-    const row = await prisma.codingSchedule.findUnique({
+    const row = await prisma.chatSchedule.findUnique({
       where: { id: scheduleId },
       select: { kind: true, intervalSec: true, promptSetBy: true },
     });
@@ -2651,8 +2651,8 @@ export async function getScheduleHealth(sessionId: string): Promise<{ active: nu
   // recurring row once 50+ newer terminal rows accumulated, reporting a live
   // monitor as dead (active: 0) and inviting a duplicate recreation.
   const [rows, terminal] = await Promise.all([
-    prisma.codingSchedule.findMany({ where: { sessionId, enabled: true }, orderBy: { createdAt: 'desc' } }),
-    prisma.codingSchedule.count({ where: { sessionId, enabled: false } }),
+    prisma.chatSchedule.findMany({ where: { sessionId, enabled: true }, orderBy: { createdAt: 'desc' } }),
+    prisma.chatSchedule.count({ where: { sessionId, enabled: false } }),
   ]);
   const items = rows.map(r => ({
     id: r.id, kind: r.kind, intervalSec: r.intervalSec ?? null,
@@ -2679,7 +2679,7 @@ let lastGcAt = 0;
  */
 export async function gcTerminalSchedules(olderThanMs = TERMINAL_ROW_TTL_MS): Promise<number> {
   const cutoff = new Date(Date.now() - olderThanMs);
-  const res = await prisma.codingSchedule.deleteMany({
+  const res = await prisma.chatSchedule.deleteMany({
     where: { enabled: false, createdAt: { lt: cutoff }, OR: [{ lastFiredAt: null }, { lastFiredAt: { lt: cutoff } }] },
   }).catch(() => ({ count: 0 }));
   if (res.count > 0) logger.info(`coding schedule GC: deleted ${res.count} terminal row(s) idle >${Math.round(olderThanMs / 86_400_000)}d`);
@@ -2707,10 +2707,10 @@ export const MIN_SCHEDULE_ID_PREFIX_LEN = 8;
 export async function resolveScheduleIdForUser(userId: string, idOrPrefix: string): Promise<string | null> {
   const id = String(idOrPrefix || '').trim();
   if (!id) return null;
-  const exact = await prisma.codingSchedule.findFirst({ where: { id, userId } });
+  const exact = await prisma.chatSchedule.findFirst({ where: { id, userId } });
   if (exact) return exact.id;
   if (id.length < MIN_SCHEDULE_ID_PREFIX_LEN) return null;
-  const matches = await prisma.codingSchedule.findMany({
+  const matches = await prisma.chatSchedule.findMany({
     where: { userId, id: { startsWith: id } },
     select: { id: true },
     take: 5,
@@ -2719,8 +2719,8 @@ export async function resolveScheduleIdForUser(userId: string, idOrPrefix: strin
     // audit 2026-10-08 W3-3: the shared heal tier — a ≥8-char suffix / prefix+suffix splice, owner-scoped.
     const { healIdRef } = await import('../platform/id-ref');
     const healed = await healIdRef(id, {
-      byPrefix: async (prefix, take) => (await prisma.codingSchedule.findMany({ where: { userId, id: { startsWith: prefix } }, select: { id: true }, take })).map((r) => r.id),
-      bySuffix: async (suffix, take) => (await prisma.codingSchedule.findMany({ where: { userId, id: { endsWith: suffix } }, select: { id: true }, take })).map((r) => r.id),
+      byPrefix: async (prefix, take) => (await prisma.chatSchedule.findMany({ where: { userId, id: { startsWith: prefix } }, select: { id: true }, take })).map((r) => r.id),
+      bySuffix: async (suffix, take) => (await prisma.chatSchedule.findMany({ where: { userId, id: { endsWith: suffix } }, select: { id: true }, take })).map((r) => r.id),
     }, 'schedule');
     if (healed.ok) return healed.id;
     if (healed.reason === 'ambiguous') {
@@ -2750,7 +2750,7 @@ export interface UserScheduleView extends ScheduleView {
 export async function getScheduleForUser(userId: string, idOrPrefix: string): Promise<UserScheduleView | null> {
   const id = await resolveScheduleIdForUser(userId, idOrPrefix);
   if (!id) return null;
-  const row = await prisma.codingSchedule.findFirst({ where: { id, userId } });
+  const row = await prisma.chatSchedule.findFirst({ where: { id, userId } });
   if (!row) return null;
   const [view] = await enrichWithCapState([{ ...toView(row), sessionId: row.sessionId }], (v) => v.sessionId);
   return view ?? null;
@@ -2770,8 +2770,8 @@ export async function listSchedulesForUser(userId: string): Promise<UserSchedule
   // could land in BOTH halves — dedup by id, active wins. The merged list is
   // re-sorted newest-first (matches listSchedules above).
   const [active, terminal] = await Promise.all([
-    prisma.codingSchedule.findMany({ where: { userId, enabled: true }, orderBy: { createdAt: 'desc' } }),
-    prisma.codingSchedule.findMany({ where: { userId, enabled: false }, orderBy: { createdAt: 'desc' }, take: 100 }),
+    prisma.chatSchedule.findMany({ where: { userId, enabled: true }, orderBy: { createdAt: 'desc' } }),
+    prisma.chatSchedule.findMany({ where: { userId, enabled: false }, orderBy: { createdAt: 'desc' }, take: 100 }),
   ]);
   const byId = new Map<string, (typeof active)[number]>();
   for (const s of [...active, ...terminal]) if (!byId.has(s.id)) byId.set(s.id, s);
@@ -2794,12 +2794,12 @@ export async function cancelScheduleForUser(
 ): Promise<boolean> {
   const scheduleId = await resolveScheduleIdForUser(userId, id);
   if (!scheduleId) return false;
-  const row = await prisma.codingSchedule.findFirst({ where: { id: scheduleId, userId } });
+  const row = await prisma.chatSchedule.findFirst({ where: { id: scheduleId, userId } });
   if (!row) return false;
   // v1#13: persist WHO disabled it + WHEN — the digest backstop re-offers
   // machine-cancelled recurring lanes durably (the 12-min timer is only the
   // lossy fast path), and forensics stop guessing from lastStatus alone.
-  await prisma.codingSchedule.update({
+  await prisma.chatSchedule.update({
     where: { id: row.id },
     data: { enabled: false, lastStatus: 'cancelled', cancelledBy: opts?.initiator === 'machine' ? 'machine' : 'owner', disabledAt: new Date() },
   });
@@ -2827,7 +2827,7 @@ export async function updateScheduleForUser(
 ): Promise<{ ok: boolean; schedule?: UserScheduleView; error?: string; warning?: string; stretchedFrom?: number }> {
   const scheduleId = await resolveScheduleIdForUser(userId, id);
   if (!scheduleId) return { ok: false, error: `No such schedule "${id}".` };
-  const row = await prisma.codingSchedule.findFirst({ where: { id: scheduleId, userId } });
+  const row = await prisma.chatSchedule.findFirst({ where: { id: scheduleId, userId } });
   if (!row) return { ok: false, error: `No such schedule "${id}".` };
   // CanLaw B1: updating a DISABLED/terminal row used to "succeed" silently —
   // the caller believed its cadence was re-steered while the row would never
@@ -3020,7 +3020,7 @@ export async function updateScheduleForUser(
     recordLoopMetric({ kind: LOOP_METRIC_KINDS.SCHEDULE_PROMPT_LINT, sessionId: row.sessionId, meta: { rule: lint.rule, seam: 'update', scheduleId: row.id } });
   }
   const armWarning = [durationWarning, cadenceWarning, driftWarning, lint?.notice].filter(Boolean).join('\n\n') || undefined;
-  const updated = await prisma.codingSchedule.update({ where: { id: row.id }, data });
+  const updated = await prisma.chatSchedule.update({ where: { id: row.id }, data });
   logger.info(`schedule: updated ${row.id} for user ${userId.slice(0, 8)} (${Object.keys(data).join('+')})`);
   // Owner-armed cadence edited by a MACHINE run (fixer 2026-09-27, AUDIT CHURN
   // finding 1): the supervisors' doctrine scopes "lengthen its cadence" to
@@ -4018,7 +4018,7 @@ export async function fireScheduleTarget(s: {
   // Either signal renders the firing EXPANDED ("requested" marker).
   let scheduleRow: { enabled: boolean; kind: string; runsCount: number; maxRuns: number | null; expiresAt: Date | null; lastFiredAt: Date | null; promptSetBy: string | null; ownerSubscribed: boolean | null; renewOnExhaustion?: boolean | null; intervalSec?: number | null; createdAt?: Date | null; prompt?: string | null } | null | undefined;
   if (origin === 'schedule') {
-    scheduleRow = await prisma.codingSchedule.findUnique({
+    scheduleRow = await prisma.chatSchedule.findUnique({
       where: { id: s.id },
       // renewOnExhaustion + intervalSec (wake-cadence-4 / -1): the [SCHEDULE
       // STATE] renewal clause and the busy-steer delta header read them.
@@ -4756,7 +4756,7 @@ async function sweepTickBody(): Promise<void> {
       lastGcAt = now.getTime();
       await gcTerminalSchedules().catch(() => {});
     }
-    const due = await prisma.codingSchedule.findMany({
+    const due = await prisma.chatSchedule.findMany({
       where: { enabled: true, nextRunAt: { lte: now } },
       orderBy: { nextRunAt: 'asc' },
       take: 10,
@@ -4784,7 +4784,7 @@ async function sweepTickBody(): Promise<void> {
 }
 
 /** One due row as the sweeper reads it. */
-type DueScheduleRow = Awaited<ReturnType<typeof prisma.codingSchedule.findMany>>[number];
+type DueScheduleRow = Awaited<ReturnType<typeof prisma.chatSchedule.findMany>>[number];
 
 /**
  * Outcome of one due-row pass — the sweep loop body, shared with the schedule
@@ -5070,7 +5070,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
     // only an abandoned, never-firing lane reaches it.
     const renewOut: RenewRefusal = {};
     const successorId = isRunCap ? await maybeRenewOnExhaustion(s, renewOut) : null;
-    await prisma.codingSchedule.update({ where: { id: s.id }, data: { enabled: false, lastStatus: 'expired', disabledAt: now } }).catch(() => {});
+    await prisma.chatSchedule.update({ where: { id: s.id }, data: { enabled: false, lastStatus: 'expired', disabledAt: now } }).catch(() => {});
     // Owner-visible: an auto-disabled schedule must never die silently
     // (feedback dd0d37ac) — one notice per row, NX-gated. A governor refusal
     // (finding B2) names its reason in the same note.
@@ -5106,7 +5106,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
   if (s.kind === 'recurring' && (s as any).nearCapAlertedAt == null) {
     const nearCause = scheduleNearCapCause(s, now);
     if (nearCause) {
-      const stamp = await prisma.codingSchedule.updateMany({
+      const stamp = await prisma.chatSchedule.updateMany({
         where: { id: s.id, nearCapAlertedAt: null },
         data: { nearCapAlertedAt: now },
       }).catch(() => ({ count: 0 }));
@@ -5127,7 +5127,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
   const cadence = await reconcileCadenceAtClaim(s);
   const claimIntervalSec = cadence.intervalSec ?? s.intervalSec ?? MIN_INTERVAL_SEC;
   const nextRunAt = new Date(now.getTime() + claimIntervalSec * 1000);
-  const claim = await prisma.codingSchedule.updateMany({
+  const claim = await prisma.chatSchedule.updateMany({
     where: { id: s.id, enabled: true, nextRunAt: s.nextRunAt, runsCount: s.runsCount },
     data: { nextRunAt, ...(cadence.intervalSec != null ? { intervalSec: cadence.intervalSec } : {}), ...(cadence.lastStatus ? { lastStatus: cadence.lastStatus } : {}) },
   }).catch(() => ({ count: 0 }));
@@ -5164,7 +5164,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
   // off). Fail-open: any gate error fires as before.
   const supervisorOff = await supervisorWakeSkipById(s.sessionId, 'schedule');
   if (supervisorOff) {
-    await prisma.codingSchedule.update({
+    await prisma.chatSchedule.update({
       where: { id: s.id },
       data: {
         lastStatus: SUPERVISOR_SWITCH_SKIPPED_STATUS,
@@ -5224,7 +5224,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
         // landed (ALARM-class event, owner notice) is a lie.
         let parkedOk = false;
         try {
-          await prisma.codingSchedule.update({
+          await prisma.chatSchedule.update({
             where: { id: s.id },
             data: { enabled: false, lastStatus: DORMANT_LAST_STATUS, cancelledBy: 'machine', disabledAt: now },
           });
@@ -5261,7 +5261,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
     const { checkSpendCap, recordSpendCapSkip, maybeAskSpendCapQuestion } = await import('./spend-cap.service');
     const spendVerdict = await checkSpendCap(s.sessionId);
     if (spendVerdict) {
-      await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: 'skipped:spend_cap' } }).catch(() => {});
+      await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: 'skipped:spend_cap' } }).catch(() => {});
       await recordSpendCapSkip(s.sessionId); // the chat's next run learns WHY it went quiet (P3 notice channel, spend flavor)
       logger.warn(`coding schedule: ${s.id} skipped — trailing-24h spend $${spendVerdict.spentUsd} over the ${spendVerdict.scope} cap $${spendVerdict.capUsd}/day`);
       // Same per-window dedupe as the daily-cap skip (feedback a30b6ad9):
@@ -5286,7 +5286,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
   // per-chat (ChatAutonomy.scheduleCap ?? 48) — see dailyCapExceeded.
   const exceededCap = await dailyCapExceeded(s.sessionId);
   if (exceededCap !== null) {
-    await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: 'skipped:daily_cap' } }).catch(() => {});
+    await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: 'skipped:daily_cap' } }).catch(() => {});
     await recordCapSkip(s.sessionId); // the session's next run learns its firing was skipped
     logger.warn(`coding schedule: ${s.id} hit the ${exceededCap}/day session cap — skipping`);
     // Fleet supervisor: let a supervisor chat react (slice B delivers).
@@ -5332,12 +5332,12 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
           // SKIP: stamp the skip + advance checkedAt (the optimistic
           // Json-equals guard lets a concurrent gate replacement win —
           // lastStatus still stamps either way).
-          const skipWrite = await prisma.codingSchedule.updateMany({
+          const skipWrite = await prisma.chatSchedule.updateMany({
             where: { id: s.id, deltaGate: { equals: (s as any).deltaGate } },
             data: { lastStatus: 'skipped:delta_unchanged', deltaGate: verdict.gate as any },
           }).catch(() => ({ count: 0 }));
           if (skipWrite.count === 0) {
-            await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: 'skipped:delta_unchanged' } }).catch(() => {});
+            await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: 'skipped:delta_unchanged' } }).catch(() => {});
           }
           // dailyCapExceeded reserved its token INCR-first; a delta skip
           // started no run, so refund it exactly like the busy/error paths
@@ -5389,12 +5389,12 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
                 const threshold = decisionThreshold('delta_material', 0.85);
                 // E2 (2026-09-25): the RESULT's mode gates acting (an uncalibrated backend answers as 'shadow').
                 if (gateAnswer.mode === 'act' && p <= 1 - threshold) {
-                  const skipWrite = await prisma.codingSchedule.updateMany({
+                  const skipWrite = await prisma.chatSchedule.updateMany({
                     where: { id: s.id, deltaGate: { equals: (s as any).deltaGate } },
                     data: { lastStatus: 'skipped:delta_immaterial', deltaGate: verdict.gate as any },
                   }).catch(() => ({ count: 0 }));
                   if (skipWrite.count === 0) {
-                    await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: 'skipped:delta_immaterial' } }).catch(() => {});
+                    await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: 'skipped:delta_immaterial' } }).catch(() => {});
                   }
                   await refundDailyCapToken(s.sessionId);
                   recordDecisionOutcome(gateAnswer, 'delta_material', { question: 'material', actual: null, acted: true, sessionId: s.sessionId, note: (verdict.detail || '').slice(0, 120) });
@@ -5484,7 +5484,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
       : Promise.resolve(null as MaterialGateResult | null),
   ]);
   if (sweepTriage?.skip) {
-    await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: sweepSkipStatus(sweepTriage.skip.consecutive) } }).catch(() => {});
+    await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: sweepSkipStatus(sweepTriage.skip.consecutive) } }).catch(() => {});
     await refundDailyCapToken(s.sessionId);
     recordLoopMetric({
       kind: LOOP_METRIC_KINDS.SCHEDULE_SWEEP_SKIP, sessionId: s.sessionId,
@@ -5497,7 +5497,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
   }
   sweepDecision = sweepTriage?.stash ?? null;
   if (turnTriage?.skip) {
-    await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: turnNoopSkipStatus(turnTriage.skip.consecutive) } }).catch(() => {});
+    await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: turnNoopSkipStatus(turnTriage.skip.consecutive) } }).catch(() => {});
     await refundDailyCapToken(s.sessionId);
     logger.info(`coding schedule: ${s.id} skipped (turn_noop) — decision gate judged the sweep turn a no-op (will_act ${turnTriage.skip.p.toFixed(2)}, consecutive ${turnTriage.skip.consecutive})`);
     return { outcome: 'skipped', reason: 'turn_noop' };
@@ -5509,7 +5509,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
     // SUP-WAKE-TIERS (2026-10-20): a progress-only sweep whose source lanes drive themselves is held
     // (lastStatus 'skipped:progress_self_driving'); the next wake's diff still lists what it saw.
     const progressHold = materialGate.skipReason === 'progress_self_driving';
-    await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: progressHold ? SCHEDULE_STATUS_PROGRESS_SELF_DRIVING : SCHEDULE_STATUS_NO_MATERIAL_CHANGE } }).catch(() => {});
+    await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: progressHold ? SCHEDULE_STATUS_PROGRESS_SELF_DRIVING : SCHEDULE_STATUS_NO_MATERIAL_CHANGE } }).catch(() => {});
     await refundDailyCapToken(s.sessionId);
     void closeStashesForGateSkip([sweepDecision, turnNoopStash], s.sessionId, 'sweep');
     if (progressHold) {
@@ -5542,7 +5542,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
       parkedGate = await preGateParkedFiring(s, now);
       if (parkedGate.skip) {
         const { disposition, confidence, finishedRunId } = parkedGate.skip;
-        await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: SUPERSEDED_SKIP_STATUS[disposition], busySkips: 0 } }).catch(() => {});
+        await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: SUPERSEDED_SKIP_STATUS[disposition], busySkips: 0 } }).catch(() => {});
         await refundDailyCapToken(s.sessionId);
         recordLoopMetric({
           kind: LOOP_METRIC_KINDS.SCHEDULE_SUPERSEDED_SKIP, sessionId: s.sessionId,
@@ -5615,7 +5615,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
       // re-attempts the fire) — same optimistic Json-equals guard; a
       // concurrently replaced gate wins and re-baselines next firing.
       if (deltaFireGate) {
-        await prisma.codingSchedule.updateMany({
+        await prisma.chatSchedule.updateMany({
           where: { id: s.id, deltaGate: { equals: deltaFireGate.original as any } },
           data: { deltaGate: deltaFireGate.updated as any },
         }).catch(() => {});
@@ -5654,7 +5654,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
       if (reachedCap && s.kind === 'recurring') {
         successorId = await maybeRenewOnExhaustion(s, renewOut);
       }
-      const bump = await prisma.codingSchedule.updateMany({
+      const bump = await prisma.chatSchedule.updateMany({
         where: { id: s.id, enabled: true },
         // lastFiredAt stamps HERE — on the actual fire, never at claim
         // (P3 pin 14a); a consumed final run also records disabledAt, and
@@ -5672,7 +5672,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
         // row predates this fire and must survive. Enabled:false + disabled
         // 'cancelled' (never delete — the renewedFromId audit trail stays).
         if (renewOut.createdId) {
-          await prisma.codingSchedule.updateMany({
+          await prisma.chatSchedule.updateMany({
             where: { id: renewOut.createdId, renewedFromId: s.id, enabled: true },
             data: { enabled: false, lastStatus: 'cancelled', disabledAt: now },
           }).then((r) => {
@@ -5777,12 +5777,12 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
       // (an owner cancel / resume landing mid-fire is never overwritten) and only a write that landed is
       // recorded 'retired' + emits schedule_disabled; a lost / failed write records 'retire_lost'.
       const charterPaused = charterRetire
-        ? Number((await prisma.codingSchedule.updateMany({
+        ? Number((await prisma.chatSchedule.updateMany({
           where: { id: s.id, enabled: true },
           data: { lastStatus: CHARTER_DONE_LAST_STATUS, ...terminal },
         }).catch(() => null))?.count ?? 0) > 0
         : false;
-      const updated = charterRetire ? null : await prisma.codingSchedule.update({
+      const updated = charterRetire ? null : await prisma.chatSchedule.update({
         where: { id: s.id },
         data: { lastStatus: archivedRetire ? ARCHIVED_SCHEDULE_LAST_STATUS : `skipped:${res.reason || 'unknown'}`, ...reArm, ...terminal, ...busyBump },
       }).catch(() => null);
@@ -5878,7 +5878,7 @@ async function processDueScheduleRow(s: DueScheduleRow, now: Date): Promise<DueR
     }
   } catch (err: any) {
     await refundDailyCapToken(s.sessionId); // no run started — the reserved token was speculative
-    await prisma.codingSchedule.update({ where: { id: s.id }, data: { lastStatus: `error:${String(err?.message).slice(0, 60)}` } }).catch(() => {});
+    await prisma.chatSchedule.update({ where: { id: s.id }, data: { lastStatus: `error:${String(err?.message).slice(0, 60)}` } }).catch(() => {});
     logger.warn(`coding schedule: fire ${s.id} errored — ${err?.message}`);
     return { outcome: 'error', message: String(err?.message ?? err).slice(0, 120) };
   }
@@ -5904,7 +5904,7 @@ export type FireNowOutcome = DueRowOutcome | { outcome: 'not_due' } | { outcome:
 export async function fireDueScheduleNow(scheduleId: string): Promise<FireNowOutcome> {
   if (isRetiring()) return { outcome: 'retiring' };
   const now = new Date();
-  const s = await prisma.codingSchedule.findUnique({ where: { id: scheduleId } });
+  const s = await prisma.chatSchedule.findUnique({ where: { id: scheduleId } });
   if (!s || !s.enabled) return { outcome: 'not_found' };
   if (s.nextRunAt.getTime() > now.getTime()) return { outcome: 'not_due' };
   return processDueScheduleRow(s, now);

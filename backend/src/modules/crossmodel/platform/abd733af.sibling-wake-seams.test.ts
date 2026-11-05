@@ -71,7 +71,7 @@ const alPrisma: any = {
   agentRun: { findMany: jest.fn(async () => []) },
   crossModelMessage: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null), create: jest.fn(async () => ({})) },
   runToolReceipt: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findFirst: jest.fn(async () => null) },
+  chatSchedule: { findFirst: jest.fn(async () => null) },
   ownerQuestion: { findFirst: jest.fn(async () => null) },
 };
 const alMetric = jest.fn();
@@ -128,7 +128,7 @@ beforeEach(() => {
 // ═══ 1b. adoption-ladder: failed no-adoption wake sets NEITHER key ═══════════
 
 describe('abd733af — adoption-ladder no-adoption wake reads the { ok: false } return', () => {
-  const goalRow = { id: GOAL, projectId: PID, title: 'Serve Qwen3.8 on QB2', status: 'active', premises: [KPI] };
+  const goalRow = { id: GOAL, projectId: PID, title: 'Serve Qwen3.8 on node-a', status: 'active', premises: [KPI] };
   const wire = () => {
     alPrisma.projectGoal.findMany.mockResolvedValue([goalRow, { id: 'g-nokpi', projectId: PID, title: 'no kpi', status: 'active', premises: [] }]);
     alPrisma.projectTodo.findMany.mockResolvedValue([{ goalId: GOAL, assigneeChatId: LANE }]);
@@ -237,7 +237,7 @@ describe('abd733af — follow-through nudges read the { ok: false } return', () 
   const PROJ = 'proj-ft';
   const SUP_ROW: any = { id: SUP, userId: 'u1', title: 'ft Supervisor', projectId: PROJ, isSupervisor: false, isProjectSupervisor: true };
   const ASK_ID = 'dir-ask-0001';
-  const ASK = { id: ASK_ID, at: '2026-10-18T00:00:00.000Z', text: 'Ship or park the QB2 cutover?', messageId: 'msg-ask-1' };
+  const ASK = { id: ASK_ID, at: '2026-10-18T00:00:00.000Z', text: 'Ship or park the node-a cutover?', messageId: 'msg-ask-1' };
 
   const wireOwnerAsk = (ageH: number) => {
     const at = new Date(NOW.getTime() - ageH * 3600_000);
@@ -304,7 +304,7 @@ describe('abd733af — follow-through nudges read the { ok: false } return', () 
     alPrisma.crossModelMessage.findMany.mockResolvedValue([noteRow]);
     alPrisma.runToolReceipt.findMany.mockResolvedValue([]);
     alPrisma.crossModelChat.findFirst.mockResolvedValue(null);
-    alPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+    alPrisma.chatSchedule.findFirst.mockResolvedValue(null);
     alPrisma.ownerQuestion.findFirst.mockResolvedValue(null);
     alPrisma.projectTodo.findFirst.mockResolvedValue(null);
     alStore.set(`follow-through:cursor:${SUP}`, String(new Date(NOW.getTime() - 120 * 60_000).getTime()));

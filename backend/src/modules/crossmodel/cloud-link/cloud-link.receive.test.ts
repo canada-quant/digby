@@ -61,7 +61,7 @@ import { receiveCloudMessageSchema } from './cloud-link.validation';
 import { WEBHOOK_PAYLOAD_OPEN } from '../webhook.service';
 
 const CHAT = { id: 'chat-1', userId: 'owner-1' };
-const LINKED = { id: 'l1', state: 'linked', cloudUrl: 'https://digby.example.com', instanceName: 'edge-1' };
+const LINKED = { id: 'l1', state: 'linked', cloudUrl: 'https://digby.ai', instanceName: 'edge-1' };
 
 beforeEach(() => {
   linkRows.length = 0;

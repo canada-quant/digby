@@ -1,6 +1,6 @@
 /**
  * Metadata + schema.org JSON-LD builders for the public site (pure — unit
- * tested in seo.test.ts). Every page gets: a canonical URL on digby.example.com, Open
+ * tested in seo.test.ts). Every page gets: a canonical URL on digby.ai, Open
  * Graph + Twitter cards, and the structured data that fits it (Organization +
  * WebSite + SoftwareApplication on the home, BreadcrumbList everywhere,
  * FAQPage where a page has FAQs, Article on the guides).
@@ -8,10 +8,15 @@
 import type { Metadata } from 'next';
 import { CONTACT_EMAIL, SITE_NAME, SITE_URL, type Faq, type LearnArticle, type SitePage } from './content';
 import { pricingOfferDescription, pricingOfferPrice } from './pricing';
+import { brandText, brandingFromEnv } from '@/lib/branding';
 
-export const DEFAULT_TITLE = 'Digby — Private, Canadian AI Assistant';
-export const DEFAULT_DESCRIPTION =
-  'Digby is a Canadian AI assistant: open-weight AI models running on Canadian hardware, your chats, memory and files stored in Canada, live web search, and double-checked answers.';
+// Shared branding core (todo d2d32b57): a self-hosted operator's name /
+// description / logo replace Digby's in every metadata + schema.org node.
+// Nothing set ⇒ the shipped Digby strings, byte-identical to before.
+const branding = brandingFromEnv();
+
+export const DEFAULT_TITLE = branding.title;
+export const DEFAULT_DESCRIPTION = branding.description;
 
 /** The default social card (app/opengraph-image.tsx). Pages that set their own
  *  openGraph object must name it — a segment's metadata object replaces the
@@ -36,7 +41,7 @@ export function pageMetadata(args: {
   fileImages?: boolean;
 }): Metadata {
   const url = absoluteUrl(args.path);
-  const images = args.fileImages ? {} : { images: [{ url: OG_IMAGE, width: 1200, height: 630, alt: 'Digby — private, Canadian AI assistant' }] };
+  const images = args.fileImages ? {} : { images: [{ url: OG_IMAGE, width: 1200, height: 630, alt: `${branding.name} — ${branding.tagline}` }] };
   return {
     title: { absolute: args.title },
     description: args.description,
@@ -50,7 +55,7 @@ export function pageMetadata(args: {
       url,
       title: args.title,
       description: args.description,
-      siteName: SITE_NAME,
+      siteName: branding.name,
       locale: (args.locale ?? 'en-CA').replace('-', '_'),
       ...images,
       ...(args.publishedTime ? { publishedTime: args.publishedTime } : {}),
@@ -71,15 +76,19 @@ export function pageLanguages(p: SitePage): Record<string, string> | undefined {
 }
 
 export function sitePageMetadata(p: SitePage): Metadata {
+  // Shared branding core (todo d2d32b57): these titles are DATA in content.ts,
+  // not JSX, so a rebranded instance would otherwise ship "Digby features —…"
+  // metadata with no way to change it short of editing source. brandText
+  // rewrites the standalone product word and is a no-op on the shipped name.
   return pageMetadata({
-    path: `/${p.slug}`, title: p.title, description: p.description, keywords: p.keywords, locale: p.lang,
+    path: `/${p.slug}`, title: brandText(p.title, branding), description: brandText(p.description, branding), keywords: p.keywords, locale: p.lang,
     languages: pageLanguages(p), fileImages: true,
   });
 }
 
 export function learnArticleMetadata(a: LearnArticle): Metadata {
   return pageMetadata({
-    path: `/learn/${a.slug}`, title: a.title, description: a.description, keywords: a.keywords,
+    path: `/learn/${a.slug}`, title: brandText(a.title, branding), description: brandText(a.description, branding), keywords: a.keywords,
     type: 'article', publishedTime: a.published, modifiedTime: a.updated, fileImages: true,
   });
 }
@@ -98,9 +107,9 @@ export function organizationLd() {
     '@context': 'https://schema.org',
     '@type': 'Organization',
     '@id': `${SITE_URL}/#organization`,
-    name: SITE_NAME,
+    name: branding.name,
     url: SITE_URL,
-    logo: `${SITE_URL}/icon-512x512.png`,
+    logo: `${SITE_URL}${branding.assets.icon512}`,
     email: CONTACT_EMAIL,
     areaServed: { '@type': 'Country', name: 'Canada' },
     // No street address: Digby publishes no registered office, and schema.org
@@ -125,7 +134,7 @@ export function websiteLd() {
     '@context': 'https://schema.org',
     '@type': 'WebSite',
     '@id': `${SITE_URL}/#website`,
-    name: SITE_NAME,
+    name: branding.name,
     url: SITE_URL,
     inLanguage: ['en-CA', 'fr-CA'],
     publisher: { '@id': `${SITE_URL}/#organization` },
@@ -136,7 +145,7 @@ export function softwareApplicationLd() {
   return {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
-    name: SITE_NAME,
+    name: branding.name,
     url: SITE_URL,
     applicationCategory: 'ProductivityApplication',
     operatingSystem: 'Web, macOS, Windows, iOS, Android',
@@ -150,7 +159,7 @@ export function softwareApplicationLd() {
 }
 
 export function breadcrumbLd(trail: { href: string; label: string }[]) {
-  const items = [{ href: '/', label: SITE_NAME }, ...trail];
+  const items = [{ href: '/', label: branding.name }, ...trail];
   return {
     '@context': 'https://schema.org',
     '@type': 'BreadcrumbList',

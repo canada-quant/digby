@@ -285,6 +285,15 @@ export function parseFollowUps(text: string): { followUps: string[]; cleanText: 
   const cleanText = text
     .replace(/\[FOLLOWUPS\][\s\S]*?\[\/FOLLOWUPS\]/gi, '')
     .replace(/\[FOLLOWUPS\][\s\S]*$/gi, '')
+    // Ticket 7af42393 — ORPHAN CLOSER, same rule the renderer now applies
+    // (plain-session.ts stripForStorage/stripLiveTags). Every rule above keys
+    // on the LITERAL opener, so a closer whose opener the model botched
+    // survives. Specimen (chat 9430e12f, msg 6a8f46bc): `[ FOLOWUPS ]` (ONE
+    // L, spaced) + a correctly spelled `[/FOLLOWUPS]`. This function is the
+    // PERSIST + Telegram seam (stripAnswerMarkup, telegram.controller), so
+    // without the rule the token is still stored and still sent to Telegram
+    // even though the web reader no longer shows it.
+    .replace(/\[\/FOLLOWUPS\]/gi, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
   return { followUps, cleanText };

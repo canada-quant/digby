@@ -37,6 +37,13 @@ import {
   perUserSubtreeSetting, mirrorOfWorktreeSync, listSubtreeKeysSync, resolveWorktreePathSync, resolveMirrorPathSync,
 } from './workspace-layout';
 import { recordIsolationMetric } from './workspace-placement';
+import { SESSION_USER_SCRIPT } from './session-user-row';
+// ticket c25f8b7e: durable per-session container identity (survives the swap it
+// describes — it lives on the coding_session_env volume, never in a container).
+import {
+  recordContainerIdentity, forgetContainerIdentity,
+  type ContainerReplacement,
+} from './container-identity';
 
 /** ISO telemetry from this module: only once the per-user switch is on (or for
  *  a session already placed per-user) — the switch off adds no rows. */
@@ -78,7 +85,7 @@ let dockerProbedAt = 0;
  * A NEGATIVE Docker probe is re-tried after this long (autonomy loop #16,
  * 2026-09-21). It used to be memoized for the PROCESS LIFETIME: box A's new
  * colour probed C's docker-proxy during the 07:00Z deploy wave, got
- * "Cannot connect to the Docker daemon at tcp://10.0.0.12:2375", and every
+ * "Cannot connect to the Docker daemon at tcp://10.0.0.15:2375", and every
  * container op from that backend then failed closed until the next deploy
  * (07:00 and 07:30 blips). A positive probe is re-checked after
  * DOCKER_POSITIVE_MEMO_MS so a later daemon outage fails closed
@@ -160,10 +167,84 @@ const sharedOverride = new Map<string, string>(); // sessionId → dev-container
 // per-session proxy URL to inject as DIGBY_TAILNET_PROXY. Populated when the
 // session resolves the shared container; absent = legacy/no injection.
 const egressGrants = new Map<string, string>();
+// Sessions whose SHARED container target just answered "No such container"
+// (ticket e2f40d10 review). Set on the exec path, consumed once by
+// ensureSessionContainer to invalidate dev-container.service's per-user health
+// memo — without it a reaped dev container is re-resolved from a warm memo to
+// the same dead name and the rebind retries into the same wall.
+const sharedVanished = new Map<string, true>();
 
 /** The container a session's exec actually targets (shared override or per-session). */
 function execTargetName(sessionId: string): string {
   return sharedOverride.get(sessionId) ?? containerName(sessionId);
+}
+
+/** Every RUNNING container's reap-relevant labels, one `docker ps` read.
+ *  Never throws: an unreadable daemon yields [] so the caller keeps today's
+ *  answer instead of failing the reap. Only RUNNING containers can host
+ *  processes worth reaping, so a stopped one is not a target. */
+async function runningContainerLabels(): Promise<Array<{ name: string; session: string; dev: string }>> {
+  try {
+    // The label NAMES are interpolated from the same constants the create path
+    // emits, so a rename can never silently turn this read into a no-op. The
+    // dev-container label lives in dev-container.service, which is imported
+    // dynamically (kept out of this module's static graph for tests) — hence
+    // the literal, kept byte-identical to its DEV_LABEL.
+    const devLabel = 'digby.dev.container';
+    const out = await docker(['ps', '--format', `{{.Names}}\t{{.Label "${LABEL}"}}\t{{.Label "${devLabel}"}}`], 15_000);
+    return out.split('\n').map((l) => l.trim()).filter(Boolean).map((l) => {
+      const [name, session, dev] = l.split('\t');
+      return { name: name || '', session: session || '', dev: dev || '' };
+    }).filter((r) => r.name);
+  } catch { return []; }
+}
+
+/**
+ * THE REAP TARGET — resolved from the daemon's own labels, not from the
+ * in-process `sharedOverride` map alone (ticket 4bb6a68a).
+ *
+ * `execTargetName` answers from a map populated ONLY by the process that ran
+ * `ensureSessionContainer` for this session. A reap running in another process
+ * (a different worker, or this one after a deploy) has a COLD map, so it falls
+ * back to `digby-code-<sid12>` — a container that exists only for sessions that
+ * did NOT get the shared dev container. For a session that DID, that name has
+ * never existed: the reap execs a phantom, throws "No such container", logs a
+ * warning and silently reaps NOTHING. The leaked background processes then pin
+ * the shared container's cgroup, and the NEXT run's verify is SIGKILLed (exit
+ * 137, empty output) — the orphan doctrine at `reapOrphanedBuildProcesses`.
+ * Production showed exactly this for 8+ sessions, f7e14cf8 included, at
+ * 07:31:52Z and 08:31:48Z on 2026-11-03.
+ *
+ * Both facts are durable in the daemon: a per-session container carries
+ * `digby.code.session=<full session id>`, the shared one carries
+ * `digby.dev.container=<userId>`. The warm map is still consulted first (free,
+ * and it wins when the daemon read fails); the label scan only ever ADDS a real
+ * target, never invents one — no match returns the pre-existing fallback.
+ */
+async function resolveReapTarget(
+  sessionId: string,
+  pre?: { rows?: Array<{ name: string; session: string; dev: string }>; userId?: string | null },
+): Promise<{ name: string; shared: boolean }> {
+  const warm = sharedOverride.get(sessionId);
+  if (warm) return { name: warm, shared: true };
+  const fallback = { name: containerName(sessionId), shared: false };
+  // A sweep resolves MANY sessions: the caller passes one label read (and one
+  // user-id read) instead of paying a `docker ps` + a findUnique per session.
+  const rows = pre?.rows ?? await runningContainerLabels();
+  if (!rows.length) return fallback;
+  const own = rows.find((r) => r.session === sessionId);
+  if (own) return { name: own.name, shared: false };
+  // The session may live in its owner's shared dev container (one per user).
+  const userId: string | null = pre && 'userId' in pre
+    ? (pre.userId ?? null)
+    : await prisma.chatCodingState
+      .findUnique({ where: { id: sessionId }, select: { userId: true } })
+      .then((r: any) => r?.userId ?? null)
+      .catch(() => null);
+  if (!userId) return fallback;
+  const shared = rows.find((r) => r.dev === userId);
+  if (shared) return { name: shared.name, shared: true };
+  return fallback;
 }
 
 // ── Whole-volume exposure (audit 2026-10-06 T7-7) ────────────────────────────
@@ -356,6 +437,16 @@ export function isNoSpaceSpawnError(stderr: string | undefined | null, exitCode?
 export function isNoSpaceError(stderr: string | undefined | null): boolean {
   return /no space left on device|runc-process|OCI runtime exec failed/i.test(stderr || '');
 }
+
+/**
+ * Transport-death classification now lives in the PURE LEAF module
+ * `./exec-transport` (re-exported here for existing in-module callers).
+ * It must NOT be re-implemented in this file: `container.service.ts` reaches
+ * prisma → config/database → config/env, and any module importing the predicate
+ * from here inherits that graph, so `parseEnv()` would `process.exit(1)` in every
+ * env-less suite that imports tools (29 suites broke that way, 2026-11-03).
+ */
+export { isExecTransportFailure } from './exec-transport';
 
 /** Best-effort in-container cleanup while exec still works. The container runs
  *  uid 1001 with HOME=/tmp, so /tmp accumulates npm/pip caches and agent
@@ -751,6 +842,15 @@ export async function ensureSessionContainer(sessionId: string): Promise<boolean
     sessionUserId = row?.userId ?? null;
     let shared: string | null = null;
     if (row?.userId) {
+      // ticket e2f40d10 review: dev-container.service caches a per-user HEALTH
+      // verdict (healthyMemo, 20 s TTL) and its invalidator had no caller — so a
+      // reaped shared container was re-resolved from the memo to the SAME dead
+      // name, and the rebind retry failed identically with no note. A session
+      // whose shared target just answered "No such container" drops it first.
+      if (sharedVanished.delete(sessionId)) {
+        const { invalidateDevContainerMemo } = await import('./dev-container.service');
+        invalidateDevContainerMemo(row.userId);
+      }
       const { ensureUserDevContainer } = await import('./dev-container.service');
       shared = await ensureUserDevContainer(row.userId);
     }
@@ -795,10 +895,10 @@ export async function ensureSessionContainer(sessionId: string): Promise<boolean
   try {
     // Already running?
     const running = (await docker(['ps', '--filter', `name=^${name}$`, '--format', '{{.Names}}'])).trim();
-    if (running === name) { await noteContainerMountMode(name); await ensureGhCli(name); return true; }
+    if (running === name) { await noteContainerMountMode(name); await ensureSessionUserRow(name); await ensureGhCli(name); return true; }
     // Exists but stopped? Start it.
     const exists = (await docker(['ps', '-a', '--filter', `name=^${name}$`, '--format', '{{.Names}}'])).trim();
-    if (exists === name) { await docker(['start', name]); await noteContainerMountMode(name); await markGitSafe(name); await ensureGhCli(name); return true; }
+    if (exists === name) { await docker(['start', name]); await noteContainerMountMode(name); await markGitSafe(name); await ensureSessionUserRow(name); await ensureGhCli(name); return true; }
 
     // Non-root default image, no extra caps, memory-capped; idles on `sleep
     // infinity`. --init: PID 1 is tini, reaping orphaned background children.
@@ -824,6 +924,7 @@ export async function ensureSessionContainer(sessionId: string): Promise<boolean
         await markGitSafe(name); // before the git self-verify, or dubious-ownership fails it
         if (await containerGitOk(name, sessionId)) {
           wholeVolumeContainers.delete(name); userSubtreeContainers.delete(name); scopedContainers.add(name);
+          await ensureSessionUserRow(name);
           await ensureGhCli(name);
           isoMetric('container', { layout, mount: 'scoped', hardened }, sessionId);
           logger.info(`coding container: started ${name} (SCOPED mounts) for session ${sessionId}`);
@@ -848,6 +949,7 @@ export async function ensureSessionContainer(sessionId: string): Promise<boolean
         await markGitSafe(name);
         if (await containerGitOk(name, sessionId)) {
           scopedContainers.delete(name); wholeVolumeContainers.delete(name); userSubtreeContainers.add(name);
+          await ensureSessionUserRow(name);
           await ensureGhCli(name);
           isoMetric('container', { layout, mount: 'user_subtree', hardened }, sessionId);
           logger.info(`coding container: started ${name} (per-user SUBTREE mount) for session ${sessionId}`);
@@ -875,12 +977,188 @@ export async function ensureSessionContainer(sessionId: string): Promise<boolean
     ], 180_000);
     scopedContainers.delete(name); userSubtreeContainers.delete(name); wholeVolumeContainers.add(name);
     await markGitSafe(name);
+    await ensureSessionUserRow(name);
     await ensureGhCli(name);
     isoMetric('container', { layout, mount: 'whole_volume', hardened: false }, sessionId);
     logger.info(`coding container: started ${name} (whole-volume mount) for session ${sessionId}`);
     return true;
   } catch (err: any) {
     logger.warn(`coding container: ensure failed for ${sessionId} (${err.message}) — falling back to in-process`);
+    failedSessions.set(sessionId, Date.now());
+    return false;
+  }
+}
+
+/** True ONLY for the docker DAEMON's own "the container is gone" refusal —
+ *  `Error response from daemon: No such container: <name>` at the very START of
+ *  stderr. A command's own output that merely mentions the phrase (a test
+ *  fixture, a `docker` call inside a script, a grep hit, an indented echo in
+ *  diagnostic output) prints it after other output or indented, and must never
+ *  be read as "our container vanished": the whole one-retry bound rests on
+ *  "the exec provably never started".
+ *  Merged from ticket c25f8b7e (position-0 anchor + exit-code guard) and
+ *  ticket e2f40d10 (the optional `docker: ` wrapper prefix). */
+export function isContainerGoneError(stderr: string | undefined | null, exitCode?: number | string): boolean {
+  if (typeof exitCode === 'number' && exitCode === 0) return false;
+  const head = (stderr || '').slice(0, 400);
+  // The daemon's own prefix may be indented by the exec wrapper (docker's 125
+  // exit) — pinned by ticket c25f8b7e: `  Error response from daemon: …`.
+  return /^\s*(?:docker:\s*)?Error response from daemon: No such container/i.test(head)
+    // The bare re-emit is NOT allowed leading whitespace (ticket e2f40d10
+    // review, finding 3). Docker never indents its own refusal, so an INDENTED
+    // bare phrase is a command's own output — a diagnostic echo, a jest line, a
+    // `cat` of a log — and reading it as a container death would announce a
+    // phantom replacement and burn the one-retry bound on work that ran.
+    || /^No such container: /i.test(head);
+}
+
+// ── Container replacement across a deploy / restart wave (ticket c25f8b7e) ───
+// The container NAME is deterministic, so a swap is invisible by name; the
+// docker ID is not. Two things read it:
+//   1. RUN START (agent.ts calls noteSessionContainerIdentity after the
+//      container resolves) — the lane is told, in its prompt, that the
+//      container it ran in last time was replaced and that everything it
+//      started inside is gone; and
+//   2. a MID-RUN exec that finds the container gone (a wave landing while the
+//      run is in flight) — the exec note says the command did NOT run, and the
+//      container is re-provisioned so the rest of the run still has a shell
+//      instead of dying with "No such container" for the remainder of the
+//      firing (the 2026-11-03 Schooltime lane 60dfc8a8 loss).
+// Detection itself lives in the durable leaf ./container-identity (a record on
+// the coding_session_env volume, which survives the swap and is never mounted
+// into a session container). This module only feeds it the live docker id.
+
+/** The container's docker ID, or null when it cannot be read (absent, daemon
+ *  down, inspect failed). Never throws. */
+export async function containerDockerId(name: string): Promise<string | null> {
+  try {
+    const id = (await docker(['inspect', '-f', '{{.Id}}', name], 15_000)).trim();
+    return id || null;
+  } catch { return null; }
+}
+
+/**
+ * Remember that this session now runs in its exec target, and report a
+ * REPLACEMENT when the container's docker id differs from the one on file.
+ * Returns null for a first sighting, an unchanged container, or an unreadable
+ * one — never a guess (a false "your work is gone" alarm costs a lane a whole
+ * recovery cycle). Never throws.
+ */
+export async function noteSessionContainerIdentity(sessionId: string): Promise<ContainerReplacement | null> {
+  try {
+    const target = execTargetName(sessionId);
+    const id = await containerDockerId(target);
+    if (!id) return null;
+    const replacement = await recordContainerIdentity(sessionId, target, id);
+    if (!replacement) return null;
+    logger.warn(
+      `coding container: REPLACED for session ${sessionId} — ${target} now ${id.slice(0, 12)}, previous ${replacement.previousId.slice(0, 12)} first seen ${replacement.previousSeenAt} (deploy/restart wave or reprovision): background processes and container-local state from that container are gone`,
+    );
+    // Telemetry (dynamic import keeps this module's static graph unchanged):
+    // a wave that swaps many lanes' containers in one minute is visible as a
+    // burst of container_replaced rows rather than as lanes silently losing work.
+    void import('../platform/loop-metrics.service')
+      .then((m) => m.recordLoopMetric({
+        kind: m.LOOP_METRIC_KINDS.CONTAINER_REPLACED,
+        sessionId,
+        meta: { container: target, previousSeenAt: replacement.previousSeenAt, replacedAt: replacement.replacedAt },
+      }))
+      .catch(() => {});
+    return replacement;
+  } catch { return null; }
+}
+
+/** Add the uid-1001 passwd/group rows to a per-session container (ticket
+ *  e2f40d10). Session execs run as --user 1001:1001, but the stock default
+ *  runner image (node:20) has NO uid-1001 row, so getpwuid fails and OpenSSH
+ *  dies "No user exists for uid 1001" — the whole tailnet box path went dark
+ *  and lanes had to compile a getpwuid LD_PRELOAD shim by hand. The dev
+ *  container has had this since a6051a82/PR #1482; the per-session path never
+ *  did. Writes /etc/passwd, so it needs root: `docker exec` defaults to the
+ *  container's --user (1001) and would die EACCES — pass -u 0 explicitly.
+ *  Idempotent (getent guards) and best-effort: a failure must never block a
+ *  shell. Memoized per container name; a recreate uses a fresh ensure. */
+const sessionUserRowEnsured = new Set<string>();
+async function ensureSessionUserRow(name: string): Promise<void> {
+  if (sessionUserRowEnsured.has(name)) return;
+  try {
+    await docker(['exec', '-u', '0', name, 'sh', '-c', SESSION_USER_SCRIPT], 15_000);
+    sessionUserRowEnsured.add(name);
+  } catch (err: any) {
+    logger.warn(`coding container: uid-1001 passwd row unavailable in ${name} (${String(err?.message).slice(0, 100)}) — ssh/tailscale helpers may report "No user exists for uid 1001"`);
+  }
+}
+/** Forget the per-container uid-row memo (a recreate must re-provision it). */
+function forgetSessionUserRow(name: string): void { sessionUserRowEnsured.delete(name); }
+/** Test-only: clear the whole uid-row memo (jest runs share the module state). */
+export function __resetSessionUserRowMemoForTest(): void { sessionUserRowEnsured.clear(); }
+
+/** Re-bind this session to a LIVE container after its target vanished mid-run.
+ *  Drops every memo keyed on the dead name, then re-provisions. Returns true
+ *  when a usable container is back. Never throws. */
+async function rebindSessionContainer(sessionId: string): Promise<boolean> {
+  const name = containerName(sessionId);
+  sharedOverride.delete(sessionId);
+  sharedExposure.delete(sessionId);
+  egressGrants.delete(sessionId);
+  ghProvisionedAt.delete(name);
+  wholeVolumeContainers.delete(name); scopedContainers.delete(name); userSubtreeContainers.delete(name);
+  softCleanMemo.delete(name);
+  forgetSessionUserRow(name);
+  failedSessions.delete(sessionId); // a vanished container is not a provisioning failure
+  try { return await ensureSessionContainer(sessionId); } catch { return false; }
+}
+
+/**
+ * Re-resolve the session's shell binding when the executor was left holding NO
+ * container (ticket 093e9a61, family deploy-kills-lane-background-workers).
+ *
+ * `ensureSessionContainer` is called ONCE per run (agent.ts) and the result was
+ * captured in a const. When that single call misses — a container being
+ * re-provisioned at that instant, a Docker probe blip (DOCKER_NEGATIVE_MEMO_MS),
+ * or the 5-minute failed-session memo left by an earlier failure — the executor
+ * stayed bound to "no container" for the WHOLE firing: every shell tool refused,
+ * including the probes a lane would use to diagnose it, so the lane lost the
+ * firing and could not tell why. The memo expiring never helped, because
+ * nothing re-read it.
+ *
+ * This is the stale-binding counterpart to rebindSessionContainer (which handles
+ * a container that DIED under a live run). It makes at most ONE provisioning
+ * attempt per call, and clearing the failed-session memo first is what lets a
+ * recovered host bind immediately; re-arming it on failure keeps a broken host
+ * from being hammered once per shell tool call.
+ *
+ * LIVENESS IS VERIFIED before success is reported (adversarial review of this
+ * change, finding F3): `dev-container.service`'s `healthyMemo` returns the
+ * shared container NAME for HEALTH_MEMO_MS (20 s) with NO liveness check, so a
+ * shared container reaped moments ago still resolves to a name — and a dead
+ * container is still inspectable/named. Reporting `true` there would tell the
+ * lane "your shell is back" while every `docker exec` still answers "No such
+ * container". The check below therefore requires docker to actually SEE the
+ * resolved exec target. It only downgrades when docker is genuinely up and the
+ * target is absent (never on "cannot tell"), because a false NEGATIVE would
+ * cost a working lane its shell — the same loss this function exists to stop.
+ * Isolation is unaffected either way: `true` routes to `execInContainer`
+ * (`docker exec`), never to in-process execution. Never throws.
+ */
+export async function recoverSessionShellContainer(sessionId: string): Promise<boolean> {
+  failedSessions.delete(sessionId); // a stale binding is not a provisioning verdict
+  try {
+    const ok = await ensureSessionContainer(sessionId);
+    if (!ok) {
+      // Re-arm the backoff we just cleared, so a host that still cannot
+      // provision costs ONE attempt per window rather than one per tool call.
+      failedSessions.set(sessionId, Date.now());
+      return false;
+    }
+    // A resolved binding is not the same thing as a LIVE container (finding F3).
+    const id = await containerDockerId(execTargetName(sessionId));
+    if (!id && (await isDockerAvailable())) {
+      failedSessions.set(sessionId, Date.now());
+      return false;
+    }
+    return true;
+  } catch {
     failedSessions.set(sessionId, Date.now());
     return false;
   }
@@ -905,12 +1183,10 @@ export async function execInContainer(
   // regress the uid-alignment fix (dubious-ownership/EACCES) and could read
   // the root-owned tailnet secrets (adversarial review of #326, findings F1/F2).
   const shared = sharedOverride.has(sessionId);
-  const userArgs = shared ? ['-u', '1001:1001', '-e', 'HOME=/tmp'] : [];
-  // Per-session egress scoping (ticket 4ed6eb2e): inject THIS session's
-  // credentialed proxy URL so the shim on :1055 can authenticate + apply the
-  // session's allowlist. An explicit caller-provided value wins (never
-  // clobber); scoped containers deliberately carry no container-wide export
-  // (profile.d is comment-only there) so this -e is the only source.
+  // Shared dev container: session commands run as uid 1001 (same uid as
+  // per-session containers) — NEVER as the container's root. Root execs would
+  // regress the uid-alignment fix (dubious-ownership/EACCES) and could read
+  // the root-owned tailnet secrets (adversarial review of #326, findings F1/F2).
   // ACCEPTED LIMITATION (adversarial review F1, advisory model): every exec in
   // the shared container runs as uid 1001, so a concurrent same-uid process
   // could read this env via /proc/<pid>/environ and impersonate the session to
@@ -918,12 +1194,32 @@ export async function execInContainer(
   // Same-uid secret separation is impossible without per-session uids; the
   // network-enforced fix is the tagged-ephemeral-node upgrade (design doc Part
   // 3(a)), deliberately deferred. Cross-USER isolation is unaffected.
-  const egressGrant = shared ? egressGrants.get(sessionId) : undefined;
-  if (egressGrant && !extraEnv?.DIGBY_TAILNET_PROXY) envArgs.push('-e', `DIGBY_TAILNET_PROXY=${egressGrant}`);
+  //
+  // RECOMPUTED PER ATTEMPT (ticket e2f40d10 review): identity + egress args
+  // used to be computed once, before any retry. After an executor REBIND the
+  // target may be a different container (shared → per-session or back), so a
+  // cached `-u 1001:1001` would either be dropped (a retry running as the
+  // container's default user) or applied to a per-session container that does
+  // not need it. Resolve it inside `attempt` so every retry — the disk-full
+  // recycle and the vanished-container rebind alike — re-derives it from the
+  // live binding.
+  const identityArgs = (): string[] => {
+    const args: string[] = [];
+    if (!sharedOverride.has(sessionId)) return args; // per-session: container's own --user
+    args.push('-u', '1001:1001', '-e', 'HOME=/tmp');
+    // Per-session egress scoping (ticket 4ed6eb2e): inject THIS session's
+    // credentialed proxy URL so the shim on :1055 can authenticate + apply the
+    // session's allowlist. An explicit caller-provided value wins (never
+    // clobber); scoped containers deliberately carry no container-wide export
+    // (profile.d is comment-only there) so this -e is the only source.
+    const grant = egressGrants.get(sessionId);
+    if (grant && !extraEnv?.DIGBY_TAILNET_PROXY) args.push('-e', `DIGBY_TAILNET_PROXY=${grant}`);
+    return args;
+  };
   const attempt = async (): Promise<{ stdout: string; stderr: string; failed: boolean; code: number | string }> => {
     try {
       const { stdout, stderr } = await execFileAsync(
-        'docker', ['exec', '-w', cwd, ...userArgs, ...envArgs, execTargetName(sessionId), 'bash', '-lc', command],
+        'docker', ['exec', '-w', cwd, ...identityArgs(), ...envArgs, execTargetName(sessionId), 'bash', '-lc', command],
         { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
       );
       return { stdout: stdout.toString(), stderr: stderr.toString(), failed: false, code: 0 };
@@ -932,7 +1228,21 @@ export async function execInContainer(
     }
   };
   const r = await attempt();
-  if (r.failed && isNoSpaceSpawnError(r.stderr, r.code)) {
+  // The FIRST attempt's outcome, captured before anything below mutates `r`
+  // (ticket e2f40d10 review). Both retry guards must test THIS, not `r`:
+  // a disk-full retry that SUCCEEDED used to leave `r.failed` stale-true, so a
+  // stderr line merely quoting the daemon phrase could then send an
+  // already-successful command through the rebind branch a THIRD time — the
+  // double-apply this fix promises cannot happen.
+  const first = { failed: r.failed, stderr: r.stderr, code: r.code };
+  // The name this attempt ACTUALLY targeted. Captured HERE because the
+  // vanished-container block below deletes sharedOverride (line ~1147), after
+  // which execTargetName() resolves to the PER-SESSION name — so a death of the
+  // SHARED dev container would name the wrong container in the lane-facing
+  // notice and the warn log (ticket e2f40d10 review, finding 2 — the fix was
+  // written in review commit 3c306cb141 but lost in the merge).
+  const attemptedTarget = execTargetName(sessionId);
+  if (first.failed && isNoSpaceSpawnError(first.stderr, first.code)) {
     // runc SPAWN disk-full failure — the command provably never started, so
     // recycling daemon-side and retrying ONCE on a fresh container can never
     // double-apply work (ticket dc05bc31). This is the ONLY auto-retry path:
@@ -942,6 +1252,7 @@ export async function execInContainer(
     await recycleSessionContainer(sessionId, 'exec failed: no space left on device (spawn)');
     if (await ensureSessionContainer(sessionId).catch(() => false)) {
       const retry = await attempt();
+      r.failed = retry.failed; r.code = retry.code; // the retry's outcome is now the command's
       if (!retry.failed) {
         r.stdout = retry.stdout;
         r.stderr = retry.stderr + '\n[coding container: the first attempt failed at spawn because the session disk was full; the container was automatically recycled and this command re-ran on a fresh container. Container-local state (background processes, /tmp) was reset.]';
@@ -962,16 +1273,62 @@ export async function execInContainer(
     // engages on the next command; here we only advise.
     r.stderr += '\n[coding container: the command reported a full disk ("no space left on device"). It was NOT retried automatically — it may have partially completed. The workspace disk is likely nearly full: the pre-exec guard will auto-clean before the next command; if it persists, free space deliberately (or recycle the session container).]';
   }
-  if (r.failed && shared && /No such container/i.test(r.stderr)) {
+  if (first.failed && shared && isContainerGoneError(first.stderr)) {
     // The shared container vanished under us (reap/restart in another process).
     // Drop the mapping so the next ensureSessionContainer re-resolves instead
     // of hammering a dead name (adversarial review of #326, finding F7/F8).
+    // `sharedVanished` also invalidates dev-container.service's warm health memo,
+    // which would otherwise re-resolve the SAME dead name (ticket e2f40d10).
+    sharedVanished.set(sessionId, true);
     sharedOverride.delete(sessionId);
     sharedExposure.delete(sessionId);
     egressGrants.delete(sessionId);
   }
+  // ticket c25f8b7e: a deploy/restart wave replaced the container WHILE this
+  // run was in flight. Before this, every later command in the firing died
+  // with a bare "No such container" and the lane lost the rest of its run (the
+  // 2026-11-03 Schooltime lane 60dfc8a8 case: its last two probes could not
+  // run at all). Distinguish the daemon's own refusal from a command that
+  // merely PRINTS the phrase, then (a) say plainly that the command did NOT
+  // run and what died with the old container, (b) re-provision so the rest of
+  // the firing has a shell, and (c) remember the swap so the run-start notice
+  // of the next firing carries the same fact.
+  if (first.failed && isContainerGoneError(first.stderr, first.code)) {
+    // The container this attempt actually targeted, NOT a fresh resolve: the
+    // shared-mapping block above already deleted sharedOverride, so calling
+    // execTargetName() here would name the per-session container when the
+    // SHARED dev container is the one that died (ticket e2f40d10 review,
+    // finding 2). `attemptedTarget` was captured before any memo cleanup.
+    const replacedName = attemptedTarget;
+    // The old container is gone; clear every memo keyed on it so the resolve
+    // below really re-provisions (shared mapping, mount-mode learning, gh
+    // provisioning, the failed-session backoff) instead of trusting a dead one.
+    sharedVanished.set(sessionId, true); // also drops the dev-container health memo (e2f40d10)
+    sharedOverride.delete(sessionId);
+    sharedExposure.delete(sessionId);
+    egressGrants.delete(sessionId);
+    failedSessions.delete(sessionId);
+    const reProvisioned = await rebindSessionContainer(sessionId);
+    const replacement = await noteSessionContainerIdentity(sessionId).catch(() => null);
+    const suffix = reProvisioned
+      ? addendumForGoneContainer(replacement, replacedName)
+      : `\n[coding container: the session container ${replacedName} was replaced under this run and could NOT be re-provisioned — shell tools are unavailable for the rest of this run. The git worktree and $DIGBY_ENV are intact; your LIVE $HOME (/tmp, the writable layer) went with the old container, so reinstall any CLI you put there when the next run re-provisions. Report this rather than retrying in a loop.]`;
+    r.stderr = r.stderr ? `${r.stderr}${suffix}` : suffix.trimStart();
+    logger.warn(`coding container: exec found ${replacedName} GONE for session ${sessionId} mid-run (deploy/restart wave) — re-provisioned=${reProvisioned}`);
+  }
   if (guardNote) r.stderr = r.stderr ? `${guardNote}\n${r.stderr}` : guardNote;
   return r;
+}
+
+/** The note appended to a mid-run exec whose container was gone. Pure — the
+ *  single wording for "your command did not run and here is what died". */
+function addendumForGoneContainer(
+  replacement: ContainerReplacement | null, container: string,
+): string {
+  const when = replacement
+    ? ` It was replaced at ${replacement.replacedAt} (previous container id ${replacement.previousId.replace(/^sha256:/, '').slice(0, 12)}).`
+    : '';
+  return `\n[coding container: THIS COMMAND DID NOT RUN — the session container ${container} was replaced (a deploy/restart wave or a host reprovision), so docker exec had no container to run it in.${when} The container has now been re-provisioned: shell tools work again for the rest of this run, and this command can be re-run as-is (it provably never started, so re-running cannot double-apply anything). What did NOT survive: every background process you started inside the old container (start_background_process handles, generators, long probes, watchers) and container-local files (/tmp, the writable layer). What DID survive: the git worktree and $DIGBY_ENV (a worktree file). What did NOT: your LIVE $HOME — the shell's HOME is /tmp (the writable layer) unless this session runs with a scoped home on the workspace volume, so a CLI installed into the live home (including $HOME/.local/bin and $HOME/bin when HOME=/tmp) went with the old container; only image-shipped bins (/usr/local/bin, e.g. tssh, tcurl) and the worktree are still there. A tool answering 'command not found' (exit 127) is this, not a broken PATH — re-check with 'command -v <tool>' and reinstall it. Your SSH identity is gone too (ticket d9ed0c1f): pw_dir=/tmp makes ~/.ssh the container-local /tmp/.ssh, so keys/config/known_hosts died with the old container and a box deploy fails as 'Host key verification failed' (plain ssh) or 'Cannot stat /tmp/.ssh/known_hosts' (an rsync/scp-over-ssh deploy) rather than connecting — the target host is usually healthy, the CLIENT lost its identity. Re-establish it: the key survives only from the WORKTREE, and the sanctioned place there is .digby/secrets/ (git-excluded, so it never reaches a commit — a private key elsewhere in the tree can be swept into one), or use the keyless route (scripts/framework-audit/run-on-box.sh via SSM). Re-add the host key from a channel that is NOT the connection itself and compare it before writing it; NEVER disable host-key checking to get past this. Re-check any artifact an earlier run produced before relying on it, and relaunch a job with the count you can actually see.]`;
 }
 
 /**
@@ -1020,11 +1377,11 @@ exit 0
 export async function reapOrphanedBuildProcesses(sessionId: string): Promise<number> {
   try {
     if (!(await isDockerAvailable())) return 0;
-    const name = execTargetName(sessionId);
+    const { name, shared } = await resolveReapTarget(sessionId);
     // Session commands in the shared dev container run as uid 1001 (never
     // root) — the orphans are uid-1001 processes, so the same uid can kill
     // them. Per-session containers exec as their create-time --user (1001).
-    const userArgs = sharedOverride.has(sessionId) ? ['-u', '1001:1001'] : [];
+    const userArgs = shared ? ['-u', '1001:1001'] : [];
     const stdout = await docker(['exec', ...userArgs, name, 'bash', '-lc', buildOrphanReapScript(sessionId)], 30_000);
     const victims = stdout.split('\n').filter(l => l.startsWith('REAPED '));
     if (victims.length) {
@@ -1039,6 +1396,14 @@ export async function reapOrphanedBuildProcesses(sessionId: string): Promise<num
 
 export async function stopSessionContainer(sessionId: string): Promise<void> {
   clearProcessRegistry(sessionId); // drop in-memory background-process handles
+  // ticket c25f8b7e: EVERY path that reaches here is a teardown the HARNESS
+  // chose (disk-pressure recycle, idle/age reap, session delete, migration) —
+  // the lane is told in the same breath by the note that triggered it, so the
+  // next run must register fresh rather than report a "replacement" nobody has
+  // to react to. A swap the harness did NOT cause (deploy/restart wave, host
+  // reprovision) never passes through here, which is exactly why it still
+  // reports on the next run.
+  await forgetContainerIdentity(sessionId);
   // A session on the SHARED dev container drops its mapping — the shared
   // container outlives sessions (reaped separately when the owner disables it).
   // Still rm the per-session NAME: a session that started per-session and later
@@ -1050,6 +1415,10 @@ export async function stopSessionContainer(sessionId: string): Promise<void> {
   // T7-7: a recreate re-learns its mount mode.
   wholeVolumeContainers.delete(containerName(sessionId)); scopedContainers.delete(containerName(sessionId));
   userSubtreeContainers.delete(containerName(sessionId)); // build 2026-10-08 ISO
+  // ticket e2f40d10 review: the container NAME is deterministic, so a recreate at
+  // the same name would hit the uid-row memo and silently skip the passwd row —
+  // reinstating "No user exists for uid 1001" on the fresh container.
+  forgetSessionUserRow(containerName(sessionId));
   if (!(await isDockerAvailable())) return;
   try { await docker(['rm', '-f', containerName(sessionId)]); } catch { /* already gone */ }
 }
@@ -1079,9 +1448,9 @@ export async function reapSessionBackgroundProcesses(sessionId: string): Promise
       await import('./session-bg');
     if (sessionBgReapDisabled()) return { reaped: 0, ok: true };
     if (!(await isDockerAvailable())) return { reaped: 0, ok: false };
-    const name = execTargetName(sessionId);
+    const { name, shared } = await resolveReapTarget(sessionId);
     const script = sessionRunEndReapScript(sessionId, CODING_WORKSPACE_ROOT, sessionBgReapMinAgeSec());
-    const userArgs = sharedOverride.has(sessionId) ? ['-u', '1001:1001'] : [];
+    const userArgs = shared ? ['-u', '1001:1001'] : [];
     const stdout = await docker(['exec', ...userArgs, name, 'bash', '-lc', script], 30_000);
     const reaped = countReaped(stdout);
     if (reaped > 0) {
@@ -1105,19 +1474,36 @@ export async function reapIdleSessionBackgroundProcesses(sessionIds: string[]): 
     if (sessionBgReapDisabled()) return 0;
     if (!(await isDockerAvailable())) return 0;
     // The sweep spans every session of the SHARED container: group targets by
-    // container name so a per-session container's sweep covers only its own
-    // session (execTargetName keys the shared override; per-session names map
-    // 1:1). Idle victims are container-local by construction.
-    const byTarget = new Map<string, string[]>();
+    // resolved container name so a per-session container's sweep covers only
+    // its own session. Idle victims are container-local by construction.
+    // Target resolution is label-backed (ticket 4bb6a68a): the in-process map
+    // is cold in a process that never resolved the session, and the per-session
+    // name is a PHANTOM for a session living in the shared dev container.
+    // ONE label read + ONE user-id read covers the whole sweep (this runs on
+    // every idle pass over dozens of sessions — a per-session docker call would
+    // turn a cheap sweep into a daemon storm).
+    const rows = await runningContainerLabels();
+    const userIds = new Map<string, string | null>();
+    if (rows.length) {
+      const ids = sessionIds.filter((sid) => !sharedOverride.has(sid));
+      try {
+        const found = await prisma.chatCodingState.findMany({
+          where: { id: { in: ids } }, select: { id: true, userId: true },
+        });
+        for (const r of found as Array<{ id: string; userId: string }>) userIds.set(r.id, r.userId ?? null);
+      } catch { /* DB hiccup — per-session containers still resolve from `rows` */ }
+    }
+    const byTarget = new Map<string, { sids: string[]; shared: boolean }>();
     for (const sid of sessionIds) {
-      const t = execTargetName(sid);
-      if (!byTarget.has(t)) byTarget.set(t, []);
-      byTarget.get(t)!.push(sid);
+      const { name: t, shared } = await resolveReapTarget(sid, { rows, userId: userIds.get(sid) ?? null });
+      if (!byTarget.has(t)) byTarget.set(t, { sids: [], shared: false });
+      const entry = byTarget.get(t)!;
+      entry.sids.push(sid);
+      if (shared) entry.shared = true;
     }
     let reaped = 0;
-    for (const [target, sids] of byTarget) {
+    for (const [target, { sids, shared }] of byTarget) {
       const script = sessionIdleReapScript(sids, CODING_WORKSPACE_ROOT);
-      const shared = sids.some((sid) => sharedOverride.has(sid));
       const userArgs = shared ? ['-u', '1001:1001'] : [];
       try {
         const stdout = await docker(['exec', ...userArgs, target, 'bash', '-lc', script], 30_000);

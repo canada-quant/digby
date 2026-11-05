@@ -137,6 +137,24 @@ export interface SerpCallOpts {
    * NEVER returned as results either way: the ca805a61 pin holds.
    */
   resumeBudgetMs?: number;
+  /**
+   * WHICH gateway MCP session this call runs on (ticket 5f69fdc4).
+   *
+   * The gateway is stateful (`supergateway --stateful`): one stdio child — and
+   * therefore one BrightData browser — per `Mcp-Session-Id`. Search/scrape
+   * share the default key; the cloud BROWSER driver passes its own per-run key
+   * so `navigate → snapshot → get_text → click_ref` all hit the SAME page.
+   * Absent = the default web-session key (byte-identical behaviour for every
+   * existing caller).
+   */
+  sessionKey?: string;
+  /**
+   * WHICH gateway MOUNT this call goes to (ticket 5f69fdc4). The interactive
+   * cloud browser uses the STATEFUL `/browser/mcp`; everything else keeps the
+   * shared, stateless `/mcp` (a stateful instance 400s session-less POSTs, and
+   * x-mcp is a live session-less client of `/mcp`). Absent = `MCP_DIGBY_URL`.
+   */
+  gatewayUrl?: string;
 }
 
 /** Known catalog codes. unexpected_q is the only DETERMINISTIC one (query

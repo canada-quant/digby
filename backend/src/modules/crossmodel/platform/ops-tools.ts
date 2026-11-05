@@ -271,12 +271,24 @@ export async function executeOpsTool(ctx: Ctx, name: OpsToolName, args: any, dep
         const { input: _runInput, ...rest } = r as any;
         return { ...rest, receipts: byRun[r.id] ?? [], contextFill: fillByRun.get(r.id) ?? [] };
       }), chatTurns /* always present (live check 2026-09-25: consumers read {runs, chatTurns}) */, note: RUN_RECEIPTS_NOTE };
-      // SAA-1.4 PHASE 0 (todo 9114e7b5) — OBSERVE-ONLY. Resolve the NEXT HOPS a
+      // SAA-1.4 PHASE 1 (todo 2ef2b254): the envelope the caller actually reads.
+      // Stays the SAME reference unless the chain applied, so observe/off are
+      // byte-identical by construction (see `withRecallChainField`).
+      let recallEnvelope: Record<string, unknown> = envelope;
+      // SAA-1.4 PHASE 0 (todo 9114e7b5) — Resolve the NEXT HOPS a
       // reader wants after citing a receipt (the lane's charter goal and todo,
       // the schedule a machine firing came from) and record what a Phase-1
-      // `next:` line WOULD have offered. NOTHING is appended and NO field is
-      // added to `envelope`, so the text an agent reads here is byte-identical
-      // with the feature on and off — the Phase 0 exit-gate requirement.
+      // `next:` line WOULD have offered. In observe mode (the default) NOTHING
+      // is appended and NO field is added, so the text an agent reads here is
+      // byte-identical with the feature on and off — the Phase 0 exit gate.
+      //
+      // PHASE 1 CORRECTION: this block used to compute the chain and stop. The
+      // metric fired while the envelope was never touched, so an ARMED box still
+      // got no `next:` field here — the surface read as "wired" in the closed-set
+      // accounting while being structurally observe-only. The apply-mode canary
+      // caught it (probe-saa1-phase1-canary.js CHECK 5, which classified the
+      // surface SILENT against 484 injectable hops recorded in the 7 days to
+      // 2026-11-04). The render call below is the missing half.
       try {
         const chainMod = await import('./chain-of-recall');
         const hops: Array<{ kind: 'run' | 'goal' | 'todo' | 'receipt' | 'chat' | 'schedule'; id: string; label?: string }> = [];
@@ -293,6 +305,10 @@ export async function executeOpsTool(ctx: Ctx, name: OpsToolName, args: any, dep
           if (sid) hops.push({ kind: 'schedule', id: String(sid) });
         }
         const chain = chainMod.planRecallChain({ surface: 'get_run_receipts', hops });
+        // THE RENDER SITE (this is the line Phase 0 was missing): an additive
+        // `next` key on the envelope, or the SAME envelope reference when the
+        // chain did not apply.
+        recallEnvelope = chainMod.withRecallChainField(envelope, chain) as Record<string, unknown>;
         const meta = chainMod.recallChainMetricMeta(chain, { chatId, runId: runId ?? null });
         if (meta) {
           const m: any = await import('./loop-metrics.service');
@@ -301,7 +317,16 @@ export async function executeOpsTool(ctx: Ctx, name: OpsToolName, args: any, dep
           }
         }
       } catch { /* observe-only: never blocks a read */ }
-      return redactReadEnvelope(ctx, name, chatId, envelope);
+      // SAA-1.4 PHASE 1 (todo 2ef2b254): give the chain a RENDER site.
+      // Phase 0 computed the hops only to record what a Phase-1 `next:` line WOULD
+      // have offered — the observation went to telemetry and the envelope was left
+      // alone. That is why this surface read as "wired" while an armed box still
+      // got no `next:` field: the metric fired (484 injectable hops in the 7d to
+      // 2026-11-04) and nothing was appended. The apply-mode canary caught it
+      // (probe-saa1-phase1-canary.js CHECK 5 classified it SILENT).
+      // `withRecallChainField` returns the SAME envelope reference unless the chain
+      // actually applied, so observe/off stay byte-identical by construction.
+      return redactReadEnvelope(ctx, name, chatId, recallEnvelope);
     }
     case 'get_chat_autonomy': {
       const raw = String(args?.chatId || '').trim() || ctx.sessionId;

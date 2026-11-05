@@ -251,8 +251,8 @@ describe('review — the assignment shape leaves cursors, prose, placeholders, c
   });
 
   it('a URL share token is redacted but the query tail after & survives', () => {
-    const { text, hits } = redactSecrets('https://x.digby.example.com/share?token=abcdefghijklmnopqrstuvwx&view=1');
-    expect(text).toBe(`https://x.digby.example.com/share?token=${REDACTED_NOTE}&view=1`);
+    const { text, hits } = redactSecrets('https://x.digby.ai/share?token=abcdefghijklmnopqrstuvwx&view=1');
+    expect(text).toBe(`https://x.digby.ai/share?token=${REDACTED_NOTE}&view=1`);
     expect(hits).toEqual(['Credential assignment']);
   });
 

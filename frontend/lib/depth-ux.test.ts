@@ -25,7 +25,7 @@ describe('always-Auto policy helpers', () => {
   it('describeAutoOnlyState: since + by; the pre-audit row is honest about its unrecorded actor; env default reads as default', () => {
     const base = { enabled: true, since: '2026-09-26T20:35:16.556Z', updatedBy: null, source: 'setting' as const, envVar: 'PATIENCE_AUTO_ONLY' };
     expect(describeAutoOnlyState(base)).toBe('ON since 2026-09-26 20:35Z (actor unrecorded — pre-audit flip)');
-    expect(describeAutoOnlyState({ ...base, updatedBy: 'paul@sunday.market' })).toBe('ON since 2026-09-26 20:35Z by paul@sunday.market');
+    expect(describeAutoOnlyState({ ...base, updatedBy: 'example-user@example.com' })).toBe('ON since 2026-09-26 20:35Z by example-user@example.com');
     expect(describeAutoOnlyState({ ...base, enabled: false, since: '2026-09-27T01:00:00Z', updatedBy: 'a@b.c' })).toBe('OFF since 2026-09-27 01:00Z by a@b.c');
     expect(describeAutoOnlyState({ enabled: false, since: null, updatedBy: null, source: 'env', envVar: 'PATIENCE_AUTO_ONLY' })).toBe('OFF (default, env PATIENCE_AUTO_ONLY)');
     expect(describeAutoOnlyState({ ...base, since: 'junk' })).toBe('ON (default, env PATIENCE_AUTO_ONLY)');

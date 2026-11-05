@@ -199,7 +199,7 @@ describe('verifyMachineCloseEvidence — commitSha and supporting members', () =
   it('prUrl / deployRunId ALONE never satisfy the bar (unverifiable_evidence)', async () => {
     const v = await verifyMachineCloseEvidence({
       ticketId: TICKET_ID,
-      evidence: { prUrl: 'https://github.com/canada-quant/digby/pull/595', deployRunId: '123456789' },
+      evidence: { prUrl: 'https://github.com/example-org/crossmodel/pull/595', deployRunId: '123456789' },
     });
     expect(v).toMatchObject({ ok: false, reason: 'unverifiable_evidence' });
     expect((v as any).message).toContain('replayTestPath');
@@ -221,11 +221,11 @@ describe('verifyMachineCloseEvidence — commitSha and supporting members', () =
     const sha = 'b'.repeat(40);
     const v = await verifyMachineCloseEvidence({
       ticketId: TICKET_ID,
-      evidence: { commitSha: sha, prUrl: 'https://github.com/canada-quant/digby/pull/595', deployRunId: '17654321000' },
+      evidence: { commitSha: sha, prUrl: 'https://github.com/example-org/crossmodel/pull/595', deployRunId: '17654321000' },
     });
     expect(v).toMatchObject({ ok: true });
     const note = (v as any).auditNote as string;
-    expect(note).toContain('PR https://github.com/canada-quant/digby/pull/595');
+    expect(note).toContain('PR https://github.com/example-org/crossmodel/pull/595');
     expect(note).toContain('deploy run 17654321000');
   });
 
@@ -233,16 +233,16 @@ describe('verifyMachineCloseEvidence — commitSha and supporting members', () =
     const sha = 'c'.repeat(40);
     const v = await verifyMachineCloseEvidence({
       ticketId: TICKET_ID,
-      evidence: { commitSha: sha, repo: 'canada-quant/example-repo' },
+      evidence: { commitSha: sha, repo: 'example-org/optcg' },
     });
     expect(v).toMatchObject({ ok: true, verified: ['commitSha'] });
     const note = (v as any).auditNote as string;
     expect(note).toContain(`commit ${sha}`);
-    expect(note).toContain('repo canada-quant/example-repo');
+    expect(note).toContain('repo example-org/optcg');
   });
 
   it('a malformed repo slug refuses (invalid_repo) — a malformed scope must not silently downgrade to the platform repo and 404', async () => {
-    for (const repo of ['nonsense', 'pasta paul/optcg', 'canada-quant/example-repo/x', 'canada-quant/', '/optcg', 'canada-quant/example-repo extra']) {
+    for (const repo of ['nonsense', 'acme corp/optcg', 'example-org/optcg/x', 'example-org/', '/optcg', 'example-org/optcg extra']) {
       const v = await verifyMachineCloseEvidence({
         ticketId: TICKET_ID,
         evidence: { commitSha: 'd'.repeat(40), repo },

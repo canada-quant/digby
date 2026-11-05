@@ -1,7 +1,7 @@
 /**
  * Dynamic roster phase 1 — the model catalog's pure card rules
  * (docs/DYNAMIC_ROSTER_PLAN_2026-10-03.md §5). The ids below are the real
- * registry ids on the prod gateway (llm.example.com, DR1003 readout 2026-10-03).
+ * registry ids on the prod gateway (llm.cql.ca, DR1003 readout 2026-10-03).
  */
 jest.mock('../coding/coding-model', () => ({
   BUILT_IN_CODING_MODEL_IDS: ['glm-5.3', 'deepseek-flash'],
@@ -94,7 +94,7 @@ describe('registryCard', () => {
     expect(c).toMatchObject({ spec: 'cql-litellm:api-alibaba-qwen3.8-flash', family: 'qwen', tier: 'fast', vision: true, maxTools: 64, frontier: false, autoEligible: true, servable: true });
   });
   // Gateway swap 2026-10-24 (catalog refresh): MiniMax-M3.1-Flash replaced the dead-named
-  // deepseek-v4.1-flash routes on llm.example.com — served as `minimax-m3.1-flash` plus the bare
+  // deepseek-v4.1-flash routes on llm.cql.ca — served as `minimax-m3.1-flash` plus the bare
   // alias `m3.1-flash`, both e2e-verified 200 with /model/info max_input_tokens 262144. The
   // bare alias has no vendor stem, so the FAMILY_RULES m-flash shape must name the line.
   it('the 2026-10-24 MiniMax swap: both served ids family minimax, tier fast, ctx from the entry', () => {

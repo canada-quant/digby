@@ -22,7 +22,8 @@
  *   4. external-effect tools ⇒ a card on BOTH turn kinds;
  *   5. the staging-time validation still runs first on the direct path;
  *   6. the own-chat scope for the schedule tools;
- *   7. WORK_TOOLS_NO_CARD_DISABLED=1 restores the card;
+ *   7. (RSW-1) the card-free direct path is unconditional — its kill switch
+ *      WORK_TOOLS_NO_CARD_DISABLED is retired (see pin 10 for what still cards);
  *   8. (review fixer) the direct path stamps MODEL provenance on schedule
  *      rows (promptSetBy / initiator 'machine', no owner-subscription mark,
  *      the directive-conflict detector on) while the confirmed re-call keeps
@@ -34,7 +35,7 @@
  *  11. (review fixer) import_repo / configure_workspace run directly only
  *      when the repo URL is in the user's own message (ctx.userTurnText);
  *  12. (review fixer) the note names the task card only when one renders
- *      (taskCardAvailable / TASK_CARD_DISABLED), else "posted in this chat".
+ *      (taskCardAvailable), else "posted in this chat".
  *
  * Mock stack mirrors platform-tools.b6acc1e3.test.ts (the service layer under
  * the tools is fully mocked — the gate's routing is what we pin).
@@ -230,8 +231,6 @@ beforeEach(() => {
   mockOwnerQuestions.reset();
   mockStore.clear();
   svc.startCodingSession.mockResolvedValue(SPAWN);
-  delete process.env.WORK_TOOLS_NO_CARD_DISABLED;
-  delete process.env.TASK_CARD_DISABLED;
 });
 
 const directMetric = () => mockRecordLoopMetric.mock.calls.filter((c) => c[0]?.kind === 'work_tool_direct' && !c[0]?.meta?.deduplicated);
@@ -295,7 +294,7 @@ describe('the table: work tools vs external-effect tools', () => {
     expect(appendWorkToolDirectNote('cancel_schedule', '{not json')).toBe('{not json');
   });
 
-  it('the note names the task card ONLY when one renders — otherwise "posted in this chat" (taskCardAvailable / TASK_CARD_DISABLED)', () => {
+  it('the note names the task card ONLY when one renders — otherwise "posted in this chat" (taskCardAvailable)', () => {
     expect(workToolDirectNote('start_coding_session', { taskCard: true })).toContain('progress shows on the task card in this chat');
     expect(workToolDirectNote('start_coding_session', { taskCard: false })).toContain('progress and the result are posted in this chat');
     expect(workToolDirectNote('start_coding_session', { taskCard: false })).not.toContain('task card');
@@ -304,11 +303,6 @@ describe('the table: work tools vs external-effect tools', () => {
     expect(workToolDirectNote('schedule_message', { taskCard: true })).toContain('under the same task card');
     expect(workToolDirectNote('schedule_message', { taskCard: false })).not.toContain('task card');
     expect(workToolDirectNote('import_repo', { taskCard: false })).not.toContain('task card');
-    // the switch of the card module itself turns the sentence off regardless of the module's presence
-    process.env.TASK_CARD_DISABLED = '1';
-    expect(taskCardAvailable()).toBe(false);
-    expect(workToolDirectNote('start_coding_session')).not.toContain('task card');
-    delete process.env.TASK_CARD_DISABLED;
     // the default follows the module's presence in this build (a resolve probe, never an import)
     expect(typeof taskCardAvailable()).toBe('boolean');
     expect(workToolDirectNote('start_coding_session').includes('task card')).toBe(taskCardAvailable());
@@ -590,16 +584,6 @@ describe('schedule tools: own-chat scope + MODEL provenance on the direct path (
     expect(svc.updateSchedule.mock.calls[0][0].ownerSubscribed).toBeUndefined();
     expect(mockDirectiveConflict).toHaveBeenCalledWith(expect.objectContaining({ scheduleId: 'aaaaaaaa-1111-2222-3333-444455556666', oldPrompt: 'old prompt', newPrompt: 'new prompt' }));
     expect(mockConfirmations.rows).toHaveLength(0);
-  });
-});
-
-describe('kill switch', () => {
-  it('WORK_TOOLS_NO_CARD_DISABLED=1 restores the card for a work tool on a human turn', async () => {
-    process.env.WORK_TOOLS_NO_CARD_DISABLED = '1';
-    const out = JSON.parse(await executePlatformTool(humanCtx(), 'start_coding_session', { projectId: 'p1', title: 'Deck build' }));
-    expect(out).toMatchObject({ ok: false, needsConfirmation: true });
-    expect(svc.startCodingSession).not.toHaveBeenCalled();
-    expect(mockRecordLoopMetric).not.toHaveBeenCalledWith(expect.objectContaining({ kind: 'work_tool_direct' }));
   });
 });
 

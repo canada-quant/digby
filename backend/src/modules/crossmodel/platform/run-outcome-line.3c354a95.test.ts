@@ -80,7 +80,7 @@ describe('ticket 3c354a95 — the three production specimens (replayed from the 
 
   it('REPLAY (msg d8810422, the noun-modifier specimen): the mechanism close-out stamps MERGE-SAFE · 0, not NOT-MERGE-SAFE · 0', () => {
     const text = [
-      '**PR #1750 MERGED to main** (squash sha `f6cb7621120c`, merge receipt: "MERGED canada-quant/digby#1750 (squash sha f6cb7621120c) — confirmed merged:true by follow-up GET").',
+      '**PR #1750 MERGED to main** (squash sha `f6cb7621120c`, merge receipt: "MERGED example-org/crossmodel#1750 (squash sha f6cb7621120c) — confirmed merged:true by follow-up GET").',
       '',
       'Plus sighting ticket **abe2a3a2-332f-4944-856d-20ae156a7871** filed for the separate run-outcome-line defect (live parenthetical NOT-MERGE-SAFE vetoes degrade to `n/a` — the c90958af half of PR #1723, verified by probe: pre `VERDICT: NOT-MERGE-SAFE · BLOCKING: 2` → post `VERDICT: n/a · BLOCKING: 2`; NOT this lane\'s concern per one-concern-per-PR).',
       '',

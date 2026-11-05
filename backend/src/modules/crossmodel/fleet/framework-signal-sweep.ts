@@ -46,6 +46,132 @@ const TWO_H = 2 * 60 * 60 * 1000;
 const DAY = 24 * 60 * 60 * 1000;
 
 /**
+ * LIVE-RUN WRITE GUARD (ticket 92d644c6) — do not convict a row a live coding
+ * run is still WRITING.
+ *
+ * A coding-run assistant row is INSERTED at run start and rewritten in place
+ * (`run-executor.persistPartial`) with the RAW model stream — `latestText` and
+ * the accumulated `partial` parts, verbatim. The renderer scrub
+ * (`scrubDeliveredRowContent`, the stripped parts, `normalizeAssistantMarkdown`)
+ * happens only at FINALIZE. So for as long as the run is alive the stored row
+ * legitimately holds raw `[SEND_EMAIL]` / `[CANVAS]` markup that no reader will
+ * ever see: it is a mid-flight working copy, not delivered text.
+ *
+ * Specimen (chat 1e838830, row ca0e5684): created 2026-11-03T04:53:54.836Z, the
+ * 05:11:46Z pass flagged raw-marker:SEND_EMAIL mid-run, and finalize rewrote the
+ * row at 06:19:47Z — the convicting text is GONE today (verified: zero
+ * SEND_EMAIL occurrences in content and all 40 parts). The ticket described a
+ * marker that was never delivered.
+ *
+ * Liveness is the durable signal the rest of the runtime already uses: an
+ * `agent_runs` row status='running' whose lease has not expired
+ * (`container.service`, `dev-container.service` read the same pair). A stale
+ * lease is dead — the sweep must still convict a crashed run's leftover raw
+ * partial once the lease lapses, so this guard only ever defers a conviction,
+ * it never disables one. Pure — exported for tests.
+ */
+/**
+ * ROW-PRECISE liveness view: sessionId → the EARLIEST createdAt among that
+ * session's live runs.
+ *
+ * Liveness is the durable signal the rest of the runtime already uses: an
+ * `agent_runs` row status='running' whose lease has not expired (the pair
+ * container.service / dev-container.service read). An EXPIRED lease is a dead
+ * run — the sweep must still convict a crashed run's leftover raw partial once
+ * the lease lapses, so this only ever DEFERS a conviction, never disables one.
+ *
+ * A live run's transcript row is written in ONE chat (the chat id IS the run's
+ * sessionId), so "created at/after this instant, in that chat" narrows the skip
+ * to the row in flight — the rest of the chat's rows are finished work and stay
+ * scannable. A chat-level exclusion would defer genuine findings on a busy
+ * chat's older rows for as long as any run on it is alive. Pure.
+ */
+export function liveRunWriteStarts(
+  runs: ReadonlyArray<{ sessionId?: string | null; status?: string | null; leaseExpiresAt?: Date | string | null; createdAt?: Date | string | null }>,
+  now: Date = new Date(),
+): Map<string, Date> {
+  const starts = new Map<string, Date>();
+  const at = now.getTime();
+  for (const run of runs) {
+    if (!run || !run.sessionId) continue;
+    if (run.status != null && run.status !== 'running') continue;
+    const lease = run.leaseExpiresAt ? new Date(run.leaseExpiresAt).getTime() : Number.NaN;
+    if (!Number.isFinite(lease) || lease <= at) continue;
+    const started = run.createdAt ? new Date(run.createdAt) : null;
+    if (!started || !Number.isFinite(started.getTime())) continue;
+    const prev = starts.get(run.sessionId);
+    if (!prev || started < prev) starts.set(run.sessionId, started);
+  }
+  return starts;
+}
+
+/** Max live runs read per pass (the liveness lookup, not a query clause). */
+const LIVE_RUN_LOOKUP_CAP = 200;
+/** Skew allowed between an `agent_runs` row's createdAt and its transcript row's. */
+export const LIVE_ROW_START_SKEW_MS = 2 * 60 * 1000;
+/**
+ * How recently a row must have been rewritten to count as "being written right
+ * now". `persistPartial` flushes on a `PARTIAL_PERSIST_MS` (8 s) throttle, so a
+ * live run's row is never older than that; 90 s is ~11 flush intervals of slack.
+ * This bound is what stops the `updatedAt` witness from over-reaching: without
+ * it, ANY row finalized after a later run started (a chat that chains runs
+ * back-to-back) sits inside the guard for that run's whole lifetime and a real
+ * finding waits — or, if the run outlives the 2 h scan window, is missed.
+ */
+export const LIVE_ROW_RECENT_WRITE_MS = 90 * 1000;
+
+/**
+ * Is this transcript row the one a LIVE run is still writing?
+ *
+ * Two independent witnesses, either one is enough:
+ *   - `createdAt` at/after the run's start — a FRESH run INSERTs its row then;
+ *   - `updatedAt` at/after the run's start AND within LIVE_ROW_RECENT_WRITE_MS
+ *     of now — `persistPartial` rewrites the row on every partial flush (Prisma
+ *     `@updatedAt` bumps the stamp). The recency bound matters: "updated after
+ *     some run in this chat started" alone is satisfied by a PREVIOUS run's
+ *     finalized row, so the un-bounded form suppressed real findings for the
+ *     duration of an unrelated run. This witness is what catches a RESUMED run,
+ *     which writes into the row its INTERRUPTED attempt created (run-state
+ *     `resumeAssistantMsgId`, the duplicate-bubble fix ddb4acc5) where
+ *     `createdAt` predates the resume and so cannot identify it.
+ *
+ * A FINALIZED row stops moving: its `updatedAt` freezes at finalize, so it
+ * leaves this predicate one flush-interval later and the next pass convicts it
+ * normally — the guard only ever DEFERS a conviction. Pure — exported for tests.
+ */
+export function writtenByLiveRun(
+  row: { chatId?: string | null; createdAt?: Date | string | null; updatedAt?: Date | string | null },
+  liveStarts: ReadonlyMap<string, Date>,
+  now: Date = new Date(),
+  skewMs: number = LIVE_ROW_START_SKEW_MS,
+  recentWriteMs: number = LIVE_ROW_RECENT_WRITE_MS,
+): boolean {
+  if (!row || !row.chatId) return false;
+  const startedAt = liveStarts.get(row.chatId);
+  if (!startedAt) return false;
+  const floor = startedAt.getTime() - skewMs;
+  const created = row.createdAt ? new Date(row.createdAt).getTime() : Number.NaN;
+  if (Number.isFinite(created) && created >= floor) return true;
+  const updated = row.updatedAt ? new Date(row.updatedAt).getTime() : Number.NaN;
+  if (!Number.isFinite(updated) || updated < floor) return false;
+  // RECENCY BOUND: the row must have moved within the last flush interval or
+  // two, otherwise it is a finished row that merely post-dates the run start.
+  return updated >= now.getTime() - recentWriteMs;
+}
+
+/** Drop every row a live run is still writing from a scan batch. Pure. */
+export function dropLiveWrites<T extends { chatId?: string | null; createdAt?: Date | string | null; updatedAt?: Date | string | null }>(
+  rows: ReadonlyArray<T>,
+  liveStarts: ReadonlyMap<string, Date>,
+  now: Date = new Date(),
+  skewMs: number = LIVE_ROW_START_SKEW_MS,
+  recentWriteMs: number = LIVE_ROW_RECENT_WRITE_MS,
+): T[] {
+  if (!liveStarts.size) return [...rows];
+  return rows.filter((r) => !writtenByLiveRun(r, liveStarts, now, skewMs, recentWriteMs));
+}
+
+/**
  * Daily NEW-filing budget (2026-10-20, Grok-bot review): the per-pass CAP
  * alone × an hourly cron allowed up to 240 tickets/day. Same Redis INCR-first
  * reservation as the log-signal sweep (day-filing-budget.ts), on a day-named
@@ -372,12 +498,41 @@ function defaultDeps(): FrameworkSignalSweepDeps {
   return {
     async loadMessages() {
       const prisma = await db();
-      return prisma.crossModelMessage.findMany({
+      // LIVE-RUN WRITE GUARD (ticket 92d644c6): a coding run's assistant row
+      // legitimately holds marker text mid-run that no reader ever sees as raw
+      // markup — run-executor's persistPartial rewrites the row with the
+      // streamed text/parts on every flush, and only finalize writes the
+      // delivered form. See liveRunWriteStarts / writtenByLiveRun above for the
+      // liveness signal and BOTH witnesses (createdAt for a fresh run, a FRESH
+      // updatedAt for a resumed one, recency-bounded so a previous run's
+      // finalized row is never hidden).
+      // Fail-open: if the liveness read fails the sweep runs exactly as before
+      // (an hourly signal must never be silenced by a telemetry read).
+      let liveStarts = new Map<string, Date>();
+      try {
+        const runs = await prisma.agentRun.findMany({
+          // deterministic under the cap: without an order a truncated read could
+          // silently drop the very run whose row is in flight.
+          where: { status: 'running', leaseExpiresAt: { gt: new Date() } },
+          orderBy: { createdAt: 'desc' },
+          select: { sessionId: true, status: true, leaseExpiresAt: true, createdAt: true },
+          take: LIVE_RUN_LOOKUP_CAP,
+        });
+        liveStarts = liveRunWriteStarts(runs);
+      } catch {
+        // fail OPEN (see above)
+        liveStarts = new Map();
+      }
+      const rows = await prisma.crossModelMessage.findMany({
         where: { role: 'assistant', createdAt: { gte: since(TWO_H) } },
         orderBy: { createdAt: 'desc' },
         take: 2000,
-        select: { id: true, chatId: true, content: true, parts: true, createdAt: true },
+        // updatedAt is REQUIRED by the guard's second witness (a resumed run
+        // rewrites a row it did not create) — without it here that witness
+        // silently never fires in production.
+        select: { id: true, chatId: true, content: true, parts: true, createdAt: true, updatedAt: true },
       });
+      return dropLiveWrites(rows, liveStarts);
     },
     async loadQuestions() {
       const prisma = await db();

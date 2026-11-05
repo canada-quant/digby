@@ -50,6 +50,8 @@ const pendingRows: Array<{
   mode: string | null; source: string; createdAt: Date; uploadIds?: string[];
 }> = [];
 let pendingSeq = 0;
+/** Transcript-row ids minted by the buffered $transaction mock. */
+let msgSeq = 0;
 
 /** In-memory crossmodel_messages table — only what the supersession marker
  *  (c6db9c72) reads: user rows of SOURCE chats (chatId/role/createdAt/metadata). */
@@ -72,6 +74,14 @@ const mockRedis = {
   exists: jest.fn(async (k: string) => (redisStore.has(k) ? 1 : 0)),
   mGet: jest.fn(async (keys: string[]) => keys.map((k) => redisStore.get(k) ?? null)),
   expire: jest.fn(async (..._a: any[]) => 1),
+  // MERGE-1 kill-window fix: noteDrainAttempt bounds the immediate redelivery
+  // chain after a failed persist. Without incr the call THROWS and the
+  // fail-open path returns 0, so the bound would never engage (a real spin).
+  incr: jest.fn(async (k: string) => {
+    const n = Number(redisStore.get(k) ?? 0) + 1;
+    redisStore.set(k, String(n));
+    return n;
+  }),
 };
 jest.mock('../../../config/redis', () => ({ __esModule: true, default: mockRedis }));
 
@@ -99,6 +109,17 @@ const mockPrisma: any = {
       if (i >= 0) pendingRows.splice(i, 1);
       return {};
     }),
+    // MERGE-1 cutover kill-window fix (2026-11-05): the persist consumes the
+    // drained rows in ONE transaction with the transcript row.
+    deleteMany: jest.fn(async ({ where }: any) => {
+      const ids: string[] = where?.id?.in ?? (where?.id ? [where.id] : []);
+      let count = 0;
+      for (const id of ids) {
+        const i = pendingRows.findIndex(r => r.id === id);
+        if (i >= 0) { pendingRows.splice(i, 1); count += 1; }
+      }
+      return { count };
+    }),
   },
   // chat-agent run persistence (a drained run executes a REAL detached turn).
   crossModelMessage: {
@@ -116,12 +137,44 @@ const mockPrisma: any = {
     updateMany: jest.fn(async () => ({ count: 1 })),
     findUnique: jest.fn(async () => ({ title: 'A proper existing title' })),
   },
+  // MERGE-1 cutover kill-window fix (2026-11-05): createMessagesConsumingPending
+// writes the transcript row and consumes the queued row in ONE transaction.
+// Buffered, all-or-nothing (see message-queue.test.ts for the rationale).
+  $transaction: jest.fn(async (fn: any) => {
+    const created: any[] = [];
+    let consumedIds: string[] = [];
+    const tx = {
+      crossModelMessage: {
+        // Delegate to the SAME mock the non-transactional path uses, so tests
+        // asserting on crossModelMessage.create (drainedUserRow) stay meaningful.
+        create: jest.fn(async (args: any) => {
+          const row = { id: `m${++msgSeq}`, createdAt: new Date(Date.now() + msgSeq), ...args.data };
+          created.push(row);
+          void mockPrisma.crossModelMessage.create(args);
+          return row;
+        }),
+      },
+      pendingChatMessage: {
+        deleteMany: jest.fn(async ({ where }: any) => {
+          consumedIds = where?.id?.in ?? (where?.id ? [where.id] : []);
+          return { count: consumedIds.length };
+        }),
+      },
+    };
+    const out = await fn(tx);
+    for (const r of created) transcriptRows.push(r);
+    for (const id of consumedIds) {
+      const i = pendingRows.findIndex(r => r.id === id);
+      if (i >= 0) pendingRows.splice(i, 1);
+    }
+    return out;
+  }),
   // chat-busy's durable layer (worker-tier coding runs) — none in these tests.
   agentRun: { findFirst: jest.fn(async () => null), findMany: jest.fn(async () => []) },
   // 3405e332 cancel-wins guard: the drain re-reads the firing's schedule row.
   // Default = the post-consume state of a fired one-shot (enabled:false,
   // lastStatus 'started') — the KEEP case; drop cases override per-test.
-  codingSchedule: {
+  chatSchedule: {
     findUnique: jest.fn(async () => ({ lastStatus: 'started' })),
   },
 };
@@ -204,6 +257,17 @@ async function waitFor(pred: () => boolean, ms = 3000): Promise<void> {
   if (!pred()) throw new Error('timed out waiting for condition');
 }
 
+/**
+ * ASYNC variant of waitFor — for predicates that must AWAIT (a DB/count read).
+ * waitFor's predicate is SYNC, so passing an async one returns a Promise, which
+ * is always truthy: the wait passes vacuously on its first call. Anything that
+ * needs an await must come through here.
+ */
+async function waitUntil(pred: () => Promise<boolean>, ms = 3000): Promise<void> {
+  const t0 = Date.now();
+  while (!(await pred()) && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 10));
+}
+
 /** The persisted user row a drained run left behind (by content needle). */
 function drainedUserRow(needle: string) {
   return mockPrisma.crossModelMessage.create.mock.calls
@@ -236,8 +300,13 @@ describe('3405e332 — schedule-origin busy-queue drain', () => {
     await expect(drainChatQueue('chat-sq1', 'u1')).resolves.toBe(true);
     // The cancel-wins guard re-read the schedule row and KEPT the firing
     // (lastStatus 'started' = the consumed one-shot, not a cancel class).
-    expect(mockPrisma.codingSchedule.findUnique).toHaveBeenCalledWith({ where: { id: 'sch_1' }, select: { lastStatus: true } });
-    expect(await countPending('chat-sq1')).toBe(0); // row deleted on dequeue
+    expect(mockPrisma.chatSchedule.findUnique).toHaveBeenCalledWith({ where: { id: 'sch_1' }, select: { lastStatus: true } });
+    // MERGE-1 kill-window fix (2026-11-05): consumption moved from dequeue to
+    // the persist transaction — assert it lands, not that it lands early.
+    // Poll explicitly: waitFor takes a SYNC predicate, so an async one would
+    // be truthy on its first call and pass vacuously.
+    await waitUntil(async () => (await countPending('chat-sq1')) === 0);
+    expect(await countPending('chat-sq1')).toBe(0); // row consumed at persist
     await waitFor(() => mockRunCodingAgent.mock.calls.some(c => String(c[0]?.userMessage).includes('provider billing outage')));
     // Provenance: the drained run is stamped like the direct fire path
     // (messageOrigin 'schedule') — never laundered into a human turn.
@@ -277,7 +346,7 @@ describe('3405e332 — schedule-origin busy-queue drain', () => {
     // The incident shape verbatim: the owner answered the watched question and
     // the schedule was cancelled BEFORE the lane freed — delivering now would
     // fire a stale reminder.
-    mockPrisma.codingSchedule.findUnique.mockResolvedValueOnce({ lastStatus: 'cancelled' });
+    mockPrisma.chatSchedule.findUnique.mockResolvedValueOnce({ lastStatus: 'cancelled' });
     await enqueueChatMessage({
       chatId: 'chat-sq2', userId: 'u1', content: 'stale recharge-card reminder', source: 'schedule',
       origin: { kind: 'schedule', scheduleId: 'sch_2' },
@@ -288,7 +357,7 @@ describe('3405e332 — schedule-origin busy-queue drain', () => {
   });
 
   it('cancel-wins: a firing whose schedule row was DELETED after queueing is dropped', async () => {
-    mockPrisma.codingSchedule.findUnique.mockResolvedValueOnce(null);
+    mockPrisma.chatSchedule.findUnique.mockResolvedValueOnce(null);
     await enqueueChatMessage({
       chatId: 'chat-sq3', userId: 'u1', content: 'dead schedule firing', source: 'schedule',
       origin: { kind: 'schedule', scheduleId: 'sch_3' },
@@ -299,7 +368,7 @@ describe('3405e332 — schedule-origin busy-queue drain', () => {
   });
 
   it('a schedule-read ERROR never drops the firing (fail-open — uncertainty must not lose a real firing)', async () => {
-    mockPrisma.codingSchedule.findUnique.mockRejectedValueOnce(new Error('db blip'));
+    mockPrisma.chatSchedule.findUnique.mockRejectedValueOnce(new Error('db blip'));
     await enqueueChatMessage({
       chatId: 'chat-sq4', userId: 'u1', content: 'firing survives a guard hiccup', source: 'schedule',
       origin: { kind: 'schedule', scheduleId: 'sch_4' },
@@ -315,7 +384,7 @@ describe('3405e332 — schedule-origin busy-queue drain', () => {
       chatId: 'chat-sq5', userId: 'u1', content: 'stash-less schedule firing', source: 'schedule', // no origin → no stash
     });
     await expect(drainChatQueue('chat-sq5', 'u1')).resolves.toBe(true);
-    expect(mockPrisma.codingSchedule.findUnique).not.toHaveBeenCalled(); // no scheduleId → nothing to check
+    expect(mockPrisma.chatSchedule.findUnique).not.toHaveBeenCalled(); // no scheduleId → nothing to check
     await waitFor(() => !!drainedUserRow('stash-less schedule firing'));
     expect(drainedUserRow('stash-less schedule firing').metadata).toMatchObject({ origin: 'schedule' });
     await waitFor(() => !isRunActive('chat:chat-sq5'));
@@ -323,14 +392,14 @@ describe('3405e332 — schedule-origin busy-queue drain', () => {
   });
 
   it('a dropped firing falls through to the NEXT queued message in the same drain', async () => {
-    mockPrisma.codingSchedule.findUnique.mockResolvedValueOnce({ lastStatus: 'skipped:cancelled' });
+    mockPrisma.chatSchedule.findUnique.mockResolvedValueOnce({ lastStatus: 'skipped:cancelled' });
     await enqueueChatMessage({
       chatId: 'chat-sq6', userId: 'u1', content: 'cancelled schedule firing', source: 'schedule',
       origin: { kind: 'schedule', scheduleId: 'sch_6' },
     });
     await enqueueChatMessage({ chatId: 'chat-sq6', userId: 'u1', content: 'real agent nudge behind it', source: 'agent' });
     await expect(drainChatQueue('chat-sq6', 'u1')).resolves.toBe(true);
-    expect(mockPrisma.codingSchedule.findUnique).toHaveBeenCalledTimes(1); // guard ran only for the schedule row
+    expect(mockPrisma.chatSchedule.findUnique).toHaveBeenCalledTimes(1); // guard ran only for the schedule row
     await waitFor(() => mockRunCodingAgent.mock.calls.some(c => String(c[0]?.userMessage).includes('real agent nudge behind it')));
     expect(await countPending('chat-sq6')).toBe(0); // both rows consumed (drop + start)
     await waitFor(() => !isRunActive('chat:chat-sq6'));

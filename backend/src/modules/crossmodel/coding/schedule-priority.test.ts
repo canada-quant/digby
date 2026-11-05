@@ -6,7 +6,7 @@ const mockFindFirst = jest.fn();
 const mockUpdate = jest.fn(async (..._a: any[]) => ({}));
 jest.mock('../../../config/database', () => ({
   __esModule: true,
-  default: { codingSchedule: { findFirst: (...a: any[]) => mockFindFirst(...a), update: (...a: any[]) => mockUpdate(...a) } },
+  default: { chatSchedule: { findFirst: (...a: any[]) => mockFindFirst(...a), update: (...a: any[]) => mockUpdate(...a) } },
 }));
 // The direct fire (autonomy loop #10) — schedule.service is mocked at the
 // boundary: the priority module dynamically imports it and only calls

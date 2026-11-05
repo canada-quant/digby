@@ -33,7 +33,7 @@ const mockPrisma: any = {
   },
   crossModelChat: { findUnique: jest.fn(async () => ({ project: { name: 'LiteLLM' } })), findFirst: jest.fn(async () => null) },
   projectTodo: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   ownerQuestion: { findMany: jest.fn(async () => []), findFirst: jest.fn(async () => null) },
   agentRun: { groupBy: jest.fn(async () => []) },
 };

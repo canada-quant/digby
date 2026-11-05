@@ -73,7 +73,7 @@ describe('8a25754c — desktop shell file picker (runOpenPanelWith)', () => {
   });
 
   it('desktop-latest.json: either still 0.1.8 (dmg not yet rebuilt) or ≥0.1.9 noting the fix', () => {
-    expect(FEED.url).toBe('https://digby.example.com/Digby.dmg');
+    expect(FEED.url).toBe('https://digby.ai/Digby.dmg');
     if (atLeast(FEED.version, '0.1.10')) {
       // 0.1.10+ (agent 0.6.2): the notes must name the multi-display capture fix
       // and the one-time permission re-grant a re-signed binary needs.

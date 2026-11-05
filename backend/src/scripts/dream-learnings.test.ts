@@ -19,6 +19,7 @@ jest.mock('../modules/crossmodel/coding/coding-memory.service', () => ({
 }));
 
 import { runDreamLearnings, resolveLearningsPath, GUARD_EXIT_CODE } from './dream-learnings';
+import { isExportTree, REPO_ROOT } from '../utils/export-mode';
 
 const INPUT = [
   '# Learned conventions (durable)',
@@ -66,6 +67,17 @@ describe('resolveLearningsPath', () => {
     expect(resolveLearningsPath(root)).toBe(file);
   });
 
+  it("the default is this checkout's own .digby/notes/learnings.md (which exists)", () => {
+    const def = resolveLearningsPath();
+    expect(def.endsWith(path.join('.digby', 'notes', 'learnings.md'))).toBe(true);
+    // EXPORT TREE (todo 13069ce2, 2026-11-05): the public export drops `.digby/`
+    // wholesale, so the DEFAULT path is legitimately absent there. The pin's real
+    // subject is the path SHAPE (asserted above, true in both trees); existence is
+    // a fact about which tree this is. Asserting the correct answer for each tree
+    // keeps this meaningful everywhere — and fails if an export ever ships the
+    // private notes folder by accident.
+    expect(fs.existsSync(def)).toBe(!isExportTree(REPO_ROOT));
+  });
 });
 
 describe('runDreamLearnings', () => {

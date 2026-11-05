@@ -1,0 +1,85 @@
+# Nightly integration/e2e suites (batch-train T3h, 2026-10-17).
+#
+# The 4 integration/e2e suites — backend/src/relay/relay.integration.test.ts,
+# backend/src/modules/crossmodel/cohesive.e2e.test.ts,
+# backend/src/modules/crossmodel/integrations/moonshot.integration.test.ts,
+# backend/src/modules/crossmodel/platform/fleet-supervisor.e2e.test.ts (the
+# repo's ENTIRE *.integration.test.ts / *.e2e.test.ts population) — replay
+# whole subsystems through the real merged modules: a real HTTP server + real
+# ws tunnel client (relay), real owner transcripts through the real
+# consequential gate + dispatch seams (cohesive), the Moonshot client's
+# fallback behaviors (moonshot), and one continuous fleet-supervisor
+# narrative wiring the real services together. That is nightly-grade
+# coverage, not per-PR smoke, so they moved OUT of ci.yml's per-PR jest run
+# (T3h) into this scheduled workflow.
+#
+# The per-PR smoke subset is their unit siblings, which STAY in ci.yml:
+# relay-core.test.ts (the relay transport seams) and
+# moonshot.k3-contract.test.ts (the Kimi contract).
+#
+# Drift guard: scripts/deploy/integration-e2e-suites.test.sh (runs in ci.yml's
+# Deploy shell-script tests job) fails CI when a NEW *.integration.test.ts /
+# *.e2e.test.ts file appears that is not in BOTH ci.yml's ignore list and this
+# workflow's run list — a new suite must be consciously classified per-PR vs
+# nightly, never silently dropped.
+#
+# Kill switch: repository variable INTEGRATION_E2E_NIGHTLY_DISABLED=1 (or
+# `gh workflow disable integration-e2e-nightly.yml`).
+name: Nightly integration/e2e suites
+
+on:
+  schedule:
+    # 07:43 UTC — after the overnight lanes settle, before the trajectory
+    # evals (09:41) and the nightly query suite (10:17), so a red suite is
+    # seen in the morning queue rather than behind the paid runs.
+    - cron: '43 7 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-e2e-nightly
+  cancel-in-progress: false
+
+jobs:
+  integration-e2e:
+    if: ${{ vars.INTEGRATION_E2E_NIGHTLY_DISABLED != '1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Same pin as ci.yml's backend job: an unpinned `npx prisma` resolves
+      # the ORM 8 RC CLI, which has no generate/migrate (2026-09-16).
+      - name: Generate Prisma client
+        run: npx prisma@7 generate
+
+      # The 4 suites (same set as ci.yml's --testPathIgnorePatterns — the
+      # drift guard pins the two lists to each other). Env-less like every
+      # other backend run: these suites mock config/env like the rest.
+      - name: Run the 4 integration/e2e suites (jest)
+        run: npx jest --runInBand src/relay/relay.integration.test.ts src/modules/crossmodel/cohesive.e2e.test.ts src/modules/crossmodel/integrations/moonshot.integration.test.ts src/modules/crossmodel/platform/fleet-supervisor.e2e.test.ts
+
+      - name: Report suite summary to the run summary
+        if: always()
+        run: |
+          echo "## Nightly integration/e2e suites" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "relay.integration · cohesive.e2e · moonshot.integration · fleet-supervisor.e2e" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Moved out of the per-PR CI jest run by batch-train T3h (2026-10-17). Per-PR smoke: relay-core.test.ts + moonshot.k3-contract.test.ts." >> "$GITHUB_STEP_SUMMARY"

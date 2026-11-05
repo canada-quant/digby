@@ -67,7 +67,7 @@ test('helper protocol: round-trip ping + every seam method through the fake help
     ['key_up', { vk: 0x41, scan: 0x1e, extended: false, shift: true }],
     ['unicode_char', { ch: 'é' }],
     ['clear_modifiers', {}],
-    ['open', { target: 'https://digby.example.com' }],
+    ['open', { target: 'https://digby.ai' }],
   ]) {
     await client.call(method, params);
   }
@@ -488,7 +488,7 @@ test('isolation: a missing helper refuses computer_* but never browser_*', async
   const GEO = { imageWidth: 0, imageHeight: 0, screenWidth: 0, screenHeight: 0 };
   const shot = await executeCommand('computer_screenshot', {}, deps, GEO);
   assert.equal(shot.ok, false);
-  const nav = await executeCommand('browser_navigate', { url: 'https://digby.example.com' }, deps, GEO);
+  const nav = await executeCommand('browser_navigate', { url: 'https://digby.ai' }, deps, GEO);
   assert.equal(nav.ok, true, 'browser_* works while computer_* refuses');
 });
 

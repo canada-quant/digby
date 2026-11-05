@@ -13,7 +13,6 @@
     "prisma:migrate": "prisma migrate deploy",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
-    "backfill:transcripts": "tsx scripts/backfill-coding-transcripts.ts",
     "decision-gate:fit": "sh -c 'if [ -f dist/scripts/decision-gate-fit-temperature.js ]; then echo \"decision-gate:fit → dist/scripts (compiled; run npm run build to refresh)\" >&2; exec node dist/scripts/decision-gate-fit-temperature.js \"$@\"; else exec npx tsx src/scripts/decision-gate-fit-temperature.ts \"$@\"; fi' decision-gate-fit",
     "decision-gate:export": "sh -c 'if [ -f dist/scripts/decision-gate-export.js ]; then echo \"decision-gate:export → dist/scripts (compiled; run npm run build to refresh)\" >&2; exec node dist/scripts/decision-gate-export.js \"$@\"; else exec npx tsx src/scripts/decision-gate-export.ts \"$@\"; fi' decision-gate-export",
     "decision-gate:cascade": "sh -c 'if [ -f dist/scripts/decision-gate-cascade.js ]; then echo \"decision-gate:cascade → dist/scripts (compiled; run npm run build to refresh)\" >&2; exec node dist/scripts/decision-gate-cascade.js \"$@\"; else exec npx tsx src/scripts/decision-gate-cascade.ts \"$@\"; fi' decision-gate-cascade",

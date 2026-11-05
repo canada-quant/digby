@@ -118,6 +118,22 @@ const progressMessages = (input: ReturnType<typeof baseInput>): string[] =>
     .filter((c: any[]) => c[0] === "progress")
     .map((c: any[]) => c[1]?.message || "");
 
+/** Every key the HARNESS or the model dispatched, in order, as
+ *  `key+modifier` strings.
+ *
+ *  WHY SEQUENCES AND NOT COUNTS (ticket 09c984d8, UNVERIFIED finding on
+ *  a40f64d9): the suite pinned dispatch COUNTS through
+ *  `mockResolvedValueOnce` sequences, so the reviewer's injection experiment —
+ *  DROPPING A LEG from the probe — left the suite GREEN: the mocked replies
+ *  shift onto the remaining dispatches and every count still matches. A count
+ *  cannot tell `Cmd+Space then Cmd+Tab` from `Cmd+Tab alone`; only the KEY
+ *  IDENTITY can. Asserting these strings is what makes a dropped leg (or a
+ *  reordered one, or a missing focus restore) fail the suite. */
+const dispatchedKeys = (): string[] =>
+  mockDispatch.mock.calls
+    .filter((c) => c[1] === "computer_key")
+    .map((c) => `${c[2].key}${c[2].modifiers?.length ? "+" + c[2].modifiers.join("+") : ""}`);
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockVisionConfigured.mockReturnValue(true);
@@ -265,8 +281,10 @@ describe("6f4f8b36 RC2 — no-op-prone keys never strike on pixel-identity", () 
       .mockResolvedValueOnce(RICH_A) // identical ⇒ hold at 1
       .mockResolvedValueOnce({ ok: true }) // key return
       .mockResolvedValueOnce(RICH_A) // identical rich ⇒ STRIKE 2 ⇒ the HARNESS probes
-      .mockResolvedValueOnce({ ok: true }) // probe: cmd+space
-      .mockResolvedValueOnce(RICH_A) // probe frame identical, frontmost unchanged ⇒ probe FAILED ⇒ abort
+      .mockResolvedValueOnce({ ok: true }) // probe leg 1: cmd+space
+      .mockResolvedValueOnce(RICH_A) // probe frame identical, frontmost unchanged ⇒ leg 1 inert
+      .mockResolvedValueOnce({ ok: true }) // probe leg 2: cmd+tab (ticket a40f64d9 — multi-leg control)
+      .mockResolvedValueOnce(RICH_A) // identical too ⇒ EVERY leg inert ⇒ probe FAILED ⇒ abort
       .mockResolvedValueOnce({ ok: true }) // probe cleanup: escape
       .mockResolvedValueOnce(RICH_A);
     mockVisionChat
@@ -278,6 +296,15 @@ describe("6f4f8b36 RC2 — no-op-prone keys never strike on pixel-identity", () 
     const r = await runComputerAgentSession(input);
     expect(r.steps).toBe(3); // aborted on the 2nd STRIKE-ELIGIBLE dead action + failed probe
     expect(progressMessages(input).some((m) => m.includes("Input watchdog"))).toBe(true);
+    // ticket 09c984d8 (the reviewer's UNVERIFIED finding, now closed): assert
+    // WHICH keys, not how many dispatches. A dropped leg shifts the mocked
+    // replies onto the remaining call and every COUNT still matches — only the
+    // key IDENTITY catches it. Pinned end-to-end: the model's own Escape (an
+    // expected no-op, streak HOLDS), its Return (strike 2), then BOTH control
+    // legs in order (Cmd+Space then Cmd+Tab, ticket a40f64d9), then the Escape
+    // cleanup — and NO Cmd+Tab restore, because every leg was inert with an
+    // unchanged frontmost (nothing moved to hand back).
+    expect(dispatchedKeys()).toEqual(["escape", "return", "space+cmd", "tab+cmd", "escape"]);
     // Fix (d): the verdict is phrased as UNVERIFIABLE, never asserted dead —
     // the old text ("the input is not landing" as fact) sent the owner
     // chasing permissions that were fine.

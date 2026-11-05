@@ -274,7 +274,7 @@ describe('POST /ux/beacon — stream_drop / stream_resume', () => {
   it('one client rotating chat uuids is capped per client; a second guest behind the same ALB node still records', async () => {
     process.env.QUOTA_TRUSTED_PROXY_HOPS = '2';
     try {
-      const alb = '10.0.0.4';
+      const alb = '10.0.0.14';
       const chat = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`;
       for (let i = 0; i < 20; i++) {
         await beacon({ event: 'stream_drop', chatId: chat(i), attempts: 0, outcome: 'retrying' }, { ip: alb, headers: { 'x-forwarded-for': `203.0.113.9, ${alb}` } });

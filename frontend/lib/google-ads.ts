@@ -4,10 +4,10 @@
  * - ONE gtag.js, site-wide: app/layout.tsx renders app/GoogleAdsTag.tsx on every page. It loads gtag.js by the GA4
  *   id exactly as Google's GA snippet does (`gtag/js?id=G-NK7XPHC7FE`, owner 2026-10-07: "here is the tag … which
  *   should have analytics attached") and configures two destinations on it: GA4 `G-NK7XPHC7FE` and Google Ads
- *   `AW-00000000000` — the Ads account (Digby.ai, 504-594-5009) that owns BOTH conversion actions:
- *     · "Page view (Page load digby.example.com)" — a URL rule kept in Google's own tag config for AW-00000000000 (no code);
+ *   `AW-16512038948` — the Ads account (Digby.ai, 504-594-5009) that owns BOTH conversion actions:
+ *     · "Page view (Page load digby.ai)" — a URL rule kept in Google's own tag config for AW-16512038948 (no code);
  *     · "Sign-up" — the manual event reportGoogleAdsSignup() sends after a successful registration (app/login).
- *   The GA4 container does not carry the Ads destination, so the explicit `config` for AW-00000000000 is required.
+ *   The GA4 container does not carry the Ads destination, so the explicit `config` for AW-16512038948 is required.
  * - AW-11419212138 is GONE (owner 2026-10-07: "i think we need to remove the other 11419212138 tag"): it held no
  *   conversion action, it only added a second Ads account's page-view / remarketing hits.
  * - Never for a Digby Kids (child) session: the access token's `isChild` claim (set on child logins + refreshes —
@@ -19,7 +19,7 @@
  * History: 2026-10-04 Ads tag + Sign-up (#1261, then two Ads ids); 2026-10-06 GA4 added (ticket 4bb5fe23).
  */
 /** The Google Ads account (Digby.ai, 504-594-5009) that owns the Page view and Sign-up conversion actions. */
-export const GOOGLE_ADS_ID = 'AW-00000000000';
+export const GOOGLE_ADS_ID = 'AW-16512038948';
 export const GOOGLE_ADS_SIGNUP_SEND_TO = `${GOOGLE_ADS_ID}/cQctCLPgl5EdEKTwxsE9`;
 /** Every Google Ads id the page configures — one account. */
 export const GOOGLE_ADS_CONFIG_IDS: readonly string[] = [GOOGLE_ADS_ID];

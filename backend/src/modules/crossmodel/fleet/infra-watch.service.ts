@@ -245,7 +245,7 @@ export function backupProducerHosts(env: NodeJS.ProcessEnv = process.env): strin
   const list = String(env[BACKUP_PRODUCER_HOSTS_ENV] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   return list.length ? list : [...BACKUP_PRODUCER_HOSTS_DEFAULT];
 }
-const DUMP_RE = /^digby_db-.*\.dump$/;
+const DUMP_RE = /^admin_db-.*\.dump$/;
 
 /** Parse the backup-status.json marker digby-backup.sh writes next to the dumps.
  * Returns null when absent/unreadable/malformed (a pre-2026-09-25 script or a
@@ -258,7 +258,7 @@ export function parseBackupStatus(raw: string): Pick<BackupState, 'status' | 'st
   } catch { return null; }
 }
 
-/** Newest `digby_db-*.dump` under the mount. undefined = not mounted / unreadable (say nothing). */
+/** Newest `admin_db-*.dump` under the mount. undefined = not mounted / unreadable (say nothing). */
 export async function readBackupState(dir: string = process.env[BACKUP_DIR_ENV] || BACKUP_DIR_DEFAULT, now: Date = new Date()): Promise<BackupState | undefined> {
   let names: string[];
   try { names = await fs.readdir(dir); } catch { return undefined; }
@@ -749,7 +749,7 @@ export function renderBackupAlert(a: BackupAlert, now: Date): string {
     // NETWORKING note (egress-guarded default bridge → RDS refused) plus the
     // disk guard and a dead RDS. This is the IMMEDIATE companion to the 30 h
     // stale rule: a failed 08:30Z run surfaces on the NEXT sweep, not next day.
-    return `[INFRA ALERT — backup FAILED] the latest nightly backup attempt on ${producer} FAILED at ${a.statusError ? `${a.newestAt ?? 'unknown time'} (${a.statusError})` : a.newestAt ?? 'unknown time'} (seen ${hhmmz(now)}) — backup-status.json on the /backups mount says status:"failed", so the 08:30Z digby-backup run produced no dump. Without it a bad migration or a deleted table is unrecoverable past the last S3 copy. Playbook: dispatch_platform_task "Nightly backup FAILED on ${producer}" — the lane reads journalctl -u digby-backup.service --since -1d on the prod box (known causes: the dump container's network path to RDS — the sandbox egress guard rejects the default bridge, the fixed script uses --network host; the disk guard aborting under 2 GB free; a transient RDS refusal), fixes the cause, re-runs sudo systemctl start digby-backup.service, and confirms a fresh digby_db-*.dump under /opt/crossmodel-backups AND backup-status.json flipping to status:"ok". Verify: get_fleet_telemetry view 'boxes' shows ${producer} backup.ageH under 24. Never delete dumps to make room — grow the volume instead (owner spend, one question).`;
+    return `[INFRA ALERT — backup FAILED] the latest nightly backup attempt on ${producer} FAILED at ${a.statusError ? `${a.newestAt ?? 'unknown time'} (${a.statusError})` : a.newestAt ?? 'unknown time'} (seen ${hhmmz(now)}) — backup-status.json on the /backups mount says status:"failed", so the 08:30Z digby-backup run produced no dump. Without it a bad migration or a deleted table is unrecoverable past the last S3 copy. Playbook: dispatch_platform_task "Nightly backup FAILED on ${producer}" — the lane reads journalctl -u digby-backup.service --since -1d on the prod box (known causes: the dump container's network path to RDS — the sandbox egress guard rejects the default bridge, the fixed script uses --network host; the disk guard aborting under 2 GB free; a transient RDS refusal), fixes the cause, re-runs sudo systemctl start digby-backup.service, and confirms a fresh admin_db-*.dump under /opt/crossmodel-backups AND backup-status.json flipping to status:"ok". Verify: get_fleet_telemetry view 'boxes' shows ${producer} backup.ageH under 24. Never delete dumps to make room — grow the volume instead (owner spend, one question).`;
   }
   if (a.severity === 'lapse') {
     return `[INFRA ALERT — backup producer not reporting] the backup producer ${producer} has not reported a backup reading in over 24 h while its box_health heartbeats continue normally (seen ${hhmmz(now)}) — the read-only /backups mount is missing or unreadable in its container (the pre-4f6cb3610 class: a box recreated without the mount). Backup alerting is blind while this lasts: a failed nightly dump would go unnoticed (the 2026-09-17 night). Playbook: dispatch_platform_task "Backup producer ${producer} not reporting backups" — the lane checks the /backups mount in the producer's containers (ls ${BACKUP_DIR_DEFAULT}; the mount wiring shipped in 4f6cb3610, docs/BACKUPS.md), restores it, and confirms box_health meta.backup reappears. Verify: get_fleet_telemetry view 'boxes' shows ${producer} backup.ageH under 24. A producer whose heartbeats STOP is classifyBoxHealth's silent-box alert instead — continuing heartbeats are what makes this a mount lapse.`;

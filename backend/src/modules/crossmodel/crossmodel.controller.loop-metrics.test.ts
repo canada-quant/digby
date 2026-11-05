@@ -83,9 +83,9 @@ const mkRes = (): any => {
   return res;
 };
 
-const ADMIN = { id: 'u-admin', role: 'ADMIN', email: 'admin@digby.example.com' };
-const OWNER = { id: 'u-paul', role: 'USER', email: 'paul@sunday.market' };
-const MORTAL = { id: 'u-user', role: 'USER', email: 'user@digby.example.com' };
+const ADMIN = { id: 'u-admin', role: 'ADMIN', email: 'admin@digby.ai' };
+const OWNER = { id: 'u-paul', role: 'USER', email: 'example-user@example.com' };
+const MORTAL = { id: 'u-user', role: 'USER', email: 'user@digby.ai' };
 
 beforeEach(() => {
   jest.clearAllMocks();

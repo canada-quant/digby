@@ -111,8 +111,8 @@ const turn = (id: string, chatId: string, content: string, minutesAgo: number): 
 // route to it. proj-deckpose is a repo-bound product; proj-optcg is the same
 // product under a repo name that does NOT imply its domain (the tier-3 env
 // map's real shape: product "optcg" serving deckpose.com).
-const PLATFORM_REPO = 'https://github.com/canada-quant/digby';
-const DECKPOSE_REPO = 'https://github.com/canada-quant/example-repo';
+const PLATFORM_REPO = 'https://github.com/example-org/crossmodel';
+const DECKPOSE_REPO = 'https://github.com/example-org/optcg';
 function seedProjects(): void {
   projectRows = [
     { id: 'proj-crossmodel', name: 'crossmodel', repoUrl: PLATFORM_REPO, userId: 'owner-1' },
@@ -194,7 +194,7 @@ describe('surface classification at filing (the detector change, default path)',
     expect(filed[0].userProjectId).toBe('proj-deckpose');
     const ctx = filed[0].raw.context;
     expect(ctx.surfaceRoute.tier).toBe('chat_project');
-    expect(ctx.surfaceRoute.repoSlug).toBe('canada-quant/example-repo');
+    expect(ctx.surfaceRoute.repoSlug).toBe('example-org/optcg');
     expect(ctx.surfaceRoute.evidence).toContain('deckpose.com');
     // Every OTHER context key survives untouched (conservative stamping).
     expect(ctx.kind).toBe('missed-bug');
@@ -227,7 +227,7 @@ describe('surface classification at filing (the detector change, default path)',
     expect(filed).toHaveLength(1);
     expect(filed[0].about).toBe('user_project');
     expect(filed[0].userProjectId).toBe('proj-optcg');
-    expect(filed[0].raw.context.surfaceRoute).toMatchObject({ tier: 'env_map', repoSlug: 'canada-quant/example-repo' });
+    expect(filed[0].raw.context.surfaceRoute).toMatchObject({ tier: 'env_map', repoSlug: 'example-org/optcg' });
     expect(filed[0].raw.context.surfaceRoute.evidence).toContain('PRODUCT_PROJECT_DOMAINS');
   });
 
@@ -256,7 +256,7 @@ describe('surface classification at filing (the detector change, default path)',
   it('AMBIGUOUS evidence (two competing product surfaces) keeps current behavior — mis-filing is safer than mis-routing', async () => {
     projectRows = [
       ...projectRows,
-      { id: 'proj-canvasly', name: 'canvasly', repoUrl: 'https://github.com/canada-quant/canvasly', userId: 'owner-1' },
+      { id: 'proj-canvasly', name: 'canvasly', repoUrl: 'https://github.com/example-org/canvasly', userId: 'owner-1' },
     ];
     userRows = [turn('u-m1', 'chat-deck', 'the decklist export on deckpose.com is still broken, and so is my bracket app at canvasly.app', 5)];
     assistantRows = [turn('a-m1', 'chat-deck', 'ack', 8)];
@@ -266,8 +266,8 @@ describe('surface classification at filing (the detector change, default path)',
     expect(filed[0].userProjectId).toBeUndefined();
   });
 
-  it('never routes to the PLATFORM project even when a complaint names digby.example.com (platform domains are never evidence)', async () => {
-    userRows = [turn('u-p1', 'chat-plat', 'digby.example.com streaming is still broken', 5)];
+  it('never routes to the PLATFORM project even when a complaint names digby.ai (platform domains are never evidence)', async () => {
+    userRows = [turn('u-p1', 'chat-plat', 'digby.ai streaming is still broken', 5)];
     assistantRows = [turn('a-p1', 'chat-plat', 'ack', 8)];
     await runFrameworkSignalSweepOnce();
     expect(filed).toHaveLength(1);

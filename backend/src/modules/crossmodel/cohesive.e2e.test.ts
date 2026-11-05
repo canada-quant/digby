@@ -227,7 +227,7 @@ beforeEach(() => {
   mockStore.clear();
   messageRows.clear();
   messageSeq = 0;
-  for (const k of ['WORK_TOOLS_NO_CARD_DISABLED', 'TASK_CARD_DISABLED', 'TURN_CONTINUATION_DISABLED', 'CONTINUATION_MAX_ROUNDS']) delete process.env[k];
+  for (const k of ['TURN_CONTINUATION_DISABLED', 'CONTINUATION_MAX_ROUNDS']) delete process.env[k];
 });
 
 describe('E2E 1 — "build me a deck": no card, one task card running → done, the PDF handed back to the chat that asked', () => {

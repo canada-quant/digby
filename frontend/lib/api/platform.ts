@@ -129,11 +129,15 @@ export interface FleetHook {
 export type FleetAutonomyTool =
   | 'send_chat_message' | 'start_coding_session' | 'schedule_message'
   | 'cancel_schedule' | 'update_schedule' | 'dispatch_platform_task'
-  | 'send_to_instance';
+  | 'send_to_instance' | 'create_chat_webhook';
 
 export const FLEET_AUTONOMY_TOOLS: FleetAutonomyTool[] = [
   'send_chat_message', 'start_coding_session', 'schedule_message', 'cancel_schedule', 'update_schedule',
   'dispatch_platform_task', 'send_to_instance',
+  // EXPLICIT-GRANT-ONLY (owner ruling oq_d45410a4, ticket d53eed71): listed here
+  // so the owner CAN name it — deliberately absent from the backend's
+  // AUTONOMY_GRANTABLE_TOOLS, so no mode/auto-provisioning path ever writes it.
+  'create_chat_webhook',
 ];
 
 /** The maximum scheduled firings per day a grant can allow (backend MAX_SCHEDULE_CAP) — the "full access" switch grants this. */

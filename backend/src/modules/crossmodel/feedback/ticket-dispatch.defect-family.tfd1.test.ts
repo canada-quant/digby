@@ -100,7 +100,7 @@ const mockPrisma: any = {
       && (!where.updatedAt?.gte || r.updatedAt >= where.updatedAt.gte)).length),
   },
   chatCodingState: { findMany: jest.fn(async () => []) },
-  codingSchedule: { findMany: jest.fn(async () => []) },
+  chatSchedule: { findMany: jest.fn(async () => []) },
   contextStoreEntry: { findUnique: jest.fn(async () => null) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));

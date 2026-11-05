@@ -43,7 +43,7 @@ import { resolveFixStateFromEvidence, parseClosureEvidenceNote } from './fix-sta
 import type { DnsLookupAll } from './liveness-probe';
 
 const OWNER_TOKEN_USER = '11111111-2222-4333-8444-555566667777';
-const OPTCG_FIX = '23fb37165c53eee4418b31e1cac935369de013f2'; // the 4e818bb9 deckpose merge commit (canada-quant/example-repo)
+const OPTCG_FIX = '23fb37165c53eee4418b31e1cac935369de013f2'; // the 4e818bb9 deckpose merge commit (example-org/optcg)
 const TICKET = '36b8c979-8a3f-41d6-b81f-2f789bf1942d';
 const PROBE = { url: 'https://deckpose.com/', expect: ['Save to My Decks', 'Copy decklist'] };
 const PUBLIC_IP = '76.76.21.21';
@@ -61,7 +61,7 @@ const makeGh = (routes: Array<{ match: RegExp; body: any }> = []) =>
   }) as any;
 
 /** The merged optcg evidence with NO Actions run (total_count 0 — the ticket's shape). */
-const MERGED_OPTCG = [{ match: new RegExp(`/repos/canada-quant/example-repo/compare/${OPTCG_FIX}\\.\\.\\.main`), body: { status: 'ahead', ahead_by: 2, behind_by: 0 } }];
+const MERGED_OPTCG = [{ match: new RegExp(`/repos/example-org/optcg/compare/${OPTCG_FIX}\\.\\.\\.main`), body: { status: 'ahead', ahead_by: 2, behind_by: 0 } }];
 
 /** The probe seam (rides resolveFixStateFromEvidence's probeFetchImpl opt — the probe fetches the LIVE SURFACE, never the GitHub-wrapped fetch): deckpose.com resolves public, the fetch returns the shipped strings. */
 const makeProbeSeam = (body: string, status = 200) => ({
@@ -96,15 +96,15 @@ beforeEach(() => {
   mockPrisma.crossModelProject.findUnique.mockResolvedValue(null);
   mockPrisma.crossModelChat.findUnique.mockResolvedValue(null);
   mockPrisma.loopMetric.findMany.mockResolvedValue([]); // no box_health rows — the ticket's shape
-  process.env.FIX_STATE_EVIDENCE_REPO_ALLOWLIST = 'canada-quant/example-repo';
+  process.env.FIX_STATE_EVIDENCE_REPO_ALLOWLIST = 'example-org/optcg';
 });
 
 describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching the recorded probe server-side', () => {
-  it('THE 4e818bb9 SHAPE: merged in canada-quant/example-repo (no Actions runs, no box_health) + live-probe 200 with the strings = fixLive', async () => {
+  it('THE 4e818bb9 SHAPE: merged in example-org/optcg (no Actions runs, no box_health) + live-probe 200 with the strings = fixLive', async () => {
     const seam = makeProbeSeam('<html>Save to My Decks — Copy decklist — Edit deck</html>');
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', livenessProbe: PROBE },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg', livenessProbe: PROBE },
       { fetchImpl: makeGh(MERGED_OPTCG), ...seam },
     );
     expect(st.fixLive).toBe(true);
@@ -112,7 +112,7 @@ describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching th
     expect(st.reason).toContain('live-probe https://deckpose.com/');
     expect(st.reason).toContain('all 2 expected string(s)');
     // Every GITHUB read went to the named repo; the probe fetch went to the probe url.
-    expect(urls.every((u) => u.includes('/repos/canada-quant/example-repo/'))).toBe(true);
+    expect(urls.every((u) => u.includes('/repos/example-org/optcg/'))).toBe(true);
     expect(seam.probeFetchImpl.mock.calls.every((c: any[]) => String(c[0]).startsWith('https://deckpose.com/'))).toBe(true);
   });
 
@@ -120,8 +120,8 @@ describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching th
     const seam = makeProbeSeam('Save to My Decks');
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', livenessProbe: PROBE },
-      { fetchImpl: makeGh([{ match: new RegExp(`/repos/canada-quant/example-repo/compare/${OPTCG_FIX}`), body: { status: 'diverged' } }]), ...seam },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg', livenessProbe: PROBE },
+      { fetchImpl: makeGh([{ match: new RegExp(`/repos/example-org/optcg/compare/${OPTCG_FIX}`), body: { status: 'diverged' } }]), ...seam },
     );
     expect(st.fixLive).toBe(false);
     expect(st.reason).toContain('NOT merged');
@@ -136,14 +136,14 @@ describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching th
     );
     expect(st.fixLive).toBe(false);
     expect(st.reason).toContain('GitHub compare 404');
-    expect(urls.every((u) => u.includes('/repos/canada-quant/digby/'))).toBe(true);
+    expect(urls.every((u) => u.includes('/repos/example-org/crossmodel/'))).toBe(true);
   });
 
   it('FAIL-CLOSED: a surface that has since dropped the strings refuses (the stale probe re-fires)', async () => {
     const seam = makeProbeSeam('<html>deck rebuilt — strings removed</html>');
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', livenessProbe: PROBE },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg', livenessProbe: PROBE },
       { fetchImpl: makeGh(MERGED_OPTCG), ...seam },
     );
     expect(st.fixLive).toBe(false);
@@ -155,7 +155,7 @@ describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching th
     (seam.doLookup as any).mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', livenessProbe: { url: 'https://rebinding.example.com/', expect: ['x'] } },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg', livenessProbe: { url: 'https://rebinding.example.com/', expect: ['x'] } },
       { fetchImpl: makeGh(MERGED_OPTCG), ...seam },
     );
     expect(st.fixLive).toBe(false);
@@ -167,7 +167,7 @@ describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching th
     (seam.probeFetchImpl as any).mockRejectedValue(new Error('ECONNRESET'));
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', livenessProbe: PROBE },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg', livenessProbe: PROBE },
       { fetchImpl: makeGh(MERGED_OPTCG), ...seam },
     );
     expect(st.fixLive).toBe(false);
@@ -180,7 +180,7 @@ describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching th
       const seam = makeProbeSeam('Save to My Decks — Copy decklist');
       const st = await resolveFixStateFromEvidence(
         { id: TICKET, userId: OWNER_TOKEN_USER },
-        { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo', livenessProbe: PROBE },
+        { commitSha: OPTCG_FIX, repo: 'example-org/optcg', livenessProbe: PROBE },
         { fetchImpl: makeGh(MERGED_OPTCG), ...seam },
       );
       expect(st.fixLive).toBe(false);
@@ -194,7 +194,7 @@ describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching th
   it('NO PROBE: the pre-36b8c979 no-run/no-telemetry shape refuses byte-shaped ("no box runs the fix sha")', async () => {
     const st = await resolveFixStateFromEvidence(
       { id: TICKET, userId: OWNER_TOKEN_USER },
-      { commitSha: OPTCG_FIX, repo: 'canada-quant/example-repo' },
+      { commitSha: OPTCG_FIX, repo: 'example-org/optcg' },
       { fetchImpl: makeGh(MERGED_OPTCG) },
     );
     expect(st.fixLive).toBe(false);
@@ -202,8 +202,8 @@ describe('ticket 36b8c979 — the deployed leg proves liveness by re-fetching th
   });
 
   it('parseClosureEvidenceNote: the `live-probe` member survives the LAST-block rule (a reclose replaces the probe)', () => {
-    const first = '[machine-close evidence: commit 1111111111111111111111111111111111111111 (format-verified); repo canada-quant/example-repo; live-probe https://old.example.com/ (expects "old")]';
-    const second = '[machine-close evidence: commit 2222222222222222222222222222222222222222 (format-verified); repo canada-quant/example-repo; live-probe https://deckpose.com/ (expects "Save to My Decks|Copy decklist")]';
+    const first = '[machine-close evidence: commit 1111111111111111111111111111111111111111 (format-verified); repo example-org/optcg; live-probe https://old.example.com/ (expects "old")]';
+    const second = '[machine-close evidence: commit 2222222222222222222222222222222222222222 (format-verified); repo example-org/optcg; live-probe https://deckpose.com/ (expects "Save to My Decks|Copy decklist")]';
     const note = parseClosureEvidenceNote(`${first}\n${second}`);
     expect(note?.livenessProbe).toEqual(PROBE);
     expect(note?.commitSha).toBe('2222222222222222222222222222222222222222');

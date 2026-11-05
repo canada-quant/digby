@@ -67,6 +67,7 @@ export function partitionQueuedEchoes<T extends { id: string }>(
  * Pure + total; output sorted by createdAt then id (the previous merge order).
  */
 export interface EchoRow { id: string; role?: string; content?: string; createdAt?: string }
+
 export function reconcileQueuedEchoes<T extends EchoRow>(
   prev: T[],
   page: T[],
@@ -104,4 +105,106 @@ export function reconcileQueuedEchoes<T extends EchoRow>(
     return ca < cb ? -1 : ca > cb ? 1 : (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   });
   return { messages, idMap };
+}
+
+/**
+ * The PLAIN busy-queue echo id family — `send()` mints `tmp-<epochMs>` for the
+ * optimistic bubble of a message handed to the server's pending queue.
+ * Deliberately narrow: `steer-*` (coding steers, persisted eagerly) and the
+ * provision / guest queue ids never reach the server queue this reconciles
+ * against, so they must not be matched here.
+ */
+export function isPlainQueueEchoId(id: string | null | undefined): boolean {
+  return typeof id === 'string' && /^tmp-\d+$/.test(id);
+}
+
+/**
+ * reconcilePendingEchoes ("Send now" shows the message TWICE — owner report
+ * 2026-11-05, ticket 81b229e1).
+ *
+ * The plain-chat Send now path queues the message, PROMOTES it, then STOPS the
+ * live run. Stopping triggers `reloadPlain` while the promoted row is still
+ * sitting in `pending_chat_messages` (nothing has drained it yet), so the same
+ * text arrives twice over different render paths:
+ *   - the optimistic `tmp-*` echo the composer appended at send time, still in
+ *     `pendingSteerIds` (the run has not persisted anything to reconcile it
+ *     with), and
+ *   - that same message as the server-listed `pending-<rowId>` row.
+ * `reconcileQueuedEchoes` cannot merge them: its twin search only looks at the
+ * PERSISTED page, and a queue entry is not persisted until it drains. The
+ * id-only append therefore keeps both, and the queued part renders two
+ * identical bubbles — the bug the owner screenshotted.
+ *
+ * The server's queue row is the record (it is what will actually run), so the
+ * local echo is DROPPED in favour of it, and `idMap` maps the echo id onto the
+ * row id for callers that track the pending set.
+ *
+ * IDENTITY FIRST (adversarial review, blocking #2). A clock heuristic alone is
+ * unsound here because `promoteQueuedUserMessage` REWRITES the very row this
+ * matches (backend …/chat-agent/queue-controls.ts):
+ *     const desired = new Date(order[myFirst].createdAt.getTime() - ORDER_EPSILON_MS);
+ *     await prisma.pendingChatMessage.update({ … data: { createdAt: target } });
+ * i.e. promoting re-stamps the row to just before the caller's OLDEST queued
+ * message — so its createdAt can jump arbitrarily BACK in time relative to the
+ * echo, and any fixed window either misses the real pair or starts claiming
+ * unrelated same-text rows.
+ *
+ * The send path knows the pairing EXACTLY (`onQueued` carries the row id next
+ * to the `tmp-<epochMs>` echo it belongs to), so `echoToPending` is passed in
+ * and wins outright. That is the authoritative path and it is immune to the
+ * re-stamp.
+ *
+ * The clock path is only a FALLBACK for a reattach that has lost the pairing,
+ * and it is deliberately tight and symmetric: when we cannot prove identity we
+ * would rather MISS (the duplicate stays visible for one more render, failing
+ * safe) than claim an unrelated row that happens to hold the same text.
+ *
+ * Matching also requires the same user role and the same non-empty trimmed
+ * content, and each row is claimed at most ONCE, so two consecutive identical
+ * sends map onto two distinct rows in order.
+ *
+ * Pure + total: inputs are not mutated; order is preserved.
+ */
+export function reconcilePendingEchoes<T extends EchoRow>(
+  messages: T[],
+  pendingRows: T[],
+  opts?: {
+    isQueueEcho?: (id: string) => boolean;
+    /** Exact echo→row pairing recorded at send time (authoritative). */
+    echoToPending?: ReadonlyMap<string, string>;
+    windowMs?: number;
+  },
+): { messages: T[]; idMap: Map<string, string> } {
+  const isQueueEcho = opts?.isQueueEcho ?? isPlainQueueEchoId;
+  const windowMs = opts?.windowMs ?? 2 * 60_000;
+  const norm = (s: unknown) => String(s ?? '').trim();
+  const ms = (s: unknown) => { const t = new Date(String(s ?? '')).getTime(); return Number.isFinite(t) ? t : NaN; };
+  const byId = new Set(pendingRows.map((p) => p.id));
+  const idMap = new Map<string, string>();
+  const claimed = new Set<string>();
+  const out: T[] = [];
+  for (const m of messages) {
+    if (!isQueueEcho(m.id)) { out.push(m); continue; }
+    // 1. The exact pairing the send recorded — no guessing, no clock.
+    const known = opts?.echoToPending?.get(m.id);
+    if (known && byId.has(known) && !claimed.has(known)) {
+      claimed.add(known); idMap.set(m.id, known); continue;
+    }
+    // 2. Fallback: same role + identical non-empty text, close in time.
+    const t0 = ms(m.createdAt);
+    const twin = pendingRows.find((p) => {
+      if (claimed.has(p.id)) return false;
+      if (isQueueEcho(p.id)) return false;
+      if ((p.role ?? 'user') !== 'user' || (m.role ?? 'user') !== 'user') return false;
+      if (norm(p.content) !== norm(m.content) || norm(m.content) === '') return false;
+      const t1 = ms(p.createdAt);
+      // An unparseable timestamp cannot be placed in time — refuse the match
+      // rather than letting content alone claim a row of any age.
+      if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false;
+      return Math.abs(t1 - t0) <= windowMs;
+    });
+    if (twin) { claimed.add(twin.id); idMap.set(m.id, twin.id); continue; } // server row renders instead
+    out.push(m);
+  }
+  return { messages: out, idMap };
 }

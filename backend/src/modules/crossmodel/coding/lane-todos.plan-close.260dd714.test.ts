@@ -48,7 +48,7 @@ const mockPrisma: any = {
   projectTodo: { findMany: jest.fn(async ({ where }: any) => todos.filter((t) => matchTodo(t, where)).map((t) => ({ ...t }))) },
   todoDependency: { findMany: jest.fn(async ({ where }: any) => deps.filter((d) => where.todoId.in.includes(d.todoId))) },
   crossModelChat: { findUnique: jest.fn(async () => ({ ...chat })) },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   agentRun: { count: jest.fn(async () => 0) },
   projectGoal: { findUnique: jest.fn(async () => ({ title: 'Schooltime polish' })) },
 };

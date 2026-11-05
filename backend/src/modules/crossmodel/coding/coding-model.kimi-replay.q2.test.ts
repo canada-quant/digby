@@ -27,7 +27,7 @@ import {
 } from './coding-model';
 
 const mockPost = (axios as any).post as jest.Mock;
-const GATEWAY_KIMI: ProviderConfig = { url: 'https://llm.example.com/v1/chat/completions', apiKey: 'sk', model: 'api-optimize-moonshot-kimi-k3', spec: 'cql-litellm:api-optimize-moonshot-kimi-k3', label: 'cql-litellm (custom endpoint)', extra: {}, reasoningEffort: 'auto' };
+const GATEWAY_KIMI: ProviderConfig = { url: 'https://llm.cql.ca/v1/chat/completions', apiKey: 'sk', model: 'api-optimize-moonshot-kimi-k3', spec: 'cql-litellm:api-optimize-moonshot-kimi-k3', label: 'cql-litellm (custom endpoint)', extra: {}, reasoningEffort: 'auto' };
 const GATEWAY_GLM: ProviderConfig = { ...GATEWAY_KIMI, model: 'api-optimize-zai-glm-5.3', spec: 'cql-litellm:api-optimize-zai-glm-5.3' };
 const BUILTIN_KIMI: ProviderConfig = { url: 'https://api.moonshot.ai/v1/chat/completions', apiKey: 'k', model: 'kimi-k3', label: 'Moonshot direct', extra: {} };
 const http400 = (body: string) => Object.assign(new Error('Request failed with status code 400'), { response: { status: 400, data: Readable.from([`{"error":{"message":${JSON.stringify(body)}}}`]) } });

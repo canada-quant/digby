@@ -4,14 +4,14 @@
  */
 import axios from 'axios';
 
-const MCP_DIGBY_URL   = 'https://mcp.digby.example.com/mcp';
+const MCP_DIGBY_URL   = 'https://mcp.digby.ai/mcp';
 const MCP_DIGBY_TOKEN = process.env.MCP_DIGBY_TOKEN;
 
 async function testMcpHealth() {
   console.log('\n=== 1. Health Check ===');
   try {
     const start = Date.now();
-    const r = await axios.get('https://mcp.digby.example.com/health', { timeout: 10000 });
+    const r = await axios.get('https://mcp.digby.ai/health', { timeout: 10000 });
     console.log(`✅ Health: ${r.data} (${Date.now() - start}ms)`);
   } catch (e: any) {
     console.error(`❌ Health failed: ${e.message}`);

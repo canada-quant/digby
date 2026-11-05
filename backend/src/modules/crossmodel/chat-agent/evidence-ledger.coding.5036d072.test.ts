@@ -19,10 +19,10 @@
 import { createEvidenceLedger, EVIDENCE_LEDGER_PREFIX } from './evidence-ledger';
 
 const COMMIT_OK = '[digby/session-13df1406 e8d5fd417ab] fix(platform): lane-scoped ledger\n 1 file changed, 10 insertions(+), 2 deletions(-)';
-const PUSH_OK = 'Pushed digby/session-13df1406 to GitHub (https://github.com/canada-quant/digby) — sha e8d5fd417ab.';
+const PUSH_OK = 'Pushed digby/session-13df1406 to GitHub (https://github.com/example-org/crossmodel) — sha e8d5fd417ab.';
 const PUSH_IDEMPOTENT_SKIP = '[idempotent skip] already done in this run: Pushed digby/session-13df1406 to GitHub — sha 9ceb340ef12 (receipt rcpt-uuid-1). The remote branch already carries this exact commit; nothing new to push.';
-const OPEN_PR_OK = 'Opened PR #842: https://github.com/canada-quant/digby/pull/842';
-const MERGE_OK = 'MERGED canada-quant/digby#842 (squash sha 012d3aa2abcd) — confirmed merged:true by follow-up GET.\nGate evidence:\n- PR open + mergeable clean';
+const OPEN_PR_OK = 'Opened PR #842: https://github.com/example-org/crossmodel/pull/842';
+const MERGE_OK = 'MERGED example-org/crossmodel#842 (squash sha 012d3aa2abcd) — confirmed merged:true by follow-up GET.\nGate evidence:\n- PR open + mergeable clean';
 const CHECK_CI_OK = 'CI for 9ceb340ef123: SUCCESS (2 checks)\n- build: success\n- test: success';
 
 describe('createEvidenceLedger lane:"coding" — receipt-family harvest (ticket 5036d072)', () => {

@@ -79,7 +79,7 @@ const FOREIGN_ACTION_VERBS = /\b(worry|bother|ignore|hesitate|stress|fret|panic|
  *  decision space — there is nothing to choose between, so the options
  *  axis is complete by the card's own declaration. Specimen
  *  oq_81ce2c39 (live row, prod probe 2026-10-23, deployed admission
- *  verdict ["options"]): a 792-char self-contained [cql-agx-orin64]
+ *  verdict ["options"]): a 792-char self-contained [cql-accelerator]
  *  credential ask — background (Hue power cycle worked, box rebooted
  *  03:58Z, memory leak uncontained, froze twice), the measured blocker
  *  ("sudo: a password is required" 01:00Z and 04:03Z), the exact move
@@ -359,7 +359,7 @@ export function detectOwnerCardPayloadGaps(input: OwnerCardGapInput): string[] {
   // cue-list asks "does the card talk about deploys/boxes/runs?" but a
   // structured decision ask carries its background in domain vocabulary the
   // list cannot enumerate (specimen oq_892c91ae: a 1163-char self-contained
-  // [ctrl.example.com] choice card — "CanLaw is LIVE on r-0, tailnet-only",
+  // [ctrl.cql.ca] choice card — "CanLaw is LIVE on r-0, tailnet-only",
   // Hyperstack IPs, zai legs — 4 typed options with consequences,
   // expectedAnswerType 'choice', context empty because the whole card rides
   // inline; the owner DISMISSED it 16 min after filing because the ruling

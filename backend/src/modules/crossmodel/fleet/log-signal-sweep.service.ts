@@ -33,14 +33,21 @@
  *        RULE 2 (broken suppression promise) — the RAW message carries a
  *          suppression promise (quarantin… | back(ing) off | suppress… | once
  *          per | cooldown) yet the fingerprint repeated INSIDE the promised
- *          window. The window is parsed from the raw text when a duration is
- *          stated ("quarantined for 6h" → 6 h; the LARGEST duration in the
- *          message wins): rule 2 fires when ≥ RULE2_MIN_REPEATS occurrences
- *          sit closer together than that window. When no duration is
- *          parseable the promise is implicit, so ≥ RULE2_MIN_REPEATS_UNPARSED
- *          occurrences (3) fire instead — never 2, because a per-session /
- *          per-chat suppression promise legitimately logs once per subject
- *          and ids are stripped from the fingerprint.
+ *          window. The window is parsed from the raw text when a duration sits
+ *          in the SAME CLAUSE as the promise token ("quarantined for 6h" → 6 h):
+ *          rule 2 fires when ≥ RULE2_MIN_REPEATS occurrences sit closer together
+ *          than that window. A duration in another clause is NOT the promise's
+ *          window (6384c6a7: "once per cause per process" harvested a 8000 ms
+ *          embed TIMEOUT budget and claimed a 0-min promise — parsePromisedWindow-
+ *          Ms reads only the promise's own clause, ±PROMISE_ADJACENCY_CHARS).
+ *          A SCOPE-qualified promise (`once per process|worker|instance|boot|
+ *          container|pod`) is not a time promise at all — it is honoured across
+ *          processes by construction, so detectSuppressionPromise returns null
+ *          for it and rule 1's cross-hour recurrence is the honest signal.
+ *          When no duration is parseable the promise is implicit, so ≥
+ *          RULE2_MIN_REPEATS_UNPARSED occurrences (3) fire instead — never 2,
+ *          because a per-session / per-chat suppression promise legitimately
+ *          logs once per subject and ids are stripped from the fingerprint.
  *   4. Files ONE ticket per fingerprint per ISO week through the SAME insert
  *      path the file_feedback tool uses (feedback.fileFeedbackTicket — its
  *      caps + dedup apply), capped at LOG_SIGNAL_TICKETS_PER_PASS per sweep
@@ -387,16 +394,152 @@ export function normalizeLogMessage(raw: string): string {
     .slice(0, FINGERPRINT_MAX_LEN);
 }
 
-/** The suppression promise a raw message makes, if any (lowercased match), else null. */
-export function detectSuppressionPromise(raw: string): string | null {
-  const m = String(raw ?? '').match(SUPPRESSION_PROMISE_RE);
-  return m ? m[0].toLowerCase() : null;
+/**
+ * ADJACENCY (ticket 6384c6a7, 2026-11-03) — a duration only counts as a
+ * promise's window when it sits in the promise's OWN clause.
+ *
+ * Pre-fix `parsePromisedWindowMs` took the LARGEST duration ANYWHERE in the raw
+ * message and the sweep filed it as the promise ("once per" + a 8000 ms embed
+ * TIMEOUT budget ⇒ "promised once per 0 min"). The motivating prod row:
+ *
+ *   unified-memory: embed failed, 10/10 row(s) stored keyword-only — timeout
+ *   (embed attempt timeout after 8000ms (batch 1/1, 2 attempt(s))); rows=10
+ *   maxChars=3500 source=orchestrator scope=session; per-row retry not
+ *   attempted (logged once per cause per process; counted as
+ *   unified_memory_embed_failed)
+ *
+ * The only duration there is the embed CLIENT's timeout budget, ~120 chars from
+ * the `once per` token and in a different clause; the promise itself is
+ * SCOPE-qualified (`once per cause per process`), not a time window at all.
+ *
+ * The rule, documented exactly: for every promise-token match, scan
+ * PROMISE_ADJACENCY_CHARS on EACH side of the token, truncate that span at the
+ * nearest CLAUSE TERMINATOR (`;` `(` `)` `[` `]` `—` `–` newline), and read
+ * DURATION_RE only inside what remains. The window is therefore "the promise's
+ * own clause, at most ±80 chars of it" — a timeout budget in a parenthetical, a
+ * retry budget after a `;`, or a duration in another sentence is not adjacent
+ * and cannot be harvested. The LARGEST ADJACENT duration wins (two promises may
+ * each name a window: "retry in 30s, full cooldown 10 minutes" ⇒ 10 min).
+ */
+export const PROMISE_ADJACENCY_CHARS = 80;
+/** Clause terminators that end a promise's own clause (never `,` or `:` — real
+ *  lines hyphenate/colon after the promise token: "backoff: retry in 90s"). */
+const PROMISE_CLAUSE_END_RE = /[;()[\]\u2013\u2014\n]/;
+/**
+ * SCOPE-qualified promise (ticket 6384c6a7) — `once per process|worker|
+ * instance|boot|container|pod` promises once per PROCESS, which is honoured by
+ * construction across processes: N rows in a fleet-wide 24 h window are N
+ * processes, not a broken promise, so rule 2 can never falsify it. The honest
+ * signal for that class is rule 1's cross-hour recurrence (which still fires).
+ *
+ * Deliberately NARROW: `per session|chat|subject|browser|key` are NOT here. A
+ * once-per-SUBJECT promise legitimately logs once per subject, and ids are
+ * stripped from the fingerprint, so those keep the 3-repeat unparsed branch
+ * described in the module doc (lines 33-43) rather than being nulled.
+ */
+const PROMISE_SCOPE_QUALIFIER_RE = /\bper\s+(?:process|worker|instance|boot|container|pod)\b/i;
+/** The same scope words when the promise token itself ate the `per` — the
+ *  `once per` promise IS the first `per`, so `once per process` leaves only
+ *  ` process` in the after-clause and the pattern above cannot see it. */
+const PROMISE_SCOPE_TAIL_RE = /^\s*(?:process|worker|instance|boot|container|pod)\b/i;
+
+/** Every promise-token match in the raw text, as a global clone (the exported
+ *  RE is non-global so callers may `.test` it without residue). */
+function suppressionPromiseMatches(raw: string): Array<{ phrase: string; index: number; end: number }> {
+  const text = String(raw ?? '');
+  const re = new RegExp(SUPPRESSION_PROMISE_RE.source, 'gi');
+  const out: Array<{ phrase: string; index: number; end: number }> = [];
+  for (const m of text.matchAll(re)) {
+    out.push({ phrase: m[0].toLowerCase(), index: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
+  }
+  return out;
 }
 
-/** Parse the LARGEST duration named in a raw message, in ms — the "promised window" for Rule 2. Null when none. */
+/**
+ * Drop a PARTIAL token left by the adjacency slice (adversarial review
+ * 2026-11-03, NIT-5). The slice is a raw character cut, so it can land inside a
+ * duration token and change its MEANING: `'…' + ' '.repeat(76) + '300ms'` cut
+ * at 80 chars leaves `300m`, which DURATION_RE reads as 300 MINUTES — a 1000×
+ * magnified window that would convict a gap nothing promised. Trimming to a
+ * whitespace boundary removes the fragment. Only when the slice truncated.
+ */
+function trimPartialToken(slice: string, truncatedAtStart: boolean, truncatedAtEnd: boolean): string {
+  let out = slice;
+  if (truncatedAtStart) {
+    const ws = out.search(/\s/);
+    out = ws === -1 ? out : out.slice(ws + 1);
+  }
+  if (truncatedAtEnd) {
+    const m = /\S+$/.exec(out);
+    if (m) out = out.slice(0, m.index);
+  }
+  return out;
+}
+
+/** The promise token's own clause AFTER it — ≤ PROMISE_ADJACENCY_CHARS, cut at the first terminator. */
+function promiseClauseAfter(text: string, from: number): string {
+  const end = Math.min(text.length, from + PROMISE_ADJACENCY_CHARS);
+  const tail = text.slice(from, end);
+  const cut = tail.search(PROMISE_CLAUSE_END_RE);
+  if (cut !== -1) return tail.slice(0, cut);
+  return trimPartialToken(tail, false, end < text.length);
+}
+
+/** The promise token's own clause BEFORE it — ≤ PROMISE_ADJACENCY_CHARS, cut at the last terminator. */
+function promiseClauseBefore(text: string, to: number): string {
+  const start = Math.max(0, to - PROMISE_ADJACENCY_CHARS);
+  const head = text.slice(start, to);
+  let cut = -1;
+  for (let i = head.length - 1; i >= 0; i--) {
+    if (PROMISE_CLAUSE_END_RE.test(head[i])) { cut = i; break; }
+  }
+  if (cut !== -1) return head.slice(cut + 1);
+  return trimPartialToken(head, start > 0, false);
+}
+
+/**
+ * A promise that promises per PROCESS/BOOT rather than per TIME WINDOW (see
+ * PROMISE_SCOPE_QUALIFIER_RE).
+ *
+ * TWO conditions, and the SECOND is what keeps this honest (adversarial review
+ * 2026-11-03, BLOCKER): the promise's own clause must state NO duration.
+ * Without it, `quarantined for 6h, one fresh attempt per process after` matched
+ * the unrelated `per process` retry clause and nulled a genuine 6 h promise —
+ * silently switching rule 2 off for the repo's own session-history quarantine
+ * warn (session-history-sync ends "…quarantined for Nh, one fresh attempt
+ * after)"). A promise that STATES its window is a time promise, and a scope
+ * word elsewhere in the clause cannot rescue it from being policed.
+ *
+ * The TAIL form only applies when the promise token itself ENDS in `per`
+ * (`once per process` — the token ate the preposition), so an unrelated noun
+ * after a `suppressed`/`cooldown` token can never be mistaken for a scope.
+ */
+function isScopeQualifiedPromise(text: string, token: { phrase: string; index: number; end: number }): boolean {
+  const before = promiseClauseBefore(text, token.index);
+  const after = promiseClauseAfter(text, token.end);
+  // A stated window in the promise's OWN clause wins over any scope word.
+  if ([before, after].some((c) => [...c.matchAll(DURATION_RE)].length > 0)) return false;
+  if (PROMISE_SCOPE_QUALIFIER_RE.test(after)) return true;
+  return /\bper$/.test(token.phrase) && PROMISE_SCOPE_TAIL_RE.test(after);
+}
+
+/** The suppression promise a raw message makes, if any (lowercased match), else null.
+ *  A scope-qualified promise (per process/worker/boot…) returns null: it is not a
+ *  time promise, so rule 2 must not be applied to it (rule 1 recurrence still is). */
+export function detectSuppressionPromise(raw: string): string | null {
+  const text = String(raw ?? '');
+  for (const m of suppressionPromiseMatches(text)) {
+    if (isScopeQualifiedPromise(text, m)) continue;
+    return m.phrase;
+  }
+  return null;
+}
+
+/** Parse the LARGEST duration ADJACENT to a (time) promise token, in ms — the
+ *  "promised window" for Rule 2. Null when no promise names a duration, or when
+ *  every promise in the message is scope-qualified (see PROMISE_SCOPE_QUALIFIER_RE). */
 export function parsePromisedWindowMs(raw: string): number | null {
-  const matches = [...String(raw ?? '').matchAll(DURATION_RE)];
-  if (!matches.length) return null;
+  const text = String(raw ?? '');
   const toMs = (n: number, unit: string): number => {
     const u = unit.toLowerCase();
     if (u.startsWith('mil') || u === 'ms') return n;
@@ -407,7 +550,14 @@ export function parsePromisedWindowMs(raw: string): number | null {
     if (u.startsWith('w')) return n * 604_800_000;
     return n;
   };
-  return Math.max(...matches.map((m) => toMs(Number(m[1]), m[2])));
+  const windows: string[] = [];
+  for (const m of suppressionPromiseMatches(text)) {
+    if (isScopeQualifiedPromise(text, m)) continue;
+    windows.push(promiseClauseBefore(text, m.index), promiseClauseAfter(text, m.end));
+  }
+  if (!windows.length) return null;
+  const found = windows.flatMap((w) => [...w.matchAll(DURATION_RE)].map((d) => toMs(Number(d[1]), d[2])));
+  return found.length ? Math.max(...found) : null;
 }
 
 /** One app_error_logs row as the sweep reads it. */

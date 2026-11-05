@@ -48,19 +48,19 @@ function stubMcp(payload: object) {
 
 test('getIssue sends snake_case issue_number (server zod schema requires it)', async () => {
   stubMcp({ result: { content: [{ type: 'text', text: 'Issue body here' }] } });
-  const out = await getIssue('user-1', 'canada-quant', 'digby', 42);
+  const out = await getIssue('user-1', 'example-org', 'crossmodel', 42);
 
   expect(mockPost).toHaveBeenCalledTimes(1);
   const body = mockPost.mock.calls[0][1];
   expect(body.params.name).toBe('github_get_issue');
   // THE regression guard: must be issue_number, NOT issueNumber.
   expect(body.params.arguments).toEqual({
-    owner: 'canada-quant',
-    repo: 'digby',
+    owner: 'example-org',
+    repo: 'crossmodel',
     issue_number: 42,
   });
   expect(body.params.arguments).not.toHaveProperty('issueNumber');
-  expect(out).toContain('[GitHub Issue #42: canada-quant/digby]');
+  expect(out).toContain('[GitHub Issue #42: example-org/crossmodel]');
   expect(out).toContain('Issue body here');
 });
 
@@ -168,7 +168,7 @@ describe('failed reads surface ONE readable line', () => {
     test('first account 404s, second account has the file → the second account\'s file', async () => {
       twoAccounts();
       byToken({ ghp_old: notFound, ghp_work: '# src/a.ts\n```\nexport const a = 1;\n```' });
-      const out = await getFileContents()('user-1', 'canada-quant', 'digby', 'src/a.ts');
+      const out = await getFileContents()('user-1', 'example-org', 'crossmodel', 'src/a.ts');
       expect(out).toContain('export const a = 1;');
       expect(out).not.toContain('Not Found');
       expect(mockPost).toHaveBeenCalledTimes(2);
@@ -177,8 +177,8 @@ describe('failed reads surface ONE readable line', () => {
     test('every account 404s → the 404, saying every connected account was tried', async () => {
       twoAccounts();
       byToken({ ghp_old: notFound, ghp_work: notFound });
-      const out = await getFileContents()('user-1', 'canada-quant', 'digby', 'src/a.ts');
-      expect(out).toContain('[GitHub File: canada-quant/digby/src/a.ts]');
+      const out = await getFileContents()('user-1', 'example-org', 'crossmodel', 'src/a.ts');
+      expect(out).toContain('[GitHub File: example-org/crossmodel/src/a.ts]');
       expect(out).toContain('Not Found');
       expect(out).toContain('every connected GitHub account (2) answered Not Found');
       expect(mockPost).toHaveBeenCalledTimes(2);
@@ -187,7 +187,7 @@ describe('failed reads surface ONE readable line', () => {
     test('one account 404s, the other could not be checked → the 404 names the unchecked account', async () => {
       twoAccounts();
       byToken({ ghp_old: notFound, ghp_work: 'Error getting file src/a.ts: Bad credentials' });
-      const out = await getFileContents()('user-1', 'canada-quant', 'digby', 'src/a.ts');
+      const out = await getFileContents()('user-1', 'example-org', 'crossmodel', 'src/a.ts');
       expect(out).toContain('Not Found');
       expect(out).toMatch(/1 other connected GitHub account could not be checked \(GitHub get file contents call was rejected by GitHub \(Bad credentials\)/);
     });
@@ -245,7 +245,7 @@ describe('failed reads surface ONE readable line', () => {
 // The mishap: a plain query ("065caccb") was forwarded to GitHub /search/code
 // BARE — a GitHub-wide search — and returned 12 hits in unrelated PUBLIC repos
 // (defold/defold, aliarabat/OpenStack, …), none in the connected account's
-// repos; and repo:canada-quant/digby returned 0 because GitHub does not
+// repos; and repo:example-org/crossmodel returned 0 because GitHub does not
 // index that user-owned private repo. These tests pin the fix: unscoped
 // queries are auto-scoped per connected account; explicit scopes pass through.
 let searchCode: typeof import('./github-mcp').searchCode;
@@ -285,11 +285,11 @@ test('searchCode passes an explicit repo: scope through unchanged (ticket 0b35a3
   mockTokens.mockResolvedValue([{ token: 'ghp_explicit', label: 'Personal', username: 'paul' }]);
   stubMcp({ result: { content: [{ type: 'text', text: 'No code results found' }] } });
 
-  const out = await searchCode('user-1', 'repo:canada-quant/digby 8e88474e');
+  const out = await searchCode('user-1', 'repo:example-org/crossmodel 8e88474e');
 
   expect(mockPost).toHaveBeenCalledTimes(1);
   const sentQ = mockPost.mock.calls[0][1].params.arguments.query;
-  expect(sentQ).toBe('repo:canada-quant/digby 8e88474e');
+  expect(sentQ).toBe('repo:example-org/crossmodel 8e88474e');
   expect(mockGet).not.toHaveBeenCalled(); // no scope lookup for explicit scopes
   expect(out).toContain('explicit scope');
   expect(out).toContain('default branch only');

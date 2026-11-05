@@ -89,6 +89,24 @@ export function stripForStorage(text: string): string {
     .replace(/\[CANVAS[^\]]*\][\s\S]*/gi, '')
     .replace(/\[FOLLOWUPS\][\s\S]*?\[\/FOLLOWUPS\]/gi, '')
     .replace(/\[FOLLOWUPS\][\s\S]*$/gi, '')
+    // Ticket 7af42393 — ORPHAN CLOSERS, mirrored from the renderer
+    // (plain-session.ts stripForStorage/stripLiveTags). Every rule above keys
+    // on the LITERAL opener, so a closer whose opener the model botched
+    // survives to the reader. Specimen (chat 9430e12f, msg 6a8f46bc): a
+    // misspelled, spaced opener `[ FOLOWUPS ]` (ONE L) followed by a correctly
+    // spelled `[/FOLLOWUPS]` — no opener rule matched, the closer rendered
+    // verbatim, and this detector was RIGHT to convict it. The renderer now
+    // deletes the orphan token; this copy must delete it too, or the detector
+    // stays stricter than the renderer and refills the queue with markers no
+    // user can see (the d6fdc1df flood class). Keep the FOLLOWUPS rules
+    // byte-identical with plain-session.ts — that pair IS the mirror contract.
+    // (The CANVAS rules above are deliberately NOT identical: this copy keeps
+    // the inner text via `$1` so a nested marker is still scanned, while the
+    // renderer deletes it. See the doc block above.) Scope matches the
+    // renderer exactly: FOLLOWUPS-only. A `[/CANVAS]` closer is the LAST
+    // canvas shape that still reaches a reader, so stripping it would retire
+    // canvas detection outright (its own decision, on its own evidence).
+    .replace(/\[\/FOLLOWUPS\]/gi, '')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 }

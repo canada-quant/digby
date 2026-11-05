@@ -44,7 +44,7 @@ const mockPrisma: any = {
     count: jest.fn(async () => 0),
   },
   projectTodo: { findUnique: jest.fn(), count: jest.fn(async () => 0) },
-  codingSchedule: { count: jest.fn(async () => 0) },
+  chatSchedule: { count: jest.fn(async () => 0) },
   crossModelProject: { findUnique: jest.fn() },
   crossModelChat: { findUnique: jest.fn(), update: jest.fn(async () => ({})) },
   crossModelMessage: { create: jest.fn(async () => ({})) },
@@ -179,7 +179,7 @@ beforeEach(() => {
   mockPrisma.hookEvent.count.mockResolvedValue(0);
   mockPrisma.projectTodo.findUnique.mockResolvedValue({ status: 'pending', assigneeChatId: 'c-tgt' });
   // Retired by default: no enabled schedules, no open todos.
-  mockPrisma.codingSchedule.count.mockResolvedValue(0);
+  mockPrisma.chatSchedule.count.mockResolvedValue(0);
   mockPrisma.projectTodo.count.mockResolvedValue(0);
   targetChat = { ...RETIRED_CODING_LANE };
   // The sweep reads the TARGET (ownership + retirement selects) and, for a
@@ -223,7 +223,7 @@ describe('retired-target hook hygiene (ticket 57154856)', () => {
 
   it('an ARCHIVED target chat is retired even if it still has an enabled schedule (archived wins)', async () => {
     targetChat = { ...RETIRED_CODING_LANE, archivedAt: new Date('2026-09-20T00:00:00Z') };
-    mockPrisma.codingSchedule.count.mockResolvedValue(1); // would otherwise be live
+    mockPrisma.chatSchedule.count.mockResolvedValue(1); // would otherwise be live
     setPendingRows([eventRow()]);
     await sweepHookEvents();
     expect(mockFireScheduleTarget).not.toHaveBeenCalled();
@@ -234,7 +234,7 @@ describe('retired-target hook hygiene (ticket 57154856)', () => {
 
   it('ARCHIVED-TARGET-RETIRE (2026-10-20): a SATELLITE-archived lane (session API archive) is retired even with live work, and the paused hook is remembered for the restore; the kill switch delivers', async () => {
     targetChat = { ...RETIRED_CODING_LANE, codingState: { id: 'cs-1', status: 'archived' } };
-    mockPrisma.codingSchedule.count.mockResolvedValue(1); // leftover rows would otherwise read live
+    mockPrisma.chatSchedule.count.mockResolvedValue(1); // leftover rows would otherwise read live
     mockPrisma.projectTodo.count.mockResolvedValue(2);
     setPendingRows([eventRow()]);
     await sweepHookEvents();
@@ -247,7 +247,7 @@ describe('retired-target hook hygiene (ticket 57154856)', () => {
 
     jest.clearAllMocks();
     process.env.ARCHIVED_TARGET_RETIRE_DISABLED = '1';
-    mockPrisma.codingSchedule.count.mockResolvedValue(1);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1);
     mockPrisma.hookEvent.updateMany.mockResolvedValue({ count: 1 });
     mockFireScheduleTarget.mockResolvedValue({ started: true });
     setPendingRows([eventRow()]);
@@ -257,7 +257,7 @@ describe('retired-target hook hygiene (ticket 57154856)', () => {
   });
 
   it('a coding lane WITH an enabled schedule is LIVE — the wake delivers unchanged', async () => {
-    mockPrisma.codingSchedule.count.mockResolvedValue(1);
+    mockPrisma.chatSchedule.count.mockResolvedValue(1);
     setPendingRows([eventRow()]);
     await sweepHookEvents();
     expect(mockFireScheduleTarget).toHaveBeenCalledTimes(1);
@@ -289,7 +289,7 @@ describe('retired-target hook hygiene (ticket 57154856)', () => {
     await sweepHookEvents();
     expect(mockFireScheduleTarget).toHaveBeenCalledTimes(1);
     expect(updatesWith((d) => d?.status === HOOK_STATUS_TARGET_RETIRED)).toHaveLength(0);
-    expect(mockPrisma.codingSchedule.count).not.toHaveBeenCalled(); // exempt BEFORE the counts
+    expect(mockPrisma.chatSchedule.count).not.toHaveBeenCalled(); // exempt BEFORE the counts
   });
 
   it('EXEMPTION: the system:direct-wake todo_wake self-hook still fires (the lane REACTIVATION path)', async () => {
@@ -326,7 +326,7 @@ describe('retired-target hook hygiene (ticket 57154856)', () => {
   });
 
   it('a count-query hiccup fails OPEN (delivers) — the outbox must not wedge on a transient', async () => {
-    mockPrisma.codingSchedule.count.mockRejectedValue(new Error('prisma down'));
+    mockPrisma.chatSchedule.count.mockRejectedValue(new Error('prisma down'));
     setPendingRows([eventRow()]);
     await sweepHookEvents();
     expect(mockFireScheduleTarget).toHaveBeenCalledTimes(1);

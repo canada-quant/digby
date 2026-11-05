@@ -389,11 +389,11 @@ export async function mootReasonForStagedAction(
         const id = String(args?.id ?? '').trim();
         if (!id) return null;
         const prisma = await db();
-        let row = await prisma.codingSchedule.findFirst({ where: { id, userId } });
+        let row = await prisma.chatSchedule.findFirst({ where: { id, userId } });
         if (!row && id.length >= 8) {
           // Same prefix tolerance as the tool: a severed id resolves when it
           // names exactly ONE of the owner's schedules; ambiguity is never moot.
-          const matches = await prisma.codingSchedule.findMany({ where: { userId, id: { startsWith: id } } });
+          const matches = await prisma.chatSchedule.findMany({ where: { userId, id: { startsWith: id } } });
           if (matches.length === 1) row = matches[0];
           else if (matches.length > 1) return null;
         }
@@ -421,11 +421,11 @@ export async function mootReasonForStagedAction(
         // an explicit fleet-idiom ≥8-char prefix is tolerated only when it
         // names exactly ONE chat with candidate rows — ambiguity is never moot
         // (same rule as cancel_schedule above).
-        let rows = await prisma.codingSchedule.findMany({
+        let rows = await prisma.chatSchedule.findMany({
           where: { userId, sessionId: chatId, kind, enabled: true },
         });
         if (!rows.length && chatId.length >= 8) {
-          const prefixed = await prisma.codingSchedule.findMany({
+          const prefixed = await prisma.chatSchedule.findMany({
             where: { userId, kind, enabled: true, sessionId: { startsWith: chatId } },
           });
           if (new Set(prefixed.map((r: any) => r.sessionId)).size > 1) return null;

@@ -71,17 +71,117 @@ const NO_CHANGE_LIMIT = 3;
  *  frontmost app. macOS only (the probe is a Spotlight keystroke);
  *  never in observe-only sessions (it IS input). */
 const PROBE_AT_STRIKES = 2;
+/** ticket a40f64d9 — the positive control's LEGS, tried in order until one
+ *  produces a visible change.
+ *
+ *  WHY MORE THAN ONE: the probe used to be a single Cmd+Space, and the copy
+ *  read "Cmd+Space produced an identical frame ⇒ input is not landing". That
+ *  inference is only valid where ⌘Space still opens Spotlight. On a Mac whose
+ *  ⌘Space is remapped (input-source switching is the common one — macOS's
+ *  default on many layouts; System Settings → Keyboard → Shortcuts can rebind
+ *  it to anything) the chord is DELIVERED CORRECTLY and legitimately changes
+ *  nothing, so a healthy write path was convicted of being dead: the reported
+ *  symptom (lane 375ce2aa, cqlstannembp2) had Escape and mouse clicks landing
+ *  in the SAME run while two Cmd+Space presses were pixel-identical.
+ *
+ *  Cmd+Tab is the second leg because it is a system-wide binding that is
+ *  practically never remapped, and it changes the FRONTmost app — one of the
+ *  two signals the probe already trusts. It COMMITS a switch, so the probe
+ *  Tab-switches back afterwards (see the restore below) rather than leaving
+ *  the user's focus somewhere else. */
+export const PROBE_LEGS: ReadonlyArray<{ key: string; modifiers: string[]; label: string }> = [
+  { key: "space", modifiers: ["cmd"], label: "Cmd+Space" },
+  { key: "tab", modifiers: ["cmd"], label: "Cmd+Tab" },
+];
+
+export interface ProbeLegResult {
+  label: string;
+  /** The leg dispatched AND returned a frame — its inertness is real evidence. */
+  conclusive: boolean;
+  changed: boolean;
+  pct: number | null;
+  frontmost?: string;
+  /** Ticket 09c984d8 (MEDIUM-2): did the call REACH the device (a refusal still
+   *  reached it and came back `ok:false`), and did the device ACCEPT it? The
+   *  focus-restore decision reads these — what the DEVICE did — never the
+   *  verdict that the leg looked inert. A refused chord moved nothing. */
+  dispatched?: boolean;
+  landed?: boolean;
+}
+
+/** Ticket 09c984d8 (MEDIUM-2) — did the Cmd+Tab leg leave the user's focus
+ *  anywhere other than where it started? Pure, so the rule is pinnable
+ *  without driving the loop.
+ *
+ *  WHY THIS IS NOT `passed?.label === switcher && frontmost !== preApp` (the
+ *  a40f64d9 shape): that gate asked the VERDICT whether the focus moved. Cmd+Tab
+ *  COMMITS a switch, so the switch happens whether or not the probe could read
+ *  its result — a pixel-identical frame (the switcher's two targets can look
+ *  the same) or a failed frame read left the user parked on another window and
+ *  the restore branch never ran. The decision now reads what the DEVICE says:
+ *  the leg's own frontmost field when the agent reports one, otherwise the LIVE
+ *  frontmost read taken after the leg. Only a leg that provably never landed
+ *  (refused / threw) skips the restore.
+ *
+ *  @param dispatched  the switcher leg actually reached the device
+ *  @param landed      the device accepted it (`ok !== false`) — a refused chord
+ *                     moved nothing, so switching back would MOVE the focus
+ *  @param preApp      frontmost app before the probe (unknown ⇒ nothing to compare)
+ *  @param observed    frontmost app after the leg: the leg frame's own field,
+ *                     else the live read; null = could not be read at all
+ */
+export function probeLeftFocusMoved(args: {
+  dispatched: boolean;
+  landed: boolean;
+  preApp?: string;
+  observed: string | null;
+}): boolean {
+  if (!args.dispatched || !args.landed) return false;
+  if (!args.preApp) return false;
+  if (args.observed) return args.observed !== args.preApp;
+  // A landed Cmd+Tab with an unreadable frontmost: the keystroke almost
+  // certainly switched apps, and leaving the user's focus elsewhere is the
+  // user-visible side effect this exists to prevent — hand it back.
+  return true;
+}
+
+/** Human list of the legs, for the progress line and the verdict copy. Pure. */
+export function formatProbeLegs(legs: ReadonlyArray<{ label: string }> = PROBE_LEGS): string {
+  const labels = legs.map((l) => l.label);
+  if (labels.length <= 1) return labels.join("");
+  return `${labels.slice(0, -1).join(", ")}, then ${labels[labels.length - 1]}`;
+}
 /** Review fix (2026-09-25, cu-diag fix #2 follow-up): the probe runs ONLY on
- *  the action that just SCORED a strike, and at most this many times per
- *  session. An INCONCLUSIVE probe (the agent refused the Cmd+Space dispatch,
- *  the follow-up screenshot failed, or the driver threw) leaves the streak
- *  where it was, and the old `streak >= 2` gate then re-fired the probe on
- *  EVERY later action of any kind — screenshots, waits, bare Escape presses —
- *  until the step cap (4 Cmd+Space/Escape pairs in a 7-action replay). Now an
- *  inconclusive probe is retried at most ONCE, on the next genuine strike
- *  (strike 3 — right before the legacy NO_CHANGE_LIMIT abort), never on
- *  reads / no-op keys / the same streak level. */
+ *  the action that just SCORED a strike, and at most this many CONCLUSIVE
+ *  times per session. An INCONCLUSIVE probe (the agent refused a leg's
+ *  dispatch, the follow-up screenshot failed, or the driver threw) leaves the
+ *  streak where it was, and the old `streak >= 2` gate then re-fired the probe
+ *  on EVERY later action of any kind — screenshots, waits, bare Escape
+ *  presses — until the step cap. Now an inconclusive probe is retried on the
+ *  next genuine strike (a HIGHER streak level — never on reads / no-op keys /
+ *  the same streak level), and per ticket 09c984d8 it no longer SPENDS one of
+ *  these attempts: this constant bounds only probes that produced a compared
+ *  frame pair. Total dispatches are bounded separately by
+ *  MAX_PROBE_DISPATCHES below, and the legacy NO_CHANGE_LIMIT abort bounds the
+ *  streak itself. */
 const MAX_PROBE_ATTEMPTS = 2;
+/** Ticket 09c984d8 (MEDIUM-1) — HARD ceiling on probe DISPATCHES per session,
+ *  as distinct from MAX_PROBE_ATTEMPTS, which now bounds only probes that
+ *  produced a CONCLUSIVE observation (a compared frame pair).
+ *
+ *  WHY: an inconclusive probe (a leg's dispatch refused / no frame returned)
+ *  yields no evidence either way, yet it used to spend one of the two
+ *  attempts. With MAX_PROBE_ATTEMPTS = 2 a session could therefore burn its
+ *  entire probe budget on two unreadable attempts — on a fresh streak the
+ *  third attempt (the one that would have produced a conclusive inert frame
+ *  pair) was never dispatched, and the session ended on the HEDGED
+ *  "could not settle whether input lands" copy instead of the STRICTER
+ *  dead-input verdict the evidence supported. An inconclusive probe now
+ *  extends the conclusive budget rather than spending it; this constant is
+ *  the termination guarantee that bounds how far it may extend (the legacy
+ *  NO_CHANGE_LIMIT abort is the other bound). It can only ever make the
+ *  watchdog STRICTER about what counts as proof — never laxer. */
+const MAX_PROBE_DISPATCHES = 4;
 /** cu-diag fix #3: the repeated-action nudge no longer consumes a step. This
  *  bounds how many free nudges a session gets before they cost a step again
  *  (termination guarantee — the wall-clock deadline is the other bound). */
@@ -159,6 +259,21 @@ export function looksLikeVisionSeatLeak(text: string): boolean {
 export const VISION_LEAK_NUDGE =
   "[HARNESS NOTICE — not typed by the user] Your previous message contained tool-call markup as PLAIN TEXT (DSML tokens / <tool_result> / a call written out), so NO tool ran and nothing was recorded. Act through the structured tool-calling API (screenshot, click, type, key, scroll, open, wait, done…). If you are finished, call done with a plain-language final answer for the user — no markup.";
 
+/** ticket a40f64d9 — the two guidance bullets the WINDOWS splice rewrites are
+ *  named ONCE, here, and both the macOS text and the Windows replacement key
+ *  off these constants. They used to be inline literals duplicated in the
+ *  splice: editing the macOS bullet silently turned the Windows replacement
+ *  into a no-op (`String.replace` with a missing needle returns the input
+ *  unchanged), which is exactly how Windows doctrine quietly degrades. */
+const MAC_OPEN_APP_BULLET =
+  `- To open an app, prefer the open tool with the app's name — it does not depend on a shortcut being bound. Spotlight (key "space" with modifiers ["cmd"], then type the name, key "return") only works where ⌘Space still opens Spotlight; if a Cmd+Space press changes nothing, that shortcut is remapped or unbound on this Mac — switch to the open tool and do NOT read it as dead input. To open a website, use open with the URL (opens in their default browser, already signed in to their accounts).`;
+
+const MAC_SHORTCUT_BULLET =
+  `- Prefer keyboard shortcuts over clicking when reliable (cmd+tab switch apps, tab/return in dialogs and forms). A shortcut that is unbound in the app you are in, or remapped on this Mac (System Settings → Keyboard → Shortcuts), legitimately changes NOTHING even though your keystroke landed — a shortcut doing nothing is NOT evidence the keyboard is dead. If one shortcut appears to have no effect, type into a focused text field once to confirm the keyboard itself works, then take a different route (click, or the open tool) instead of repeating the chord.`;
+
+const MAC_NO_CHANGE_BULLET =
+  `- A "NO VISIBLE CHANGE" notice means the screen was pixel-identical after your action, on a verified readable screenshot. THREE things produce it, and only the last is a defect: (1) the action legitimately had no visible effect — a shortcut unbound in this app or remapped on this Mac, a target already selected; (2) the input landed but its effect is on a display or window the capture is not showing; (3) the input truly did not land (Accessibility permission / synthetic-input drop), including the setup fix for the user. Never repeat the identical action: re-ground with ONE screenshot, then try a DIFFERENT action that should visibly change the screen — typing into a focused text field is the cheapest decisive test. Only report the task BLOCKED by input delivery when the harness's own positive-control verdict says the write path failed; a single shortcut that did nothing is not that verdict, and typing that lands proves the keyboard works.`;
+
 const INSTRUCTIONS = `You are operating the user's own Mac computer for them. You SEE the screen via screenshots and ACT with the provided tools — exactly ONE action per turn; after each action you receive a fresh screenshot showing the result.
 
 Coordinate contract: screenshots are downscaled for you. ALWAYS click in the pixel coordinate space of the MOST RECENT screenshot (the image you just saw) — the agent converts to native screen coordinates. Never estimate scaling yourself.
@@ -166,11 +281,11 @@ Coordinate contract: screenshots are downscaled for you. ALWAYS click in the pix
 You are an extension of the user: use THEIR existing setup. The first screenshot names the frontmost app — if the task fits what is already open (their browser with their logins, their mail client, the document they are in), continue there instead of opening something new. Use the browser and apps they already use (the default browser via open with a URL; never install or switch to a different browser). Only ask which app to use when the choice is genuinely ambiguous AND matters.
 
 Operating guidance:
-- To open an app, prefer the open tool with the app's name (or use Spotlight: key "space" with modifiers ["cmd"], type the name, key "return"). To open a website, use open with the URL (opens in their default browser, already signed in to their accounts).
-- Prefer keyboard shortcuts over clicking when reliable (cmd+tab switch apps, cmd+space Spotlight, tab/return in dialogs and forms).
+${MAC_OPEN_APP_BULLET}
+${MAC_SHORTCUT_BULLET}
 - After clicking into a text field, type with the type tool. To submit a form, prefer key "return" over hunting for a button.
 - Verify each action's effect in the fresh screenshot before the next one. If nothing changed, reconsider (wrong coordinates, a dialog stole focus, the app is slow) rather than repeating the identical action.
-- A "NO VISIBLE CHANGE" notice means the screen was pixel-identical after your action, on a verified readable screenshot: either the input did not land, or the action simply had no visible effect. Never repeat the identical action: re-ground with ONE screenshot, then try a DIFFERENT action that should visibly change the screen (open a menu, type into a field); if that also changes nothing, call done and report the task BLOCKED by input delivery (Accessibility permission / synthetic-input drop), including the setup fix for the user.
+${MAC_NO_CHANGE_BULLET}
 - macOS permission errors (Screen Recording / Accessibility) arrive in the tool result — relay the setup instructions to the user verbatim in your done message; do NOT retry in a loop.
 - The user values autonomy: act decisively, don't ask for confirmation. Use ask_user ONLY when truly stuck (e.g. a password only the user knows). The user cannot answer mid-run, so prefer finishing with clear instructions over blocking.
 - When the task is complete — or genuinely cannot proceed — call done with a full, concrete answer for the user (what you did, what you saw, anything they must finish themselves).`;
@@ -193,20 +308,20 @@ export function instructionsForPlatform(
       `You are operating the user's own Windows computer for them.`,
     )
     .replace(
-      `- To open an app, prefer the open tool with the app's name (or use Spotlight: key "space" with modifiers ["cmd"], type the name, key "return"). To open a website, use open with the URL (opens in their default browser, already signed in to their accounts).`,
+      MAC_OPEN_APP_BULLET,
       `- To open an app, press the Win key (key "win"), type the app's name, press return — or use open with the app's name. To open a website, use open with the URL (opens in their default browser, already signed in to their accounts).`,
     )
     .replace(
-      `- Prefer keyboard shortcuts over clicking when reliable (cmd+tab switch apps, cmd+space Spotlight, tab/return in dialogs and forms).`,
-      `- Prefer keyboard shortcuts over clicking when reliable (alt+tab switch apps, Win-key search, ctrl shortcuts, tab/return in dialogs and forms). Modifier names: ctrl, alt, shift, win.`,
+      MAC_SHORTCUT_BULLET,
+      `- Prefer keyboard shortcuts over clicking when reliable (alt+tab switch apps, Win-key search, ctrl shortcuts, tab/return in dialogs and forms). Modifier names: ctrl, alt, shift, win. A shortcut the focused app does not bind legitimately changes NOTHING even though your keystroke landed — a shortcut doing nothing is NOT evidence the keyboard is dead. If one shortcut appears to have no effect, type into a focused text field once to confirm the keyboard itself works, then take a different route (click, or the open tool) instead of repeating the chord.`,
     )
     .replace(
       `- macOS permission errors (Screen Recording / Accessibility) arrive in the tool result — relay the setup instructions to the user verbatim in your done message; do NOT retry in a loop.`,
       `- Windows blocks some actions by design instead of showing permission prompts: an elevated (administrator) window ignores synthetic clicks/keys from a normal app (UIPI), a locked screen or secure desktop cannot be captured, and anti-cheat/DRM windows refuse capture or input. Those errors arrive in the tool result — report plainly what blocks and what the user must do (unlock the PC, click the elevated window themselves, or run the task in a non-admin window); do NOT retry in a loop.`,
     )
     .replace(
-      `(Accessibility permission / synthetic-input drop), including the setup fix for the user.`,
-      `(an elevated/UIPI-protected window, or synthetic input being dropped), including the fix for the user.`,
+      MAC_NO_CHANGE_BULLET,
+      `- A "NO VISIBLE CHANGE" notice means the screen was pixel-identical after your action, on a verified readable screenshot. THREE things produce it, and only the last is a defect: (1) the action legitimately had no visible effect — a shortcut this app does not bind, a target already selected; (2) the input landed but its effect is on a window the capture is not showing; (3) the input truly did not land (an elevated/UIPI-protected window, or synthetic input being dropped), including the fix for the user. Never repeat the identical action: re-ground with ONE screenshot, then try a DIFFERENT action that should visibly change the screen — typing into a focused text field is the cheapest decisive test. Only report the task BLOCKED by input delivery when the harness's own positive-control verdict says the write path failed; a single shortcut that did nothing is not that verdict, and typing that lands proves the keyboard works.`,
     );
   // B1 (review, PR #1064): the uia_* sentence is spliced ONLY when the agent
   // can claim the commands — a 0.8.x Windows agent must not be told about
@@ -1176,6 +1291,7 @@ export async function runComputerAgentSession(
       displayCount: null,
       probesRun: 0,
       probesPassed: 0,
+      probesConclusive: 0,
       inputProven: false,
       frontmostChanges: 0,
     };
@@ -1756,7 +1872,12 @@ export async function runComputerAgentSession(
             strikeScored &&
             noChangeStreak >= PROBE_AT_STRIKES &&
             noChangeStreak > probedAtStreak &&
-            counters.probesRun < MAX_PROBE_ATTEMPTS &&
+            // ticket 09c984d8 (MEDIUM-1): the CONCLUSIVE budget bounds
+            // probes that produced a compared frame pair; a separate hard
+            // ceiling bounds total dispatches so an unreadable device cannot
+            // extend the probe forever.
+            counters.probesConclusive < MAX_PROBE_ATTEMPTS &&
+            counters.probesRun < MAX_PROBE_DISPATCHES &&
             !inputProven &&
             !observeOnly &&
             selection.platform !== "windows"
@@ -1765,32 +1886,158 @@ export async function runComputerAgentSession(
             counters.probesRun += 1;
             const preB64 = lastShotB64;
             const preApp = lastFrontmost;
+            const preMetrics = lastFrameGrade?.metrics ?? null;
             try {
-              sendEvent("progress", { message: "Input watchdog: running a harness positive-control probe (Cmd+Space, then Escape) before drawing any verdict." });
-              const p1 = await driver.execute({ name: "key", key: "space", modifiers: ["cmd"], reasoning: "harness positive-control probe" });
-              const p1Changed =
-                (!!p1.screenshotBase64 && !!preB64 && p1.screenshotBase64 !== preB64) ||
-                (!!p1.frontmostApp && !!preApp && p1.frontmostApp !== preApp);
-              const p1Grade = p1.screenshotBase64 ? gradeFrame(p1) : null;
-              const p1Pct = frameDiffPercent(lastFrameGrade?.metrics ?? null, p1Grade?.metrics ?? null);
+              sendEvent("progress", { message: `Input watchdog: running a harness positive-control probe (${formatProbeLegs()}) before drawing any verdict.` });
+              // ticket a40f64d9: the control runs EVERY leg, not just Cmd+Space.
+              // A remapped/unbound shortcut is delivered but legally changes
+              // nothing, so one leg cannot distinguish "this chord is remapped"
+              // from "no synthetic input reaches this session".
+              const legResults: ProbeLegResult[] = [];
+              let passed: ProbeLegResult | null = null;
+              let lastLegObs: ComputerObservation | null = null;
+              for (const leg of PROBE_LEGS) {
+                let r: ComputerObservation | null = null;
+                // ticket 09c984d8 (MEDIUM-2): what the DEVICE did, kept apart
+                // from what the probe could READ. `dispatched` = the call
+                // reached the device and came back (a refusal reached it and
+                // returned ok:false; a transport throw did not); `landed` = the
+                // device ACCEPTED the chord. The focus restore reads these —
+                // never the verdict that the leg looked inert.
+                let dispatched = false;
+                let landed = false;
+                try {
+                  r = await driver.execute({ name: "key", key: leg.key, modifiers: [...leg.modifiers], reasoning: "harness positive-control probe" });
+                  dispatched = true;
+                  landed = !!r && r.ok !== false;
+                } catch (e: any) {
+                  logger.warn(`computer loop: harness probe leg ${leg.label} failed to dispatch: ${e?.message || e}`);
+                }
+                if (!r || !r.ok || !r.screenshotBase64) {
+                  // INCONCLUSIVE: the leg's dispatch was refused or returned no
+                  // frame, so it is no evidence either way — and we cannot SEE
+                  // the result. Stop here rather than dispatching the next leg:
+                  // a leg that may have landed unreadably must not be followed
+                  // by more input (Cmd+Tab would switch apps blind).
+                  legResults.push({
+                    label: leg.label,
+                    conclusive: false,
+                    changed: false,
+                    pct: null,
+                    dispatched,
+                    landed,
+                    ...(r?.frontmostApp ? { frontmost: r.frontmostApp } : {}),
+                  });
+                  break;
+                }
+                const g = gradeFrame(r);
+                const pct = frameDiffPercent(preMetrics, g.metrics);
+                const changed =
+                  (!!preB64 && r.screenshotBase64 !== preB64) ||
+                  (!!preApp && !!r.frontmostApp && r.frontmostApp !== preApp);
+                const res: ProbeLegResult = {
+                  label: leg.label,
+                  conclusive: true,
+                  changed,
+                  pct,
+                  frontmost: r.frontmostApp,
+                  dispatched,
+                  landed,
+                };
+                legResults.push(res);
+                lastLegObs = r;
+                if (changed) { passed = res; break; }
+              }
+              // Cmd+Tab COMMITS an app switch, so the switcher leg can leave the
+              // user's focus somewhere else — hand it straight back (a second
+              // Cmd+Tab returns to the app that was frontmost) so the probe
+              // never leaves the task parked on someone else's window.
+              const tabLeg = legResults.find((l) => l.label === PROBE_LEGS[1].label);
+              // A PASSING switcher leg restores immediately (before the Escape
+              // cleanup) exactly as it always has: its own frame proved the app
+              // changed, so its frontmost field IS the live truth.
+              if (passed?.label === PROBE_LEGS[1].label && tabLeg?.frontmost && preApp && tabLeg.frontmost !== preApp) {
+                try {
+                  const back = await driver.execute({ name: "key", key: PROBE_LEGS[1].key, modifiers: [...PROBE_LEGS[1].modifiers], reasoning: "harness probe restore" });
+                  if (back?.screenshotBase64) lastLegObs = back;
+                } catch (e: any) {
+                  logger.warn(`computer loop: harness probe focus-restore failed to dispatch: ${e?.message || e}`);
+                }
+              }
               const p2 = await driver.execute({ name: "key", key: "escape", reasoning: "harness probe cleanup" });
-              probeFrame = p2.screenshotBase64 ? p2 : p1.screenshotBase64 ? p1 : null;
-              if (p1.ok && p1.screenshotBase64 && p1Changed) {
+              probeFrame = (p2.ok && p2.screenshotBase64) ? p2 : lastLegObs?.screenshotBase64 ? lastLegObs : null;
+              // ticket 09c984d8 (MEDIUM-2): a switcher leg that did NOT pass can
+              // still have moved the user's focus. Cmd+Tab commits the switch
+              // whether or not the probe could READ the result — the switcher's
+              // two targets can be pixel-identical (verdict "inert") and the
+              // frame read can fail outright — and the old
+              // `passed?.label === switcher && frontmost !== preApp` gate asked
+              // the VERDICT whether the app moved, so the restore never ran and
+              // the user was left parked on another window. The decision now
+              // reads what the DEVICE says: the frontmost app on the LIVE frame
+              // taken after the leg (the Escape cleanup's own screenshot — no
+              // extra round-trip), falling back to the leg's frame field. Only a
+              // leg that provably never reached the device, or was refused,
+              // skips the restore (nothing moved, so switching back would move
+              // the focus itself).
+              if (tabLeg && !passed) {
+                const observed = p2?.frontmostApp ?? tabLeg.frontmost ?? null;
+                if (
+                  probeLeftFocusMoved({
+                    dispatched: !!tabLeg.dispatched,
+                    landed: !!tabLeg.landed,
+                    preApp,
+                    observed,
+                  })
+                ) {
+                  try {
+                    const back = await driver.execute({ name: "key", key: PROBE_LEGS[1].key, modifiers: [...PROBE_LEGS[1].modifiers], reasoning: "harness probe restore" });
+                    if (back?.screenshotBase64) {
+                      lastLegObs = back;
+                      probeFrame = back;
+                    }
+                  } catch (e: any) {
+                    logger.warn(`computer loop: harness probe focus-restore failed to dispatch: ${e?.message || e}`);
+                  }
+                }
+              }
+              const inconclusiveLegs = legResults.filter((l) => !l.conclusive);
+              // ticket 09c984d8 (MEDIUM-1): only an observation that ACTUALLY
+              // produced a compared frame pair may advance the inert/landed
+              // verdict — i.e. spend MAX_PROBE_ATTEMPTS. A probe where every
+              // leg was inconclusive (dispatch refused / no frame) yields no
+              // evidence either way, so it extends the budget instead of
+              // spending it (MAX_PROBE_DISPATCHES is the hard ceiling).
+              if (legResults.some((l) => l.conclusive)) counters.probesConclusive += 1;
+              if (passed) {
                 counters.probesPassed += 1;
                 inputProven = true;
                 counters.inputProven = true;
                 noChangeStreak = 0;
+                const detail = `${passed.pct !== null ? `${passed.pct}% of pixels` : "bytes differ"}${passed.frontmost && preApp && passed.frontmost !== preApp ? `, frontmost ${preApp}→${passed.frontmost}` : ""}`;
+                // The remap case is the ticket's own class: leg 1 DELIVERED but
+                // visibly inert, a later leg proving the write path is alive.
+                // Only a CONCLUSIVE inert leg licenses the "remapped" claim — an
+                // inconclusive one (dispatch refused / no frame) says nothing
+                // about the shortcut, so it must never be called remapped.
+                const first = legResults[0];
+                const remapNote =
+                  passed !== first && first?.conclusive && !first.changed
+                    ? ` NOTE: ${first.label} changed nothing on this Mac — that shortcut is remapped or disabled (System Settings → Keyboard → Shortcuts), so it is NOT a usable way to open things here: use the open tool instead, and do not read an inert shortcut as dead input.`
+                    : "";
                 probeNote =
-                  `HARNESS POSITIVE CONTROL PASSED — the harness pressed Cmd+Space and the screen changed (${p1Pct !== null ? `${p1Pct}% of pixels` : "bytes differ"}${p1.frontmostApp && preApp && p1.frontmostApp !== preApp ? `, frontmost ${preApp}→${p1.frontmostApp}` : ""}), then Escape. Input IS landing on this device: your recent actions simply had no visible effect where the camera looks. Change approach (different target, keyboard navigation); the input-delivery hypothesis is closed.`;
-                sendEvent("computer-observation", { action: "probe", ok: true, driver: "computer", app: p1.frontmostApp, preview: `harness probe: Cmd+Space changed the screen — input lands (${p1Pct !== null ? `${p1Pct}% pixels` : "bytes differ"})` });
-              } else if (p1.ok && p1.screenshotBase64) {
+                  `HARNESS POSITIVE CONTROL PASSED — the harness pressed ${passed.label} and the screen changed (${detail}), then Escape. Input IS landing on this device: your recent actions simply had no visible effect where the camera looks. Change approach (different target, keyboard navigation); the input-delivery hypothesis is closed.${remapNote}`;
+                sendEvent("computer-observation", { action: "probe", ok: true, driver: "computer", app: passed.frontmost, preview: `harness probe: ${passed.label} changed the screen — input lands (${passed.pct !== null ? `${passed.pct}% pixels` : "bytes differ"})` });
+              } else if (legResults.every((l) => l.conclusive)) {
                 probeFailed = true;
-                sendEvent("computer-observation", { action: "probe", ok: false, driver: "computer", app: p1.frontmostApp, preview: "harness probe: Cmd+Space produced an identical frame with an unchanged frontmost app" });
+                sendEvent("computer-observation", { action: "probe", ok: false, driver: "computer", app: lastLegObs?.frontmostApp, preview: `harness probe: ${formatProbeLegs()} each produced an identical frame with an unchanged frontmost app` });
               } else {
-                // Probe inconclusive (dispatch refused / no frame) — no verdict.
-                // The streak stands; the probe is retried at most once, on the
-                // next genuine strike (never on a read / wait / no-op key).
-                sendEvent("computer-observation", { action: "probe", ok: false, driver: "computer", preview: `harness probe inconclusive: ${p1.error || "no frame"}` });
+                // Probe inconclusive (every conclusive leg was inert AND at
+                // least one dispatch was refused / returned no frame) — no
+                // verdict. The streak stands; the probe is retried at most
+                // once, on the next genuine strike (never on a read / wait /
+                // no-op key).
+                sendEvent("computer-observation", { action: "probe", ok: false, driver: "computer", preview: `harness probe inconclusive: ${inconclusiveLegs.map((l) => l.label).join(", ")} produced no frame` });
               }
               if (probeFrame?.screenshotBase64) {
                 lastShotB64 = probeFrame.screenshotBase64;
@@ -1965,9 +2212,9 @@ export async function runComputerAgentSession(
             finalText =
               `Computer use stopped: ${noChangeStreak} consecutive input actions produced no visible change on your ${noun} — the screen was pixel-identical after each, on verifiable screenshots (last attempted: ${action.name})${geometry}. ` +
               (probeFailed
-                ? "The harness then ran its own positive-control probe (Cmd+Space, then Escape) and that ALSO produced a byte-identical frame with an unchanged frontmost app. "
+                ? `The harness then ran its own positive-control probe (${formatProbeLegs()}, then Escape) and EVERY leg produced a byte-identical frame with an unchanged frontmost app. `
                 : counters.probesRun > 0
-                  ? `The harness tried its own positive-control probe (Cmd+Space, then Escape) ${counters.probesRun === 1 ? "once" : `${counters.probesRun} times`} but it was inconclusive (the keystroke was refused or no frame came back), so it could not settle whether input lands. `
+                  ? `The harness tried its own positive-control probe (${formatProbeLegs()}, then Escape) ${counters.probesRun === 1 ? "once" : `${counters.probesRun} times`} but it was inconclusive (a keystroke was refused or no frame came back), so it could not settle whether input lands. `
                   : "") +
               "The actions were dispatched, but their effect on the screen could not be verified. " +
               (selection.platform === 'windows'

@@ -210,7 +210,7 @@ export function shouldRenew(expiration: Date | string | null | undefined, now: D
 
 /** The public push URL handed to Google (share-link host convention). */
 export function driveWatchWebhookUrl(): string {
-  const host = (process.env.FRONTEND_URL ?? 'https://digby.example.com').split(',')[0].replace(/\/$/, '');
+  const host = (process.env.FRONTEND_URL ?? 'https://digby.ai').split(',')[0].replace(/\/$/, '');
   return `${host}/api/crossmodel/google/drive-watch/webhook`;
 }
 

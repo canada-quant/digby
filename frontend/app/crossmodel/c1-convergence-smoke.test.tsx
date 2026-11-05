@@ -540,7 +540,9 @@ describe('C1 smoke [42aeabf3] queued messages carry attachments (design §3 C1.2
     // send() snapshots the page's staged attachments into uploadIds…
     expect(VIEW).toContain('const uploadIds = atts.map(a => a.uploadId);');
     // …hands them to the busy-queue passthrough while a turn is live…
-    expect(VIEW).toContain('void queuePlainBehindLive(sid, effectiveMessage, plainCfg, uploadIds);');
+    // (ea04454c: the call also carries an onQueued callback so "Send now" can
+    // promote exactly this row — the uploadIds argument is unchanged.)
+    expect(VIEW).toContain('void queuePlainBehindLive(sid, effectiveMessage, plainCfg, uploadIds, {');
     // …and to the direct send URL otherwise (63bb607f: the guest session's
     // named context key rides the same call site; 2026-09-26: so does the
     // patience-plan label-window modeSource — label-window-mode-source.test.ts).

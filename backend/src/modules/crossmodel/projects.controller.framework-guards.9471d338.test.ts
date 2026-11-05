@@ -32,7 +32,7 @@ jest.mock('../../middleware/error-handler', () => ({
 // wiring without importing platform.service's whole graph.
 jest.mock('./platform/platform.service', () => ({
   __esModule: true,
-  isFrameworkProject: (row: any) => row?.repoUrl === 'canada-quant/digby',
+  isFrameworkProject: (row: any) => row?.repoUrl === 'example-org/crossmodel',
   frameworkProjectRefusal: (action: string) => `The Digby Framework project is a platform surface and cannot be ${action}ed like a user project (manage it from Manager → Framework).`,
 }));
 jest.mock('./langgraph/memory.graph', () => ({
@@ -63,7 +63,7 @@ function res() {
   return r;
 }
 
-const FRAMEWORK_ROW = { id: FW, userId: OWNER, name: 'crossmodel', repoUrl: 'canada-quant/digby' };
+const FRAMEWORK_ROW = { id: FW, userId: OWNER, name: 'crossmodel', repoUrl: 'example-org/crossmodel' };
 const req = (over: Record<string, unknown> = {}) =>
   ({ user: { id: OWNER }, params: { id: FW }, body: {}, ...over } as any);
 

@@ -1468,7 +1468,7 @@ describe('assertDecisionSpecAssignable + effectivePrimarySpec (plan D/F, 2026-09
 // refused and an owner-confirmed card passes ('allowed_by_owner'). Coding /
 // helper seats are not governed; the run path never consults it.
 describe('seat governance — frontier-class registry models on chat / supervisor seats (audit E3)', () => {
-  const FRONTIER_REG = { ...REG, url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', model: 'api-anthropic-claude-fable-5-1', label: 'cql-litellm', governanceClass: 'frontier' as const };
+  const FRONTIER_REG = { ...REG, url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', model: 'api-anthropic-claude-fable-5-1', label: 'cql-litellm', governanceClass: 'frontier' as const };
   const SPEC = 'cql-litellm:api-anthropic-claude-fable-5-1';
   const prevFlag = process.env.FRONTIER_SEATS_REFUSE;
   /** recordSeatGovernance writes through a dynamic import — let the microtask settle. */

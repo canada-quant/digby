@@ -285,7 +285,7 @@ export function valueSlotMismatch(envKey: string, value: string): string | null 
   // (`/^(?:AKIA|…)…{16}$/`): a 60-char `AKIA…<40>` blob is neither a bare key
   // ID nor a bare 40-char secret, so it slipped through every store door and
   // landed on a *_SECRET_ACCESS_KEY slot as one unusable value (the incident:
-  // a ctrl.example.com S3 pair stored as a 60-char $CANLAW_CPT_S3_SECRET_ACCESS_KEY
+  // a ctrl.cql.ca S3 pair stored as a 60-char $CANLAW_CPT_S3_SECRET_ACCESS_KEY
   // whose tail was the only real secret). The capture legs now SPLIT such a
   // run before it reaches here (secret-scan's pushCaptureSpan), so this is
   // the second door: the Account → Coding form and any direct API write. The

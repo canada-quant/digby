@@ -85,15 +85,15 @@ beforeEach(() => {
 
 describe('normalizeCloudUrl', () => {
   it('accepts full URLs, stripping trailing slashes and lowercasing scheme+host', async () => {
-    expect(normalizeCloudUrl('https://digby.example.com/')).toBe('https://digby.example.com');
-    expect(normalizeCloudUrl('HTTPS://DIGBY.EXAMPLE.COM')).toBe('https://digby.example.com');
+    expect(normalizeCloudUrl('https://digby.ai/')).toBe('https://digby.ai');
+    expect(normalizeCloudUrl('HTTPS://DIGBY.AI')).toBe('https://digby.ai');
     expect(normalizeCloudUrl('http://192.168.1.10:8080/')).toBe('http://192.168.1.10:8080');
   });
 
   it('prepends https:// when no scheme was entered', async () => {
-    expect(normalizeCloudUrl('digby.example.com')).toBe('https://digby.example.com');
-    expect(normalizeCloudUrl('  digby.example.com  ')).toBe('https://digby.example.com');
-    expect(normalizeCloudUrl('digby.example.com:8443')).toBe('https://digby.example.com:8443');
+    expect(normalizeCloudUrl('digby.ai')).toBe('https://digby.ai');
+    expect(normalizeCloudUrl('  digby.ai  ')).toBe('https://digby.ai');
+    expect(normalizeCloudUrl('digby.ai:8443')).toBe('https://digby.ai:8443');
     expect(normalizeCloudUrl('localhost:4000')).toBe('https://localhost:4000');
   });
 
@@ -114,13 +114,13 @@ describe('getCloudLinkStatus', () => {
 
   it('reports the live socket flag from the tunnel client', async () => {
     db.push({
-      id: 'l1', cloudUrl: 'https://digby.example.com', tokenEnc: 'CIPHERTEXT',
+      id: 'l1', cloudUrl: 'https://digby.ai', tokenEnc: 'CIPHERTEXT',
       instanceName: 'home-lab', pairedByUserId: 'u1', state: 'linked',
       lastError: null, createdAt: new Date(), updatedAt: new Date(),
     });
     mockTunnel.isConnected.mockReturnValue(true);
     const s = await getCloudLinkStatus();
-    expect(s).toMatchObject({ state: 'linked', cloudUrl: 'https://digby.example.com', instanceName: 'home-lab', connected: true });
+    expect(s).toMatchObject({ state: 'linked', cloudUrl: 'https://digby.ai', instanceName: 'home-lab', connected: true });
     expect(JSON.stringify(s)).not.toContain('tokenEnc');
     expect(JSON.stringify(s)).not.toContain('CIPHERTEXT');
   });
@@ -131,14 +131,14 @@ describe('pairToCloud', () => {
 
   it('redeems the code server-side, stores the token encrypted, starts the tunnel', async () => {
     mockedAxios.post.mockResolvedValueOnce(okResponse as any);
-    const status = await pairToCloud('u1', 'https://digby.example.com/', 'ABCD-2345', 'home-lab');
+    const status = await pairToCloud('u1', 'https://digby.ai/', 'ABCD-2345', 'home-lab');
 
     const [url, body] = mockedAxios.post.mock.calls[0];
-    expect(url).toBe('https://digby.example.com/api/crossmodel/instances/pair/complete');
+    expect(url).toBe('https://digby.ai/api/crossmodel/instances/pair/complete');
     expect(body).toMatchObject({ code: 'ABCD-2345', instanceName: 'home-lab', protocolVersion: 1 });
 
     expect(db).toHaveLength(1);
-    expect(db[0].cloudUrl).toBe('https://digby.example.com'); // trailing slash stripped
+    expect(db[0].cloudUrl).toBe('https://digby.ai'); // trailing slash stripped
     expect(db[0].pairedByUserId).toBe('u1');
     expect(db[0].state).toBe('linked');
     expect(db[0].tokenEnc).toBeTruthy();
@@ -150,7 +150,7 @@ describe('pairToCloud', () => {
 
   it('singleton: re-pairing replaces any existing row', async () => {
     mockedAxios.post.mockResolvedValue(okResponse as any);
-    await pairToCloud('u1', 'https://digby.example.com', 'AAAA-1111');
+    await pairToCloud('u1', 'https://digby.ai', 'AAAA-1111');
     await pairToCloud('u1', 'https://cloud.example.com', 'BBBB-2222');
     expect(db).toHaveLength(1);
     expect(db[0].cloudUrl).toBe('https://cloud.example.com');
@@ -160,7 +160,7 @@ describe('pairToCloud', () => {
     mockedAxios.post.mockRejectedValueOnce({
       response: { status: 401, data: { success: false, error: 'Invalid or expired pairing code' } },
     });
-    await expect(pairToCloud('u1', 'https://digby.example.com', 'BAD-CODE'))
+    await expect(pairToCloud('u1', 'https://digby.ai', 'BAD-CODE'))
       .rejects.toMatchObject({ statusCode: 401, message: 'Invalid or expired pairing code' });
     expect(db).toHaveLength(0);
     expect(mockTunnel.restart).not.toHaveBeenCalled();
@@ -168,19 +168,19 @@ describe('pairToCloud', () => {
 
   it('maps an unreachable cloud to 502', async () => {
     mockedAxios.post.mockRejectedValueOnce({ code: 'ECONNREFUSED', message: 'connect ECONNREFUSED' });
-    await expect(pairToCloud('u1', 'https://digby.example.com', 'ABCD-2345'))
+    await expect(pairToCloud('u1', 'https://digby.ai', 'ABCD-2345'))
       .rejects.toMatchObject({ statusCode: 502, message: expect.stringContaining('unreachable') });
   });
 
   it('rejects a malformed success payload (no dgi_ token) with 502', async () => {
     mockedAxios.post.mockResolvedValueOnce({ data: { success: true, data: { instanceId: 'i1' } } } as any);
-    await expect(pairToCloud('u1', 'https://digby.example.com', 'ABCD-2345'))
+    await expect(pairToCloud('u1', 'https://digby.ai', 'ABCD-2345'))
       .rejects.toMatchObject({ statusCode: 502, message: expect.stringContaining('malformed') });
     expect(db).toHaveLength(0);
   });
 
   it('400s on a missing code before ever calling the cloud', async () => {
-    await expect(pairToCloud('u1', 'https://digby.example.com', '  '))
+    await expect(pairToCloud('u1', 'https://digby.ai', '  '))
       .rejects.toMatchObject({ statusCode: 400 });
     expect(mockedAxios.post).not.toHaveBeenCalled();
   });
@@ -191,14 +191,14 @@ describe('unlinkFromCloud', () => {
     // Seed a real pair so the stored ciphertext decrypts to a real dgi_ token.
     const token = `dgi_${'c'.repeat(48)}`;
     mockedAxios.post.mockResolvedValueOnce({ data: { success: true, data: { instanceId: 'i1', token } } } as any);
-    await pairToCloud('u1', 'https://digby.example.com', 'ABCD-2345');
+    await pairToCloud('u1', 'https://digby.ai', 'ABCD-2345');
 
     mockedAxios.delete.mockResolvedValueOnce({ data: { success: true } } as any);
     const status = await unlinkFromCloud();
 
     expect(mockTunnel.stop).toHaveBeenCalled();
     const [url, opts] = mockedAxios.delete.mock.calls[0];
-    expect(url).toBe('https://digby.example.com/api/crossmodel/instances/self');
+    expect(url).toBe('https://digby.ai/api/crossmodel/instances/self');
     expect((opts as any).headers.Authorization).toBe(`Bearer ${token}`);
     expect(db).toHaveLength(0);
     expect(status.state).toBe('unlinked');
@@ -206,7 +206,7 @@ describe('unlinkFromCloud', () => {
 
   it('proceeds locally even when the cloud is unreachable', async () => {
     db.push({
-      id: 'l1', cloudUrl: 'https://digby.example.com', tokenEnc: 'not-decryptable',
+      id: 'l1', cloudUrl: 'https://digby.ai', tokenEnc: 'not-decryptable',
       instanceName: 'x', pairedByUserId: 'u1', state: 'error',
       lastError: 'token rejected — re-pair', createdAt: new Date(), updatedAt: new Date(),
     });
@@ -227,7 +227,7 @@ describe('unlinkFromCloud', () => {
 
 describe('startEdgePairingCode (device activation — the edge mints the code)', () => {
   it('mints an XXXX-XXXX code, records sha256+metadata in Redis (10-min TTL), creates a pending row, starts the pending dial', async () => {
-    const { code, expiresAt } = await startEdgePairingCode('u1', 'digby.example.com', 'home-lab');
+    const { code, expiresAt } = await startEdgePairingCode('u1', 'digby.ai', 'home-lab');
     expect(code).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     expect(expiresAt.getTime()).toBeGreaterThan(Date.now() + 9 * 60 * 1000);
 
@@ -237,12 +237,12 @@ describe('startEdgePairingCode (device activation — the edge mints the code)',
     expect(keys[0]).toMatch(/^edge:paircode:[0-9a-f]{64}$/);
     expect(JSON.stringify(redisStore.get(keys[0]))).not.toContain(code);
     expect(JSON.parse(redisStore.get(keys[0])!)).toMatchObject({
-      cloudUrl: 'https://digby.example.com', instanceName: 'home-lab', userId: 'u1',
+      cloudUrl: 'https://digby.ai', instanceName: 'home-lab', userId: 'u1',
     });
 
     expect(db).toHaveLength(1);
     expect(db[0]).toMatchObject({
-      cloudUrl: 'https://digby.example.com', // normalized: scheme prepended
+      cloudUrl: 'https://digby.ai', // normalized: scheme prepended
       instanceName: 'home-lab',
       pairedByUserId: 'u1',
       state: 'pending',
@@ -255,11 +255,11 @@ describe('startEdgePairingCode (device activation — the edge mints the code)',
 
   it('409s when already linked — unlink first', async () => {
     db.push({
-      id: 'l1', cloudUrl: 'https://digby.example.com', tokenEnc: 'CIPHERTEXT',
+      id: 'l1', cloudUrl: 'https://digby.ai', tokenEnc: 'CIPHERTEXT',
       instanceName: 'x', pairedByUserId: 'u1', state: 'linked',
       lastError: null, createdAt: new Date(), updatedAt: new Date(),
     });
-    await expect(startEdgePairingCode('u1', 'https://digby.example.com'))
+    await expect(startEdgePairingCode('u1', 'https://digby.ai'))
       .rejects.toMatchObject({ statusCode: 409 });
     expect(mockTunnel.startPendingPairing).not.toHaveBeenCalled();
     expect(db).toHaveLength(1);
@@ -272,10 +272,10 @@ describe('startEdgePairingCode (device activation — the edge mints the code)',
       instanceName: 'x', pairedByUserId: 'u1', state: 'error',
       lastError: 'pairing code expired — generate a new one', createdAt: new Date(), updatedAt: new Date(),
     });
-    await startEdgePairingCode('u1', 'https://digby.example.com');
+    await startEdgePairingCode('u1', 'https://digby.ai');
     expect(db).toHaveLength(1);
     expect(db[0].state).toBe('pending');
-    expect(db[0].cloudUrl).toBe('https://digby.example.com');
+    expect(db[0].cloudUrl).toBe('https://digby.ai');
     expect(db[0].lastError).toBeNull();
   });
 
@@ -288,8 +288,8 @@ describe('startEdgePairingCode (device activation — the edge mints the code)',
   });
 
   it('getCloudLinkStatus surfaces the pending state (UI polls it while waiting)', async () => {
-    await startEdgePairingCode('u1', 'https://digby.example.com', 'home-lab');
+    await startEdgePairingCode('u1', 'https://digby.ai', 'home-lab');
     const s = await getCloudLinkStatus();
-    expect(s).toMatchObject({ state: 'pending', cloudUrl: 'https://digby.example.com', instanceName: 'home-lab', connected: false });
+    expect(s).toMatchObject({ state: 'pending', cloudUrl: 'https://digby.ai', instanceName: 'home-lab', connected: false });
   });
 });

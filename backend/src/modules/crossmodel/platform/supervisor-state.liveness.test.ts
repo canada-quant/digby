@@ -24,7 +24,7 @@ jest.mock('../../../config/database', () => ({
   default: {
     crossModelChat: { findMany: (...a: any[]) => mockChatFindMany(...a) },
     crossModelProject: { findMany: (...a: any[]) => mockProjectFindMany(...a) },
-    codingSchedule: {
+    chatSchedule: {
       groupBy: (...a: any[]) => mockSchedGroupBy(...a),
       findMany: (...a: any[]) => mockSchedFindMany(...a), // the near-cap row scan (ticket b4d1096c)
     },

@@ -40,8 +40,15 @@ admin-designated endpoint itself (or derived locally from your first message,
 with no network call at all, when no endpoint is designated) — never by a
 cloud model that the admin did not designate.
 
-Ghost mode is orthogonal to how deeply Digby thinks — it changes where the
-models run and what is remembered, not the depth of the answer.
+Ghost mode overrides how deeply Digby thinks: a ghost conversation gets
+exactly **one** answer from the designated model. It does not run a Double
+Checker, an ensemble or a research council, whatever depth the composer,
+Auto routing or the decision gate would otherwise pick — a second model would
+mean a second inference on a posture whose whole point is one private answer
+(and, before 2026-11-03, a "Double Checker is researching alongside…" banner
+that promised a comparison the privacy rule never intended to make). Ghost
+mode therefore changes **where** the model runs, **how many** models run, and
+what is remembered — one model, one answer, nothing remembered.
 
 ## What the admin designates
 
@@ -60,8 +67,10 @@ conversation ever routes through a model the admin did not designate.
 
 **Does:**
 
-- Routes the conversation's models to the admin-designated self-hosted
-  endpoint.
+- Routes the conversation's model — exactly one inference, the lead — to the
+  admin-designated self-hosted endpoint. No Double Checker, ensemble or
+  research council runs on a ghost conversation, whatever depth would
+  otherwise apply.
 - Keeps the conversation out of Digby's per-user memory, out of learning, and
   out of cross-chat surfacing.
 

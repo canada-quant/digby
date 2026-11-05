@@ -72,7 +72,7 @@
 ; LZMA SOLID (NSIS's default is zlib). The payload — self-contained .NET shell
 ; (~180 MB) + node.exe (~87 MB) + agent JS/node_modules (~19 MB) — lands at
 ; 103.1 MiB under zlib, which is OVER GitHub's 100 MiB push limit and therefore
-; blocks the digby.example.com publish path (frontend/public direct commit, the Digby.dmg
+; blocks the digby.ai publish path (frontend/public direct commit, the Digby.dmg
 ; precedent). LZMA-solid compresses this mix ~25-40% smaller (~7x MB) — under
 ; the limit and a smaller download for every user.
 ;   /FINAL  — an !include'd script cannot silently re-set it back to zlib.

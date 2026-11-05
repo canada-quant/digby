@@ -202,11 +202,11 @@ cat > "$ROOT/frontend/public/DigbyAgent.pkg.json" <<EOF
 EOF
 # url is RELATIVE on purpose (reviewer 2026-10-25): the stamp sits next to the
 # pkg, so a bare filename resolves on whatever origin serves it — a hard-coded
-# https://digby.example.com/DigbyAgent.pkg would publish a lie on every self-host.
+# https://digby.ai/DigbyAgent.pkg would publish a lie on every self-host.
 
 echo ""
 echo "✓ Built + notarized: $OUT"
 echo "✓ Staged: frontend/public/DigbyAgent.pkg + DigbyAgent.pkg.json (agent $VERSION)"
-echo "  Publish so digby.example.com serves them:"
+echo "  Publish so digby.ai serves them:"
 echo "    git add frontend/public/DigbyAgent.pkg frontend/public/DigbyAgent.pkg.json"
 echo "    git commit -m 'chore: publish DigbyAgent.pkg $VERSION' && git push origin main"

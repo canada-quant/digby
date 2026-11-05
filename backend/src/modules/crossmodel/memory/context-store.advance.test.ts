@@ -84,19 +84,21 @@ describe('storeFindByKeyPrefix — the prefix is matched LITERALLY', () => {
 });
 
 describe('storeDeleteChatScoped — a deleted chat leaves no chat-keyed rows behind', () => {
-  it("clears [chatId,'thread'] and [chatId,'supervisor-archive'] for each chat, by exact namespace path", async () => {
+  it("clears [chatId,'thread'], [chatId,'supervisor-archive'] and the background-report spill for each chat, by exact namespace path", async () => {
     const deleteMany = jest.fn(async () => ({ count: 3 }));
     const n = await cs.storeDeleteChatScoped(['c1', 'c2', 'c1', ''], { contextStoreEntry: { deleteMany } });
     expect(n).toBe(3);
     expect(deleteMany).toHaveBeenCalledTimes(1);
-    expect(deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { in: ['c1:thread', 'c1:supervisor-archive', 'c2:thread', 'c2:supervisor-archive'] } } });
+    // Ticket 458342f5: a finished background worker's spilled report lives under
+    // [chatId,'background-report'] and must die with the chat like thread state.
+    expect(deleteMany).toHaveBeenCalledWith({ where: { namespacePath: { in: ['c1:thread', 'c1:supervisor-archive', 'c1:background-report', 'c2:thread', 'c2:supervisor-archive', 'c2:background-report'] } } });
   });
 
   it('chunks large account sweeps and does nothing for no chats', async () => {
     const deleteMany = jest.fn(async (args: any) => ({ count: args.where.namespacePath.in.length }));
     const ids = Array.from({ length: 600 }, (_, i) => `chat-${i}`);
-    expect(await cs.storeDeleteChatScoped(ids, { contextStoreEntry: { deleteMany } })).toBe(1200);
-    expect(deleteMany).toHaveBeenCalledTimes(3);
+    expect(await cs.storeDeleteChatScoped(ids, { contextStoreEntry: { deleteMany } })).toBe(1800);
+    expect(deleteMany).toHaveBeenCalledTimes(4);
     expect(deleteMany.mock.calls.every((c: any[]) => c[0].where.namespacePath.in.length <= 500)).toBe(true);
     deleteMany.mockClear();
     expect(await cs.storeDeleteChatScoped([], { contextStoreEntry: { deleteMany } })).toBe(0);

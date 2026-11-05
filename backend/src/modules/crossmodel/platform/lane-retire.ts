@@ -232,7 +232,7 @@ export async function gatherLaneRetireFacts(ids: string[], now: Date = new Date(
   const [states, liveRuns, schedules, shares, owning, runMax, msgMax, receiptMax, userRows, openTodos, ownerQuestions, confirmations, family, inbound] = await Promise.all([
     leg(prisma.chatCodingState.findMany({ where: { id: { in: live } }, select: { id: true, status: true } })),
     leg(prisma.agentRun.findMany({ where: { sessionId: { in: live }, status: { in: ['queued', 'running', 'interrupted'] } }, select: { sessionId: true } })),
-    leg(prisma.codingSchedule.groupBy({ by: ['sessionId'], where: { sessionId: { in: live }, enabled: true }, _count: { _all: true } } as any) as Promise<any[]>),
+    leg(prisma.chatSchedule.groupBy({ by: ['sessionId'], where: { sessionId: { in: live }, enabled: true }, _count: { _all: true } } as any) as Promise<any[]>),
     leg(prisma.chatShareLink.findMany({ where: { chatId: { in: live } }, select: { chatId: true, isActive: true, expiresAt: true } })),
     leg(prisma.userFeatureRequest.findMany({
       where: { status: { in: [...LANE_OWNING_TICKET_STATUSES] }, OR: live.map((id) => ({ context: { path: ['dispatchedTo'], equals: id } })) },

@@ -200,6 +200,59 @@ const CLOUD_DESC =
   'traffic, or anything that does NOT require the user to be logged in. It has no access to the ' +
   "user's personal accounts, cookies, or private sessions.";
 
+/** Ticket 5f69fdc4 (second workstream, 2026-11-03): name the CLOUD
+ *  destination's real INTERACTION CEILING in the routing surface.
+ *
+ *  Measured waste this removes: with CLOUD_BROWSER_CDP off (the production
+ *  default) the router offered CLOUD for an interaction-needing task, the
+ *  first click came back 'disabled-by-config', and only then did the glm-loop
+ *  re-route to a paired Mac (b346ce80) — a wasted round trip plus a refusal
+ *  the user reads as a failure. No destination description ever mentioned that
+ *  cloud could not click, so the reasoning router had no way to know.
+ *
+ *  The ceiling comes from the DRIVER's own interactionCapability(), never a
+ *  second read of the env: this project has twice been bitten by two
+ *  hand-kept copies of one predicate drifting apart, so the driver stays the
+ *  single source of truth. */
+const CLOUD_DESC_READ_ONLY =
+  ' NOTE — NO INTERACTIVE CLOUD SESSION IN THIS DEPLOYMENT: the CLOUD browser here is ' +
+  'READ-ONLY. It can navigate and read pages, but every click, type and scroll is refused. ' +
+  'Do not choose it for a task that needs interaction when an interactive destination is offered.';
+
+/** The other half of the same fact: interactive mode is ENABLED here. Stated
+ *  as "enabled, established on the first navigate" rather than "working now",
+ *  because at selection time no session exists yet — that is exactly as much
+ *  as is knowable, and it is the widening this ticket asked for. */
+const CLOUD_DESC_INTERACTIVE =
+  ' Interaction is ENABLED in this deployment (one live browser per session, established on ' +
+  'the first navigate): clicks, typing, scrolling and screenshots work within the session, so ' +
+  'it also suits interactive tasks on public sites that need no login.';
+
+/** One-line forms for the decision gate's compact criteria (≤200-char budget). */
+const CLOUD_GATE_READ_ONLY = ' READ-ONLY here: no clicks/typing.';
+const CLOUD_GATE_INTERACTIVE = ' Interactive here: clicks/typing enabled.';
+
+/**
+ * The cloud ceiling as knowable BEFORE any navigate (both one-liners, '' when
+ * the driver cannot report). A fresh driver answers 'disabled-by-config' when
+ * CLOUD_BROWSER_CDP is off, and 'unavailable' when interactive mode is enabled
+ * but no live session has been established yet — only the first is a permanent
+ * ceiling, so only it is described as read-only. Empty output is deliberate:
+ * a test double or a driver without the optional method must not make us
+ * assert a ceiling we did not measure.
+ */
+function cloudCeiling(): { desc: string; gate: string } {
+  let cap: string | undefined;
+  try {
+    cap = new CloudBrowserDriver().interactionCapability?.();
+  } catch {
+    return { desc: '', gate: '' };
+  }
+  if (cap === 'disabled-by-config') return { desc: CLOUD_DESC_READ_ONLY, gate: CLOUD_GATE_READ_ONLY };
+  if (cap) return { desc: CLOUD_DESC_INTERACTIVE, gate: CLOUD_GATE_INTERACTIVE };
+  return { desc: '', gate: '' };
+}
+
 const LOCAL_DESC =
   "LOCAL browser (Digby's own browser on the user's Mac): a real Chromium running on the user's " +
   "computer under a persistent DIGBY profile — it stays signed in wherever the user logged in " +
@@ -387,8 +440,13 @@ export async function selectBrowserDriver(userId: string, message: string, opts:
   // its camera-only ceiling so the router (GLM / decision gate) cannot pick it
   // for an interactive desktop task — the capability limit is named up front.
   const computerDesc = opts.computerInputMode === 'observe' ? COMPUTER_DESC_OBSERVE : COMPUTER_DESC;
+  // 5f69fdc4: the same treatment for CLOUD — its real interaction ceiling is
+  // named up front, so an interaction-needing task is not routed into a
+  // read-only driver (and, when interaction IS enabled, the interactive
+  // capability is visible to the choice).
+  const ceiling = cloudCeiling();
   if (localAgentId) options.push(LOCAL_DESC);
-  options.push(CLOUD_DESC);
+  options.push(CLOUD_DESC + ceiling.desc);
   if (hostedOk) options.push(HOSTED_DESC);
   if (computerOk) options.push(computerDesc);
   const allowed = [localAgentId ? '"local"' : null, '"cloud"', hostedOk ? '"hosted"' : null, computerOk ? '"computer"' : null].filter(Boolean).join('|');
@@ -417,7 +475,7 @@ export async function selectBrowserDriver(userId: string, message: string, opts:
     const mode = decisionMode('browser_driver');
     if (mode !== 'off') {
       const criteria: Record<string, string> = {
-        cloud: CLOUD_GATE_SUMMARY,
+        cloud: CLOUD_GATE_SUMMARY + ceiling.gate,
         ...(localAgentId ? { local: LOCAL_GATE_SUMMARY } : {}),
         ...(hostedOk ? { hosted: HOSTED_GATE_SUMMARY } : {}),
         ...(computerOk ? { computer: COMPUTER_GATE_SUMMARY } : {}),
@@ -459,6 +517,13 @@ export async function selectBrowserDriver(userId: string, message: string, opts:
             'Reason about the task; do NOT rely on specific keywords. Available destinations:\n\n' +
             options.map((d, i) => `${i + 1}. ${d}`).join('\n\n') + '\n\n' +
             'Choose CLOUD for public web tasks where no login is needed. ' +
+            (ceiling.desc === CLOUD_DESC_INTERACTIVE
+              // 5f69fdc4: interaction is enabled on cloud here, so an
+              // interactive PUBLIC-site task has a second viable destination.
+              // Without this clause the prompt pushed every interactive task
+              // to LOCAL (or ground through a refusal first).
+              ? 'Choose CLOUD also for interactive tasks on public sites that need no login — it can click, type and scroll. '
+              : '') +
             (localAgentId ? 'Choose LOCAL for interactive web tasks, anti-bot pages, or accounts the user has connected through Digby. ' : '') +
             (computerOk ? "Choose COMPUTER when the task needs the user's EXISTING everyday browser session (their own Chrome/Safari logins), a desktop app, or their screen — or when they name their browser/app/screen/Mac. " : '') +
             `Respond with ONLY compact JSON: {"driver":${allowed},"reason":"<one short sentence>"}.`,

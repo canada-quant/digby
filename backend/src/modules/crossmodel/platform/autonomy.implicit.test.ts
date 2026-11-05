@@ -23,7 +23,7 @@ const mockPrisma: any = {
   // crossModelChat.findMany = the unique ≥8-char own-scoped chat prefix lookup (2026-09-14).
   crossModelChat: { findUnique: jest.fn(), findMany: jest.fn(async () => []) },
   // findMany = the unique ≥8-char prefix lookup (gate flip 2026-09-11).
-  codingSchedule: { findFirst: jest.fn(), findMany: jest.fn(async () => []) },
+  chatSchedule: { findFirst: jest.fn(), findMany: jest.fn(async () => []) },
 };
 jest.mock('../../../config/database', () => ({ __esModule: true, default: mockPrisma }));
 
@@ -57,8 +57,8 @@ const USER = 'u1';
 beforeEach(() => {
   jest.clearAllMocks();
   mockPrisma.crossModelChat.findUnique.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
-  mockPrisma.codingSchedule.findMany.mockResolvedValue([]);
+  mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
+  mockPrisma.chatSchedule.findMany.mockResolvedValue([]);
 });
 
 describe('PARENT_IMPLICIT_TOOLS scope', () => {
@@ -146,20 +146,20 @@ describe('send_chat_message targets', () => {
 
 describe('schedule targets (update_schedule / cancel_schedule)', () => {
   it("ALLOWS tuning a schedule that lives on the caller's own child", async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ sessionId: 'child-1' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ sessionId: 'child-1' });
     mockPrisma.crossModelChat.findUnique.mockResolvedValue({ parentChatId: CALLER, userId: USER });
     await expect(implicitParentAutonomyAllows({
       callerChatId: CALLER, userId: USER, tool: 'update_schedule', args: { id: 'sch-1', intervalMinutes: 60 },
     })).resolves.toBe(true);
     // Exact id + same owner is tried FIRST (the prefix lookup only runs on a miss).
-    expect(mockPrisma.codingSchedule.findFirst).toHaveBeenCalledWith({
+    expect(mockPrisma.chatSchedule.findFirst).toHaveBeenCalledWith({
       where: { id: 'sch-1', userId: USER }, select: { sessionId: true },
     });
-    expect(mockPrisma.codingSchedule.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.findMany).not.toHaveBeenCalled();
   });
 
   it("ALLOWS cancelling a schedule on the caller's own child", async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ sessionId: 'child-1' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ sessionId: 'child-1' });
     mockPrisma.crossModelChat.findUnique.mockResolvedValue({ parentChatId: CALLER, userId: USER });
     await expect(implicitParentAutonomyAllows({
       callerChatId: CALLER, userId: USER, tool: 'cancel_schedule', args: { id: 'sch-1' },
@@ -167,11 +167,11 @@ describe('schedule targets (update_schedule / cancel_schedule)', () => {
   });
 
   it('REFUSES when the schedule does not resolve for this owner (unknown / foreign / short prefix)', async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
     await expect(implicitParentAutonomyAllows({
       callerChatId: CALLER, userId: USER, tool: 'cancel_schedule', args: { id: 'sch-pre' }, // 7 chars — below the prefix floor
     })).resolves.toBe(false);
-    expect(mockPrisma.codingSchedule.findMany).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.findMany).not.toHaveBeenCalled();
     expect(mockPrisma.crossModelChat.findUnique).not.toHaveBeenCalled();
   });
 
@@ -179,20 +179,20 @@ describe('schedule targets (update_schedule / cancel_schedule)', () => {
   // prefix — the shape the schedule tools themselves invite — RESOLVES like the
   // full id; an ambiguous prefix still fails closed.
   it("ALLOWS tuning a child's schedule addressed by a UNIQUE ≥8-char prefix", async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null); // exact miss
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([{ id: '8accf96b-1111-2222-3333-444444444444', sessionId: 'child-1' }]);
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null); // exact miss
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([{ id: '8accf96b-1111-2222-3333-444444444444', sessionId: 'child-1' }]);
     mockPrisma.crossModelChat.findUnique.mockResolvedValue({ parentChatId: CALLER, userId: USER });
     await expect(implicitParentAutonomyAllows({
       callerChatId: CALLER, userId: USER, tool: 'update_schedule', args: { id: '8accf96b', intervalMinutes: 30 },
     })).resolves.toBe(true);
-    expect(mockPrisma.codingSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockPrisma.chatSchedule.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { userId: USER, id: { startsWith: '8accf96b' } },
     }));
   });
 
   it('REFUSES an AMBIGUOUS prefix (never widens on a guess)', async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue(null);
-    mockPrisma.codingSchedule.findMany.mockResolvedValue([
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue(null);
+    mockPrisma.chatSchedule.findMany.mockResolvedValue([
       { id: '8accf96b-aaaa', sessionId: 'child-1' },
       { id: '8accf96b-bbbb', sessionId: 'child-2' },
     ]);
@@ -203,7 +203,7 @@ describe('schedule targets (update_schedule / cancel_schedule)', () => {
   });
 
   it("REFUSES a schedule on a NON-child chat", async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ sessionId: 'stranger-chat' });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ sessionId: 'stranger-chat' });
     mockPrisma.crossModelChat.findUnique.mockResolvedValue({ parentChatId: null, userId: USER });
     await expect(implicitParentAutonomyAllows({
       callerChatId: CALLER, userId: USER, tool: 'update_schedule', args: { id: 'sch-2', prompt: 'p' },
@@ -211,7 +211,7 @@ describe('schedule targets (update_schedule / cancel_schedule)', () => {
   });
 
   it("REFUSES a schedule on the CALLER's own chat (self)", async () => {
-    mockPrisma.codingSchedule.findFirst.mockResolvedValue({ sessionId: CALLER });
+    mockPrisma.chatSchedule.findFirst.mockResolvedValue({ sessionId: CALLER });
     await expect(implicitParentAutonomyAllows({
       callerChatId: CALLER, userId: USER, tool: 'cancel_schedule', args: { id: 'sch-3' },
     })).resolves.toBe(false);
@@ -227,7 +227,7 @@ describe('scope boundaries + fail-closed', () => {
       })).resolves.toBe(false);
     }
     expect(mockPrisma.crossModelChat.findUnique).not.toHaveBeenCalled();
-    expect(mockPrisma.codingSchedule.findFirst).not.toHaveBeenCalled();
+    expect(mockPrisma.chatSchedule.findFirst).not.toHaveBeenCalled();
   });
 
   it('REFUSES on missing caller/user identity', async () => {
@@ -247,7 +247,7 @@ describe('scope boundaries + fail-closed', () => {
   });
 
   it('fails CLOSED when the schedule lookup throws', async () => {
-    mockPrisma.codingSchedule.findFirst.mockRejectedValue(new Error('db down'));
+    mockPrisma.chatSchedule.findFirst.mockRejectedValue(new Error('db down'));
     await expect(implicitParentAutonomyAllows({
       callerChatId: CALLER, userId: USER, tool: 'cancel_schedule', args: { id: 'sch-1' },
     })).resolves.toBe(false);

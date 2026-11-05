@@ -39,6 +39,7 @@ import type { SpanRescueCounter, DeliverableSecret } from './owner-question-secr
 import { OQ_SECRET_TOTAL_CAP } from './owner-question-secrets';
 import { parseExpectedAnswerType, credentialLifted, answerLooksLikeCredential, rawEnvKeyHalf } from './credential-gate';
 import { detectOwnerCardPayloadGaps } from './owner-card-gaps';
+import { detectSpeclessConsoleAsk, OWNER_CONSOLE_ASK_DETECT_DISABLED_ENV } from './console-ask';
 import { ownerDirectiveFanoutDisabled, ownerProvenanceStrictDisabled, ownerDismissRailsDisabled, ownerQuestionPayloadClassDisabled, ownerQuestionTriageEarlyReleaseDisabled } from './owner-authority-switches';
 export { detectOwnerCardPayloadGaps };
 
@@ -477,7 +478,7 @@ export const COUNTER_QUESTION_INSTRUCTION =
 
 // ── Credential-gate conversational replies (2026-10-20) ─────────────────────
 /** The owner typed WORDS — not the key — into a credential-gated card. The
- *  2026-10-20 ctrl.example.com specimen: "i never got the json policy to copy…" on
+ *  2026-10-20 ctrl.cql.ca specimen: "i never got the json policy to copy…" on
  *  a "paste the canlaw-bucket access key you created with the read-only policy
  *  I sent" card. Before: the reply was recorded on the row and noted in the
  *  lane's transcript, but the card showed the RED "needs a credential, not a
@@ -1730,6 +1731,24 @@ async function flagOwnerQuestionCore(input: FlagOwnerQuestionInput, trace: Owner
     return { kind: 'refused', refused: 'invalid', message: `consoleAction invalid: ${consoleAction.error}` };
   }
   const consoleSpec = consoleAction?.ok ? consoleAction.value : null;
+  // ── Backlog CA-1 (ticket 1b1c41bc residual): OBSERVE-ONLY intake telemetry ──
+  // A card that names a console surface and tells the owner to ACT there, filed
+  // WITHOUT a consoleAction spec, renders as an ordinary short card — exactly the
+  // 12:26:54Z oq_ea52c6ae shape the structured path exists to prevent. Detection
+  // only: nothing is refused, nothing is rewritten (a false positive refusing a
+  // legitimate non-console ask would be worse than the sloppy card). The 7-day
+  // baseline this accrues is what gates any future enforcement (the 6f8b52b7 /
+  // PR #1548 ladder). Runs on the ALREADY redacted + echo-scrubbed question and
+  // context — never raw agent input. Kill switch OWNER_CONSOLE_ASK_DETECT_DISABLED=1.
+  if (!consoleSpec && process.env[OWNER_CONSOLE_ASK_DETECT_DISABLED_ENV] !== '1') {
+    const detected = detectSpeclessConsoleAsk(`${question}\n${context ?? ''}`);
+    if (detected.detected) {
+      void recordOwnerQuestionMetric('console_ask_specless', {
+        chatId: input.chatId, kind: 'flag', surfaces: detected.surfaces, verbs: detected.verbs,
+        questionChars: question.length, excerpt: detected.excerpt,
+      });
+    }
+  }
   // Review BLOCKING G2 (round 6) + H5 (round 7): the payload is scrubbed
   // ONCE here — both the composed body and the ROW's stored consoleAction
   // field use this spec (the row's copy feeds the pending surface and the
@@ -4589,7 +4608,7 @@ export async function answerOwnerQuestion(
       // review finding F1: a multi-word secret the paste leg refused was then
       // quoted verbatim; the paste path NEVER quotes, whatever the shape).
       const pastePath = opts.credentialPaste === true;
-      // 2026-10-20 (the ctrl.example.com "i never got the json policy" specimen):
+      // 2026-10-20 (the ctrl.cql.ca "i never got the json policy" specimen):
       // WORDS from the owner — not a paste through the key field, not a PEM /
       // opaque token — are a counter-question the asking lane must answer ON
       // THE CARD, not a failed key. Owner-origin only: a replayed preset

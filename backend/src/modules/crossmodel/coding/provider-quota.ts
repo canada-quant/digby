@@ -3,7 +3,7 @@
  *
  * Owner: "i thought the api optimize rotates through both coding plans and pay
  * per use we should never run out of token budgets". The owner's LiteLLM
- * gateway (llm.example.com `api-optimize-*` model groups) rotates each group across
+ * gateway (llm.cql.ca `api-optimize-*` model groups) rotates each group across
  * coding-plan keys and pay-per-use keys, but a deployment that hits its plan
  * window answers HTTP 403 "You've reached your weekly (7-day) usage limit …"
  * and LiteLLM passes that 403 through instead of failing over (its router

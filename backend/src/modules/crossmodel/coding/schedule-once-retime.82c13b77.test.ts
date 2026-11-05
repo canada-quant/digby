@@ -41,7 +41,7 @@ const mockScheduleFindUnique = jest.fn(async (..._a: any[]): Promise<any> => ({ 
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    codingSchedule: {
+    chatSchedule: {
       create: (...a: any[]) => mockCreate(...a),
       count: (...a: any[]) => mockCount(...a),
       findMany: (...a: any[]) => mockFindMany(...a),
@@ -64,7 +64,7 @@ jest.mock('../../../config/database', () => ({
     crossModelChat: { findUnique: jest.fn(async (..._a: any[]): Promise<any> => undefined), update: jest.fn(async (..._a: any[]) => ({})) },
     crossModelMessage: { create: jest.fn(async (..._a: any[]) => ({})) },
     $transaction: async (fn: any) => fn({
-      codingSchedule: {
+      chatSchedule: {
         create: (...a: any[]) => mockCreate(...a),
         findMany: (...a: any[]) => mockFindMany(...a),
         updateMany: jest.fn(async (..._a: any[]) => ({ count: 0 })),

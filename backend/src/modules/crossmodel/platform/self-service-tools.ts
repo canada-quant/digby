@@ -178,7 +178,7 @@ export async function executeSelfServiceTool(ctx: Ctx, name: SelfServiceToolName
         const { randomBytes } = await import('crypto');
         const shareToken = project.shareToken ?? randomBytes(20).toString('hex');
         const updated = await prisma.crossModelProject.update({ where: { id: projectId }, data: { isPublic: true, shareToken } });
-        const host = (process.env.FRONTEND_URL || '').split(',')[0] || 'https://digby.example.com';
+        const host = (process.env.FRONTEND_URL || '').split(',')[0] || 'https://digby.ai';
         await audit(userId, 'project.share', { projectId, via: 'tool' });
         return out({ ok: true, tool: name, ids: { projectId }, shared: true, shareUrl: `${host}/shared/project/${updated.shareToken}`, message: `Project "${project.name}" is PUBLIC at ${host}/shared/project/${updated.shareToken} — share_project {enable:false} turns it off.` });
       }
@@ -206,7 +206,7 @@ export async function executeSelfServiceTool(ctx: Ctx, name: SelfServiceToolName
       }
       const invitee = await prisma.user.findUnique({ where: { email } }).catch(() => null) ?? await prisma.user.findFirst({ where: { email: { equals: email, mode: 'insensitive' } } }).catch(() => null);
       if (!invitee) {
-        // The sign-up host is THIS instance's (self-host setup hardening 2026-10-20) — "digby.example.com" was wrong on a self-host.
+        // The sign-up host is THIS instance's (self-host setup hardening 2026-10-20) — "digby.ai" was wrong on a self-host.
         const { instanceSiteLabel } = await import('./instance-setup');
         return out({ ok: false, tool: name, ids: { projectId }, reason: 'no_such_user', message: `No Digby account with email ${email} — they create one at ${instanceSiteLabel()} first.` });
       }

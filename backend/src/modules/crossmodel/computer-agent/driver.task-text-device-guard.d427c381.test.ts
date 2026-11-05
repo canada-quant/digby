@@ -5,8 +5,8 @@
  *
  * The mishap: the device name 'cql-stanne-mbp1' appeared ONLY in the task
  * text; the `device` param was omitted. selectComputerDriver silently used
- * the owner's default Mac (home-pauls-mac-mini) and returned a healthy
- * capture — verbatim header "device: home-pauls-mac-mini · …
+ * the owner's default Mac (example-tailnet-peer) and returned a healthy
+ * capture — verbatim header "device: example-tailnet-peer · …
  * degenerateFrames=0" — which the lane nearly reported as "mbp-1 capture is
  * healthy, menu bar visible", clearing a device-specific capture-dead
  * diagnosis off the WRONG machine's evidence.
@@ -59,7 +59,7 @@ const row = (over: Record<string, unknown> = {}) => ({
 
 // The mishap's exact fleet: the default Mac mini + the mis-resolved MBP.
 const INCIDENT_FLEET = () => [
-  row({ id: "agent-mini", label: "home-pauls-mac-mini", deviceName: "mini.local", deviceId: "device-mini", isDefault: true }),
+  row({ id: "agent-mini", label: "example-tailnet-peer", deviceName: "mini.local", deviceId: "device-mini", isDefault: true }),
   row({ id: "agent-mbp", label: "cql-stanne-mbp1", deviceName: "mbp-1.local", deviceId: "device-mbp", isDefault: false }),
 ];
 
@@ -109,30 +109,30 @@ describe("DETECTOR-RECALL REPLAY — ticket d427c381 (the task-text device guard
     const sel = await selectComputerDriver(
       "user-1",
       undefined,
-      "Screenshot both cql-stanne-mbp1 and home-pauls-mac-mini.",
+      "Screenshot both cql-stanne-mbp1 and example-tailnet-peer.",
     );
     expect(sel.driver).toBeNull();
     expect(sel.status).toContain("several paired devices");
     expect(sel.status).toContain("cql-stanne-mbp1");
-    expect(sel.status).toContain("home-pauls-mac-mini");
-    expect(sel.taskTextNamedDevices).toEqual(expect.arrayContaining(["cql-stanne-mbp1", "home-pauls-mac-mini"]));
+    expect(sel.status).toContain("example-tailnet-peer");
+    expect(sel.taskTextNamedDevices).toEqual(expect.arrayContaining(["cql-stanne-mbp1", "example-tailnet-peer"]));
   });
 
   it("prose names a device other than the explicit param → selection binds the PARAM and flags the mismatch", async () => {
-    const sel = await selectComputerDriver("user-1", "cql-stanne-mbp1", "check home-pauls-mac-mini too");
+    const sel = await selectComputerDriver("user-1", "cql-stanne-mbp1", "check example-tailnet-peer too");
     expect(sel.driver).not.toBeNull();
     expect(sel.agentId).toBe("agent-mbp");
-    expect(sel.taskTextNamesOtherThanParam).toEqual(["home-pauls-mac-mini"]);
+    expect(sel.taskTextNamesOtherThanParam).toEqual(["example-tailnet-peer"]);
     const header = formatComputerTaskToolResult({
       finalResponse: "done",
       elapsed: 1,
       steps: 2,
       localStatus: "connected (Mac app v0.9.10)",
       device: "cql-stanne-mbp1",
-      taskTextNamesOtherThanParam: ["home-pauls-mac-mini"],
+      taskTextNamesOtherThanParam: ["example-tailnet-peer"],
     } as any);
     expect(header).toContain("DEVICE MISMATCH");
-    expect(header).toContain("the task text named 'home-pauls-mac-mini'");
+    expect(header).toContain("the task text named 'example-tailnet-peer'");
     expect(header).toContain("device: 'cql-stanne-mbp1' was driven");
   });
 
@@ -142,10 +142,10 @@ describe("DETECTOR-RECALL REPLAY — ticket d427c381 (the task-text device guard
       elapsed: 1,
       steps: 2,
       device: "Mac",
-      taskTextNamesOtherThanParam: ["home-pauls-mac-mini"],
+      taskTextNamesOtherThanParam: ["example-tailnet-peer"],
     } as any);
     expect(header).toContain("DEVICE MISMATCH");
-    expect(header).toContain("the task text named 'home-pauls-mac-mini'");
+    expect(header).toContain("the task text named 'example-tailnet-peer'");
     expect(header).toContain("device: 'Mac' was driven");
   });
 
@@ -170,7 +170,7 @@ describe("detectNamedDevices (pure)", () => {
   });
 
   it("returns every distinct named device on a multi-name text", () => {
-    const named = detectNamedDevices("use cql-stanne-mbp1 then home-pauls-mac-mini", INCIDENT_FLEET());
+    const named = detectNamedDevices("use cql-stanne-mbp1 then example-tailnet-peer", INCIDENT_FLEET());
     expect(named.map((d: any) => d.id).sort()).toEqual(["agent-mbp", "agent-mini"]);
   });
 
@@ -212,7 +212,7 @@ describe("detectNamedDevices (pure)", () => {
   });
 
   it("a task naming the default device itself yields exactly that one (the historical pick, no behavior change)", () => {
-    const named = detectNamedDevices("check home-pauls-mac-mini", INCIDENT_FLEET());
+    const named = detectNamedDevices("check example-tailnet-peer", INCIDENT_FLEET());
     expect(named.map((d: any) => d.id)).toEqual(["agent-mini"]);
   });
 });
@@ -227,7 +227,7 @@ describe("guard interplay with the historical paths (no regression)", () => {
   });
 
   it("prose names the default Mac only → the default pick, no auto-bind flag", async () => {
-    const sel = await selectComputerDriver("user-1", undefined, "check home-pauls-mac-mini");
+    const sel = await selectComputerDriver("user-1", undefined, "check example-tailnet-peer");
     expect(sel.driver).not.toBeNull();
     expect(sel.agentId).toBe("agent-mini");
     expect(sel.deviceAutoBound).toBeUndefined();
@@ -235,7 +235,7 @@ describe("guard interplay with the historical paths (no regression)", () => {
 
   it("auto-bind honors the capability gate: a named but offline/incapable Mac is refused, not bypassed", async () => {
     mockListAgents.mockResolvedValue([
-      row({ id: "agent-mini", label: "home-pauls-mac-mini", deviceName: "mini.local", deviceId: "device-mini", isDefault: true }),
+      row({ id: "agent-mini", label: "example-tailnet-peer", deviceName: "mini.local", deviceId: "device-mini", isDefault: true }),
       row({ id: "agent-mbp", label: "cql-stanne-mbp1", deviceName: "mbp-1.local", deviceId: "device-mbp", agentVersion: "0.2.0" }),
     ]);
     const sel = await selectComputerDriver("user-1", undefined, INCIDENT_TASK);

@@ -3,7 +3,7 @@
  * 'Post-CPT Coordination — SFT/GRPO/GSPO + …' — framework or model?"
  *
  * THE INCIDENT (auto-filed at breaker trip, 2026-09-19T00:19Z): session
- * e083ff2e-de98-412a-85df-86923572db1d (CanLaw project, repo canada-quant/canlaw),
+ * e083ff2e-de98-412a-85df-86923572db1d (CanLaw project, repo example-org/canlaw),
  * run 2382a0f8-9227-4c81-9117-71b9c97fc855 — the lane called list_dir on 'docs'
  * and the tool failed twice (streak 3× at trip):
  *   "Tool list_dir failed: ENOENT: no such file or directory, scandir

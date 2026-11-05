@@ -31,7 +31,7 @@ import { __resetGatewayModelInfoForTests } from './gateway-model-info';
 const mockGet = axios.get as unknown as jest.Mock;
 
 const GATEWAY = (model: string, extra: Record<string, any> = {}) => ({
-  url: 'https://llm.example.com/v1/chat/completions', baseUrl: 'https://llm.example.com/v1', apiKey: 'sk-gw', model, label: 'cql-litellm',
+  url: 'https://llm.cql.ca/v1/chat/completions', baseUrl: 'https://llm.cql.ca/v1', apiKey: 'sk-gw', model, label: 'cql-litellm',
   supportsVision: false, coding: true, chatCapable: true, ...extra,
 });
 
@@ -130,7 +130,7 @@ describe('resolveProviderForRun — the One Piece seat', () => {
     mockResolveRegistryModel.mockResolvedValueOnce(GATEWAY('api-alibaba-qwen3.8-max'));
     const p = await resolveProviderForRun('cql-litellm:api-alibaba-qwen3.8-max', 'u1');
     expect(p).toMatchObject({ contextChars: registryContextChars(500_000), contextCharsSource: 'model_info' });
-    expect(mockGet.mock.calls[0][0]).toBe('https://llm.example.com/v1/model/info');
+    expect(mockGet.mock.calls[0][0]).toBe('https://llm.cql.ca/v1/model/info');
   });
 
   it('a published contextWindow skips the fetch entirely', async () => {
@@ -147,7 +147,7 @@ describe('resolveProviderForRun — the One Piece seat', () => {
     delete reg.baseUrl;
     mockResolveRegistryModel.mockResolvedValueOnce(reg);
     expect(await resolveProviderForRun('cql-litellm:api-alibaba-qwen3.8-max')).toMatchObject({ contextChars: 800_000, contextCharsSource: 'gateway_family' });
-    expect(mockGet.mock.calls[0][0]).toBe('https://llm.example.com/v1/model/info');
+    expect(mockGet.mock.calls[0][0]).toBe('https://llm.cql.ca/v1/model/info');
   });
 
   it('kill switches: GATEWAY_MODEL_INFO_RUNTIME_DISABLED=1 → no fetch; REGISTRY_CONTEXT_FAMILY_DISABLED=1 → 160k, no source key', async () => {

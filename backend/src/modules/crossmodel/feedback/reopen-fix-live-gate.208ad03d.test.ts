@@ -96,7 +96,7 @@ const INCIDENT_ADMIN_NOTE =
   'Fixed per PR #859; deploy watched green.\n' +
   `[machine-close evidence: replay test backend/src/modules/crossmodel/feedback/reopen-fix-live-gate.${TICKET_208AD03D}.test.ts (verified: exists + cites 5ba5f03e); ` +
   `commit ${FIX_SHA} (format-verified; existence not checkable server-side — no repo checkout in this process); ` +
-  `PR https://github.com/canada-quant/digby/pull/859; deploy run ${DEPLOY_RUN}]`;
+  `PR https://github.com/example-org/crossmodel/pull/859; deploy run ${DEPLOY_RUN}]`;
 
 const incidentRow = (over: Record<string, unknown> = {}) => ({
   id: INCIDENT_TICKET_ID,
@@ -310,7 +310,7 @@ describe('fix-state.ts — parseClosureEvidenceNote (the REAL parser)', () => {
     const note = parseClosureEvidenceNote(INCIDENT_ADMIN_NOTE);
     expect(note).toEqual({
       commitSha: FIX_SHA,
-      prUrl: 'https://github.com/canada-quant/digby/pull/859',
+      prUrl: 'https://github.com/example-org/crossmodel/pull/859',
       deployRunId: DEPLOY_RUN,
     });
   });

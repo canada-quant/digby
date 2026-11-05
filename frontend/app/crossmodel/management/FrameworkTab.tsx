@@ -15,6 +15,12 @@
  * `FrameworkSurface` is the presentational core (statically testable, the
  * repo's node-environment vitest idiom); `FrameworkTab` is the fetching
  * container.
+ *
+ * The Goals & board panel renders in THREE sections — Active delivery ·
+ * Paused · Monitoring — not one flat list (owner ticket 2026-11-04): a
+ * parked program and a standing monitor probe are not delivery rows, and
+ * printing their raw DB status ("blocked" / "active") misreads both. See
+ * `boardSectionOf` / `boardStatusLabel` for the classification rules.
  */
 
 import { useCallback, useEffect, useState } from 'react';
@@ -152,10 +158,87 @@ export function resolveFrameworkBoard(input: {
   return { boardSource: 'unavailable', goals: [], digestGeneratedAt: null };
 }
 
+/**
+ * Which of the board's three sections a goal belongs to (owner ticket,
+ * 2026-11-04). The live ledger mixes three very different kinds of row into
+ * ONE flat list, so the panel used to print a PAUSED research program as
+ * "blocked" (its real DB status) and a standing MONITOR probe as "active" —
+ * both truthful as raw rows, both misleading as a delivery board.
+ *
+ * 'active'     real delivery work — INCLUDING goals that carry blocked todos,
+ *              which is normal delivery state, not a reason to demote them;
+ * 'paused'     a program the owner explicitly parked (its row stays 'blocked'
+ *              in the DB, but "blocked" reads as a fault — it is not one);
+ * 'monitoring' a standing watch/probe, not delivery work (its row stays
+ *              'active' in the DB, but it ships nothing).
+ */
+export type FrameworkBoardSection = 'active' | 'paused' | 'monitoring';
+
+export interface FrameworkBoardGroup {
+  key: FrameworkBoardSection;
+  heading: string;
+  goals: FrameworkBoardGoal[];
+}
+
+/** The section headings, in display order. */
+const BOARD_SECTIONS: { key: FrameworkBoardSection; heading: string }[] = [
+  { key: 'active', heading: 'Active delivery' },
+  { key: 'paused', heading: 'Paused' },
+  { key: 'monitoring', heading: 'Monitoring' },
+];
+
+/**
+ * Classify a goal from the ONLY classification metadata the ledger carries
+ * (there is no `kind` column): the explicit title prefixes the supervisor
+ * stamps. Deliberately prefix-anchored (`PAUSED — …`, `MONITOR — …`) so a
+ * title that merely MENTIONS the word ("unpaused delivery…") is not caught,
+ * and case/hyphen tolerant because a prefix is typed by hand
+ * (`PAUSED -`, `paused:`, `Monitor —` all mean the same thing).
+ */
+export function boardSectionOf(goal: Pick<FrameworkBoardGoal, 'title'>): FrameworkBoardSection {
+  const title = goal.title ?? '';
+  if (/^\s*PAUSED\b/i.test(title)) return 'paused';
+  if (/^\s*MONITOR\b/i.test(title)) return 'monitoring';
+  return 'active';
+}
+
+/**
+ * Group the board's rows into the three sections, preserving the incoming
+ * row order inside each one (the digest pre-sorts blocked-first) and dropping
+ * a section that holds no rows — an empty "Paused · 0" heading is clutter.
+ */
+export function groupBoardGoals(goals: FrameworkBoardGoal[]): FrameworkBoardGroup[] {
+  return BOARD_SECTIONS.map(({ key, heading }) => ({
+    key,
+    heading,
+    goals: goals.filter((g) => boardSectionOf(g) === key),
+  })).filter((group) => group.goals.length > 0);
+}
+
+/**
+ * The status text a row may show. Paused / monitoring rows must NOT print the
+ * raw DB status: 'blocked' on a program the owner parked himself reads as a
+ * fault, and 'active' on a nightly probe reads as delivery work.
+ */
+export function boardStatusLabel(goal: FrameworkBoardGoal): string {
+  const section = boardSectionOf(goal);
+  if (section === 'paused') return 'paused';
+  if (section === 'monitoring') return 'monitoring';
+  return goal.status;
+}
+
+/** A row is amber when it is a DELIVERY goal that is blocked or carries
+ *  blocked todos — never because a paused/monitoring row's raw status says
+ *  'blocked' (there is nothing to act on). */
+export function boardGoalNeedsAttention(goal: FrameworkBoardGoal): boolean {
+  if (boardSectionOf(goal) !== 'active') return false;
+  return goal.status === 'blocked' || goal.blockedCount > 0;
+}
+
 const BACKLOG = {
-  repo: 'canada-quant/digby',
+  repo: 'example-org/crossmodel',
   path: 'docs/FRAMEWORK_BACKLOG.md',
-  url: 'https://github.com/canada-quant/digby/blob/main/docs/FRAMEWORK_BACKLOG.md',
+  url: 'https://github.com/example-org/crossmodel/blob/main/docs/FRAMEWORK_BACKLOG.md',
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -224,6 +307,7 @@ export function FrameworkSurface({ snapshot, loading, error, onOpenChat, onRetry
   const activeSessions = sessions.filter((s) => s.status === 'running' || s.status === 'scheduled');
   const todosOpen = goals.reduce((acc, g) => acc + (g.todosTotal - g.todosDone), 0);
   const goalsBlocked = goals.filter((g) => g.status === 'blocked' || g.blockedCount > 0).length;
+  const boardGroups = groupBoardGoals(goals);
 
   return (
     <div className="space-y-4" data-mac-agent-card="framework-tab">
@@ -307,21 +391,37 @@ export function FrameworkSurface({ snapshot, loading, error, onOpenChat, onRetry
                 <span>· {todosOpen} open todos</span>
                 {goalsBlocked > 0 && <span className="text-amber-600 dark:text-amber-400">· {goalsBlocked} blocked</span>}
               </div>
-              <ul className="space-y-2">
-                {goals.map((g) => (
-                  <li key={g.goalId} className="rounded-md border p-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-sm font-medium">{g.title}</span>
-                      <span className={`text-xs ${g.status === 'blocked' || g.blockedCount > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
-                        {g.status}{g.blockedCount > 0 ? ` · ${g.blockedCount} blocked` : ''}
+              {/* Three sections, not one flat list (owner ticket 2026-11-04):
+                  a paused program and a standing monitor probe are not
+                  delivery rows, and printing their raw DB status ("blocked" /
+                  "active") misreads both. Sections with no rows are dropped. */}
+              <div className="space-y-4" data-testid="board-sections">
+                {boardGroups.map((group) => (
+                  <section key={group.key} data-testid={`board-section-${group.key}`}>
+                    <h4 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {group.heading}
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-normal normal-case tracking-normal">
+                        {group.goals.length}
                       </span>
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {g.todosDone}/{g.todosTotal} todos done{g.eta?.etaDays != null ? ` · ETA ~${g.eta.etaDays}d` : ''}
-                    </div>
-                  </li>
+                    </h4>
+                    <ul className="space-y-2">
+                      {group.goals.map((g) => (
+                        <li key={g.goalId} data-goal-id={g.goalId} className="rounded-md border p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-medium">{g.title}</span>
+                            <span className={`text-xs ${boardGoalNeedsAttention(g) ? 'text-amber-600 dark:text-amber-400' : 'text-muted-foreground'}`}>
+                              {boardStatusLabel(g)}{g.blockedCount > 0 ? ` · ${g.blockedCount} blocked` : ''}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-muted-foreground">
+                            {g.todosDone}/{g.todosTotal} todos done{g.eta?.etaDays != null ? ` · ETA ~${g.eta.etaDays}d` : ''}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
                 ))}
-              </ul>
+              </div>
             </>
           )}
         </CardContent>

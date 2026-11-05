@@ -31,6 +31,11 @@ const mockCallMcpTool = jest.fn();
 jest.mock('../mcp-search', () => ({
   __esModule: true,
   callMcpTool: (...a: any[]) => mockCallMcpTool(...a),
+  // Real exports the driver calls for the stateful browser mount (ticket
+  // 5f69fdc4). A module mock must mirror them or `cdp()` throws and every
+  // navigate falls back to scrape — which is NOT what these tests assert.
+  mcpGatewayTarget: () => ({ url: 'https://mcp.test/mcp', token: 'test-token' }),
+  mcpBrowserGatewayTarget: () => ({ url: 'https://mcp.test/browser/mcp', token: 'test-token' }),
 }));
 
 const mockGlmChat = jest.fn();
@@ -183,6 +188,39 @@ describe('CloudBrowserDriver — interactionCapability + cause-aware refusals (c
     // its success proves the zone lets us through again.
     await driver.execute({ name: 'navigate', url: 'https://example.test/2' });
     expect(driver.interactionCapability()).toBe('cdp');
+  });
+
+  it('CDP enabled + EMPTY get_text: falls through to the scrape path instead of ok:true with 0 bytes (5f69fdc4)', async () => {
+    process.env.CLOUD_BROWSER_CDP = '1';
+    mockCallMcpTool.mockImplementation(async (tool: string) => {
+      if (tool === 'scraping_browser_navigate') return 'navigated ok';
+      if (tool === 'scraping_browser_get_text') return ''; // live session, blank read
+      if (tool === 'scrape_as_markdown') return '# Page';
+      return null;
+    });
+    const driver = loadDriver();
+
+    const nav = await driver.execute({ name: 'navigate', url: 'https://example.test/' });
+    // Pre-fix this returned ok:true with content '' — indistinguishable from a
+    // genuinely empty document. The scrape path must serve the rendered page.
+    expect(nav.ok).toBe(true);
+    expect(nav.content).toContain('# Page');
+    expect(mockCallMcpTool).toHaveBeenCalledWith('scrape_as_markdown', { url: 'https://example.test/' }, expect.any(Number));
+  });
+
+  it('CDP enabled + WHITESPACE-ONLY get_text is treated as empty too (5f69fdc4)', async () => {
+    process.env.CLOUD_BROWSER_CDP = '1';
+    mockCallMcpTool.mockImplementation(async (tool: string) => {
+      if (tool === 'scraping_browser_navigate') return 'navigated ok';
+      if (tool === 'scraping_browser_get_text') return '   \n\t  ';
+      if (tool === 'scrape_as_markdown') return '# Page';
+      return null;
+    });
+    const driver = loadDriver();
+
+    const nav = await driver.execute({ name: 'navigate', url: 'https://example.test/' });
+    expect(nav.ok).toBe(true);
+    expect(nav.content).toContain('# Page');
   });
 });
 

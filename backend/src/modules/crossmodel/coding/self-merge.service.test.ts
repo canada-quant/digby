@@ -88,7 +88,7 @@ import {
   evaluateMergeGates, nothingChanged,
   readAttempt, writeAttempt, clearAttempt, recordMergeLearning, readMergeLearnings,
   deleteMergedHeadBranch, selfMergeKeepHeadBranch,
-  classifyMergeWait, mergeWaitOnceMs, repoCiP50FromRows, repoCiP50Ms, selfMergeWaitOnceDisabled, selfMergeWaitOnceMaxMs,
+  classifyMergeWait, mergeWaitOnceMs, repoCiP50FromRows, repoCiP50Ms, selfMergeWaitOnceMaxMs,
   tryAcquireMergeWaitSlot, releaseMergeWaitSlot, mergeWaitSlotsInUse, mergeWaitMaxConcurrent,
   SELF_MERGE_WAIT_ONCE_MIN_MS, SELF_MERGE_WAIT_ONCE_MAX_MS, SELF_MERGE_WAIT_ONCE_DEFAULT_CI_P50_MS, SELF_MERGE_WAIT_ONCE_API_MS, MERGE_WAIT_MAX_CONCURRENT_DEFAULT,
   type GithubApi, type GateFailure, type GatePass,
@@ -120,7 +120,7 @@ const ENV_KEYS = [
   'VERIFY_CHAIN_GATE_ENFORCE', 'UNVERIFIED_GATE_DISABLED',
   'RESULTS_LOG_GUARD_ENFORCE', 'RESULTS_LOG_MAX_DELETED_LINES', 'RESULTS_LOG_GLOB',
   'SELF_MERGE_KEEP_HEAD_BRANCH',
-  'SELF_MERGE_WAIT_ONCE_DISABLED', 'SELF_MERGE_WAIT_ONCE_MAX_MS', 'MERGE_WAIT_MAX_CONCURRENT',
+  'SELF_MERGE_WAIT_ONCE_MAX_MS', 'MERGE_WAIT_MAX_CONCURRENT',
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
@@ -284,9 +284,6 @@ describe('self-merge WAIT-ONCE helpers (pure + the bounded p50 read)', () => {
     expect(mergeWaitOnceMs(null, 'server_5xx')).toBe(5);
     process.env.SELF_MERGE_WAIT_ONCE_MAX_MS = String(60 * 60_000); // never above the 10-min ceiling
     expect(selfMergeWaitOnceMaxMs()).toBe(600_000);
-    expect(selfMergeWaitOnceDisabled()).toBe(false);
-    process.env.SELF_MERGE_WAIT_ONCE_DISABLED = '1';
-    expect(selfMergeWaitOnceDisabled()).toBe(true);
   });
 
   test('repoCiP50FromRows: the median of the (first ci failure → merge_success) delta per PR; PRs without both sides and non-ci gates are ignored; under 3 samples → null', () => {

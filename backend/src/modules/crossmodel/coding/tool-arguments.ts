@@ -442,6 +442,45 @@ export function isUnrecoveredSeverance(lossClass: ToolCallLossClass, severedVerd
   return severedVerdict !== 'cancelled';
 }
 
+/**
+ * TICKET cffd0d0a (2026-11-03) — WAS THIS CALL REJECTED AT DISPATCH?
+ *
+ * True iff the call's raw arguments FAIL to parse AND this turn's own
+ * arithmetic settles the loss as `severed-in-transit` — the harness rejected
+ * it at dispatch, so the tool never ran and NOTHING was written. Pure (the same
+ * two functions that produce the model-facing text and the durable `ec` key, so
+ * the three can never disagree about the class).
+ *
+ * WHAT THE CALLER MAY CONCLUDE — AND WHAT IT MAY NOT. It may conclude that this
+ * turn produced no result the model could have looped on. It may NOT conclude
+ * that the wire is at fault: a model that simply stops mid-object is
+ * byte-for-byte indistinguishable from a gateway that cut a longer payload at
+ * the same point, and `classifyToolCallLoss` only proves the gateway forwarded
+ * faithfully, never that it forwarded EVERYTHING the model emitted. So the
+ * repeat breaker CAPS its escalation for this turn (the permanent rung is
+ * unreachable) but does not dissolve the streak — for both readings of the
+ * class, "keep the tool offered, keep interrupting the loop" is the right
+ * response, and a model emitting unfinished JSON every turn stays bounded.
+ *
+ * WHY CAPPING IS THE FIX (measured, chat 99e63f86, 2026-11-03 20:23:09Z and
+ * 20:28:07Z — both `tool_repeat_break`, tool `goal_update`): a cut re-cuts a
+ * re-sent payload at the SAME byte (5/5 measured on the reporting seat), so the
+ * arguments are byte-identical across turns BY CONSTRUCTION. The exact leg
+ * therefore escalated 1 round → 3 rounds → `permaWithheld`, REMOVING
+ * `goal_update` from the schema for the rest of the run. A transient dispatch
+ * fault became a permanent capability loss, and a write that never executed —
+ * the supervisor's owner-halt marker — could then never land: the ticket's
+ * "then tool loop-broken".
+ */
+export function isTransportSeveredRejection(
+  raw: unknown,
+  evidence?: ToolCallTurnEvidence,
+): boolean {
+  const parsed = parseToolArguments(raw);
+  if (parsed.ok) return false;
+  return classifyToolCallLoss(parsed, evidence) === 'severed-in-transit';
+}
+
 export function toolArgumentRejection(
   toolName: string,
   failure: ToolArgumentsFailure,

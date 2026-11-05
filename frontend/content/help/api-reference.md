@@ -4,7 +4,7 @@
 
 > 📖 This inventory covers the **core surface only** — see also the OpenAPI spec served by the backend at `/api/openapi.json` (Swagger UI at `/api/docs`).
 
-Base URL: `http://localhost:4000/api` (dev) | `https://digby.example.com/api` (prod)
+Base URL: `http://localhost:4000/api` (dev) | `https://digby.ai/api` (prod)
 Swagger docs: `http://localhost:4000/api/docs` (alias: `/api-docs`)
 
 ---

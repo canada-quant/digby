@@ -518,8 +518,8 @@ describe('handleMessagesRequest (Phase 5 cloud→edge messaging)', () => {
 });
 
 describe('peer forwarding (multi-box prod: relay per box, socket in one)', () => {
-  const MY_ADDR = '10.0.0.80:4302';
-  const PEER_ADDR = '10.0.0.22:4301';
+  const MY_ADDR = '10.0.0.16:4302';
+  const PEER_ADDR = '10.0.0.11:4301';
   const SAVED = process.env.RELAY_ADVERTISE_ADDR;
   beforeEach(() => { process.env.RELAY_ADVERTISE_ADDR = MY_ADDR; });
   afterEach(() => {

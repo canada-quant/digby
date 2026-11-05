@@ -1023,7 +1023,7 @@ async function sweepUser(userId: string, supervisorChatId: string, now: Date): P
   // lookback window, on a chat with ZERO enabled rows left.
   try {
     const CADENCE_LOOKBACK_MS = 26 * 60 * 60 * 1000; // catch an overnight stop on the morning sweep
-    const stopped = await prisma.codingSchedule.findMany({
+    const stopped = await prisma.chatSchedule.findMany({
       where: {
         userId, kind: 'recurring', enabled: false,
         runsCount: { gte: 3 },
@@ -1042,7 +1042,7 @@ async function sweepUser(userId: string, supervisorChatId: string, now: Date): P
           bySession.set(s.sessionId, s);
         }
       }
-      const stillActive = await prisma.codingSchedule.findMany({
+      const stillActive = await prisma.chatSchedule.findMany({
         where: { sessionId: { in: [...bySession.keys()] }, enabled: true },
         select: { sessionId: true },
       });
@@ -1101,7 +1101,7 @@ async function sweepUser(userId: string, supervisorChatId: string, now: Date): P
       const exhaustedChatIds = new Set<string>();
       if (cadenceStopFix) {
         try {
-          const allStopped = await prisma.codingSchedule.findMany({
+          const allStopped = await prisma.chatSchedule.findMany({
             where: { sessionId: { in: [...bySession.keys()] }, kind: 'recurring', enabled: false, runsCount: { gte: 1 } },
             select: { sessionId: true, runsCount: true, maxRuns: true, cancelledBy: true, lastStatus: true },
           });
@@ -1194,7 +1194,7 @@ async function sweepUser(userId: string, supervisorChatId: string, now: Date): P
   // is applied in JS (intervalSec varies per row).
   try {
     const MIN_OVERDUE_GRACE_MS = 30 * 60 * 1000;
-    const overdueCandidates = await prisma.codingSchedule.findMany({
+    const overdueCandidates = await prisma.chatSchedule.findMany({
       where: {
         userId, kind: 'recurring', enabled: true,
         nextRunAt: { lte: new Date(nowMs - MIN_OVERDUE_GRACE_MS) },
@@ -1230,7 +1230,7 @@ async function sweepUser(userId: string, supervisorChatId: string, now: Date): P
     const rawSnap = await (redisClient as any).get(SCHED_SNAP_KEY(userId)).catch(() => null);
     let prev: Record<string, { r: number; s: string; e: boolean }> = {};
     try { prev = rawSnap ? JSON.parse(String(rawSnap)) : {}; } catch { prev = {}; }
-    const current = await prisma.codingSchedule.findMany({
+    const current = await prisma.chatSchedule.findMany({
       where: { userId, kind: 'recurring' },
       select: { id: true, sessionId: true, enabled: true, runsCount: true },
     });
@@ -1311,7 +1311,7 @@ async function sweepUser(userId: string, supervisorChatId: string, now: Date): P
       (t.status === 'pending' || t.status === 'in_progress') && t.goal?.status !== 'done' && t.goal?.status !== 'archived');
     if (live.length) {
       const assigneeIds = [...new Set(live.map((t) => t.assigneeChatId as string))];
-      const enabledRows = await prisma.codingSchedule.findMany({
+      const enabledRows = await prisma.chatSchedule.findMany({
         where: { sessionId: { in: assigneeIds }, enabled: true },
         select: { sessionId: true },
       });
@@ -1336,7 +1336,7 @@ async function sweepUser(userId: string, supervisorChatId: string, now: Date): P
         // audit 2026-10-06 T4-1 (fleet.md F3/F6): a one-shot's intervalSec is
         // not a cadence (a 900 s one-shot set a 30-min deaf floor).
         const recurringOnlyDeaf = !watchdogRecurringCadenceDisabled();
-        const intervalRows: any[] = await prisma.codingSchedule.findMany({
+        const intervalRows: any[] = await prisma.chatSchedule.findMany({
           where: { sessionId: { in: assigneeIds }, intervalSec: { not: null }, ...(recurringOnlyDeaf ? { kind: 'recurring' } : {}) },
           select: { sessionId: true, intervalSec: true, ...(recurringOnlyDeaf ? { kind: true } : {}) },
           orderBy: { createdAt: 'desc' },
@@ -1676,7 +1676,7 @@ async function sweepZombieMachineRuns(supervisorChatIds: string[], now: Date): P
   // both sides (supervisors by MAX_USERS_PER_SWEEP upstream, lanes here).
   const candidates = new Set<string>(supervisorChatIds);
   try {
-    const skipLanes: Array<{ sessionId: string }> = await (prisma as any).codingSchedule.findMany({
+    const skipLanes: Array<{ sessionId: string }> = await (prisma as any).chatSchedule.findMany({
       where: { enabled: true, busySkips: { gte: ZOMBIE_BUSY_SKIPS_MIN } },
       select: { sessionId: true },
       take: MAX_ZOMBIE_LANES,
@@ -1700,7 +1700,7 @@ async function sweepZombieMachineRuns(supervisorChatIds: string[], now: Date): P
   const recurringOnly = !watchdogRecurringCadenceDisabled();
   const shortestIntervalSec = new Map<string, number>();
   try {
-    const rows = await prisma.codingSchedule.findMany({
+    const rows = await prisma.chatSchedule.findMany({
       where: { sessionId: { in: [...locked] }, enabled: true, intervalSec: { not: null }, ...(recurringOnly ? { kind: 'recurring' } : {}) },
       select: { sessionId: true, intervalSec: true, ...(recurringOnly ? { kind: true } : {}) },
     });

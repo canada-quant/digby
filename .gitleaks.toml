@@ -5,8 +5,8 @@
 # so the CI gate is passable while still failing on any real credential.
 #
 # Every entry below was reviewed by hand: they are placeholder strings such as
-# `sk-AAAA…`, `hunter2`, `-----BEGIN RSA PRIVATE KEY-----\nMIIFAKEFAKEFAKE`,
-# used to prove the secret-redaction code catches them. Adding a path here is a
+# `sk-AAAA…`, `hunter2`, and a fake PEM opener/body used to prove the
+# secret-redaction code catches them. Adding a path here is a
 # security decision — do not extend this list without reading the file.
 
 title = "Digby gitleaks config"
@@ -51,4 +51,24 @@ paths = [
 regexes = [
   '''this\.t1PeakSimPrompt''',
   '''getRecurringTransactions''',
+  # ---------------------------------------------------------------------------
+  # §3b-B adjudications (2026-11-05, todo 57d1cb50). Both were found by scanning
+  # the FLIP TREE (not the live public tree) and each was adjudicated on
+  # evidence before being allowed — an allowlist entry is a security decision, so
+  # the reasoning ships next to it.
+  #
+  # 1. scripts/deploy/apply-env-overrides.sh
+  #      SECRET_PURGE_ID="2026-10-20-secret-owned"
+  #    A date-stamped PURGE MARKER. It names the marker generation, and the
+  #    neighbouring line it guards (SECRET_AUTHORITATIVE_KEYS) carries env-var
+  #    KEY NAMES, not values. Not a credential in any sense.
+  '''2026-10-20-secret-owned''',
+  # 2. scripts/seo/indexnow-submit.mjs
+  #      const KEY = 'd3fae3e0e8874b6aa25929e5cd74628e'
+  #    The IndexNow OWNERSHIP-PROOF key, public BY DESIGN: the export ships
+  #    frontend/public/d3fae3e0e8874b6aa25929e5cd74628e.txt (the proof file the
+  #    protocol requires), the live public tree already ships it, and
+  #    https://digby.ai/d3fae3e0e8874b6aa25929e5cd74628e.txt serves HTTP 200.
+  #    Publishing the key IS the mechanism — it grants nothing.
+  '''d3fae3e0e8874b6aa25929e5cd74628e''',
 ]

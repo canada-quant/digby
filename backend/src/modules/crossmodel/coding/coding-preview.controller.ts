@@ -33,7 +33,7 @@ const execFileAsync = promisify(execFile);
 const PREVIEW_TIMEOUT_MS = 25_000;
 
 /**
- * Optional DEDICATED preview origin (e.g. "preview.digby.example.com"). When set, previews
+ * Optional DEDICATED preview origin (e.g. "preview.digby.ai"). When set, previews
  * are served cross-origin from the main app, so a previewed (possibly third-party)
  * dev server's JS runs on a SEPARATE origin and structurally cannot touch the app's
  * localStorage/cookies — which lets us safely re-enable allow-same-origin for full
@@ -44,7 +44,7 @@ const PREVIEW_TIMEOUT_MS = 25_000;
  */
 const PREVIEW_HOST = (process.env.CODING_PREVIEW_HOST || '').trim();
 /** The app origin(s) allowed to frame a preview (frame-ancestors CSP). */
-const APP_ORIGIN = (process.env.FRONTEND_URL || 'https://digby.example.com').split(',')[0].trim();
+const APP_ORIGIN = (process.env.FRONTEND_URL || 'https://digby.ai').split(',')[0].trim();
 
 /**
  * Ports the preview proxy must NEVER curl. In the in-process fallback (container

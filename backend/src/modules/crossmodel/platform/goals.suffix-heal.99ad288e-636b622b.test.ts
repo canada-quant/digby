@@ -291,7 +291,7 @@ const INCIDENT_636B622B = [
   {
     typed: '665b2d57-663d-4003-bb95-a8f348e94cc1',
     real: '665b2d57-c268-47de-9948-d1017d5ef47c',
-    title: 'Deploy fix to bench containers and verify live on canlegalbench.com + canlegal-bench.example.com in both modes',
+    title: 'Deploy fix to bench containers and verify live on canlegalbench.com + canlegal-bench.cql.ca in both modes',
   },
   {
     typed: 'dfd56bfc-457d-4544-b7f0-48f17e261ac1',
