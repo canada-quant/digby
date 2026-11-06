@@ -1,0 +1,324 @@
+name: Install smoke (anonymous, published images)
+
+# LEG (e) OF TODO 7d41a5e1 — build and run ONLY on the public repo.
+#
+# WHAT THIS PROVES, AND WHY IT CANNOT BE PROVED FROM THE PRIVATE TREE
+#   `docs/SELF_HOST.md` § "Install from published images" makes a promise to a
+#   stranger: two commands, no clone, no account, and a working instance. Every
+#   other gate in this repository checks the tree the export PRODUCES; none of
+#   them ever ran the documented path end to end. A published image can be
+#   un-pullable anonymously, a compose file can reference a tag that was never
+#   built, and the installer can be broken on a clean host — and every one of
+#   those failures is invisible until a real person tries it. That is the class
+#   this workflow exists to catch, and it is exactly the class that only shows
+#   up OUTSIDE this repository (fresh runner, no docker cache, no config).
+#
+# WHAT IT ASSERTS (each is a named step, so a red run names its own cause)
+#   A  tag→digest binding, ANONYMOUSLY: the manifest digest GitHub Container
+#      Registry serves for the requested tag is the digest actually pulled. A
+#      private image, a deleted tag or a wrong-build tag all fail here first.
+#   B  the stack reaches `healthy` through Caddy on :8080 — the documented
+#      entrypoint, not a container-internal probe.
+#   C  the running backend's reported `revision` equals the image's own
+#      `org.opencontainers.image.revision` label. SELF_HOST.md documents these
+#      two as the same value; this is the credential-free check it describes.
+#   D  first-run signup: `POST /api/auth/register` returns 201, and the address
+#      in SELFHOST_ADMIN_EMAIL really is promoted to ADMIN (the documented
+#      first-admin bootstrap, 2026-10-20).
+#   E  UPGRADE: the from_tag instance is moved to to_tag with the documented
+#      `pull` + `up -d`, then (1) its revision CHANGED, (2) it is healthy
+#      again, and (3) THE SAME USER CAN STILL LOG IN — the data survived the
+#      swap. That third assertion is the whole point of an upgrade test; a
+#      stack that boots on the new image but lost its database is not an
+#      upgrade.
+#
+# WHAT IT DELIBERATELY DOES NOT DO
+#   - No model provider key, no cloud credential, no account, no `secrets.` or
+#     `vars.` reference of ANY kind. The runner starts with nothing and must
+#     succeed with nothing; `/api/health` is `healthy` on db+redis alone, which
+#     is why the smoke test needs no vendor key. A workflow that needs a
+#     provisioned credential cannot guard a repo whose ruling is ZERO
+#     credentials (owner, 2026-11-05T18:07Z).
+#   - No chat/model completion is exercised. With no key there is no model to
+#     call, and asserting on one would make this test's green depend on a
+#     vendor secret this repo must not carry.
+#   - The two JWT session secrets are GENERATED ON THE RUNNER at run time
+#     (`openssl rand -hex 32`, exactly what the guide tells an operator to
+#     run). They are never literals in this file — a workflow carrying a
+#     `NAME=<value>` line of a secret-shaped variable reads as a shipped
+#     credential to the export's own scanner, and it would be one.
+#
+# HOW IT RUNS
+#   `workflow_dispatch` with inputs (defaults = current release pair), so a
+#   maintainer can smoke any tag pair on demand, plus one weekly scheduled
+#   firing so a broken release is caught without anyone remembering to look.
+#   Actions minutes on a public repository are free, and this job pulls only
+#   the DEFAULT compose profile (~1.7 GB) — the optional `mcp`/`browser`/
+#   `tools` profiles are not started, so `browser-service` (931 MB) is excluded.
+#
+# TEARDOWN IS UNCONDITIONAL: a `down -v` step runs even on failure, so a red
+# run cannot leave volumes behind to poison the next one (the runner is
+# disposable, but a leftover named volume would make the next first-run check
+# a lie).
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_tag:
+        description: "Starting image tag to install (the default a new user gets)"
+        required: false
+        default: "latest"
+      to_tag:
+        description: "Image tag to upgrade to (the release under test)"
+        required: false
+        default: "1.0.1"
+  schedule:
+    # Weekly. The defaults above are the release pair under continuous test.
+    - cron: "17 5 * * 1"
+
+concurrency:
+  group: install-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FROM_TAG: ${{ inputs.from_tag || 'latest' }}
+  TO_TAG: ${{ inputs.to_tag || '1.0.1' }}
+  COMPOSE: docker-compose.selfhost.published.yml
+  DIGBY_DIR: digby
+  # The address that must become ADMIN on first registration. Not a credential
+  # and not a real mailbox — it is the documented bootstrap variable.
+  ADMIN_EMAIL: smoke-owner@example.com
+
+jobs:
+  anonymous-install-and-upgrade:
+    name: anonymous install ${{ inputs.from_tag || 'latest' }} → upgrade to ${{ inputs.to_tag || '1.0.1' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Preflight — docker, compose v2, free disk
+        run: |
+          set -eu
+          docker --version
+          docker compose version
+          # Compose v2 is a documented requirement; refuse early rather than
+          # produce a confusing half-working install (install.sh does the same).
+          docker compose version >/dev/null 2>&1 || { echo "::error::compose v2 missing on runner"; exit 1; }
+          df -h / | tail -1
+          echo "runner disk headroom is needed for ~1.7 GB of default-profile images"
+
+      - name: A — tag→digest binding, anonymously
+        id: digests
+        run: |
+          set -eu
+          # The anonymous token endpoint is what a stranger's `docker pull`
+          # uses. Asking for a token with NO credential and then reading the
+          # manifest is the exact check that a private or deleted image fails.
+          repo="canada-quant/digby-backend"
+          acc="application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json"
+          for tag in "$FROM_TAG" "$TO_TAG"; do
+            tok=$(curl -fsS "https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io" | jq -r .token)
+            [ -n "$tok" ] && [ "$tok" != "null" ] || { echo "::error::no anonymous token for $repo"; exit 1; }
+            dg=$(curl -fsSI -H "Authorization: Bearer $tok" -H "Accept: $acc" \
+                   "https://ghcr.io/v2/${repo}/manifests/${tag}" \
+                 | tr -d '\r' | awk 'tolower($1)=="docker-content-digest:"{print $2}')
+            [ -n "$dg" ] || { echo "::error::tag '$tag' is not pullable anonymously (no manifest digest)"; exit 1; }
+            echo "  anonymous  ${repo}:${tag}  ->  ${dg}"
+            case "$tag" in
+              "$FROM_TAG") echo "from_digest=$dg" >> "$GITHUB_OUTPUT" ;;
+            esac
+            case "$tag" in
+              "$TO_TAG") echo "to_digest=$dg" >> "$GITHUB_OUTPUT" ;;
+            esac
+          done
+
+      - name: Install — exactly the two documented commands
+        run: |
+          set -eu
+          # Verbatim from docs/SELF_HOST.md § "Install from published images":
+          #   curl -fsSLO .../scripts/selfhost/install.sh
+          #   sh install.sh
+          # Fetched from the live public branch, NOT from a checkout, because a
+          # checkout would test a copy of the installer instead of the one a
+          # stranger actually downloads.
+          curl -fsSLO "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/main/scripts/selfhost/install.sh"
+          DIGBY_IMAGE_TAG="$FROM_TAG" sh install.sh
+          # install.sh must have produced the documented layout and written NO
+          # secret of its own (its own contract; asserted here so a regression
+          # that starts writing one is caught by a run, not by a reader).
+          test -f "$DIGBY_DIR/$COMPOSE" || { echo "::error::installer did not write $COMPOSE"; exit 1; }
+          test -f "$DIGBY_DIR/deploy/selfhost/Caddyfile" || { echo "::error::installer did not write the Caddyfile"; exit 1; }
+          test -d "$DIGBY_DIR/branding" || { echo "::error::installer did not create branding/"; exit 1; }
+          test -f "$DIGBY_DIR/.env" || { echo "::error::installer did not seed .env"; exit 1; }
+          if grep -qE '^JWT_SECRET=.+' "$DIGBY_DIR/.env"; then
+            echo "::error::installer wrote a JWT_SECRET value; it must write none"
+            exit 1
+          fi
+
+      - name: Set the two session secrets the guide makes the operator generate
+        run: |
+          set -eu
+          cd "$DIGBY_DIR"
+          # Anchor on the KEY TEXT, never a line number: the example file is
+          # edited over time and a range-based rewrite would land on the wrong
+          # variable. Values are hex, so they cannot break the sed delimiter.
+          s1=$(openssl rand -hex 32)
+          s2=$(openssl rand -hex 32)
+          [ "$s1" != "$s2" ] || { echo "::error::generated the same session secret twice"; exit 1; }
+          for pair in "JWT_SECRET:$s1" "JWT_REFRESH_SECRET:$s2" "SELFHOST_ADMIN_EMAIL:$ADMIN_EMAIL"; do
+            k=${pair%%:*}; v=${pair#*:}
+            sed -i -E "s|^${k}=.*$|${k}=${v}|" .env
+            grep -qx "${k}=${v}" .env || { echo "::error::could not set ${k} in .env"; exit 1; }
+          done
+          # Same secrets from this point on, whatever the current image is.
+          echo "JWT_SECRET=$s1" >> "$GITHUB_ENV"
+          echo "JWT_REFRESH_SECRET=$s2" >> "$GITHUB_ENV"
+
+      - name: Start the stack
+        run: |
+          set -eu
+          cd "$DIGBY_DIR"
+          DIGBY_IMAGE_TAG="$FROM_TAG" docker compose -f "$COMPOSE" up -d
+
+      - name: Wait for healthy through Caddy, and A/C assertions
+        id: first
+        run: |
+          set -eu
+          cd "$DIGBY_DIR"
+          ok=0
+          for i in $(seq 1 40); do
+            body=$(curl -fsS http://localhost:8080/api/health 2>/dev/null || true)
+            if [ -n "$body" ] && [ "$(printf '%s' "$body" | jq -r .status)" = "healthy" ]; then
+              ok=1; printf '%s' "$body" | jq .; break
+            fi
+            sleep 15
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::stack did not report healthy within 10 minutes"
+            docker compose -f "$COMPOSE" ps || true
+            docker compose -f "$COMPOSE" logs --no-color --tail=120 backend worker migrate || true
+            exit 1
+          fi
+          api_rev=$(printf '%s' "$body" | jq -r '.revision // ""')
+          img_rev=$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "$(docker inspect --format '{{.Image}}' digby-backend)")
+          echo "  image label revision : $img_rev"
+          echo "  /api/health revision : $api_rev"
+          [ -n "$img_rev" ] && [ "$img_rev" != "<no value>" ] \
+            || { echo "::error::image carries no revision label; cannot answer 'what is this running?'"; exit 1; }
+          [ "$api_rev" = "$img_rev" ] \
+            || { echo "::error::health revision '$api_rev' != image label '$img_rev' (SELF_HOST.md documents them equal)"; exit 1; }
+          echo "revision=$img_rev" >> "$GITHUB_OUTPUT"
+          echo "  A/C PASS — anonymous pull at $FROM_TAG, healthy, revision matches the image"
+
+      - name: D — first-run signup, and the documented first-admin bootstrap
+        run: |
+          set -eu
+          # The password is generated HERE and carried to the post-upgrade login
+          # step through $GITHUB_ENV. (An earlier draft re-generated it inline at
+          # register time and referenced an unset $SMOKE_PASSWORD afterwards —
+          # the login check would have sent an empty password and failed for a
+          # reason having nothing to do with the upgrade.)
+          pw=$(openssl rand -hex 16)
+          # The guide's documented sequence: register, and the SELFHOST_ADMIN_EMAIL
+          # address becomes ADMIN. Asserting the role is the difference between
+          # "signup returned 201" and "the documented bootstrap works".
+          code=$(curl -sS -o resp.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$pw\"}" \
+            http://localhost:8080/api/auth/register)
+          cat resp.json; echo
+          [ "$code" = "201" ] || { echo "::error::register returned HTTP $code, expected 201"; exit 1; }
+          role=$(jq -r '.data.user.role // ""' resp.json)
+          [ "$role" = "ADMIN" ] \
+            || { echo "::error::first user role is '$role', expected ADMIN from SELFHOST_ADMIN_EMAIL"; exit 1; }
+          echo "  D PASS — register 201, first user promoted to ADMIN via SELFHOST_ADMIN_EMAIL"
+          echo "SMOKE_PASSWORD=$pw" >> "$GITHUB_ENV"
+
+      - name: E — upgrade to ${{ inputs.to_tag || '1.0.1' }}
+        id: upgrade
+        run: |
+          set -eu
+          cd "$DIGBY_DIR"
+          # The published-image upgrade path: move the tag, pull, recreate. This
+          # is what an operator does per SELF_HOST.md § Pinning a release.
+          DIGBY_IMAGE_TAG="$TO_TAG" docker compose -f "$COMPOSE" pull
+          DIGBY_IMAGE_TAG="$TO_TAG" docker compose -f "$COMPOSE" up -d
+          ok=0
+          for i in $(seq 1 40); do
+            body=$(curl -fsS http://localhost:8080/api/health 2>/dev/null || true)
+            if [ -n "$body" ] && [ "$(printf '%s' "$body" | jq -r .status)" = "healthy" ]; then
+              ok=1; printf '%s' "$body" | jq .; break
+            fi
+            sleep 15
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::stack did not return to healthy after upgrading to $TO_TAG"
+            docker compose -f "$COMPOSE" ps || true
+            docker compose -f "$COMPOSE" logs --no-color --tail=120 backend worker migrate || true
+            exit 1
+          fi
+          api_rev=$(printf '%s' "$body" | jq -r '.revision // ""')
+          img_rev=$(docker image inspect \
+            --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+            "$(docker inspect --format '{{.Image}}' digby-backend)")
+          echo "  after upgrade, image label revision : $img_rev"
+          echo "  after upgrade, /api/health revision : $api_rev"
+          [ "$api_rev" = "$img_rev" ] \
+            || { echo "::error::post-upgrade health revision '$api_rev' != image label '$img_rev'"; exit 1; }
+          # The stack must actually be RUNNING DIFFERENT BYTES. Without this the
+          # "upgrade" could be a no-op recreate that still reports healthy.
+          [ "$img_rev" != "${{ steps.first.outputs.revision }}" ] \
+            || { echo "::error::revision is unchanged ($img_rev) — '$FROM_TAG' and '$TO_TAG' resolved to the same build; not an upgrade"; exit 1; }
+          echo "revision=$img_rev" >> "$GITHUB_OUTPUT"
+          # Record which registry artifact is actually in use, for the log.
+          # NOT compared to step A's digest: that one is the multi-arch INDEX
+          # digest, while a pulled image's RepoDigest is its per-platform
+          # manifest — different values by construction, so an equality check
+          # here would fail on every correct run. The revision assertion above
+          # (and the "must differ" check before it) is the real binding proof.
+          echo "  RepoDigests: $(docker inspect --format '{{join .RepoDigests \" \"}}' "$(docker inspect --format '{{.Image}}' digby-backend)")"
+          echo "  E PASS — upgraded '$FROM_TAG' -> '$TO_TAG', revision ${{ steps.first.outputs.revision }} -> $img_rev, healthy again"
+
+      - name: E (cont.) — the upgrade did not lose the database
+        run: |
+          set -eu
+          # A stack that boots on the new image with an EMPTY database is not an
+          # upgrade — it is a reinstall. The account created before the swap
+          # must still authenticate after it.
+          code=$(curl -sS -o login.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}" \
+            http://localhost:8080/api/auth/login || true)
+          if [ "$code" != "200" ]; then
+            echo "::error::login after upgrade returned HTTP $code — the upgrade lost data or the schema"
+            cat login.json 2>/dev/null || true
+            docker compose -f "$DIGBY_DIR/$COMPOSE" logs --no-color --tail=150 migrate backend || true
+            exit 1
+          fi
+          echo "  E PASS — the pre-upgrade account still authenticates after the swap"
+
+      - name: Diagnostics (only shown on failure)
+        if: failure()
+        run: |
+          echo "── compose ps ──"
+          (cd "$DIGBY_DIR" && docker compose -f "$COMPOSE" ps) || true
+          echo "── backpack backend ──"
+          (cd "$DIGBY_DIR" && docker compose -f "$COMPOSE" logs --no-color --tail=200 backend) || true
+          echo "── migrate ──"
+          (cd "$DIGBY_DIR" && docker compose -f "$COMPOSE" logs --no-color --tail=200 migrate) || true
+          echo "── disk ──"
+          df -h / || true
+
+      - name: Teardown (always)
+        if: always()
+        run: |
+          # Unconditional: a named volume left behind would make the NEXT
+          # first-run check inherit a seeded database and pass vacuously.
+          if [ -d "$DIGBY_DIR" ]; then
+            (cd "$DIGBY_DIR" && docker compose -f "$COMPOSE" down -v --remove-orphans) || true
+          fi
+          docker system prune -af --volumes >/dev/null 2>&1 || true

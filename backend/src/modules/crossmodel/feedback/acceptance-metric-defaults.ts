@@ -497,6 +497,60 @@ const DESIGNED_OBSERVABILITY_SIGNATURES: ReadonlyArray<{
     },
     why: 'the action-verifier third-party-attribution drop guard discarding a claim a lane attributed to another lane is the guard WORKING — the dropped claim is real but not this run\'s, so no fix in this run can or should reduce the count',
   },
+  {
+    // ── TICKET 68200428 (2026-11-06, family lane a10726b9) ──────────────────
+    // `Digby Web Search: PDF fetch/extract failed for "<url>": <reason>` —
+    // mcp-search.ts `extractPdfTextFromUrl`'s catch, the per-target PDF fetch
+    // observability for web research. ONE warn per failed TARGET, then null and
+    // the caller falls through to the remaining search results; the fetch is
+    // never retried inside the function.
+    //
+    // WHY THE WHOLE CLASS AND NOT ONE ARM. The two signatures above key on a
+    // distinguishing token because their emit sites carry SILENCED and
+    // MUST-STILL-FILE arms side by side. This one does not: EVERY arm of this
+    // message is a per-target property of a third-party server or of a
+    // deliberate bound of ours, and the open-the-loop defect is identical for
+    // each — measured in the ticket's own window, the class filed as
+    // `Request failed with status code 403` (asbca.mil, dupont.com,
+    // accessdata.fda.gov), `402` (globalsecurity.org) and `503`
+    // (rockwool.com) plus `maxContentLength size of 20971520 exceeded`, i.e.
+    // the cap designed into PDF_FETCH_MAX_BYTES. None is a defect a fix could
+    // drive to zero: an external host refusing us stays refused (re-probed
+    // 2026-11-06 with a full browser User-Agent — the same AkamaiGHost
+    // `Access Denied` 403 body, so it is not bot-blocking we could mitigate),
+    // and the size cap is memory safety, not a bug.
+    //
+    // WHY A PATTERN MATCH RATHER THAN A FRAGMENT SHAPE (the F1 trap, avoided).
+    // The autofiler's derived fragment for a row of this class is the message
+    // head ending at the first variable token — measured on the live rows:
+    // `digby web search: pdf fetch/extract failed for "https://www.asbca.mil/portals/`
+    // (78 chars). Because normalizeLogMessage collapses the digit runs, the
+    // fragment stops at the FIRST numeric path segment, so it is a per-HOST
+    // prefix that does NOT carry the reason. Two consequences, both deliberate:
+    //   - a shape-based test on the fragment could not tell a 403 arm from a
+    //     same-host arm, so it would have to accept every host. Keying on the
+    //     emit-site TEMPLATE is the same breadth but states the real reason —
+    //     the class is designed end to end;
+    //   - the bar the autofiler stamped is therefore per-host, and a fix could
+    //     never clear it. That is the loop this closes.
+    //
+    // NOT A FILING-STOP, and NOT a logClass tag: the sweep keeps fingerprinting
+    // and filing this class (the per-target warn is the only account of which
+    // research targets are unreachable, and it is what surfaced this ticket).
+    // Only the METRIC decision consults this set. Source-level pinned below in
+    // log-signal-pdf-fetch.68200428.test.ts: exactly ONE emit site, one warn per
+    // target, never retried — if a future refactor adds a retry or a second
+    // emitter the pin fails and this signature must be revisited rather than
+    // silently widening.
+    //
+    // THE EXTRACTOR IS A DIFFERENT MESSAGE AND KEEPS ITS BAR — `pdf-parse
+    // getText() failed for <filename>` (pdf-extract.ts) measures the extractor
+    // working, so a regression there must stay measurable. This pattern cannot
+    // match it (pinned).
+    id: 'websearch-pdf-fetch-target',
+    test: (p) => /pdf fetch\/extract failed/i.test(p),
+    why: 'the web-search PDF fetch/extract warn is per-target observability for an external document host refusing us or exceeding a deliberate size bound — one warn per target, never retried, so its volume tracks which third-party URLs a research session cites, never whether a fix works',
+  },
 ];
 
 /** The unsoundness FAMILY a matched signature belongs to — the verifier's note reads from this. */

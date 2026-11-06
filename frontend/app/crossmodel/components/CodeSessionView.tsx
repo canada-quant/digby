@@ -63,7 +63,7 @@ import { imagePartFromFrame } from '@/lib/image-frame-part';
 const URGENT_PROGRESS_STAGES: ReadonlySet<string> = new Set(['zero-tool-gate', 'evidence-guard', 'leak', 'deadline', 'loop', 'resume', 'steer', 'event-log-degraded', 'truncated']);
 import {
   AssistantParts, CodeTranscriptMarkdown,
-  parseEmailDraft, extractEmailFromParts, PlainEmailCard, PlainSourcesRow, PlainFollowUps, PlainModelCard, PlainMessageActions, UserMessageCopyButton,
+  parseEmailDraft, extractEmailFromParts, PlainEmailCard, PlainSourcesRow, PlainFollowUps, PlainModelCard, PlainMessageActions, UserMessageCopyButton, UserMessageVaultButton,
 } from './code-transcript';
 import { ElapsedTimer, LiveRunStatus, StreamingDot, ThinkingBlock, appendThinkingStep, liveHasText } from './LiveRunStatus';
 import { StreamingWordsContext } from '@/lib/stream-words-context';
@@ -4374,6 +4374,25 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
                     when the message carries text worth copying. */}
                 {m.role === 'user' && !!m.content?.trim() && (
                   <UserMessageCopyButton content={m.content} />
+                )}
+                {/* One-tap "Vault this" (feedback ticket f95e1e30, part 2). Two
+                    conditions, BOTH required:
+                      · m.plainMeta.credentialPaste — the server's value-free
+                        stamp, derived at read time from this row's own content
+                        (platform/credential-paste.ts). The browser never sniffs
+                        for credentials itself; this flag IS the decision.
+                      · a REAL persisted row id — a live/guest echo has no row
+                        (CROSSMODEL_MSG_ID_RE fails) and the route would 404, so
+                        those rows get no button.
+                    Members watching a shared session never get it either: the
+                    route is owner-scoped and would refuse their click. */}
+                {m.role === 'user' && !!m.plainMeta?.credentialPaste
+                  && CROSSMODEL_MSG_ID_RE.test(m.id) && !!chatId && !memberViewOnly && (
+                  <UserMessageVaultButton
+                    chatId={chatId}
+                    messageId={m.id}
+                    flag={m.plainMeta.credentialPaste}
+                  />
                 )}
                 {m.role === 'user' ? (
                   // min-w-0 is load-bearing: a flex item's min-content width

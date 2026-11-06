@@ -16,6 +16,8 @@
 import axios from 'axios';
 import logger from '../../utils/logger';
 import { logExternal } from '../../utils/log-level';
+import { isZoneErrorCode } from './platform/brightdata-zone';
+import { recordZoneFailure } from './platform/search-config-state';
 
 const BD_REQUEST_URL = 'https://api.brightdata.com/request';
 const TOKEN = process.env.BRIGHTDATA_API_TOKEN;
@@ -58,6 +60,34 @@ export class DirectUpstreamError extends Error {
 }
 
 /**
+ * ZONE CONFIG ERROR (ticket 02f8c83f): Bright Data answered HTTP **200 with a
+ * zero-byte body** because the zone named in the request does not exist on the
+ * account — the truth only appears in headers (`x-brd-status-code: 407`,
+ * `x-brd-err-code: client_10002`, `x-brd-error: Zone not found`).
+ *
+ * This is a DISTINCT class from a generic upstream rejection and from a
+ * deterministic empty page, because it is neither a bad target nor a transient
+ * blip: OUR configuration is wrong, EVERY search and scrape will keep
+ * answering 200-with-nothing, and the only fix is the operator naming a zone
+ * that exists. Live evidence (digby.cql.ca, 2026-11-06): the stored row had
+ * `zone: null` → the hardcoded default 'web_unlocker1' → every SERP and scrape
+ * silently returned nothing for hours while the settings page showed a saved,
+ * readable key. Recording it (search-config-state.recordZoneFailure) is what
+ * lets Admin → Settings → Web search stop showing a dead default as healthy.
+ */
+export class DirectZoneError extends DirectUpstreamError {
+  constructor(
+    code: string,
+    status: number,
+    message: string,
+    public readonly zone: string,
+  ) {
+    super(code, status, message);
+    this.name = 'DirectZoneError';
+  }
+}
+
+/**
  * DIRECT-tier MISS CLASS (backlog audit PE-06, 2026-09-28). The direct
  * search_engine tier answered nothing in ~35 % of prod searches (592/1,674 over
  * 7 d) and nothing recorded WHY — the "returned nothing" warn carried no body
@@ -67,7 +97,9 @@ export class DirectUpstreamError extends Error {
  *   timeout | empty_body | serp_<bodyClass> | upstream_<x-brd-err-code> |
  *   http_<status> | net_<code> | no_token | error
  * where bodyClass (classifySerpBody) is one of consent | captcha | redirect |
- * json_no_organic | json_malformed | html | other.
+ * json_no_organic | json_malformed | html | other, and a zone rejection is
+ * `zone_<x-brd-err-code>` (ticket 02f8c83f — a 200-with-empty-body because the
+ * zone does not exist, NEVER reported as "no results").
  */
 export interface DirectMissInfo {
   class: string;
@@ -111,6 +143,11 @@ export function classifySerpBody(text: string): string {
 
 /** Map any direct-tier failure to its DirectMissInfo (pure; never throws). */
 export function classifyDirectMiss(err: any): DirectMissInfo {
+  // Zone rejection FIRST: it is a DirectUpstreamError subclass, but it is a
+  // CONFIG error (the zone does not exist), not an ACL/policy refusal — the
+  // class must be distinguishable so telemetry and the admin surface never
+  // file it as "returned no results" (ticket 02f8c83f).
+  if (err instanceof DirectZoneError) return { class: `zone_${err.code}`, status: err.status, code: err.code, detail: err.zone };
   if (err instanceof DirectUpstreamError) return { class: `upstream_${err.code}`, status: err.status, code: err.code };
   if (err instanceof DirectSerpShapeError) return { class: `serp_${err.bodyClass}`, detail: err.bodyClass };
   if (err instanceof DirectEmptyBodyError) return { class: 'empty_body' };
@@ -235,10 +272,15 @@ export async function resolveDirectBrightDataCreds(): Promise<DirectBrightDataCr
   // store read failure degrades to "no store creds" — the gateway tier and
   // the not-configured message own the rest, never a thrown error.
   try {
-    const { resolveStoreBrightDataCredentials, DEFAULT_UNLOCKER_ZONE } = await import('./platform/search-provider-config');
+    const { resolveStoreBrightDataCredentials, resolveWireZone } = await import('./platform/search-provider-config');
     const store = await resolveStoreBrightDataCredentials();
     if (store) {
-      const creds = { token: store.token, zone: store.zone || DEFAULT_UNLOCKER_ZONE, source: 'store' as const };
+      // F1 (ticket 02f8c83f): the zone on the wire MUST come from the one
+      // shared resolver — computing it locally (store.zone || DEFAULT) made the
+      // admin panel report a different zone than the tier actually used, which
+      // is how a dead stored zone rendered as verified (and a good one as dead)
+      // on every compose install (the env zone is always set there).
+      const creds = { token: store.token, zone: resolveWireZone(store.zone), source: 'store' as const };
       _lastStoreCreds = { at: Date.now(), creds };
       return creds;
     }
@@ -355,11 +397,21 @@ async function bdRequest(body: Record<string, any>, timeoutMs: number, retryBudg
       // DirectUpstreamError doc).
       const errCode = r.headers?.['x-brd-err-code'] ?? r.headers?.['x-brd-err_code'];
       if (errCode) {
-        throw new DirectUpstreamError(
-          String(errCode),
-          r.status,
-          String(r.headers?.['x-brd-err'] || 'BrightData upstream rejection'),
-        );
+        const zone = String(body?.zone ?? (creds ? creds.zone : UNLOCKER_ZONE));
+        const detail = String(r.headers?.['x-brd-err'] || r.headers?.['x-brd-err-msg'] || 'BrightData upstream rejection');
+        // The REAL cause code is in x-brd-status-code (407 'Zone not found');
+        // r.status is 200 — reporting http=200 next to "does not exist" reads
+        // like a success (reviewer F7).
+        const providerStatus = Number(r.headers?.['x-brd-status-code']) || r.status;
+        // A ZONE rejection is a CONFIG error, not an ACL/policy one: the zone in
+        // the request does not exist on the account, so EVERY call will keep
+        // answering 200-with-nothing. Record it for the admin surface, then throw
+        // the distinct class so telemetry says zone_<code>, never "no results".
+        if (isZoneErrorCode(errCode)) {
+          recordZoneFailure({ at: Date.now(), zone, code: String(errCode) });
+          throw new DirectZoneError(String(errCode), providerStatus, detail, zone);
+        }
+        throw new DirectUpstreamError(String(errCode), providerStatus, detail);
       }
       const text = typeof r.data === 'string' ? r.data : JSON.stringify(r.data ?? '');
       if (!text || !text.trim()) throw new DirectEmptyBodyError('empty body from BrightData direct');
@@ -499,7 +551,13 @@ export async function tryDirectBrightData(
           .catch(e => {
             // Upstream rejections must stay loud even when batched — the inline
             // text alone would repeat the 2026-08-06 invisible-outage pattern.
-            if (e instanceof DirectUpstreamError) {
+            if (e instanceof DirectZoneError) {
+              logger.warn(
+                `BrightData direct: scrape_batch URL ${String(u).slice(0, 60)} ZONE CONFIG ERROR — zone "${e.zone}" does not exist` +
+                ` (x-brd-err-code=${e.code}); every search/scrape answers 200 with an empty body until a real zone is saved`,
+                { source: 'brightdata-direct', tool: 'scrape_batch' },
+              );
+            } else if (e instanceof DirectUpstreamError) {
               logger.warn(
                 `BrightData direct: scrape_batch URL ${String(u).slice(0, 60)} UPSTREAM rejection` +
                 ` (x-brd-err-code=${e.code}, http=${e.status}) — ${e.message}`,
@@ -514,6 +572,20 @@ export async function tryDirectBrightData(
     }
     return null; // tool not covered by the direct tier
   } catch (err: any) {
+    // ZONE CONFIG ERROR (ticket 02f8c83f) — the zone does not exist on the
+    // account, so EVERY search/scrape answers 200 + empty body. Say that, out
+    // loud, instead of the generic upstream wording: an operator reading the
+    // logs must be told to fix the ZONE, not to check the target page or retry.
+    if (err instanceof DirectZoneError) {
+      logger.warn(
+        `BrightData direct: ${toolName} ZONE CONFIG ERROR — zone "${err.zone}" does not exist on this account` +
+        ` (x-brd-err-code=${err.code}, http=${err.status}, "${err.message}"); every search will answer 200 with an empty body` +
+        ' until Admin → Settings → Web search names a zone that exists (GET https://api.brightdata.com/zone/get_active_zones)',
+        { source: 'brightdata-direct', tool: toolName },
+      );
+      noteMiss(classifyDirectMiss(err));
+      return null;
+    }
     // Upstream rejection (ACL/zone/credentials refused): loud + specific —
     // config is broken, not the page. Still null (gateway may route around).
     if (err instanceof DirectUpstreamError) {

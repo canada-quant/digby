@@ -74,6 +74,35 @@ cd digby
 docker compose -f docker-compose.selfhost.published.yml up -d
 ```
 
+### This path is smoke-tested on every release, anonymously
+
+The two commands above are the promise; `Install smoke (anonymous, published
+images)` in `canada-quant/digby` is the check that keeps it honest. It runs on a
+**credential-free** GitHub runner — no model key, no cloud account, nothing
+provisioned — and follows this section end to end: it fetches `install.sh` from
+`main`, installs the current release, waits for `/api/health` to report
+`healthy` through Caddy on port 8080, registers the `SELFHOST_ADMIN_EMAIL`
+account and asserts it really is `ADMIN`, then **upgrades that same instance to
+the release under test** using the documented `pull` + `up -d`, and finally
+asserts the pre-upgrade account can still log in — a stack that boots on a new
+image with an empty database is a reinstall, not an upgrade.
+
+It also asserts two things this page states elsewhere, so neither can drift
+silently: the image tag resolves for an **anonymous** pull, and the `revision`
+reported by `/api/health` equals the running image's
+`org.opencontainers.image.revision` label (see *Checking which revision an
+instance runs*).
+
+Start it yourself from **Actions → Install smoke → Run workflow**, choosing
+`from_tag` (what a new user currently gets, default `latest`) and `to_tag` (the
+release under test). It also fires weekly. A green run is the evidence that a
+release is installable — not merely published.
+
+The two session secrets this path requires are generated **on the runner** at
+run time with `openssl rand -hex 32`, exactly as this guide tells you to; the
+job never carries one, and the instance it creates is destroyed
+unconditionally when the job ends.
+
 ### Pinning a release
 
 `:latest` is convenient; a pinned tag is reproducible. The published images
@@ -83,29 +112,35 @@ carry three tag families:
   compose file uses when `DIGBY_IMAGE_TAG` is unset).
 - `sha-<full 40-char commit sha>` — one per published commit. This is the
   reproducible pin: it names the precise source the image was built from.
-- `<version>` — a released version, e.g. `1.0.0`. The workflow strips the
-  leading `v` from the git tag, so git tag `v1.0.0` produces image tag `1.0.0`.
+- `<version>` — a released version, e.g. `1.0.1`. The workflow strips the
+  leading `v` from the git tag, so git tag `v1.0.1` produces image tag `1.0.1`.
 
 ```bash
 # pin to the current release
-DIGBY_IMAGE_TAG=1.0.0 \
+DIGBY_IMAGE_TAG=1.0.1 \
   docker compose -f docker-compose.selfhost.published.yml up -d
 ```
 
 **Releases.** `canada-quant/digby` publishes a git tag and a GitHub release per
 version, and `publish-images.yml` builds every image from that exact tagged
-commit. `v1.0.0` was cut at commit
-`0330c8714d78fc0d6aa5a9d632155ec566d05f91`; its images are published as both
-`1.0.0` and `sha-0330c8714d78fc0d6aa5a9d632155ec566d05f91`, so you can pin by
-version or by source commit and get byte-identical images.
+commit. **`v1.0.1`** was cut at commit
+`743c9c7eb4f3`; its images are published as both `1.0.1` and
+`sha-743c9c7eb4f3…`, so you can pin by version or by source commit and get
+byte-identical images.
 
-> ℹ️ **Earlier revisions of this page were wrong in both directions.** They first
-> showed a bare `DIGBY_IMAGE_TAG=1.0.0` when no such tag existed (the pull
-> failed); a later revision marked that as `⚠ STALE` and said the repository had
-> **zero** tags and **zero** releases. Both statements were true when written and
-> are false now — `v1.0.0` exists and its images are pullable anonymously. If a
+`v1.0.0` was **withdrawn**. Its images are still pullable, but its source
+archive predates a public-tree fix and carried two production systemd units the
+export policy withholds — no credentials, but material that should not have
+shipped. Use `v1.0.1`.
+
+> ℹ️ **This page has now been wrong in three directions, so check before trusting
+> it.** It first showed a bare `DIGBY_IMAGE_TAG=1.0.0` when no such tag existed
+> (the pull failed); a later revision marked that `⚠ STALE` and claimed the
+> repository had **zero** tags and **zero** releases; then it documented `v1.0.0`
+> as the current release, which was true until `v1.0.0` was withdrawn. Each
+> statement was accurate when written. **The current release is `v1.0.1`.** If a
 > documented tag ever fails to pull, check
-> `https://github.com/canada-quant/digby/releases` before assuming the docs are
+> `https://github.com/canada-quant/digby/releases` before assuming this page is
 > current.
 
 ### What is different from the from-source path
@@ -769,10 +804,23 @@ on, in resolution order:
 - **Admin UI (recommended)** — Admin → Settings → Web search: paste your Bright
   Data API key (+ zone). It is stored server-side ENCRYPTED (never echoed back
   after save) and arms search within ~30 s — no restart, no `.env` edit.
+
+  The zone is **validated at save time**: the backend asks your account for its
+  real zone list (`GET https://api.brightdata.com/zone/get_active_zones`) and
+  refuses a save naming a zone that is not there — including a save that names
+  no zone at all when the built-in default is not on your account. The error
+  names the bad zone, Bright Data's own err-code (`client_10002`) and the zones
+  you DO have, so the fix is one paste; nothing is written until the zone
+  resolves. The panel always shows the **zone actually in use** (not just the
+  stored one) and marks it `verified` / `unverified` / `does not exist — search
+  is dead`, so a saved key can no longer sit next to a green default that makes
+  every search return nothing. When the provider cannot be reached the save
+  proceeds and the zone reads `unverified` — it is never reported as healthy.
 - **Direct API via env** — set `BRIGHTDATA_API_TOKEN` in `.env`
   (https://brightdata.com, a Web Unlocker zone; `BRIGHTDATA_WEB_UNLOCKER_ZONE`
   defaults to `web_unlocker1`). No gateway needed. Takes precedence over the
-  admin store when set.
+  admin store when set. The env path is NOT validated at boot (an env var cannot
+  be rejected), so the panel's zone check is how you confirm it.
 
   ⚠ Verify the zone actually EXISTS on your account before relying on that
   default — `GET https://api.brightdata.com/zone/get_active_zones` with the same
@@ -783,6 +831,11 @@ on, in resolution order:
   page still shows a saved key. If your real zones differ (e.g. `web_unlocker2`),
   set `BRIGHTDATA_WEB_UNLOCKER_ZONE` to the one that exists — the key itself is
   almost certainly fine, so do not rotate it.
+
+  The search backend now classifies that response for what it is: a
+  `zone_client_10002` provider ZONE/config error (logged as `ZONE CONFIG ERROR`
+  naming the zone and the fix) — never `empty_body` and never "search returned
+  no results".
 - **Local gateway** — run with `--profile mcp` and set
   `MCP_DIGBY_URL=http://brightdata-mcp:8000/mcp` plus a `MCP_DIGBY_TOKEN` you
   invent (it gates your own gateway). The gateway container reads

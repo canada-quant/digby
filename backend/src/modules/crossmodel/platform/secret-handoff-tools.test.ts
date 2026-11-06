@@ -87,7 +87,7 @@ describe('store_secret — schema', () => {
     expect(SECRET_HANDOFF_TOOL_SCHEMA).toHaveLength(1);
     const p: any = SECRET_HANDOFF_TOOL_SCHEMA[0].function.parameters;
     expect(p.required).toEqual(['envKey']);
-    expect(Object.keys(p.properties)).toEqual(['envKey', 'label', 'fromMessageId', 'which']);
+    expect(Object.keys(p.properties)).toEqual(['envKey', 'label', 'fromMessageId', 'which', 'all']);
     expect(SECRET_HANDOFF_TOOL_SCHEMA[0].function.description).toMatch(/Machine-triggered runs .* MUST pass fromMessageId/);
   });
 });

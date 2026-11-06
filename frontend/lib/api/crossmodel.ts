@@ -525,6 +525,31 @@ export interface PendingConfirmation {
   machine?: boolean;
 }
 
+export const credentialVaultApi = {
+  /** One-tap "vault this" (feedback ticket f95e1e30, part 2): vault every
+   *  credential-shaped value of ONE of the caller's own pasted messages.
+   *
+   *  The client sends NO value — the id says which row, and the server lifts the
+   *  bytes from the persisted message exactly as `store_secret` does. The answer
+   *  names env keys / pattern names / refusal reasons and NEVER a value:
+   *  `stored` is every key the vault holds, `notStored` is everything it could
+   *  not store (so a partial vault is never silent).
+   *
+   *  Authed by the app-level /api/crossmodel guard + apiClient's bearer; a row
+   *  in someone else's chat answers 404 (no existence leak), a machine-authored
+   *  row inside your own chat answers 403 NOT_OWNER_TYPED. */
+  vaultMessage: async (chatId: string, messageId: string): Promise<{
+    ok: boolean;
+    reason?: string;
+    stored: Array<{ envKey: string; injectedKey: string; pattern: string; replaced: boolean }>;
+    notStored: Array<{ n: number; pattern: string; envKey: string; reason: string }>;
+    message: string;
+  }> => {
+    const r = await apiClient.post(`/crossmodel/chats/${chatId}/messages/${messageId}/vault`);
+    return r.data;
+  },
+};
+
 export const confirmationsApi = {
   /** Every chat of the user's currently blocked on a human (sidebar banner poll). */
   getPending: async (opts?: { signal?: AbortSignal }): Promise<PendingConfirmation[]> => {
@@ -2421,6 +2446,18 @@ export interface WebSearchConfigStatus {
   envPrecedence: boolean;
   updatedAt: string | null;
   updatedBy: string | null;
+  /** The zone the backend ACTUALLY uses now (row → env → default) — the value
+   *  to SHOW; `zone` is only the stored value (ticket 02f8c83f). */
+  resolvedZone: string | null;
+  /** true = the resolved zone exists on the account · false = it does NOT (every
+   *  search answers HTTP 200 + empty body) · null = could not be checked. */
+  zoneVerified: boolean | null;
+  /** Why the zone could not be checked (only when zoneVerified is null). */
+  zoneProbeError: string | null;
+  /** Zones that exist on the account (empty when the probe could not answer). */
+  activeZones: string[];
+  /** A zone rejection the search tier observed: 200 + empty body + client_10002. */
+  zoneError: { zone: string; code: string; at: string } | null;
 }
 
 // ── Instance setup (2026-10-20, self-host setup hardening) ────────────────────

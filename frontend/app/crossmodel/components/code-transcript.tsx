@@ -41,6 +41,7 @@ import {
   ListChecks, CheckCheck, Play, Square, Activity,
   CheckCircle2, XCircle, AlertCircle, Globe, Mail, MailCheck, Send, Pencil, Check, X, Loader2, Brain, Zap,
   Copy, CopyCheck, Volume2, VolumeX, ThumbsDown, ThumbsUp, RotateCcw, CornerDownRight, Download, ExternalLink,
+  KeyRound, ShieldCheck,
 } from 'lucide-react';
 
 /**
@@ -2433,6 +2434,108 @@ export function UserMessageCopyButton({ content }: { content: string }) {
         ? <><CopyCheck className="size-3.5 text-success-accent" /><span className="sr-only">Copied</span></>
         : <><Copy className="size-3.5" /><span className="sr-only">Copy</span></>
       }
+    </button>
+  );
+}
+
+/**
+ * One-tap "Vault this" on the OWNER's own credential paste (feedback ticket
+ * f95e1e30, part 2).
+ *
+ * THE GAP THIS CLOSES. Before this, the only path from an owner's pasted key to
+ * the encrypted coding-credentials vault was an agent deciding to call
+ * `store_secret`. If the run never noticed, the credential sat in the transcript
+ * unvaulted and the owner had no button of his own (specimen chat 41bd202a:
+ * Brev's access_token + refresh_token pair, 05:29Z).
+ *
+ * TWO SOURCES OF TRUTH, both required to render:
+ *  - `messageId` — a REAL persisted row id (CROSSMODEL_MSG_ID_RE). A live or
+ *    guest echo has no row, so the route would 404; those rows get NO button.
+ *  - `flag` — the server's value-free `credentialPaste` stamp, computed at read
+ *    time from the row's content. The browser NEVER sniffs for credentials: it
+ *    renders on the flag alone, so the decision "is this a credential" lives in
+ *    exactly one place (platform/credential-paste.ts).
+ *
+ * When the flag already carries `vaulted`, this renders a quiet "stored as $X"
+ * note instead of a button — the store is visible across reloads and cannot be
+ * offered a second time by accident.
+ *
+ * The POST carries NO value: the ids identify the row and the server lifts the
+ * bytes itself, exactly as `store_secret` does. The reply names env keys and
+ * anything NOT stored, so a partial vault is never silent.
+ */
+export function UserMessageVaultButton({ chatId, messageId, flag, disabled }: {
+  chatId: string;
+  messageId: string;
+  flag: { count: number; patterns: string[]; vaulted?: string[]; notStored?: string[] };
+  /** Guest / member-view transcripts: never offer a write the route would refuse. */
+  disabled?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [vaulted, setVaulted] = useState<string[]>(Array.isArray(flag.vaulted) ? flag.vaulted : []);
+  const [notStored, setNotStored] = useState<string[]>([]);
+  // A partial vault from an EARLIER click rides the server stamp, so a reload
+  // keeps the retry (finding #4). A COMPLETE vault carries none.
+  const [carriedPending] = useState<string[]>(Array.isArray(flag.notStored) ? flag.notStored : []);
+  const pendingKeys = notStored.length ? notStored : carriedPending;
+  const partial = !!vaulted.length && pendingKeys.length > 0;
+  const label = flag.count === 1 ? 'Vault this credential' : `Vault these ${flag.count} credentials`;
+
+  const run = () => {
+    if (busy || disabled) return;
+    setBusy(true);
+    void import('@/lib/api/crossmodel')
+      .then(({ credentialVaultApi }) => credentialVaultApi.vaultMessage(chatId, messageId))
+      .then((res) => {
+        if (res?.ok) {
+          setVaulted(res.stored.map((s) => s.injectedKey));
+          setNotStored(res.notStored.map((n) => n.envKey || n.pattern));
+          toast.success(res.message);
+        } else {
+          toast.error(res?.message || 'Nothing was stored.');
+        }
+      })
+      .catch((err: any) => {
+        const detail = err?.response?.data?.error;
+        toast.error(detail || 'Could not vault that value. Nothing was changed.');
+      })
+      .finally(() => setBusy(false));
+  };
+
+  if (vaulted.length && !partial) {
+    return (
+      <span
+        className="absolute top-full right-9 mt-0.5 z-10 inline-flex items-center gap-1 text-[10px] text-muted-foreground/80 whitespace-nowrap"
+        title={`Stored in the encrypted coding-credentials vault as ${vaulted.map((k) => `$${k}`).join(', ')}`}
+      >
+        <ShieldCheck className="size-3 text-success-accent" />
+        <span>{`stored as ${vaulted.map((k) => `$${k}`).join(', ')}`}</span>
+        <span className="sr-only">{label}</span>
+      </span>
+    );
+  }
+  return (
+    <button
+      onClick={run}
+      disabled={busy || disabled}
+      className={cn(
+        'absolute top-full right-9 mt-0.5 z-10 inline-flex h-6 items-center gap-1 rounded-md px-1.5 transition text-[10px] font-medium',
+        // A PARTIAL vault is an ACTIVE failure, not a quiet success: it stays
+        // visible (no hover reveal) and reads as a retry, so the owner can finish
+        // what the vault could not store without waiting for an agent.
+        partial
+          ? 'text-warning-accent hover:bg-warning-accent/10'
+          : 'text-muted-foreground/80 hover:text-foreground hover:bg-muted md:opacity-0 md:group-hover/msg:opacity-100 md:focus-within:opacity-100',
+        'focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50',
+      )}
+      aria-label={partial ? `Retry vaulting: ${pendingKeys.join(', ')} not stored` : label}
+      title={partial
+        ? `Not stored: ${pendingKeys.join(', ')} — click to retry the rest. Already stored: ${vaulted.map((k) => `$${k}`).join(', ')}`
+        : `${label} — stored server-side in this account's encrypted coding credentials, never read by a model`}
+    >
+      {busy ? <Loader2 className="size-3.5 animate-spin" /> : <KeyRound className="size-3.5" />}
+      <span>{busy ? 'Vaulting…' : partial ? 'Retry vault' : 'Vault'}</span>
+      {partial && !busy && <span className="text-muted-foreground/70">{`(${pendingKeys.length} left)`}</span>}
     </button>
   );
 }

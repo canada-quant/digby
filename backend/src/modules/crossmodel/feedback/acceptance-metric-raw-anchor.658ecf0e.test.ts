@@ -134,12 +134,22 @@ describe('log-signal family 2026-10-21 (ac626e4f/658ecf0e/78b4dc66/33005438) —
     expect(m?.params.messagePattern).toBe(fragPdf);
   });
 
-  it('logSignalMetricContext: the sweep passes the RAW example through — the metric is measurable on all four family shapes', () => {
+  it('logSignalMetricContext: the sweep passes the RAW example through — the metric is measurable on the family shapes that keep a bar', () => {
+    // 33005438 IS DELIBERATELY ABSENT (ticket 68200428, 2026-11-06). It is the
+    // `PDF fetch/extract failed` emit site, which the taxonomy now classifies as
+    // DESIGNED OBSERVABILITY (websearch-pdf-fetch-target): every arm is a
+    // third-party host refusing us or a deliberate size bound, so no volume bar
+    // can ever clear and the post-deploy verifier reopened 68200428 at 4 vs 2.
+    // `logSignalMetricContext` therefore returns acceptanceMetricMissing for it
+    // by design. The RAW-ANCHOR property this test exists for is STILL pinned on
+    // that shape — at the BUILDER level, in the test above (stableLiteralFragment
+    // + logSignalDefaultMetric are not gated by the designed-observability set),
+    // and the suppression itself is pinned in log-signal-pdf-fetch.68200428.test.ts.
+    // Not a silent coverage drop: one shape moved class, the other three did not.
     for (const [fp, raw] of [
       [AC626E4F_FP, AC626E4F_RAW],
       [C58ECF0E_FP, C58ECF0E_RAW],
       [S78B4DC66_FP, S78B4DC66_RAW],
-      [S33005438_FP, S33005438_RAW],
     ] as const) {
       const ctx = logSignalMetricContext({ fingerprint: fp, exampleMessage: raw, levels: ['warn'], sources: ['web-search'] });
       expect(ctx.acceptanceMetricSource).toBe(AUTOFILER_DEFAULT_METRIC_SOURCE);
@@ -149,6 +159,15 @@ describe('log-signal family 2026-10-21 (ac626e4f/658ecf0e/78b4dc66/33005438) —
       // own class — a measurable metric, never a vacuous one.
       expect(raw.toLowerCase()).toContain(String(metric.params.messagePattern).toLowerCase());
     }
+  });
+
+  // The class move above, asserted rather than assumed: the PDF shape now gets
+  // NO bar and is FLAGGED (it keeps filing — only the metric decision changed).
+  it('33005438/68200428: the PDF-fetch shape is now flagged, not bar-stamped', () => {
+    const ctx = logSignalMetricContext({ fingerprint: S33005438_FP, exampleMessage: S33005438_RAW, levels: ['warn'], sources: ['web-search'] });
+    expect(ctx.acceptanceMetric).toBeUndefined();
+    expect(ctx.acceptanceMetricMissing).toBe(true);
+    expect(ctx.acceptanceMetricDesignedObservability).toBe('websearch-pdf-fetch-target');
   });
 
   it('honest no-metric: a raw example whose variable text is ALL the fingerprint carries yields null, never a wrong-class pattern', () => {

@@ -268,6 +268,15 @@ export interface PlainMessageMeta {
    *  messageAuthors map (may be absent — e.g. a deleted account — in which
    *  case the footnote falls back to 'teammate'). */
   authorName?: string;
+  /** Ticket f95e1e30 (part 2): the OWNER's own message carries credential-shaped
+   *  text, so the transcript offers ONE-tap "Vault this". Derived SERVER-SIDE at
+   *  read time (platform/credential-paste.ts) and value-free by construction —
+   *  a span COUNT and scanner pattern NAMES, never a value, never a length.
+   *  `vaulted` is set once the vault route has stored the row's values, so the
+   *  button becomes a "stored as $X" note and stays that way across reloads.
+   *  Absent on every row that is not the owner's paste — the button is gated on
+   *  this flag alone, never on content sniffing in the browser. */
+  credentialPaste?: { count: number; patterns: string[]; vaulted?: string[]; notStored?: string[] };
 }
 
 export interface CodingMessage {

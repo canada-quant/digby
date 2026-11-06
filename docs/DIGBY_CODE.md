@@ -390,6 +390,7 @@ Newer route families (full source of truth: `coding.routes.ts`):
 | GET/POST | `/coding/dev-container/status` · `/restart` · `/tailnet/restart` | shared tailnet dev container |
 | GET/PUT | `/coding/dev-container/egress` + PUT `/coding/sessions/:id/tailnet-egress` | tailnet egress policy (per-user default + per-session override) |
 | GET | `/coding/cron-status` | durable cron supervision (cron_jobs + agent_runs queue counts) |
+| POST | `/chats/:chatId/messages/:messageId/vault` | **one-tap "Vault this"** on the owner's own credential paste (ticket f95e1e30) — no body, no client value: the route lifts the value server-side from that persisted row (owner-only; 404 on a foreign row) |
 
 ---
 

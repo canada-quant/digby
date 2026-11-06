@@ -5940,6 +5940,49 @@
         ]
       }
     },
+    "/api/crossmodel/chats/{chatId}/messages/{messageId}/vault": {
+      "post": {
+        "summary": "Post vault message",
+        "tags": [
+          "crossmodel"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "One-tap \"vault this\" (feedback ticket f95e1e30, part 2): the OWNER's own\ncredential paste → the encrypted coding-credentials vault, one click, no agent\nin the loop. The client sends no value — the route lifts it server-side from\nthe persisted row and proves the caller owns that row's chat (404 otherwise,\nsame as the confirm door below). See ./credential-vault.controller.ts.\nChild sub-accounts are rejected (Digby Kids).",
+        "parameters": [
+          {
+            "name": "chatId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "messageId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/crossmodel/confirmations/pending": {
       "get": {
         "summary": "Get pending confirmations",

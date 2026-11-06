@@ -58,14 +58,15 @@ export const SECRET_HANDOFF_TOOL_SCHEMA = [
     type: 'function' as const,
     function: {
       name: 'store_secret',
-      description: "Store a credential the OWNER pasted (API key, token, password, passphrase) in their encrypted coding credentials so EVERY coding lane of this account gets it as $ENVKEY in its shell. The server lifts the value from the owner's OWN message — this turn's message by default, or an earlier one they typed (fromMessageId, any chat they own) — you never pass, retype or echo the value (a value argument is ignored). Returns only the env var name. Then tell lanes to use \"$ENVKEY\" in commands — never relay the value in a message and never ask the owner for it again. Machine-triggered runs (schedule / hook / ticket wakes) MUST pass fromMessageId naming the owner's own pasted message — a paste the owner already sent IS the authorization; without one there is nothing lawful to store. Storing the same envKey (+label) again replaces it. label is normalized to UPPER_SNAKE, ≤24 chars (longer is refused, never truncated). When the message carries several credential-shaped values the refusal lists them — re-call with which.",
+      description: "Store a credential the OWNER pasted (API key, token, password, passphrase) in their encrypted coding credentials so EVERY coding lane of this account gets it as $ENVKEY in its shell. The server lifts the value from the owner's OWN message — this turn's, or an earlier one they typed (fromMessageId, any chat they own); you never pass, retype or echo the value. Returns only the env var name(s) — then tell lanes to use \"$ENVKEY\" and never relay the value or ask for it again. Machine-triggered runs (schedule / hook / ticket wakes) MUST pass fromMessageId naming the owner's own paste: that paste IS the authorization. Re-storing the same envKey (+label) replaces it. SEVERAL values in one message: a credential-file paste whose values each name their own slot (access_token + refresh_token, an AWS pair) is vaulted in ONE call, each under a derived env var named in the result; otherwise the refusal lists the candidates — re-call with which, or all: true to vault every value.",
       parameters: {
         type: 'object',
         properties: {
-          envKey: { type: 'string', description: 'UPPER_SNAKE env var name the lanes will read, e.g. HUE_PASSWORD or XIAOMI_MIMO_API_KEY (2-64 chars; shell / platform names are reserved).' },
+          envKey: { type: 'string', description: 'UPPER_SNAKE env var name the lanes will read, e.g. HUE_PASSWORD or XIAOMI_MIMO_API_KEY (2-64 chars; shell / platform names are reserved). For a multi-value paste it is the PREFIX: envKey BREV_ACCESS_TOKEN stores access_token as BREV_ACCESS_TOKEN and refresh_token as BREV_REFRESH_TOKEN.' },
           label: { type: 'string', description: 'Optional: an ADDITIONAL credential under the same envKey, injected as ENVKEY_LABEL (e.g. WORK). Normalized to UPPER_SNAKE, ≤24 chars after normalization — a longer label is refused invalid_label, never truncated; keep it a short tag, not a sentence.' },
           fromMessageId: { type: 'string', description: "Optional: id of an EARLIER owner-typed message carrying the value (from get_chat_messages / search_chats), or an OWNER-QUESTION ANSWER id (oq_…, from list_owner_questions — full id or ≥8-char prefix) when the value was pasted on an inbox card." },
           which: { type: 'number', description: 'Optional 1-based pick when the message carries several credential-shaped values (the refusal lists them).' },
+          all: { type: 'boolean', description: 'Optional: vault EVERY credential-shaped value in the cited message in this one call instead of asking which one (at most 8). Use after the ambiguous refusal when the owner pasted a whole credential file; each value lands under its own env var, named in the result.' },
         },
         required: ['envKey'],
       },
@@ -120,6 +121,221 @@ function labelContext(text: string, index: number): string {
  *     several ⇒ `which` (1-based) or an `ambiguous` answer listing them
  *     (pattern + length + the label words before it — never the value).
  */
+/**
+ * One candidate value in a cited owner message, as the store leg sees it
+ * (ticket f95e1e30). `label` is the span's own named-compound label when the
+ * shared scanner supplied one (secret-scan `SecretSpan.label`) — the local
+ * credential-file reader below fills it in for the OAuth pair shapes the
+ * scanner leaves unlabelled.
+ */
+export interface HandoffSpan { n: number; value: string; pattern: string; index: number; label?: string }
+
+/** The ordered, de-duplicated credential-shaped spans of `text`, position-sorted.
+ *  The ONE enumeration both the single-value extractor and the multi-value plan
+ *  read (ticket f95e1e30) — never a second registry.
+ *
+ *  `indices` keeps EVERY occurrence of a value, not just the first: an owner who
+ *  echoes a token in prose before pasting the file would otherwise have the
+ *  prose's label win the slot (review finding #5 of f95e1e30 — `my secret_key:
+ *  <T>` followed by `{"access_token": "<T>"}` planned the access token as
+ *  BREV_SECRET_KEY). The plan refuses a value whose occurrences disagree. */
+export interface HandoffSpan { n: number; value: string; pattern: string; index: number; indices: number[]; label?: string }
+
+export function handoffSpans(text: string): HandoffSpan[] {
+  const src = String(text ?? '');
+  const seen = new Set<string>();
+  let spans: Array<{ name: string; value: string; index: number; label?: string }> = findSecretSpans(src)
+    .filter((s) => { if (seen.has(s.value)) return false; seen.add(s.value); return true; })
+    .map((s) => ({ ...s, index: src.indexOf(s.value) }))
+    .sort((a, b) => a.index - b.index);
+  // audit 2026-10-08 W4-5: no known shape — a message that SAYS it carries a token ("Token created", "API token",
+  // "api key") accepts its high-entropy runs (≥ 32 chars, mixed case + digits, never hex / a uuid / a path / a URL)
+  // as candidates: a dashboard paste of a provider token the scanner has no pattern for (a legacy 40-char
+  // Cloudflare token) was otherwise unstorable. STORE_SECRET_CUED_TOKEN_DISABLED=1 restores "none".
+  if (!spans.length && !cuedTokenDisabled()) spans = cuedTokenSpans(src);
+  return spans.map((s, i) => {
+    const indices: number[] = [];
+    for (let at = src.indexOf(s.value); at !== -1; at = src.indexOf(s.value, at + 1)) {
+      indices.push(at);
+      if (indices.length >= 20) break; // a pathological repeat is already an ambiguity
+    }
+    return { n: i + 1, value: s.value, pattern: s.name, index: s.index, indices: indices.length ? indices : [s.index], ...(s.label ? { label: s.label } : {}) };
+  });
+}
+
+/**
+ * The credential-file FIELD NAME immediately before `index` (`"access_token":
+ * "` → access_token, `refresh_token=` → refresh_token), UPPER_SNAKE, or null.
+ *
+ * Pure and LOCAL on purpose (ticket f95e1e30): the shared scanner's
+ * `compoundCredentialLabel` only labels its NAMED_COMPOUND_TAILS set, so the
+ * standard OAuth pair every CLI writes — `{"access_token": "...",
+ * "refresh_token": "..."}` — arrives here UNLABELLED. Teaching secret-scan a
+ * new tail would move a detector other surfaces read; this reader is a
+ * store-leg-only interpretation of the same bytes.
+ */
+export function assignmentLabelBefore(text: string, index: number): string | null {
+  const end = Math.max(0, Math.min(index, String(text ?? '').length));
+  const window = String(text ?? '').slice(Math.max(0, end - 96), end);
+  const m = /(?<![A-Za-z0-9_])["'`]?([A-Za-z][A-Za-z0-9_]{1,39})["'`]?[ \t]*[:=][ \t]*["'`]?$/.exec(window);
+  if (!m) return null;
+  const norm = m[1].toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  return norm || null;
+}
+
+/**
+ * Credential-file field names that each name a DISTINCT secret slot (ticket
+ * f95e1e30). Matched as the whole label or as a `_`-suffixed tail, so
+ * `BREV_ACCESS_TOKEN` and `accessToken` both resolve to `access_token`.
+ *
+ * DELIBERATELY NARROW: a bare `password` / `api key <value>` in prose names no
+ * slot, so those pastes keep today's ambiguous-with-`which` refusal (pinned by
+ * the existing tests). Only a paste whose EVERY value names its own slot is
+ * vaulted in one call without asking.
+ */
+const MULTI_VAULT_FIELDS: ReadonlyArray<{ field: string; match: string }> = [
+  { field: 'ACCESS_TOKEN', match: 'access_token' },
+  { field: 'REFRESH_TOKEN', match: 'refresh_token' },
+  { field: 'ID_TOKEN', match: 'id_token' },
+  { field: 'SESSION_TOKEN', match: 'session_token' },
+  { field: 'AUTH_TOKEN', match: 'auth_token' },
+  { field: 'BEARER_TOKEN', match: 'bearer_token' },
+  { field: 'CLIENT_SECRET', match: 'client_secret' },
+  { field: 'SECRET_ACCESS_KEY', match: 'secret_access_key' },
+  { field: 'ACCESS_KEY_ID', match: 'access_key_id' },
+  { field: 'SECRET_KEY', match: 'secret_key' },
+  { field: 'API_KEY', match: 'api_key' },
+  { field: 'APIKEY', match: 'apikey' },
+  { field: 'PRIVATE_KEY', match: 'private_key' },
+];
+
+/** How many values ONE multi-value call may vault (ticket f95e1e30). Small on
+ *  purpose: the per-user credential cap is 50, and a paste this large is
+ *  already a transcript worth reading rather than a key pair. */
+export const MULTI_VAULT_MAX_SPANS = 8;
+
+/** The env key a slot label maps to, given the caller's base envKey.
+ *
+ *  THE RULE (review findings #3 + #4 of f95e1e30): the caller's `envKey` owns the
+ *  NAMESPACE; a slot label may only name the SLOT. Pre-fix a label that already
+ *  ended in `_<field>` became the key outright, so a paste of
+ *  `PROD_API_KEY: <A>` alongside a JSON pair wrote `PROD_API_KEY` — a live
+ *  credential, under a name the caller never mentioned, silently REPLACED
+ *  (`envKey: OTHER`). Never derive a key the caller did not name.
+ *
+ *  `envKey: BREV_ACCESS_TOKEN` + access_token ⇒ `BREV_ACCESS_TOKEN`;
+ *  `envKey: BREV` + refresh_token ⇒ `BREV_REFRESH_TOKEN`. */
+function multiVaultEnvKey(baseEnvKey: string, _label: string, field: string): string | null {
+  const base = String(baseEnvKey ?? '').toUpperCase();
+  // Strip a trailing slot so a pair paste under `BREV_ACCESS_TOKEN` does not
+  // mint BREV_ACCESS_TOKEN_ACCESS_TOKEN.
+  const stripped = base.replace(/_(?:ACCESS_TOKEN|REFRESH_TOKEN|ID_TOKEN|SESSION_TOKEN|AUTH_TOKEN|BEARER_TOKEN|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_KEY_ID|SECRET_KEY|API_KEY|APIKEY|PRIVATE_KEY|TOKEN|SECRET|KEY|PASSWORD)$/, '');
+  const prefix = stripped || base;
+  if (!prefix) return null;
+  const key = `${prefix}_${field}`;
+  return key.length <= 64 ? key : null;
+}
+
+/**
+ * A derived key that would SHADOW a platform-injected / reserved variable
+ * (review finding #4/#6 of f95e1e30). `DENIED_ENV_KEYS` lists bare names
+ * (`GITHUB_TOKEN`, `GH_TOKEN`, …), so `envKey: GITHUB` + an `access_token`
+ * field minted `GITHUB_ACCESS_TOKEN` — a third-party OAuth token landing in
+ * every lane's shell under a platform-looking name, and the exact-key check at
+ * the store leg never fired.
+ *
+ * Matches on the STEM: the key itself, or `<stem>_<anything>` where `<stem>` is
+ * a reserved name with its own credential-ish tail removed (`GITHUB_TOKEN` →
+ * `GITHUB`). Pure. */
+export function reservedKeyFamily(key: string, denied: ReadonlySet<string>): string | null {
+  const k = String(key ?? '');
+  if (denied.has(k)) return k;
+  for (const d of Array.from(denied)) {
+    const stem = d.replace(/_(?:ACCESS_TOKEN|REFRESH_TOKEN|ID_TOKEN|SESSION_TOKEN|AUTH_TOKEN|BEARER_TOKEN|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_KEY_ID|SECRET_KEY|API_KEY|APIKEY|PRIVATE_KEY|TOKEN|SECRET|KEY|ID)$/, '');
+    if (stem && stem !== d && k.startsWith(`${stem}_`)) return d;
+  }
+  return null;
+}
+
+export interface PlannedSecret { n: number; value: string; pattern: string; label: string; field: string; envKey: string }
+
+/**
+ * The ONE-CALL multi-value plan for `text` (ticket f95e1e30), or null.
+ *
+ * Fires when every credential-shaped value names its own DISTINCT slot:
+ *  - two or more spans (a single value keeps the existing single path);
+ *  - each span carries a recognised credential-file field name — the scanner's
+ *    own compound label, or the local `assignmentLabelBefore` reader;
+ *  - every derived envKey is distinct and env-key shaped.
+ *
+ * `all: true` (an explicit caller opt-in) relaxes the LABEL requirement: every
+ * span is vaulted, an unlabelled one as `<PREFIX>_<n>`. That is the "vault
+ * everything in this message" door — never the default, because ordinal names
+ * carry no meaning the owner can use later.
+ */
+export function planMultiValueStore(
+  text: string,
+  baseEnvKey: string,
+  opts: { all?: boolean; spans?: HandoffSpan[] } = {},
+): { plan: PlannedSecret[] } | { reason: 'none' | 'single' | 'ambiguous' } {
+  const src = String(text ?? '');
+  const spans = opts.spans ?? handoffSpans(src);
+  if (!spans.length) return { reason: 'none' };
+  if (spans.length === 1 && !opts.all) return { reason: 'single' };
+  if (spans.length > MULTI_VAULT_MAX_SPANS) return { reason: 'ambiguous' };
+  const labelOf = (s: HandoffSpan): string | null => {
+    const own = String(s.label ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    if (own) return own;
+    // Reader labels from EVERY occurrence. A value the owner echoed in prose
+    // before pasting the file (`my secret_key: <T>` … `{"access_token": "<T>"}`)
+    // has two candidate slots; picking the first would silently store the
+    // access token under BREV_SECRET_KEY (review finding #5 of f95e1e30).
+    // Disagreement is a real ambiguity — return null so the caller refuses.
+    const at = (s.indices ?? [s.index]).map((ix) => assignmentLabelBefore(src, ix));
+    const distinct = Array.from(new Set(at.filter((l): l is string => !!l)));
+    return distinct.length === 1 ? distinct[0] : null;
+  };
+  const fieldOf = (label: string | null): { field: string; match: string } | null => {
+    if (!label) return null;
+    // Separator-insensitive on BOTH sides: the real `credentials.json` most
+    // CLIs write is camelCase (`accessToken`), which normalizes to
+    // ACCESSTOKEN and would otherwise miss ACCESS_TOKEN (review advisory of
+    // f95e1e30 — the reported shape's own spelling).
+    const flat = label.toLowerCase().replace(/_/g, '');
+    for (const f of MULTI_VAULT_FIELDS) {
+      const fm = f.match.replace(/_/g, '');
+      if (flat === fm || flat.endsWith(fm)) return f;
+    }
+    return null;
+  };
+  const basePrefix = String(baseEnvKey ?? '').toUpperCase()
+    .replace(/_(?:ACCESS_TOKEN|REFRESH_TOKEN|ID_TOKEN|SESSION_TOKEN|AUTH_TOKEN|BEARER_TOKEN|CLIENT_SECRET|SECRET_ACCESS_KEY|ACCESS_KEY_ID|SECRET_KEY|API_KEY|APIKEY|PRIVATE_KEY|TOKEN|SECRET|KEY|PASSWORD)$/, '')
+    || String(baseEnvKey ?? '').toUpperCase() || 'OWNER';
+  const plan: PlannedSecret[] = [];
+  for (const s of spans) {
+    const label = labelOf(s);
+    const f = fieldOf(label);
+    if (!f) {
+      // Explicit `all` may still take an unnamed value — under an ordinal key.
+      if (!opts.all) return { reason: 'ambiguous' };
+      const key = `${basePrefix}_${s.n}`;
+      if (!/^[A-Z][A-Z0-9_]{1,63}$/.test(key)) return { reason: 'ambiguous' };
+      plan.push({ n: s.n, value: s.value, pattern: s.pattern, label: label ?? '', field: '', envKey: key });
+      continue;
+    }
+    const key = multiVaultEnvKey(baseEnvKey, label as string, f.field);
+    if (!key) return { reason: 'ambiguous' };
+    plan.push({ n: s.n, value: s.value, pattern: s.pattern, label: label as string, field: f.match, envKey: key });
+  }
+  if (plan.length < 1) return { reason: 'none' };
+  if (plan.length === 1 && !opts.all) return { reason: 'single' };
+  // A collision means two values claim ONE slot — never guess which one the
+  // owner meant; fall back to the which-pick refusal that names both.
+  const keys = new Set(plan.map((p) => p.envKey));
+  if (keys.size !== plan.length) return { reason: 'ambiguous' };
+  return { plan };
+}
+
 export function extractSecretForHandoff(text: string, envKey: string, which?: number | null): SecretExtraction {
   const src = String(text ?? '');
   if (envKey) {
@@ -138,24 +354,15 @@ export function extractSecretForHandoff(text: string, envKey: string, which?: nu
       if (v.length >= 4 && !PLACEHOLDER_VALUE_RE.test(v) && !/^-----BEGIN\b/.test(v)) return { ok: true, value: v, pattern: 'Named assignment' };
     }
   }
-  const seen = new Set<string>();
-  let spans = findSecretSpans(src)
-    .filter((s) => { if (seen.has(s.value)) return false; seen.add(s.value); return true; })
-    .map((s) => ({ ...s, index: src.indexOf(s.value) }))
-    .sort((a, b) => a.index - b.index);
-  // audit 2026-10-08 W4-5: no known shape — a message that SAYS it carries a token ("Token created", "API token",
-  // "api key") accepts its high-entropy runs (≥ 32 chars, mixed case + digits, never hex / a uuid / a path / a URL)
-  // as candidates: a dashboard paste of a provider token the scanner has no pattern for (a legacy 40-char
-  // Cloudflare token) was otherwise unstorable. STORE_SECRET_CUED_TOKEN_DISABLED=1 restores "none".
-  if (!spans.length && !cuedTokenDisabled()) spans = cuedTokenSpans(src);
+  const spans = handoffSpans(src);
   if (!spans.length) return { ok: false, reason: 'none' };
-  if (spans.length === 1) return { ok: true, value: spans[0].value, pattern: spans[0].name };
+  if (spans.length === 1) return { ok: true, value: spans[0].value, pattern: spans[0].pattern };
   const pick = typeof which === 'number' && Number.isInteger(which) ? which : null;
-  if (pick !== null && pick >= 1 && pick <= spans.length) return { ok: true, value: spans[pick - 1].value, pattern: spans[pick - 1].name };
+  if (pick !== null && pick >= 1 && pick <= spans.length) return { ok: true, value: spans[pick - 1].value, pattern: spans[pick - 1].pattern };
   return {
     ok: false,
     reason: 'ambiguous',
-    candidates: spans.map((s, i) => ({ n: i + 1, pattern: s.name, chars: s.value.length, context: labelContext(src, s.index) })),
+    candidates: spans.map((s) => ({ n: s.n, pattern: s.pattern, chars: s.value.length, context: labelContext(src, s.index) })),
   };
 }
 
@@ -459,6 +666,100 @@ export async function executeSecretHandoffTool(ctx: Ctx, name: SecretHandoffTool
   }
 
   const which = typeof args?.which === 'number' ? args.which : (typeof args?.which === 'string' && /^\d+$/.test(args.which) ? Number(args.which) : null);
+  // ── Ticket f95e1e30: ONE call vaults EVERY value ─────────────────────────
+  // The measured flow (chat 41bd202a, 05:29Z): the owner pasted Brev's
+  // credentials.json — `{"access_token": …, "refresh_token": …}` — and asked
+  // "if I send you a key in the chat you need ability to store it permanently
+  // for me autonomously". The pre-fix tool stored ONE value per call, so a
+  // refresh-token half either needed a second turn or (worse) was silently
+  // left behind when a NAMED assignment matched first — the same
+  // silent-partial-vault class as ca0b57cd.
+  //
+  // Two doors, both inside the existing owner-row guards above:
+  //  - AUTOMATIC: every credential-shaped value names its own DISTINCT slot
+  //    (`access_token` / `refresh_token` / `client_secret` / the AWS pair …),
+  //    so the derived keys are meaningful and no question is worth a turn;
+  //  - EXPLICIT `all: true`: vault every value, unnamed ones as `<PREFIX>_<n>`.
+  // Anything else (bare `password`, prose "api key …", duplicate slots) keeps
+  // today's ambiguous-with-`which` refusal byte-for-byte.
+  const allArg = args?.all === true || args?.all === 'true';
+  if (which === null) {
+    const planned = planMultiValueStore(text, envKey, { all: allArg });
+    // ONE value is never a multi-value store: the single-value path below owns
+    // it (a NAMED `ENVKEY=…` assignment, `which`, the honest-miss wording). A
+    // 1-length plan here would only re-derive a key the caller already named.
+    if ('plan' in planned && planned.plan.length > 1) {
+      const plan = planned.plan;
+      const stored: Array<{ envKey: string; injectedKey: string; replaced: boolean; label: string }> = [];
+        const unstored: Array<{ n: number; pattern: string; reason: string }> = [];
+        for (const item of plan) {
+          // A DERIVED name gets the same guards the caller's envKey passed
+          // above, PLUS a family check (ticket f95e1e30, review #4/#6): the
+          // exact-name DENIED set lists bare GITHUB_TOKEN but not
+          // GITHUB_ACCESS_TOKEN, so an exact check alone let `envKey: GITHUB`
+          // + an access_token field mint a platform-looking name for a
+          // third-party OAuth token.
+          const reservedFamily = reservedKeyFamily(item.envKey, creds.DENIED_ENV_KEYS);
+          if (!creds.ENV_KEY_RE.test(item.envKey) || reservedFamily) {
+            unstored.push({ n: item.n, pattern: item.pattern, reason: `derived key ${item.envKey} is not storable (${reservedFamily ? `reserved family ${reservedFamily}` : 'invalid name'}) — pass an explicit envKey with which: ${item.n}` });
+            continue;
+          }
+          try {
+            const prior = await prisma.codingCredential.findUnique({
+              where: { userId_envKey_label: { userId: ctx.userId, envKey: item.envKey, label } },
+              select: { provider: true },
+            }).catch(() => null);
+            if (prior && INFRA_ONLY_PROVIDERS.has(prior.provider)) {
+              unstored.push({ n: item.n, pattern: item.pattern, reason: `infra_managed:${prior.provider}` });
+              continue;
+            }
+            const itemSummary: any = await creds.upsertCredential(ctx.userId, prior?.provider ?? 'custom', item.envKey, item.value, label);
+            const itemInjected = String(itemSummary?.injectedKey ?? (label ? `${item.envKey}_${label}` : item.envKey));
+            stored.push({ envKey: item.envKey, injectedKey: itemInjected, replaced: !!prior, label: item.label });
+            try {
+              await prisma.activity.create({ data: { userId: ctx.userId, action: 'coding_credential.store', resource: 'platform', metadata: { via: 'store_secret', chatId: ctx.sessionId, envKey: itemInjected, source, pattern: item.pattern, replaced: !!prior, multi: plan.length, slot: item.field || null, ...(sourceMessageId ? { sourceMessageId } : {}) } } });
+            } catch { /* the audit row never fails the tool */ }
+          } catch (err: any) {
+            // Per-item isolation (ticket f95e1e30): one refused value (a slot
+            // mismatch, a multi-line non-PEM, the per-user cap) must never
+            // abort its siblings — the sibling half of a token pair surviving
+            // while the other is NAMED unstored is the whole point.
+            unstored.push({ n: item.n, pattern: item.pattern, reason: String(err?.message ?? err).slice(0, 300) });
+          }
+        }
+        if (stored.length) {
+          try {
+            const { invalidateIntegrationStatusCache } = await import('../langgraph/integration-status-cache');
+            await invalidateIntegrationStatusCache(ctx.userId);
+          } catch { /* cache hygiene never fails the store */ }
+        }
+        if (!stored.length) {
+          return refuse('store_failed', `None of the ${plan.length} credential-shaped values in that message could be stored: ${unstored.map((u) => `#${u.n} ${u.pattern} — ${u.reason}`).join('; ')}. Nothing was stored. Fix the named cause (or ask the owner to re-send that one value alone) — the others on their own would store.`, { unstored }, { unstoredPatterns: unstored.map((u) => u.pattern) });
+        }
+        recordStoreSecret(ctx, { outcome: 'stored', injectedKey: stored.map((s) => s.injectedKey).join(','), source, pattern: 'multi', replaced: stored.some((s) => s.replaced), multi: stored.length, unstored: unstored.length });
+        const list = stored.map((s) => `$${s.injectedKey}`).join(', ');
+        const unstoredNote = unstored.length
+          ? ` NOT stored: ${unstored.map((u) => `#${u.n} ${u.pattern} (${u.reason})`).join('; ')} — re-call store_secret with which: ${unstored[0].n} and an explicit envKey for that one value, or ask the owner for it on its own.`
+          : '';
+        return out({
+          ok: true,
+          tool: name,
+          envKey: stored[0].envKey,
+          injectedKey: stored[0].injectedKey,
+          envKeys: stored.map((s) => s.envKey),
+          injectedKeys: stored.map((s) => s.injectedKey),
+          stored: stored.map((s) => ({ envKey: s.envKey, injectedKey: s.injectedKey, replaced: s.replaced, slot: s.label || null })),
+          ...(unstored.length ? { unstored } : {}),
+          label: label || null,
+          replaced: stored.some((s) => s.replaced),
+          ids: { envKey: stored[0].injectedKey, envKeys: stored.map((s) => s.injectedKey) },
+          source,
+          ...(sourceMessageId ? { sourceMessageId } : {}),
+          pattern: 'multi',
+          message: `Stored ${stored.length} credential${stored.length === 1 ? '' : 's'} from that one message — ${list}. Every coding session shell of this account has them from its next command (encrypted at rest, scrubbed from shell output). Tell lanes to use ${stored.length === 1 ? 'that variable' : 'those variables'} by name — never paste a value into a message, and do not ask the owner for them again.${stored.some((s) => s.replaced) ? ' One or more REPLACED the previous value stored under that name.' : ''}${unstoredNote}`,
+        });
+    }
+  }
   const found = extractSecretForHandoff(text, envKey, which);
   if (!found.ok && found.reason === 'ambiguous') {
     // Audit 2026-10-16 (todo 8d15611c) observe-only channel: WHICH pattern
