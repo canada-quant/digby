@@ -1,13 +1,16 @@
 # Leg (b) — `crossmodel` → `digby` rename: plan and migration window
 
-**Status: PLANNED, NOT EXECUTED.** Todo `7d41a5e1` leg (b). Measured 2026-11-06T14:2xZ
-against `origin/main` (`7522056166c9`) and live public `canada-quant/digby`.
+**Status: PHASE 1 SHIPPED (2026-11-06); phases 2–4 planned, not executed.**
+Todo `7d41a5e1` leg (b). Surface measured 2026-11-06T14:2xZ against `origin/main`
+(`7522056166c9`) and live public `canada-quant/digby`.
 
-This is the "plan to bring to the supervisor" the steer asked for before execution.
-Nothing here has been applied. The one thing this document must prevent is the
-obvious failure: renaming the URL prefix without a dual-serve window, which
-silently breaks **every already-registered OAuth callback** and every self-hosted
-instance that registered one.
+Phase 1 (the additive dual-serve) is implemented and tested — see §3. **Phases 2,
+3 and 4 remain unapplied**, and phase 4 is the only destructive one.
+
+The one thing this document must prevent is the obvious failure: renaming the URL
+prefix without a dual-serve window, which silently breaks **every already-registered
+OAuth callback** and every self-hosted instance that registered one. Phase 1 is
+what makes that impossible, and it is now live in the code.
 
 ---
 
@@ -71,14 +74,63 @@ acceptable, because a miss is a compile error, not a silent production break.
 Four phases. Phases 1–3 are additive and reversible; phase 4 is the only
 destructive one and it happens after a full release cycle with evidence.
 
-**Phase 1 — serve both prefixes (additive, no user action).**
-Mount the whole `/api/crossmodel` router a second time at `/api/digby`, so both
-resolve to the same handlers. No registration changes; every existing callback
-keeps working, and a provider console can be updated at any time without a
-downtime window. Outbound: emit the **new** prefix in every URL we hand a user
-(the Setup checklist, the OAuth-callback hint, docs). Env: read `DIGBY_*` first,
-fall back to `CROSSMODEL_*`, warn once per old name. `GET /api/health` reports
-`apiPrefixes: ["digby","crossmodel"]` so an operator can see the overlap is live.
+**Phase 1 — serve both prefixes (additive, no user action). ✅ SHIPPED 2026-11-06.**
+Both prefixes resolve to the same handlers. No registration changes; every existing
+callback keeps working, and a provider console can be updated at any time without a
+downtime window.
+
+What actually shipped:
+
+- `backend/src/api-prefixes.ts` — `API_PREFIXES = ['/api/crossmodel', '/api/digby']`
+  (canonical first) and `mountApi(app, subPath, …handlers)`, which mounts the same
+  stack under every prefix. All 32 mount sites in `app.ts` go through it; **no**
+  `app.use('/api/crossmodel', …)` remains, so a future router cannot be added to
+  one prefix and forgotten on the other.
+- The limiter instances are passed by reference to both prefixes, and they key on
+  IP/chatId in Redis rather than on the path — so the alias shares ONE budget.
+  Creating per-prefix instances would have silently doubled every rate limit.
+- `GET /api/health` reports `apiPrefixes: ["/api/crossmodel","/api/digby"]`
+  (non-production instances only, alongside `revision`; the prod payload is
+  unchanged) so an operator can see the overlap is live.
+- Guards: `backend/src/api-prefixes.test.ts` (13 tests — parity of params/query/
+  body/sub-paths/404s, full ordered middleware stack per prefix incl. the single
+  `authenticate` guard, shared-limiter identity, and structural no-divergence over
+  `app.ts`), plus `backend/scripts/prove-api-prefix-alias.ts` for a live socket
+  read (`npx tsx scripts/prove-api-prefix-alias.ts`).
+
+**Deliberately NOT in phase 1** (still open, and nothing depends on them yet):
+
+- Emitting the new prefix outbound (Setup checklist, OAuth-callback hint, user-facing
+  docs). Every controller still builds `redirect_uri` from an env var or the
+  `${frontendUrl}/api/crossmodel/…` literal, so a provider keeps being handed the URI
+  that is actually registered in its console — which is what makes shipping this
+  safe. Moving the emitted URL is a **phase-2** action, and it is the one that needs
+  the console already updated.
+- `DIGBY_*` env fallback (read new first, fall back to `CROSSMODEL_*`, warn once per
+  old name). Phase 1 does not touch env names at all.
+
+Note the ordering consequence: because nothing outbound changed, the alias is
+invisible to users — it exists so operators *can* migrate, not because anything
+points at it.
+
+**Known phase-1 gap — the relay container is NOT aliased.** Three path families
+are served by the `relay` service (Digby Edge), not by the Express backend, and
+both its config and the self-host proxy match on the literal old prefix:
+
+- `deploy/selfhost/Caddyfile` routes `@relayTunnel path /api/crossmodel/instances/tunnel`,
+  `@relayProxy path_regexp ^/api/crossmodel/instances/[^/]+/proxy(/.*)?$` and
+  `@relayMessages … chats/[^/]+/messages$` to `relay:4100` **before** the `/api/*`
+  catch-all.
+- `backend/src/relay/relay-core.ts` pins `TUNNEL_PATH = '/api/crossmodel/instances/tunnel'`.
+
+So `/api/digby/instances/{tunnel,*/proxy/*,*/chats/*/messages}` does NOT work in
+phase 1 — those requests fall to the backend and are not the relay. Every other
+`/api/crossmodel/*` route, including the Edge pairing/management REST routes the
+backend owns, IS aliased. Extending the alias across the relay is a small,
+self-contained follow-up (a second Caddy matcher + a constant list in
+relay-core.ts) but it cannot be proven equivalent without a live edge WS tunnel,
+so it is deliberately left out rather than claimed. Operators migrating a console
+should leave the Edge relay URLs on `crossmodel`.
 
 **Phase 2 — operators migrate on their own schedule.** The Setup checklist shows
 the new callback URL next to the old one and says both work. Because phase 1

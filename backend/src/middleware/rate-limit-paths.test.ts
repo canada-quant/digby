@@ -143,7 +143,17 @@ describe('app.ts wires these matchers — static tripwire', () => {
     expect(appSource).toContain('skip: uploadLimiterSkip,');
     expect(appSource.split('skip: guestStreamAttachLimiterSkip,').length - 1).toBe(2); // per-client + global
     expect(appSource).toContain('keyGenerator: (req) => guestStreamAttachLimiterKey(req as any),');
-    expect(appSource).toContain("app.use('/api/crossmodel', guestStreamAttachClientRateLimit, guestStreamAttachGlobalRateLimit);");
+    // Leg (b) phase 1: mounts go through mountApi (api-prefixes.ts), which places
+    // the SAME limiter instances under EVERY prefix — so asserting the literal
+    // `app.use('/api/crossmodel', …)` form would now fail on a correct tree.
+    // The intent is preserved: these two limiters are still wired at the API
+    // prefix, and (api-prefixes.test.ts) the limiter identity is shared so the
+    // alias cannot double the budget.
+    expect(appSource).toContain('mountApi(app, \'\', guestStreamAttachClientRateLimit, guestStreamAttachGlobalRateLimit);');
+    // The "no raw app.use('/api/crossmodel')" invariant is asserted in
+    // api-prefixes.test.ts, which strips comments first — app.ts's ordering
+    // contract deliberately QUOTES that forbidden form, so a raw scan here
+    // would flag the warning itself.
     expect(appSource).not.toMatch(/req\.path !== '\/(stream|upload)'/);
   });
 });

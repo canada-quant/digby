@@ -610,11 +610,24 @@ export function scanBackendRoutes(backendRoot: string): ScannedOperation[] {
   // Guard tracking: a bare app.use('<prefix>', authenticate) line is the
   // single app-level guard; routers mounted at that prefix AFTER it inherit
   // `authenticate` (the app.ts ordering contract).
+  //
+  // Leg (b) phase 1: app.ts now mounts through `mountApi(app, '<sub>', …)`
+  // (api-prefixes.ts), which places the SAME stack under every API prefix. Two
+  // forms are therefore accepted per line:
+  //     app.use('<prefix>', <firstArg>, …)
+  //     mountApi(app, '<subPath>', <firstArg>, …)   — subPath '' for the prefix root
+  // The mountApi form is documented against the CANONICAL prefix only
+  // (/api/crossmodel): the alias serves byte-identical routes, so emitting both
+  // would duplicate every entry in the spec for no information. That also keeps
+  // this scanner's output identical to the committed openapi.json.
+  const documentedPrefix = '/api/crossmodel';
   const guardedPrefixes = new Set<string>();
   for (const line of codeView.split('\n')) {
+    const mountApiM = line.match(/\bmountApi\(\s*app\s*,\s*'([^']*)'\s*,\s*(\w+)/);
     const useM = line.match(/\bapp\.use\(\s*'([^']+)'\s*,\s*(\w+)/);
-    if (useM) {
-      const [, prefix, firstArg] = useM;
+    if (mountApiM || useM) {
+      const prefix = mountApiM ? `${documentedPrefix}${mountApiM[1]}` : useM![1];
+      const firstArg = mountApiM ? mountApiM[2] : useM![2];
       if (firstArg === 'authenticate') {
         guardedPrefixes.add(prefix);
         continue;
