@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T03:07:48.936Z",
+  "generatedAt": "2026-11-06T07:53:00.189Z",
   "docs": [
     {
       "slug": "self-host",
@@ -631,8 +631,8 @@
         },
         {
           "depth": 2,
-          "text": "Admin Dashboard Endpoints",
-          "id": "admin-dashboard-endpoints"
+          "text": "Admin Endpoints",
+          "id": "admin-endpoints"
         },
         {
           "depth": 3,

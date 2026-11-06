@@ -135,7 +135,7 @@ const logger = winston.createLogger({
     winston.format.splat(),
     winston.format.json()
   ),
-  defaultMeta: { service: 'admin-dashboard-api' },
+  defaultMeta: { service: 'digby-api' },
   transports: [
     // Console transport — always active (Docker logs)
     new winston.transports.Console({

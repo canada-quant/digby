@@ -7,7 +7,7 @@
 Live at: **[digby.ai](https://digby.ai)**
 
 ![Digby AI](https://img.shields.io/badge/AI-Multi--Model-7C3AED?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)
+![License](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue?style=for-the-badge)
 ![Stack](https://img.shields.io/badge/Stack-Next.js_16_+_Express-000?style=for-the-badge)
 ![Deploy](https://img.shields.io/badge/Deploy-AWS_EC2_via_GitHub_Actions-orange?style=for-the-badge)
 
@@ -545,7 +545,23 @@ curl -N -H "Authorization: Bearer $TOKEN" \
 
 ## 📄 License
 
-MIT License — see [LICENSE](LICENSE) for details.
+Digby is **dual-licensed**:
+
+- **AGPL-3.0-or-later** (the default) — the full text is in [LICENSE](LICENSE).
+- **A commercial licence** for organisations that need to embed Digby in a
+  closed-source product, host a modified version without publishing their
+  changes, or obtain warranty/indemnity/support — see
+  [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md).
+
+Self-hosting Digby for yourself or your own organisation normally requires
+nothing beyond keeping the copyright notices intact. The AGPL's §13 network
+obligation attaches to **modifications you distribute or operate for others**.
+
+> **Earlier releases.** Commits published before 2026-11-06 carried an MIT
+> `LICENSE` file. Changing the licence now cannot, and does not, revoke rights
+> already granted for those earlier commits — anyone who obtained the code under
+> MIT may continue to use *that* code under MIT. The AGPL applies to the tree
+> from this release forward.
 
 ---
 

@@ -195,6 +195,57 @@ function machineAuthoredRow(row: { role?: string | null; content?: string | null
  *  (via, questionId), so a miss is a true "nothing captured from THIS card". */
 const VAULT_LOOKBACK_ROWS = 25;
 
+/** How many recent owner-typed rows of THIS chat a no_user_turn refusal may
+ *  name (ticket 5fcbdd61). Small on purpose: a paste the owner is asking to
+ *  bank is inevitably near the end of the transcript, and a long id list is a
+ *  worse prompt than a short one. */
+const OWNER_ROW_CANDIDATES = 5;
+
+/**
+ * The most recent OWNER-typed message ids of this chat — ids and timestamps
+ * ONLY, never content (ticket 5fcbdd61).
+ *
+ * THE DEAD END THIS FIXES: a machine wake that reaches for a credential the
+ * owner pasted in chat was refused `no_user_turn` and told to "re-call with
+ * fromMessageId (get_chat_messages gives ids)" — so it had to spend a whole
+ * extra tool round trip hunting for the id, and when the turn budget ran out
+ * the paste simply sat unread while the owner was asked to re-paste a
+ * long-lived credential. Production telemetry for that specimen shows exactly
+ * this refusal (reason 'no_user_turn').
+ *
+ * Deliberately WEAKER than the store leg's validation: this list is a hint. A
+ * row named from it still goes through the full owner-typing + ownership
+ * checks when the caller cites it (machineAuthoredRow + chat.userId below), so
+ * a wrong or hostile id here can never widen what store_secret will lift. The
+ * filter is the SAME predicate the read path uses, so a row this helper names
+ * is one the store leg would accept — no content is inspected beyond what is
+ * needed to exclude machine rows.
+ *
+ * Never throws: any DB error yields [] and the refusal keeps its old shape.
+ */
+async function recentOwnerRowCandidates(ctx: Ctx): Promise<Array<{ id: string; at: string }>> {
+  if (!ctx.sessionId) return [];
+  const prisma = await db();
+  const rows = await prisma.crossModelMessage.findMany({
+    where: { chatId: ctx.sessionId, role: 'user' },
+    orderBy: { createdAt: 'desc' },
+    take: OWNER_ROW_CANDIDATES * 4,
+    // content is selected ONLY to apply machineAuthoredRow's prefix test; it is
+    // never returned, logged or put in the refusal.
+    select: { id: true, role: true, content: true, metadata: true, createdAt: true },
+  });
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .filter((r: any) => !machineAuthoredRow(r))
+    .slice(0, OWNER_ROW_CANDIDATES)
+    .reverse() // oldest first: the paste usually precedes the wake asking about it
+    .map((r: any) => ({
+      id: String(r.id ?? ''),
+      at: r.createdAt instanceof Date ? r.createdAt.toISOString() : String(r.createdAt ?? ''),
+    }))
+    .filter((r) => r.id);
+}
+
 /** The envKeys the owner-answer vault already stored from THIS question's
  *  reply, read from its audit rows (ticket 365588cf 2b).
  *
@@ -263,7 +314,23 @@ export async function executeSecretHandoffTool(ctx: Ctx, name: SecretHandoffTool
   // owner is present; fromMessageId rows are owner-validated below either way).
   const fromIdArg = String(args?.fromMessageId ?? '').trim();
   if (!isHumanTurn(ctx) && !fromIdArg) {
-    return refuse('no_user_turn', "store_secret runs only on the owner's own turn — the value is lifted from THEIR message, never from text a machine-triggered run holds. A machine-triggered run may store from an EARLIER owner-typed message: re-call with fromMessageId (get_chat_messages / search_chats give ids) naming the owner's paste. Otherwise tell the owner (one line, in your reply) that it is stored the moment they next message this chat — or that they can add it under Account → Coding → Credentials. Do not ask for the value again and never relay it.");
+    // Ticket 5fcbdd61 — THE DEAD END THIS REMOVES. This is the refusal an owner's
+    // paste actually hits (production telemetry: reason 'no_user_turn' at
+    // 05:30:32Z, chat 41bd202a — the run had no anchor and named no row). It used
+    // to tell the caller to "re-call with fromMessageId (get_chat_messages gives
+    // ids)" — a scavenger hunt the turn budget ran out of, so the paste sat
+    // unread in the very chat the run was in and the owner was asked to re-paste.
+    // Now the refusal NAMES the citable owner-typed rows of THIS chat. Ids and
+    // timestamps only — never a byte of content and never a value — so nothing
+    // secret transits the refusal, and the guard is NOT widened: the caller must
+    // still pass fromMessageId explicitly and that row is still owner-validated
+    // below. The run could already read these ids via get_chat_messages; this
+    // only saves the round trip that was being lost.
+    const candidates = await recentOwnerRowCandidates(ctx).catch(() => [] as Array<{ id: string; at: string }>);
+    const named = candidates.length
+      ? ` Owner-typed message(s) in THIS chat you can cite right now (oldest first; ids only): ${candidates.map((c) => `${c.id} (${c.at})`).join(', ')}. Re-call store_secret with fromMessageId set to one of those ids and the same envKey.`
+      : '';
+    return refuse('no_user_turn', `store_secret runs only on the owner's own turn — the value is lifted from THEIR message, never from text a machine-triggered run holds. A machine-triggered run may store from an EARLIER owner-typed message: re-call with fromMessageId naming the owner's paste.${named}${candidates.length ? '' : ' (No owner-typed row was found in this chat — read it with get_chat_messages / search_chats, or the owner can add the value under Account → Coding → Credentials.)'} Otherwise tell the owner (one line, in your reply) that it is stored the moment they next message this chat — or that they can add it under Account → Coding → Credentials. Do not ask for the value again and never relay it.`, candidates.length ? { candidateFromMessageIds: candidates.map((c) => c.id) } : {});
   }
   let envKey = String(args?.envKey ?? '').trim();
   if (/^[a-z][a-z0-9_]*$/i.test(envKey)) envKey = envKey.toUpperCase();

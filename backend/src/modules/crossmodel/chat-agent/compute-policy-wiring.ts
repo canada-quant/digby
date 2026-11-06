@@ -260,12 +260,51 @@ export interface SpawnCheckerInput {
    * checker-bearing plan to a ghost run STILL cannot spawn one.
    */
   ghost?: boolean;
+  /**
+   * A "second opinion" from the LEAD'S OWN MODEL is not a second opinion
+   * (2026-11-06, owner-reported "the Double Checker is researching alongside"
+   * on digby.cql.ca). When the Double Checker seat and the lead both resolve to
+   * the same model — the usual shape on a single-model self-host, where the
+   * admin points every seat at one endpoint — the run paid a FULL second
+   * inference (`completionMs` 204 283 on the traced Edge turn) that could not
+   * disagree, while the status line promised an independent cross-check. The
+   * seam now refuses to spawn it, so the wording, the pill and the model trace
+   * agree. Kill switch: CHECKER_SAME_MODEL_GUARD_DISABLED=1.
+   */
+  checkerSameModel?: boolean;
 }
 
 /** Spawn the Level 2 Double Checker iff the PLAN says so and nothing structural forbids it (pure). */
 export function shouldSpawnChecker(i: SpawnCheckerInput): boolean {
-  if (i.ghost || i.isCouncil || i.machineTurnSkipsChecker || i.checkerSeatProblem) return false;
+  if (i.ghost || i.isCouncil || i.machineTurnSkipsChecker || i.checkerSeatProblem || i.checkerSameModel) return false;
   return i.plan.spawnChecker === true;
+}
+
+/** Same-model checker guard kill switch (default ON — see `checkerSameModelAsLead`). */
+export function checkerSameModelGuardDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = String(env.CHECKER_SAME_MODEL_GUARD_DISABLED ?? '').trim().toLowerCase();
+  return v === '1' || v === 'true' || v === 'on';
+}
+
+/**
+ * Is the Double Checker the SAME model as the lead? (pure)
+ *
+ * Specs are `<registry-label>:<modelId>`; two seats can name one model with
+ * different labels (`cql-llm:spark-x` vs `spark-x`), so the comparison is on
+ * the modelId, case-insensitively. A missing/empty side is NOT a match — an
+ * unresolvable spec must never silently suppress the checker (the seat's own
+ * `seatUnservableReason` owns that verdict).
+ */
+export function checkerSameModelAsLead(leadSpec: string | null | undefined, checkerSpec: string | null | undefined): boolean {
+  const id = (spec: string | null | undefined): string => {
+    const s = String(spec ?? '').trim();
+    if (!s) return '';
+    const i = s.indexOf(':');
+    return (i >= 0 ? s.slice(i + 1) : s).trim().toLowerCase();
+  };
+  const a = id(leadSpec);
+  const b = id(checkerSpec);
+  return !!a && a === b;
 }
 
 // ── Machine lanes on the compute policy (owner 2026-09-26: "default all chats

@@ -33,7 +33,7 @@ export interface QueuedItem {
 }
 
 /** Server refusal codes (backend crossmodel.controller applyQueueControl). */
-export type QueueRefusalCode = 'QUEUE_ITEM_GONE' | 'QUEUE_NOT_OWNER' | 'QUEUE_NOT_USER_ROW';
+export type QueueRefusalCode = 'QUEUE_ITEM_GONE' | 'QUEUE_NOT_OWNER' | 'QUEUE_NOT_USER_ROW' | 'QUEUE_BLOCKED_BY_OTHER';
 
 /**
  * The INTERRUPT affordance (ticket b54efe5d — owner report 2026-11-05: "poor ui
@@ -147,6 +147,8 @@ export function queueRefusalMessage(code: QueueRefusalCode | string | undefined)
       return 'That queued message came from a machine sender — it can’t be changed from here.';
     case 'QUEUE_ITEM_GONE':
       return 'That message already started or was removed — the queue is refreshed.';
+    case 'QUEUE_BLOCKED_BY_OTHER':
+      return 'Someone else is waiting on the message next to that one — its place is theirs to keep.';
     default:
       return 'Could not update the queue — refreshing it now.';
   }

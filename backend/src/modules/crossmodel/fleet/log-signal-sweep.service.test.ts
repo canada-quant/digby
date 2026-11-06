@@ -1561,6 +1561,122 @@ describe('logSignalMetricContext (default acceptance metric)', () => {
   });
 });
 
+// ── TICKET 30dfad06 (2026-11-06): THE DEFAULT BAR MUST NOT SPAN A SIBLING ───
+// The default bar is `app_error_log_count <= N` over a case-insensitive LITERAL
+// SUBSTRING. `stableLiteralFragment` picks the LONGEST literal run, which for a
+// message whose distinguishing text sits AFTER a long common head is the HEAD —
+// and that head is a substring of every sibling subclass sharing the template.
+// Then the bar counts rows the fix is not allowed to silence, and the verifier
+// reopens a CORRECT fix forever.
+//
+// REPLAY (the live true positive this must keep catching): ticket 30dfad06's
+// fix (#2574, 8128524556) WORKED — the verifier's window
+// [02:45:52Z, 03:15:58Z] held exactly four matching warn rows and it measured
+// THREE: one `500 … Parse Error: Header overflow` correctly EXCLUDED as
+// logClass 'external' (adjudicated vendor class) plus three `timeout` rows that
+// #2574 deliberately keeps filing, because tagging our own ECONNABORTED budget
+// would swallow the invisible-outage class. 3 > 2 ⇒ reopened on a correct fix.
+describe('30dfad06 — a fragment shared with a SIBLING class buys no volume bar', () => {
+  // DETECTOR-RECALL REPLAY — the prior true positive replayed below is the live
+  // 30dfad06 window (pointers f7aed76d/e9416b6b/cd43d371/97b15b4c, measured 3
+  // over a bar of 2). Everything this change "stops filing" it must stop for the
+  // RIGHT reason: NO bar rather than a bar that measures a sibling. The recall
+  // guards below (a non-colliding sibling, and the signal matching itself) prove
+  // the discrimination does not weaken ordinary detection.
+  // The two subclasses of ONE brightdata-direct template, split by
+  // classifyDirectMiss into deliberately DIFFERENT dispositions.
+  const ROW_500 = 'BrightData direct: scrape_as_markdown failed: 500 Request failed with status code 500 — body: {"status_code":500,"error":"Proxy request failed","error_code":"unknown_proxy_error","details":"Parse Error: Header overflow"}';
+  const ROW_TIMEOUT = 'BrightData direct: scrape_as_markdown failed:  timeout of 45000ms exceeded';
+
+  it('the derived fragment really is the SHARED HEAD (the precondition this guards)', () => {
+    const fp = normalizeLogMessage(ROW_500);
+    const ctx = logSignalMetricContext({ fingerprint: fp, levels: ['warn'], sources: ['brightdata-direct'], exampleMessage: ROW_500 });
+    // Alone, the head is what the fragment builder chooses…
+    const pattern = (ctx.acceptanceMetric as any)?.params?.messagePattern as string;
+    expect(pattern).toBe('brightdata direct: scrape_as_markdown failed');
+    // …and it is a literal substring of BOTH subclasses, which is the defect.
+    expect(ROW_500.toLowerCase()).toContain(pattern);
+    expect(ROW_TIMEOUT.toLowerCase()).toContain(pattern);
+  });
+
+  it('REPLAY: with the `timeout` sibling live in the same pass, the bar is re-derived to a DISCRIMINATING run', () => {
+    const fp = normalizeLogMessage(ROW_500);
+    const sibling = normalizeLogMessage(ROW_TIMEOUT);
+    // Sanity: the sibling genuinely collides on the shared head.
+    expect(sibling.toLowerCase()).toContain('brightdata direct: scrape_as_markdown failed');
+    const ctx = logSignalMetricContext(
+      { fingerprint: fp, levels: ['warn'], sources: ['brightdata-direct'], exampleMessage: ROW_500 },
+      process.env,
+      [{ fingerprint: sibling, exampleMessage: ROW_TIMEOUT, sources: ['brightdata-direct'], levels: ['warn'] }],
+    );
+    // A bar is STILL attached — coverage is preserved, not dropped.
+    expect(ctx.acceptanceMetricSource).toBe('autofiler-default');
+    expect(ctx.acceptanceMetricMissing).toBeUndefined();
+    const pattern = (ctx.acceptanceMetric as any).params.messagePattern as string;
+    // …and it is the run that separates the 500 from `timeout`.
+    expect(pattern).toBe('request failed with status code');
+    // THE POINT: the bar's own predicate no longer matches the sibling's rows,
+    // so the three `timeout` rows can no longer make a correct fix "fail".
+    expect(ROW_500.toLowerCase()).toContain(pattern);
+    expect(ROW_TIMEOUT.toLowerCase()).not.toContain(pattern);
+  });
+
+  it('when NO run discriminates, the bar is dropped and FLAGGED (never a bar on a sibling\'s rows)', () => {
+    // A fingerprint entirely SUBSUMED by a live sibling's: every candidate run
+    // the probe could use also matches the sibling's rows, so no sound bar
+    // exists. (Two messages that normalize to the SAME fingerprint are not a
+    // sibling at all — they are one class — which the self-exclusion handles.)
+    const A = 'cache warm failed for tenant alpha';
+    const B = 'cache warm failed for tenant alpha retry exhausted';
+    expect(normalizeLogMessage(A)).not.toBe(normalizeLogMessage(B));
+    const ctx = logSignalMetricContext(
+      { fingerprint: normalizeLogMessage(A), levels: ['warn'], sources: ['cache-warm'], exampleMessage: A },
+      process.env,
+      [{ fingerprint: normalizeLogMessage(B), exampleMessage: B, sources: ['cache-warm'], levels: ['warn'] }],
+    );
+    expect(ctx.acceptanceMetric).toBeUndefined();
+    expect(ctx.acceptanceMetricSource).toBeUndefined();
+    // Never a SILENT drop: the flag puts the row on the done-bar board.
+    expect(ctx.acceptanceMetricMissing).toBe(true);
+    expect(ctx.acceptanceMetricAmbiguousFragment).toContain('cache warm failed for tenant alpha');
+  });
+
+  it('a NON-colliding sibling still gets the normal default metric (detection not weakened)', () => {
+    const fp = normalizeLogMessage(ROW_500);
+    const ctx = logSignalMetricContext(
+      { fingerprint: fp, levels: ['warn'], sources: ['brightdata-direct'], exampleMessage: ROW_500 },
+      process.env,
+      // A sibling from the SAME source that does not share the head: the
+      // discrimination must not treat "same source" as "same class".
+      [{ fingerprint: 'brightdata direct: zone credentials rejected — 401 invalid token for zone', exampleMessage: 'BrightData direct: zone credentials rejected — 401 invalid token for zone' }],
+    );
+    expect(ctx.acceptanceMetricSource).toBe('autofiler-default');
+    expect(ctx.acceptanceMetric).toMatchObject({ probe: 'app_error_log_count', operator: '<=' });
+    expect(ctx.acceptanceMetricMissing).toBeUndefined();
+  });
+
+  it('the signal matching itself is not a clash (only SIBLINGS are)', () => {
+    const fp = normalizeLogMessage(ROW_500);
+    const withSelf = logSignalMetricContext(
+      { fingerprint: fp, levels: ['warn'], sources: ['brightdata-direct'], exampleMessage: ROW_500 },
+      process.env,
+      [{ fingerprint: fp, exampleMessage: ROW_500 }],
+    );
+    expect(withSelf.acceptanceMetricSource).toBe('autofiler-default');
+    expect(withSelf.acceptanceMetricMissing).toBeUndefined();
+  });
+
+  it('ambiguousFragmentSibling — pure: ignores blank/unknown input, never throws', () => {
+    const { ambiguousFragmentSibling } = require('../feedback/acceptance-metric-defaults');
+    expect(ambiguousFragmentSibling('brightdata direct: scrape_as_markdown failed', [])).toBeNull();
+    expect(ambiguousFragmentSibling(null, [{ fingerprint: 'anything at all here' }])).toBeNull();
+    expect(ambiguousFragmentSibling('   ', [{ fingerprint: 'anything at all here' }])).toBeNull();
+    expect(ambiguousFragmentSibling('shared head of one template', [{}])).toBeNull();
+    expect(ambiguousFragmentSibling('shared head of one template', [{ fingerprint: 'a SHARED HEAD of one template, variant two' }]))
+      .toBe('a SHARED HEAD of one template, variant two');
+  });
+});
+
 // ── TICKET 35cd91a7 (2026-11-06): A DECLARED INSTRUMENT NEVER FILES ──────────
 // The sweep already computed `designedAlarmOfFingerprint` — but only inside the
 // TICKET'S OWN PAYLOAD (`logSignalMetricContext`), i.e. after the filing

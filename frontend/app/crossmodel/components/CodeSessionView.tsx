@@ -33,8 +33,9 @@ import { partitionQueuedEchoes, reconcileQueuedEchoes, reconcilePendingEchoes, i
 import { createSnapshotStore } from '@/lib/plain-transcript-snapshot';
 import { GUEST_QUEUE_CAPTION, guestDrainAction, isGuestQueueId, makeGuestQueued, mergeGuestQueued, stageChatlessBehindLive, type GuestQueuedSend } from '@/lib/guest-send-queue';
 import { interleaveSteers } from '@/lib/steer-interleave';
-import { moveItem, queueFromError, queueRefusalMessage, refusalCodeFromError, withPositions, type QueuedItem } from '@/lib/queue-controls';
-import QueuedMessagesPanel from './QueuedMessagesPanel';
+import { moveItem, queueFromError, queueRefusalMessage, refusalCodeFromError, withPositions, queuedCaption, type QueuedItem } from '@/lib/queue-controls';
+import QueuedBubbleControls from './QueuedBubbleControls';
+import { queuedBubbleActions, pendingRowIdFor, queuedSlotFor, PENDING_ROW_PREFIX } from '@/lib/queued-bubble-actions';
 import { dedupById } from '@/lib/transcript-dedup';
 import { errorToastSignature, shouldToastError } from '@/lib/error-toast-dedup';
 import { displayModelId } from '@/lib/model-alias';
@@ -3354,6 +3355,31 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
     const out = [...steerEchoes, ...provisionEchoes, ...guestEchoes];
     return out.length ? out : steerEchoes;
   }, [steerEchoes, provisionEchoes, guestEchoes]);
+  // Ticket fb3cb4e2: the per-bubble queue controls need each rendered bubble's
+  // index in the SERVER's list (a bubble-ordinal would shift the ends, because
+  // guest/provision holds are on screen but are not in that list). Keyed by the
+  // ids a bubble can carry — the `pending-<rowId>` listing id and the row id —
+  // so either spelling resolves. -1 (absent) disables the positional controls
+  // while run-now/cancel still work off the id. The same pass yields the 1-based
+  // POSITION for the caption, so the number the removed container used to show
+  // is not lost with it.
+  const queueIndexById = useMemo(() => {
+    const map = new Map<string, number>();
+    queueItems.forEach((item, i) => {
+      map.set(item.id, i);
+      map.set(`${PENDING_ROW_PREFIX}${item.id}`, i);
+    });
+    return map;
+  }, [queueItems]);
+  const queuePositionById = useMemo(() => {
+    const map = new Map<string, number>();
+    queueItems.forEach((item, i) => {
+      const pos = item.position || i + 1;
+      map.set(item.id, pos);
+      map.set(`${PENDING_ROW_PREFIX}${item.id}`, pos);
+    });
+    return map;
+  }, [queueItems]);
 
   // Scroll-up auto-load (2026-09-23) — lives below `history` (TDZ). See the
   // sentinel in the transcript for the UX rationale.
@@ -4852,22 +4878,75 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
                     <div className={cn('rounded-[20px] bg-bubble text-ink px-4 py-2.5 whitespace-pre-wrap [overflow-wrap:anywhere]', plainSizes ? plainSizes.userMsg : 'text-sm')}>{m.content}</div>
                   )}
                   <span className="inline-flex items-center gap-1 text-[11.5px] text-ink-3">
-                    {provisionQueued ? (
-                      <>
-                        <DigbyLoader size={16} label="Queued" /> {PROVISION_QUEUE_CAPTION}
-                      </>
-                    ) : guestQueued ? (
-                      <>
-                        <DigbyLoader size={16} label="Queued" /> {GUEST_QUEUE_CAPTION}
-                      </>
-                    ) : live.running && (
-                      <>
-                        <DigbyLoader size={16} label="Queued" /> {plain ? 'Queued — runs when this turn finishes' : 'Queued — folds into the run at its next step'}
-                      </>
-                    )}
-                    {timeLabel && (
-                      <span className="text-ink-3 whitespace-nowrap">{live.running || provisionQueued || guestQueued ? `· ${timeLabel}` : timeLabel}</span>
-                    )}
+                    {/* Ticket fb3cb4e2: resolve this bubble's server queue row
+                        ONCE, then read the slot through the ROW id. A freshly
+                        sent bubble is `tmp-<epochMs>` and stays so until a
+                        reload re-keys it, while the server list keys its rows by
+                        the raw row id — so a bubble-id-only lookup missed the
+                        row the enqueue ack had already listed, and the position
+                        badge plus the whole reorder pair vanished for exactly
+                        the message the person was looking at (adversarial review
+                        of fb3cb4e2, BLOCKING). */}
+                    {(() => {
+                      const pendingId = pendingRowIdFor(m.id, plainEchoToPendingRef.current);
+                      const acts = queuedBubbleActions({
+                        bubbleId: m.id,
+                        echoToPending: plainEchoToPendingRef.current,
+                        queueIndex: queuedSlotFor(m.id, pendingId, queueIndexById) ?? -1,
+                        queueLength: queueItems.length,
+                        running: live.running,
+                      });
+                      return (
+                        <>
+                          {provisionQueued ? (
+                            <>
+                              <DigbyLoader size={16} label="Queued" /> {PROVISION_QUEUE_CAPTION}
+                            </>
+                          ) : guestQueued ? (
+                            <>
+                              <DigbyLoader size={16} label="Queued" /> {GUEST_QUEUE_CAPTION}
+                            </>
+                          ) : live.running && (
+                            <>
+                              <DigbyLoader size={16} label="Queued" />{' '}
+                              {/* Ticket fb3cb4e2: the position the removed
+                                  container used to show rides the bubble's own
+                                  caption instead — "Queued #2" — so dropping the
+                                  duplicate costs no information. */}
+                              {queuedCaption({
+                                position: queuedSlotFor(m.id, pendingId, queuePositionById) ?? null,
+                                coding: !plain,
+                              })}
+                            </>
+                          )}
+                          {timeLabel && (
+                            <span className="text-ink-3 whitespace-nowrap">{live.running || provisionQueued || guestQueued ? `· ${timeLabel}` : timeLabel}</span>
+                          )}
+                          {/* Ticket fb3cb4e2 (owner: "a simple send now icon on
+                              the original queud place, not a whole new duplicate
+                              container"): the queue controls ride THIS bubble —
+                              the one place a queued message renders. Nothing is
+                              drawn for an id with no server queue row (a coding
+                              steer, a provision/guest hold) because every control
+                              would 404. The memberViewOnly gate the deleted panel
+                              carried is preserved (defense in depth; the server
+                              refuses a non-owner anyway). */}
+                          {!memberViewOnly && acts.pendingId && (
+                            <QueuedBubbleControls
+                              busy={queueBusy}
+                              runNow={acts.runNow}
+                              cancel={acts.cancel}
+                              reorder={acts.reorder}
+                              up={acts.up}
+                              down={acts.down}
+                              onRunNow={() => void runQueuedNow(acts.pendingId!)}
+                              onCancel={() => cancelQueued(acts.pendingId!)}
+                              onMove={(dir) => moveQueued(acts.pendingId!, dir)}
+                            />
+                          )}
+                        </>
+                      );
+                    })()}
                   </span>
                 </div>
               </div>
@@ -4926,19 +5005,18 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
         >
           {/* Same reading measure as the transcript above (P2 item 1). */}
           <div className="mx-auto w-full max-w-(--measure-chat)">
-          {/* Queued-message controls (ticket ea04454c): the owner's own waiting
-              messages, in drain order, each with position + reorder + run-now +
-              cancel. Renders nothing when the queue is empty. */}
-          {!!chatId && !memberViewOnly && (
-            <QueuedMessagesPanel
-              items={queueItems}
-              running={live.running}
-              busy={queueBusy}
-              onMove={moveQueued}
-              onRunNow={(id) => void runQueuedNow(id)}
-              onCancel={cancelQueued}
-            />
-          )}
+          {/* Ticket fb3cb4e2 — there is NO queued-messages container here.
+              Ticket ea04454c stacked `QueuedMessagesPanel` above the composer, but
+              the queued message was already on screen as the in-flow queued
+              bubble below, so every queued message rendered TWICE. Owner,
+              verbatim: "why does it show the queed message twice? … i just
+              asked for a simple send now icon on te original queud place not a
+              whole new duplicate container". The controls now ride the bubble
+              itself (QueuedBubbleControls, in the queuedEchoes map); the list
+              container is gone and must not come back — a second surface is
+              exactly the duplicate the owner reported. queueItems/refreshQueue
+              still exist: they are the server truth the bubbles read for
+              positions and row ids. */}
           <ChatComposer
             variant="code"
             // Enter semantics: device-aware default for BOTH session kinds

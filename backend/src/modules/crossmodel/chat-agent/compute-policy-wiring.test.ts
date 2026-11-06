@@ -17,6 +17,7 @@ import {
   computePolicyEnforcementStamp,
   researchRungBudgetDisabled, researchRungDeadlineMs, RESEARCH_RUNG_DEADLINE_FLOOR_MS,
   compactDecisionStash,
+  checkerSameModelAsLead, checkerSameModelGuardDisabled,
 } from './compute-policy-wiring';
 import { depthBudgetFor } from '../platform/depth-budget';
 import type { DepthPlan } from '../platform/compute-policy-gate';
@@ -172,6 +173,47 @@ describe('shouldSpawnChecker — by PLAN, never by mode alone', () => {
     expect(shouldSpawnChecker({ plan: plan(), machineTurnSkipsChecker: true, checkerSeatProblem: null, isCouncil: false })).toBe(false);
     expect(shouldSpawnChecker({ plan: plan(), machineTurnSkipsChecker: false, checkerSeatProblem: 'no key', isCouncil: false })).toBe(false);
     expect(shouldSpawnChecker({ plan: plan({ preset: 'deep_research' }), machineTurnSkipsChecker: false, checkerSeatProblem: null, isCouncil: true })).toBe(false);
+  });
+});
+
+describe('the Double Checker must not be the lead\'s OWN model (digby.cql.ca, 2026-11-06)', () => {
+  // The owner saw "Thinking 8s / 2 steps / Digby is digging in — the Double
+  // Checker is researching alongside…" on the Edge. The traced turn's
+  // lane_depth row carried checkerModel === leadModel ===
+  // cql-llm:spark-red-snow-5.3-flash-fp4: a full second inference
+  // (completionMs 204283) from the SAME model, so the promise of an
+  // independent cross-check was false. These cases pin the guard.
+  it('a checker on the lead\'s own model does not spawn — the wording would be false', () => {
+    expect(shouldSpawnChecker({ plan: plan(), machineTurnSkipsChecker: false, checkerSeatProblem: null, isCouncil: false, checkerSameModel: true })).toBe(false);
+    // Fire the exact shape the seam builds, so the two pieces cannot drift.
+    expect(shouldSpawnChecker({ plan: plan(), machineTurnSkipsChecker: false, checkerSeatProblem: null, isCouncil: false, checkerSameModel: checkerSameModelAsLead('cql-llm:spark-red-snow-5.3-flash-fp4', 'cql-llm:spark-red-snow-5.3-flash-fp4') })).toBe(false);
+  });
+
+  it('a genuinely different model still spawns (the guard never disables the checker)', () => {
+    expect(shouldSpawnChecker({ plan: plan(), machineTurnSkipsChecker: false, checkerSeatProblem: null, isCouncil: false, checkerSameModel: checkerSameModelAsLead('kimi-k3', 'deepseek-flash') })).toBe(true);
+  });
+
+  it('checkerSameModelAsLead compares the MODEL, not the registry label', () => {
+    // Same model behind two labels is still the same model.
+    expect(checkerSameModelAsLead('cql-llm:spark-red-snow-5.3-flash-fp4', 'spark-red-snow-5.3-flash-fp4')).toBe(true);
+    expect(checkerSameModelAsLead('CQL-LLM:Spark-Red-Snow-5.3-Flash-FP4', 'cql-llm:spark-red-snow-5.3-flash-fp4')).toBe(true);
+    // Different models, same provider, are NOT a match.
+    expect(checkerSameModelAsLead('cql-llm:kimi-k3', 'cql-llm:deepseek-flash')).toBe(false);
+    // An unresolved side is never a match — a missing spec must not silently
+    // suppress the checker (the seat's own servability check owns that).
+    expect(checkerSameModelAsLead('', 'cql-llm:kimi-k3')).toBe(false);
+    expect(checkerSameModelAsLead('cql-llm:kimi-k3', null)).toBe(false);
+    expect(checkerSameModelAsLead(null, undefined)).toBe(false);
+  });
+
+  it('CHECKER_SAME_MODEL_GUARD_DISABLED=1 restores the old behaviour', () => {
+    expect(checkerSameModelGuardDisabled({ CHECKER_SAME_MODEL_GUARD_DISABLED: '1' })).toBe(true);
+    expect(checkerSameModelGuardDisabled({ CHECKER_SAME_MODEL_GUARD_DISABLED: 'true' })).toBe(true);
+    expect(checkerSameModelGuardDisabled({ CHECKER_SAME_MODEL_GUARD_DISABLED: 'on' })).toBe(true);
+    // Default ON: unset/empty/anything else keeps the guard.
+    expect(checkerSameModelGuardDisabled({})).toBe(false);
+    expect(checkerSameModelGuardDisabled({ CHECKER_SAME_MODEL_GUARD_DISABLED: '0' })).toBe(false);
+    expect(checkerSameModelGuardDisabled({ CHECKER_SAME_MODEL_GUARD_DISABLED: '' })).toBe(false);
   });
 });
 

@@ -129,7 +129,7 @@ import { redactSecrets } from '../platform/secret-scan';
 // chain into this module's static import graph.
 // ACCEPTANCE-METRIC-BASELINE (2026-10-20): the default acceptance metric a
 // log-signal ticket carries (prisma-free leaf — pure builders only).
-import { AUTOFILER_DEFAULT_METRIC_SOURCE, autofilerDefaultMetricDisabled, logSignalDefaultMetric, designedAlarmOfFingerprint } from '../feedback/acceptance-metric-defaults';
+import { AUTOFILER_DEFAULT_METRIC_SOURCE, autofilerDefaultMetricDisabled, logSignalDefaultMetric, designedAlarmOfFingerprint, stableLiteralFragment, ambiguousFragmentSibling } from '../feedback/acceptance-metric-defaults';
 
 const SOURCE = 'log-signal-sweep';
 
@@ -167,7 +167,7 @@ export function logSignalQuietTarget(signal: { exampleMessage?: string | null; f
  * gate then keeps it only when the pre-fix window counted MORE rows than the
  * target (a signal that fired always did). Pure.
  */
-export function logSignalMetricContext(signal: { fingerprint: string; levels?: readonly string[]; sources?: readonly string[]; exampleMessage?: string | null }, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+export function logSignalMetricContext(signal: { fingerprint: string; levels?: readonly string[]; sources?: readonly string[]; exampleMessage?: string | null }, env: NodeJS.ProcessEnv = process.env, siblings: ReadonlyArray<{ fingerprint?: unknown; exampleMessage?: unknown; sources?: unknown; levels?: unknown }> = []): Record<string, unknown> {
   if (autofilerDefaultMetricDisabled(env)) return {};
   // TICKET 1425001e (2026-11-01): a DESIGNED-ALARM class gets NO volume default.
   // Its warn fires by design, so a `<=` bar counts the alarm rather than the
@@ -181,12 +181,63 @@ export function logSignalMetricContext(signal: { fingerprint: string; levels?: r
   // culprit that the 120-char fingerprint cut may have removed (35cd91a7 review).
   const designed = designedAlarmOfFingerprint(signal.fingerprint, signal.exampleMessage);
   if (designed) return { acceptanceMetricMissing: true, acceptanceMetricDesignedAlarm: designed.id };
+  const redactedFp = redactSweepSignal(signal.fingerprint);
+  const redactedEx = signal.exampleMessage ? redactSweepSignal(signal.exampleMessage) : null;
+  // FRAGMENT DISCRIMINATION (ticket 30dfad06, 2026-11-06). The default bar is a
+  // case-insensitive LITERAL SUBSTRING count, so a fragment that ALSO matches a
+  // SIBLING class still filing measures that sibling's rows — an unattainable
+  // bar that reopens a correct fix forever, because the fix is not allowed to
+  // silence the sibling. Live proof: this ticket reopened on a fix that WORKED —
+  // the verifier's window held four matching rows and measured THREE (one
+  // `500 … Header overflow` correctly excluded as logClass 'external', plus
+  // three `timeout` rows #2574 deliberately keeps filing, since tagging our own
+  // ECONNABORTED budget would swallow the invisible-outage class). 3 > 2.
+  //
+  // Preferred treatment is to keep a bar: re-derive the fragment from a run
+  // that does NOT collide (this ticket's message has "request failed with
+  // status code", which separates the 500 from `timeout`). Only when no run
+  // discriminates do we attach NO bar and FLAG it — never a bar that measures
+  // someone else's rows, and never a silent drop (the flag puts the row on the
+  // done-bar board, same posture as the designed-alarm path).
+  //
+  // ONLY SIBLINGS THE BAR CAN SEE: the metric is narrowed by `sources` +
+  // `levels`, so a class emitting under a DIFFERENT source contributes no rows
+  // and must not veto - otherwise every signal sharing a template word with an
+  // unrelated subsystem would lose its bar. No narrowing keys ⇒ we cannot tell
+  // what the bar sees, so we stay silent rather than over-refuse.
+  let visible: Array<{ fingerprint?: unknown; exampleMessage?: unknown }> = [];
+  if (Array.isArray(signal.sources) && signal.sources.length) {
+    visible = siblings.filter((x: any) => {
+      // SELF IS NOT A SIBLING: the caller passes the pass's whole signal list,
+      // which contains this very signal — its own fingerprint trivially CONTAINS
+      // its own fragment, so without this the bar would be suppressed on every
+      // log-signal ticket (a silent, fleet-wide metric blackout).
+      if (String(x?.fingerprint ?? '') === signal.fingerprint) return false;
+      const sibSources: string[] = Array.isArray(x?.sources) ? x.sources : [];
+      if (!sibSources.some((v) => signal.sources!.includes(String(v)))) return false;
+      const sibLevels: string[] = Array.isArray(x?.levels) ? x.levels : [];
+      if (Array.isArray(signal.levels) && signal.levels.length && sibLevels.length) {
+        return sibLevels.some((v) => signal.levels!.includes(String(v)));
+      }
+      return true;
+    });
+  }
+  const avoidFragment = visible.length
+    ? (candidate: string) => ambiguousFragmentSibling(candidate, visible) !== null
+    : undefined;
   // RAW-ANCHOR (ac626e4f/658ecf0e family 2026-10-21): the exampleMessage is
   // passed through so the default metric's fragment is verified against (or
   // re-derived from) the RAW row text — a whitespace-collapsed fingerprint
   // fragment can otherwise match zero raw rows (vacuous metric).
-  const metric = logSignalDefaultMetric({ fingerprint: redactSweepSignal(signal.fingerprint), levels: signal.levels, sources: signal.sources, quietTarget: logSignalQuietTarget(signal), exampleMessage: signal.exampleMessage ? redactSweepSignal(signal.exampleMessage) : null });
-  return metric ? { acceptanceMetric: metric, acceptanceMetricSource: AUTOFILER_DEFAULT_METRIC_SOURCE } : {};
+  const metric = logSignalDefaultMetric({ fingerprint: redactedFp, levels: signal.levels, sources: signal.sources, quietTarget: logSignalQuietTarget(signal), exampleMessage: redactedEx, avoidFragment });
+  if (!metric) return {};
+  // Did the discriminating pass actually work, or is the chosen run shared?
+  const chosen = String((metric.params as any)?.messagePattern ?? '');
+  const residual = chosen ? ambiguousFragmentSibling(chosen, visible) : null;
+  if (residual) {
+    return { acceptanceMetricMissing: true, acceptanceMetricAmbiguousFragment: String(residual).slice(0, 120) };
+  }
+  return { acceptanceMetric: metric, acceptanceMetricSource: AUTOFILER_DEFAULT_METRIC_SOURCE };
 }
 
 /** Source stamps the sweep must NEVER read back as its own input (ticket
@@ -1049,7 +1100,7 @@ export async function runLogSignalSweepOnce(deps: LogSignalSweepDeps = {}): Prom
             userId,
             title: logSignalTicketTitle(s.fingerprint),
             description: logSignalTicketDescription(s, now),
-            context: { sessionId: logSignalTicketSessionId(fpHash), surface: 'system', origin: SOURCE, about: 'digby_platform', fingerprintHash: fpHash, rule: s.rule, count: s.count, week, day: now.toISOString().slice(0, 10), ...logSignalMetricContext(s) },
+            context: { sessionId: logSignalTicketSessionId(fpHash), surface: 'system', origin: SOURCE, about: 'digby_platform', fingerprintHash: fpHash, rule: s.rule, count: s.count, week, day: now.toISOString().slice(0, 10), ...logSignalMetricContext(s, process.env, signals) },
           });
           if (!ticket) {
             await (redisClient as any).del(key).catch(() => {}); // let the next sweep retry the filing

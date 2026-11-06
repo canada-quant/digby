@@ -495,8 +495,14 @@ describe('C1 smoke [590031fb] queued steer echoes below the live block (design �
   it('source pin: the "Queued" caption + per-echo send-time label render in the echo block', () => {
     const block = region(VIEW, '{queuedEchoes.map(m => {', '{showJumpToEnd');
     expect(block).toContain('label="Queued"');
-    expect(block).toContain('Queued — runs when this turn finishes'); // plain caption
-    expect(block).toContain('Queued — folds into the run at its next step'); // coding caption
+    // Ticket fb3cb4e2: the caption text moved INTO queuedCaption (lib/
+    // queue-controls.ts, pinned by its own tests) because the bubble now also
+    // carries the queue POSITION the removed container used to show. The block
+    // must still pick the right TRUTH per surface — plain vs coding — via the
+    // `coding` flag, so pin that wiring rather than a literal that now lives in
+    // the helper.
+    expect(block).toContain('queuedCaption({');
+    expect(block).toContain('coding: !plain');
     expect(block).toContain('formatMessageTime(m.createdAt)'); // per-echo send time
     expect(block).toContain('`· ${timeLabel}`'); // caption · time composition
   });

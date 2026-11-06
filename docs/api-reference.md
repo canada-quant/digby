@@ -165,7 +165,7 @@ Canvas types: `document`, `code`, `html`, `mermaid`, `table`
 
 ---
 
-## Admin Dashboard Endpoints
+## Admin Endpoints
 
 ### Users (Admin only)
 | Method | Path | Description |
