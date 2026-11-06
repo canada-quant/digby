@@ -270,13 +270,24 @@ export async function verifyTicketRow(row: VerifierRow, now: Date = new Date()):
     // messagePattern, never a close-out note's prose. A real defect that a
     // designed-alarm probe CAN falsify (measured <= target) still passes and
     // still closes deployed_verified, so detection is not weakened.
+    // TICKET dc4f7ff5 (2026-11-06) extends the same guard one class over:
+    // DESIGNED OBSERVABILITY (a designed failover serving the call, a drop
+    // guard discarding a misattributed claim). Rows stamped before that change
+    // still carry the unattainable `<= N` bar, and the verifier is what
+    // re-measures the STORED metric — so without this the two live tickets
+    // (3769b1b3, e35f9985) would keep reopening on correct fixes even after the
+    // autofiler stops minting such bars. The guard stays auto-filer-only, so a
+    // hand-authored metric is never redirected by it.
     const unsound = designedAlarmOfMetric(metric, stCtx.acceptanceMetricSource);
     if (unsound) {
       if (ver.lastVerdict !== 'review_required') {
+        const remedy = unsound.class === 'designed-observability'
+          ? 'A human/supervisor should replace it with a behavioural criterion for this class — for a DISCARD guard the honest bar is a replay pin (the guard still fires), never a row count, since the count tracks how often lanes misattribute, not whether the fix works. See context.verification.lastMeasured.'
+          : 'A human/supervisor should replace it with a behavioural criterion — the loop_metric_count probe over kind tool_call_unrecovered_severance is the loss signal for this class (see context.verification.lastMeasured).';
         await writeTicket(row, {
           verification: { ...ver, lastVerdict: 'review_required', lastVerdictAt: now.toISOString(), lastMeasured: measured, lastDetail: `metric unsound for this fix class — ${unsound.id}`.slice(0, 200) },
-        }, `[post-deploy verifier (6665fff6 + ticket 1425001e)]: NEEDS METRIC REVIEW — the fix is deployed, but the acceptance metric (${metric.probe} ${metric.operator} ${metric.target} over ${metric.windowHours}h) measures a DESIGNED ALARM, not the fix: ${unsound.why}. Measured ${measured}. This is NOT a reopen: a <= bar over an alarm's volume cannot distinguish a fixed system from a broken one, so the metric was redirected instead. A human/supervisor should replace it with a behavioural criterion — the loop_metric_count probe over kind tool_call_unrecovered_severance is the loss signal for this class (see context.verification.lastMeasured).`);
-        await recordVerifierMetric({ ticketId: row.id.slice(0, 8), verdict: 'review_required', probe: metric.probe, measured, target: metric.target, designedAlarm: unsound.id });
+        }, `[post-deploy verifier (6665fff6 + tickets 1425001e/dc4f7ff5)]: NEEDS METRIC REVIEW — the fix is deployed, but the acceptance metric (${metric.probe} ${metric.operator} ${metric.target} over ${metric.windowHours}h) measures a class that emits BY DESIGN, not the fix: ${unsound.why}. Measured ${measured}. This is NOT a reopen: a <= bar over such a class's volume cannot distinguish a fixed system from a broken one, so the metric was redirected instead. ${remedy}`);
+        await recordVerifierMetric({ ticketId: row.id.slice(0, 8), verdict: 'review_required', probe: metric.probe, measured, target: metric.target, designedAlarm: unsound.id, unsoundClass: unsound.class });
       }
       return 'review_required';
     }

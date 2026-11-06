@@ -227,6 +227,13 @@ services:
       - MCP_DIGBY_URL=${MCP_DIGBY_URL:-}
       - BRIGHTDATA_API_TOKEN=${BRIGHTDATA_API_TOKEN:-}
       - BRIGHTDATA_WEB_UNLOCKER_ZONE=${BRIGHTDATA_WEB_UNLOCKER_ZONE:-web_unlocker1}
+      # web_pipe's ordinary-HTML direct-fetch fallback (2026-11-05, ticket
+      # 07258fa8). Forwarded so a self-hosted operator can actually turn it OFF
+      # from .env with no deploy — the documented switch (see .env.example) was
+      # missing here, i.e. unsettable on exactly the instance class that hit the
+      # bug. This compose forwards its sibling web_pipe switches explicitly too,
+      # so omitting it was an oversight, not a policy.
+      - WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED=${WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED:-}
       # Ticket lane (agent-filed feedback dispatch) — dark unless enabled.
       - TICKET_DISPATCH_ENABLED=${TICKET_DISPATCH_ENABLED:-}
       - PLATFORM_ENGINEER_CHAT_ID=${PLATFORM_ENGINEER_CHAT_ID:-}
@@ -447,6 +454,11 @@ services:
       - MCP_DIGBY_URL=${MCP_DIGBY_URL:-}
       - BRIGHTDATA_API_TOKEN=${BRIGHTDATA_API_TOKEN:-}
       - BRIGHTDATA_WEB_UNLOCKER_ZONE=${BRIGHTDATA_WEB_UNLOCKER_ZONE:-web_unlocker1}
+      # web_pipe's ordinary-HTML direct-fetch fallback — same switch as the
+      # backend service above. The WORKER runs the agent/coding turns where
+      # web_pipe actually executes, so without it here the operator's .env
+      # setting would not reach the process doing the fetching.
+      - WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED=${WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED:-}
       - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
       - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
       - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI:-}

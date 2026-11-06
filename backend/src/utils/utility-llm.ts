@@ -85,6 +85,60 @@ export const DEEPSEEK_BILLING_TICKET_REFIRE_MS = 60 * 60 * 1000;
 // penalized for one blip).
 export const UTILITY_OVERRIDE_LATCH_MS = 5 * 60 * 1000;
 export const UTILITY_OVERRIDE_BACKOFF_STEPS_MS = [5 * 60_000, 15 * 60_000, 30 * 60_000, 60 * 60_000];
+/**
+ * How much of the CALLER's deadline the override leg may spend (ticket
+ * 3769b1b3, family lane 88351f83, 2026-11-06).
+ *
+ * The override leg used to inherit the caller's whole timeout. On the prod
+ * shape that is fatal to the very failover it exists to provide: a 45 s
+ * `dream_ops` caller let the override sit for the FULL 45 s and then handed
+ * the built-in chain a caller that had already burned its budget, so the
+ * "fallback" doubled worst-case latency instead of rescuing it. The warn's
+ * own rows prove the shape — every residual row is `streak 1`, i.e. the
+ * override SUCCEEDS between failures, so this is an intermittent seat whose
+ * slow calls the leg never cut off, never a dead endpoint (the 2026-10-24
+ * adjudication's dead-gateway premise is refuted by those streak values).
+ *
+ * Cap the override so a RESERVE of the caller's budget is left for the built-in
+ * chain: a slow override is abandoned early, the chain still has real time to
+ * answer, and the latch (below) makes the NEXT calls skip the override
+ * entirely. The reserve is min(15 s, half the budget):
+ *   budget ≤ 30 s → reserve = half the budget  (45 s→30 s, 30 s→15 s, 15 s→7.5 s)
+ *   budget > 30 s → reserve = 15 s             (90 s→75 s, 120 s→105 s)
+ *
+ * BE HONEST ABOUT THE COST (adversarial review 2026-11-06, C1): in the
+ * 1 s < budget ≤ 30 s band this IS a flat halving, and a flat halving is not
+ * free — any override call whose prefill lands in (leg, budget] now times out
+ * where it used to succeed, which latches the override and emits the very warn
+ * this ticket counts. It is worth taking because the seat's own live
+ * measurement (helper-completion.ts, 2026-10-20 probe: thinking-off 2.7 s vs
+ * omitted 30.8 s) puts a healthy override 4–10× inside every new leg, so the
+ * at-risk band is narrow; and the alternative — leaving the caller no reserve —
+ * makes the failover structurally useless (the 2026-10-24 dead-gateway
+ * adjudication is refuted by the residual rows all being `streak 1`: the
+ * override SUCCEEDS between failures, so this is an intermittent slow seat, not
+ * a dead endpoint).
+ *
+ * KNOWN LIMIT (same review, C4): on a keyless self-host Edge the override is the
+ * ONLY utility seat (docs/SELF_HOST.md), so the reserved budget buys nothing
+ * there and the leg is strictly shorter. Tracked, not fixed here — see
+ * LF-3769B1B3-EDGE-RESERVE. Also: the reserve bounds the override leg only; the
+ * DeepSeek/DashScope built-in legs still receive the caller's full budget, so
+ * total worst-case latency is reduced, not eliminated.
+ */
+export const UTILITY_OVERRIDE_FALLBACK_RESERVE_MS = 15_000;
+/** Floor for a tiny caller budget, itself capped by that budget — see above. */
+const UTILITY_OVERRIDE_MIN_LEG_MS = 1_000;
+export function utilityOverrideLegTimeout(callerTimeoutMs: number, opts?: { hasBuiltInChain?: boolean }): number {
+  const budget = Number.isFinite(callerTimeoutMs) && callerTimeoutMs > 0 ? Math.floor(callerTimeoutMs) : 20_000;
+  // Edge (adversarial review C4): when NO built-in leg is configured the
+  // override is the only utility seat, so a reserve has nothing to buy and a
+  // shorter leg strictly loses capacity. Default TRUE — the reserve is the
+  // prod-shaped behaviour and a caller that omits the flag gets it.
+  if (opts?.hasBuiltInChain === false) return budget;
+  const reserve = Math.min(UTILITY_OVERRIDE_FALLBACK_RESERVE_MS, Math.floor(budget / 2));
+  return Math.max(Math.min(UTILITY_OVERRIDE_MIN_LEG_MS, budget), Math.min(budget - reserve, budget));
+}
 const UTILITY_OVERRIDE_UNREACHABLE_RE = /timeout of \d+ms exceeded|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket hang up|network error/i;
 const UTILITY_OVERRIDE_LATCHED_SKIP = Symbol('utility-override-latched');
 let utilityOverrideLatchUntil = 0;
@@ -651,7 +705,13 @@ export async function utilityChat(
         // strips closed AND unclosed <think> blocks — a default-thinking custom
         // Qwen used to hand titles/follow-ups raw reasoning or nothing at all.
         const { postNonStreamingCompletion, extractNonStreamingAnswer } = await import('../modules/crossmodel/coding/helper-completion');
-        const resp = await postNonStreamingCompletion(p, payload, { timeout: options?.timeout || 20000 });
+        // Ticket 3769b1b3 (family lane 88351f83): the override leg gets only a
+        // SHARE of the caller's deadline, never all of it — see
+        // utilityOverrideLegTimeout. Inheriting the full budget meant a slow
+        // override burned the caller's entire deadline before the built-in chain
+        // ever ran, so the designed failover doubled worst-case latency instead
+        // of rescuing it.
+        const resp = await postNonStreamingCompletion(p, payload, { timeout: utilityOverrideLegTimeout(options?.timeout || 20000, { hasBuiltInChain: Boolean(DEEPSEEK_API_KEY || DASHSCOPE_API_KEY) }) });
         const choice = resp.data?.choices?.[0];
         const answer = extractNonStreamingAnswer(choice);
         // contentOnly callers never accept reasoning as the answer; others keep

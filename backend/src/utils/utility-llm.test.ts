@@ -33,6 +33,8 @@ import {
   UTILITY_OUTAGE_ALERT_REFIRE_MS,
   UTILITY_OVERRIDE_LATCH_MS,
   UTILITY_OVERRIDE_BACKOFF_STEPS_MS,
+  UTILITY_OVERRIDE_FALLBACK_RESERVE_MS,
+  utilityOverrideLegTimeout,
   utilityLLMHealthSnapshot,
 } from './utility-llm';
 import { fileFeedbackTicket } from '../modules/crossmodel/feedback/feedback.service';
@@ -1224,5 +1226,135 @@ describe('utility override unreachable warn — log-signal 8386e3e8 (one warn pe
     // A fast 4xx is retried on the very next call — the operator must keep seeing it.
     expect(await utilityChat([{ role: 'user', content: 'y' }], { contentOnly: true })).toBe('ds-ok');
     expect(mockOverridePost).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── Log-signal family lane 88351f83 — ticket 3769b1b3 (2026-11-06) ────────────
+// The override leg used to inherit the CALLER's whole timeout. Prod proof that
+// this was the residual defect (and that the dead-gateway premise of the
+// 2026-10-24 adjudication is refuted): every residual `unreachable` row in the
+// 24 h window is `streak 1`, i.e. the override SUCCEEDS between failures — an
+// intermittent seat, not a dead endpoint — and `test_model_role utility`
+// answered the live seat in 1,331 ms while 45 s caller budgets still expired.
+// A 45 s dream_ops caller let the override sit 45 s and then handed the
+// built-in chain a caller that had already spent its budget, so the designed
+// failover DOUBLED worst-case latency instead of rescuing it.
+describe('utilityOverrideLegTimeout — the override never eats the caller\'s whole deadline (ticket 3769b1b3)', () => {
+  it('leaves a RESERVE for the built-in chain and never exceeds the caller budget', () => {
+    expect(UTILITY_OVERRIDE_FALLBACK_RESERVE_MS).toBe(15_000);
+    // The prod caller budgets seen on the residual rows (12/15/30/45/60/90 s).
+    for (const caller of [12_000, 15_000, 30_000, 45_000, 60_000, 90_000]) {
+      const leg = utilityOverrideLegTimeout(caller);
+      expect(leg).toBeLessThan(caller);   // a real reserve remains for the fallback
+      expect(leg).toBeGreaterThan(0);
+      // The reserve is capped at half the budget, so a tight caller keeps half.
+      const reserve = Math.min(UTILITY_OVERRIDE_FALLBACK_RESERVE_MS, Math.floor(caller / 2));
+      expect(caller - leg).toBe(reserve);
+    }
+    // The two shapes the ticket names, and the generous one that must NOT be
+    // over-trimmed (a flat halving would have cut this to 45 s).
+    expect(utilityOverrideLegTimeout(45_000)).toBe(30_000);
+    expect(utilityOverrideLegTimeout(90_000)).toBe(75_000);
+    expect(utilityOverrideLegTimeout(30_000)).toBe(15_000);
+  });
+
+  it('a tiny caller budget is capped BY that budget, never over-run', () => {
+    // The floor must never exceed the caller's own deadline (a 400 ms caller
+    // cannot be given a 1 s leg) — the whole point is to leave budget behind.
+    for (const caller of [400, 900, 1_000, 1_999]) {
+      expect(utilityOverrideLegTimeout(caller)).toBeLessThanOrEqual(caller);
+    }
+    expect(utilityOverrideLegTimeout(400)).toBe(400);
+    expect(utilityOverrideLegTimeout(1_000)).toBe(1_000);
+    expect(utilityOverrideLegTimeout(2_000)).toBe(1_000);
+  });
+
+  it('a missing / nonsensical budget falls back to the 20 s default budget', () => {
+    // budget falls back to 20 s; the reserve is capped at half of that (10 s),
+    // so the leg is 10 s — NOT 15 s, which would leave only 5 s to answer.
+    for (const bad of [NaN, 0, -5, Infinity]) {
+      expect(utilityOverrideLegTimeout(bad)).toBe(10_000);
+    }
+    expect(utilityOverrideLegTimeout(20_000)).toBe(10_000);
+  });
+
+  it('EDGE (review C4): with NO built-in leg configured the override keeps the FULL budget', () => {
+    // A keyless self-host Edge serves utility calls ONLY from the override, so
+    // a reserve would have nothing to buy and a shorter leg would strictly
+    // lose capacity. The flag opts out; omitting it keeps the prod behaviour.
+    for (const caller of [8_000, 15_000, 45_000, 90_000]) {
+      expect(utilityOverrideLegTimeout(caller, { hasBuiltInChain: false })).toBe(caller);
+    }
+    expect(utilityOverrideLegTimeout(NaN, { hasBuiltInChain: false })).toBe(20_000);
+    // Default (flag omitted) is the reserve — prod-shaped, fail-safe.
+    expect(utilityOverrideLegTimeout(45_000)).toBe(30_000);
+    expect(utilityOverrideLegTimeout(45_000, { hasBuiltInChain: true })).toBe(30_000);
+  });
+
+  it('the ≤30 s band is a documented HALVING and the >30 s band a flat 15 s reserve', () => {
+    // Reviewer C1 asked for the table in the doc comment to be executable, so a
+    // future edit cannot silently reintroduce a false claim about the shape.
+    // Floor: below 2 s the 1 s minimum-leg floor dominates, so the clean
+    // halving band starts at 2 s (see the tiny-budget test above).
+    const halving = [2_000, 4_000, 5_000, 6_000, 8_000, 10_000, 12_000, 15_000, 25_000, 30_000];
+    for (const budget of halving) {
+      expect(utilityOverrideLegTimeout(budget)).toBe(Math.floor(budget / 2));
+    }
+    const flatReserve = [30_001, 45_000, 60_000, 90_000, 100_000, 120_000];
+    for (const budget of flatReserve) {
+      expect(utilityOverrideLegTimeout(budget)).toBe(budget - UTILITY_OVERRIDE_FALLBACK_RESERVE_MS);
+    }
+  });
+});
+
+describe('utilityChat override leg — the reserved budget is what the leg actually posts with', () => {
+  const mockOverridePost = postNonStreamingCompletion as jest.Mock;
+  const LOCAL_PROVIDER = { label: 'local (custom endpoint)', model: 'qwen3-4b', extra: {}, omitParams: [] as string[] };
+  const loggerMock = require('./logger').default as { warn: jest.Mock };
+
+  beforeEach(() => {
+    mockOverridePost.mockReset();
+    mockPost.mockClear();
+    __resetUtilityOutageCounterForTests();
+    __resetDeepseekBillingLatchForTests();
+    __resetUtilityOverrideLatchForTests();
+    loggerMock.warn.mockClear();
+    mockResolveRoleModel.mockImplementation(async (key: string) => (key === 'utility' ? 'local:qwen3-4b' : ''));
+    mockResolveProviderForRun.mockResolvedValue(LOCAL_PROVIDER);
+    mockPost.mockImplementation((url: string) => Promise.resolve(url.includes('deepseek') ? deepseekSuccess('ds-ok') : dashscopeSuccess('fb-ok')));
+  });
+  afterEach(() => {
+    mockResolveRoleModel.mockResolvedValue('');
+    __resetUtilityOverrideLatchForTests();
+  });
+
+  it('a 45 s caller budget posts the override at 30 s and the built-in chain still answers', async () => {
+    mockOverridePost.mockRejectedValue(new Error('timeout of 30000ms exceeded'));
+    expect(await utilityChat([{ role: 'user', content: 'dream' }], { timeout: 45_000, contentOnly: true })).toBe('ds-ok');
+    // The leg's OWN deadline is the reserved budget — not the caller's 45 s.
+    expect(mockOverridePost).toHaveBeenCalledTimes(1);
+    expect(mockOverridePost.mock.calls[0][2]).toMatchObject({ timeout: 30_000 });
+    // The fallback actually served: the built-in leg ran with the caller's
+    // remaining budget instead of inheriting an already-expired deadline.
+    expect(mockPost).toHaveBeenCalled();
+    // …and the warn names the RESERVED timeout, so the operator reads the leg's
+    // real budget rather than the caller's (the ticket's 45 s rows were this).
+    const warns = loggerMock.warn.mock.calls.filter((c: any[]) => String(c[0] ?? '').includes('utility role override unreachable'));
+    expect(String(warns[0][0])).toContain('(timeout of 30000ms exceeded)');
+  });
+
+  it('a 90 s project-brief caller keeps 75 s of override time (a flat halving would over-trim)', async () => {
+    mockOverridePost.mockRejectedValue(new Error('timeout of 75000ms exceeded'));
+    expect(await utilityChat([{ role: 'user', content: 'brief' }], { timeout: 90_000, contentOnly: true })).toBe('ds-ok');
+    expect(mockOverridePost.mock.calls[0][2]).toMatchObject({ timeout: 75_000 });
+  });
+
+  it('a fast override is untouched: a HEALTHY seat still answers and nothing is capped away', async () => {
+    mockOverridePost.mockResolvedValue({ data: { choices: [{ message: { content: 'local-ok' } }] } });
+    expect(await utilityChat([{ role: 'user', content: 'x' }], { timeout: 45_000, contentOnly: true })).toBe('local-ok');
+    expect(mockOverridePost).toHaveBeenCalledTimes(1);
+    expect(mockOverridePost.mock.calls[0][2]).toMatchObject({ timeout: 30_000 });
+    expect(utilityOverrideLatched()).toBe(false);
+    expect(mockPost).not.toHaveBeenCalled(); // the built-in chain was never needed
   });
 });

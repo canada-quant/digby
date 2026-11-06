@@ -86,6 +86,7 @@ export {
   healAutofilerDefaultMetric,
   designedAlarmOfMetric,
   designedAlarmOfFingerprint,
+  designedObservabilityOfFingerprint,
 } from './acceptance-metric-defaults';
 
 /** Registered loop_metrics kinds (the closed set params.kind must name). */

@@ -386,15 +386,148 @@ const DESIGNED_ALARM_SIGNATURES: ReadonlyArray<{ id: string; test: (pattern: str
   },
 ];
 
-/** Does this probe measure the VOLUME of a designed alarm? Only an auto-filer default can be unsound this way — a hand-authored metric is its lane's judgement. Pure. */
-export function designedAlarmOfMetric(metric: AcceptanceMetric, source: unknown): { id: string; why: string } | null {
+/**
+ * TICKET dc4f7ff5 (2026-11-06) — DESIGNED OBSERVABILITY: a warn whose FIRING IS
+ * the fix working, so its VOLUME can never be an acceptance bar.
+ *
+ * THE DEFECT THIS REPLAYS (measured, both specimens live at filing time):
+ * the log-signal auto-filer attaches `app_error_log_count <= N` over the
+ * ticket's own fingerprint fragment. For a class that emits the warning as the
+ * EVIDENCE OF DESIGNED BEHAVIOUR, every residual row is correct behaviour, so
+ * the bar is unattainable and `certainEarlyVerdict` rules each residual row a
+ * CERTAIN fail — the post-deploy verifier reopens a fix that WORKS, forever.
+ *
+ * Two live specimens, both confirmed against origin/main before this change:
+ *   - 3769b1b3 `utilityChat: utility role override unreachable (…) — the
+ *     built-in chain serves utility calls directly.` The override leg fails
+ *     over to the built-in chain BY DESIGN and the lane MEASURED the residual
+ *     shape: every row reads `streak 1` because the override SUCCEEDS BETWEEN
+ *     failures. Its 242-row baseline is external provider intermittency plus
+ *     caller budgets vs multi-tens-of-k prefill, not a defect the bar can
+ *     track.
+ *   - e35f9985 `action-verifier: dropped <n> LLM-extracted note claim(s)
+ *     narrating THIRD-PARTY lane status …` The action-verifier's drop guard
+ *     DISCARDING a misattributed claim is the guard working; the warn is its
+ *     only prose account. It reopens at 3 measured against a bar of 2 — and
+ *     all three rows are this ticket's OWN class (see below).
+ *
+ * WHY "NO BAR" AND NOT "BASELINE × k" — the ticket offered both; the data
+ * decides. A rate bar is only sound when the post-fix rate is bounded by the
+ * FIX. Neither class is: the utility latch tracks third-party latency, and the
+ * drop guard tracks how many lanes happen to narrate other lanes' status. A
+ * `<= baseline × k` would still breach on a bad hour and reopen a correct fix
+ * (the 1425001e measurement, one level down). The honest autofiler behaviour
+ * is NO volume bar, FLAGGED so the row stays on the done-bar board and a lane
+ * attaches its own behavioural criterion — the same posture as the designed
+ * alarm path above, never a silent drop.
+ *
+ * NOT A FILING-STOP. `designedAlarmOfFingerprint` ALSO gates the sweep's
+ * ticket filing (log-signal-sweep.service.ts). These classes must KEEP FILING:
+ * 3769b1b3's remedy is an OWNER action (repair/re-point the custom utility
+ * endpoint) and its recurrences are the only evidence of a sustained override
+ * failure — `utils/utility-llm.test.ts` pins exactly that contract, and
+ * e35f9985's warn is the only prose account of which claims a lane tried to
+ * attribute to other lanes (log-signal-family.3769b1b3.pin.test.ts). So this
+ * signature set is consulted ONLY for the METRIC decision; the filing-stop
+ * keeps its narrow instrument-only predicate. Pinned by test.
+ *
+ * SURFACE ASYMMETRY (same rule as the alarm signatures above, and for the same
+ * measured reason): a FINGERPRINT is the whole normalized message, so it
+ * carries the class's own self-description — require it. A metric's
+ * messagePattern is a derived FRAGMENT that may be nothing but the leading
+ * clause (that IS 3769b1b3's derived pattern, `utilitychat: utility role
+ * override unreachable (timeout of`), so the fragment must be accepted on the
+ * distinguishing TOKEN alone. Being stricter on the metric surface would leave
+ * the unfixed reopen loop in place for the very tickets this exists for.
+ */
+const DESIGNED_OBSERVABILITY_SIGNATURES: ReadonlyArray<{
+  id: string;
+  test: (pattern: string, surface: 'fingerprint' | 'metric', raw: string) => boolean;
+  why: string;
+}> = [
+  {
+    // utilityChat's override latch. The sole emitter
+    // (utils/utility-llm.ts:101) ALWAYS appends "— the built-in chain serves
+    // utility calls directly.", so the token IS the class in production; a
+    // source-level pin in the replay test fails if a future emitter drops that
+    // declaration, forcing this signature to be revisited rather than silently
+    // over-matching.
+    //
+    // WHY NOT ALSO REQUIRE THE DECLARATION HERE (the adversarial-review finding
+    // on this commit): the two surfaces cannot agree on it, and pretending they
+    // did was worse than the honest shape. The FINGERPRINT is hard-cut at
+    // FINGERPRINT_MAX_LEN=120, which lands BEFORE the declaration — that is why
+    // the stored derived fragment is `utilitychat: utility role override
+    // unreachable (timeout of`, with no declaration to test. Requiring it on
+    // the fingerprint surface while accepting the bare token on the metric
+    // surface produced a stamped bar for a hypothetical no-fallback variant
+    // that the VERIFIER would then park as designed-observability: the stamp
+    // said "measurable", the verifier said "unsound", and neither was right.
+    // Unifying on the token makes the two agree. A no-fallback variant is
+    // deliberately OUT of this class and gets NO bar (flagged, still filed) —
+    // and since a real override outage's remedy is an owner action, a flagged
+    // row is the better posture for it than a bar that cannot clear.
+    id: 'utility-override-failover',
+    test: (p) => /utility role override unreachable/i.test(p),
+    why: 'the utility override latch fires BY DESIGN when the override leg fails over to the built-in chain, which serves the call directly — every residual row is the designed failover working, and the residual rate tracks third-party latency, not the fix',
+  },
+  {
+    // action-verifier's THIRD-PARTY-ATTRIBUTION drop guard DISCARDING a claim a
+    // lane tried to attribute to another lane. This is the ONLY arm of the two
+    // `dropped <n> LLM-extracted … claim(s)` emit sites that qualifies, and the
+    // exclusion is deliberate — see below.
+    //
+    // WHY THE `with NO verbatim support` SIBLING IS EXCLUDED (587e9d64 arm): its
+    // volume IS coupled to a real defect. It measures extractor
+    // paraphrase-hallucination, so a regression in the extractor makes it fire
+    // more and a fix makes it fire less — exactly the property a `<=` bar needs.
+    // Silencing it would hide whether the extractor improved. The ticket names
+    // it as a live sibling class the fix is forbidden to silence, and its own
+    // lane must keep its bar. (Measured: after PR #2583 the autofiler's
+    // discriminator already separates the two arms, so the "shared fragment"
+    // premise was refuted — but the exclusion is right on its own merits.)
+    id: 'action-verifier-drop-guard',
+    test: (p) => {
+      if (!/llm-extracted\b.*\bclaim\(s\)/i.test(p)) return false;
+      // The stored derived fragment can START mid-message (the fragment builder
+      // drops the `action-verifier: dropped <n>` prefix, which carries the only
+      // <n> placeholder), so the class test anchors on the disposition clause.
+      if (/no verbatim support/i.test(p)) return false; // 587e9d64 arm — fix-coupled, keeps its bar
+      return /narrating third-party lane status/i.test(p);
+    },
+    why: 'the action-verifier third-party-attribution drop guard discarding a claim a lane attributed to another lane is the guard WORKING — the dropped claim is real but not this run\'s, so no fix in this run can or should reduce the count',
+  },
+];
+
+/** The unsoundness FAMILY a matched signature belongs to — the verifier's note reads from this. */
+export type UnsoundMetricClass = 'designed-alarm' | 'designed-observability';
+
+/** Does this FINGERPRINT emit by design (so no volume default may be attached)? Pure. */
+export function designedObservabilityOfFingerprint(fingerprint: unknown, exampleMessage?: unknown): { id: string; why: string } | null {
+  const fp = typeof fingerprint === 'string' ? fingerprint : '';
+  if (!fp) return null;
+  const raw = typeof exampleMessage === 'string' && exampleMessage ? exampleMessage : fp;
+  return DESIGNED_OBSERVABILITY_SIGNATURES.find((s) => s.test(fp, 'fingerprint', raw)) ?? null;
+}
+
+/**
+ * Does this probe measure the VOLUME of a class that emits by design — a
+ * designed ALARM (1425001e) or designed OBSERVABILITY (dc4f7ff5)? Only an
+ * auto-filer default can be unsound this way: a hand-authored metric is its
+ * lane's judgement, and this guard must never become the escape hatch it was
+ * built to close. Pure.
+ */
+export function designedAlarmOfMetric(metric: AcceptanceMetric, source: unknown): { id: string; why: string; class: UnsoundMetricClass } | null {
   if (source !== AUTOFILER_DEFAULT_METRIC_SOURCE) return null;
   if (metric.probe !== 'app_error_log_count') return null;
   const pattern = String(metric.params.messagePattern ?? '');
   if (!pattern) return null;
   // A metric's messagePattern IS the pattern (a short derived fragment); fall back
   // to it as the raw so the culprit test still runs on whatever text we hold.
-  return DESIGNED_ALARM_SIGNATURES.find((s) => s.test(pattern, 'metric', pattern)) ?? null;
+  const alarm = DESIGNED_ALARM_SIGNATURES.find((s) => s.test(pattern, 'metric', pattern));
+  if (alarm) return { ...alarm, class: 'designed-alarm' };
+  const obs = DESIGNED_OBSERVABILITY_SIGNATURES.find((s) => s.test(pattern, 'metric', pattern));
+  return obs ? { ...obs, class: 'designed-observability' } : null;
 }
 
 /**

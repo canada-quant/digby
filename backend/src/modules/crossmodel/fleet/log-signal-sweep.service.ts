@@ -129,7 +129,7 @@ import { redactSecrets } from '../platform/secret-scan';
 // chain into this module's static import graph.
 // ACCEPTANCE-METRIC-BASELINE (2026-10-20): the default acceptance metric a
 // log-signal ticket carries (prisma-free leaf — pure builders only).
-import { AUTOFILER_DEFAULT_METRIC_SOURCE, autofilerDefaultMetricDisabled, logSignalDefaultMetric, designedAlarmOfFingerprint, stableLiteralFragment, ambiguousFragmentSibling } from '../feedback/acceptance-metric-defaults';
+import { AUTOFILER_DEFAULT_METRIC_SOURCE, autofilerDefaultMetricDisabled, logSignalDefaultMetric, designedAlarmOfFingerprint, designedObservabilityOfFingerprint, stableLiteralFragment, ambiguousFragmentSibling } from '../feedback/acceptance-metric-defaults';
 
 const SOURCE = 'log-signal-sweep';
 
@@ -181,6 +181,37 @@ export function logSignalMetricContext(signal: { fingerprint: string; levels?: r
   // culprit that the 120-char fingerprint cut may have removed (35cd91a7 review).
   const designed = designedAlarmOfFingerprint(signal.fingerprint, signal.exampleMessage);
   if (designed) return { acceptanceMetricMissing: true, acceptanceMetricDesignedAlarm: designed.id };
+  // TICKET dc4f7ff5 (2026-11-06): DESIGNED OBSERVABILITY — the same posture one
+  // class over. A warn whose FIRING IS the fix working (a designed failover
+  // serving the call, a drop guard discarding a misattributed claim) can never
+  // be held to a VOLUME bar: every residual row is correct behaviour, and
+  // `certainEarlyVerdict` rules a `<=` breach with measured > target as CERTAIN,
+  // so a correct deployed fix reopens on its next blip and burns a fresh lane.
+  //
+  // MEASURED, both live at filing time (this ticket's own specimens):
+  //   - 3769b1b3 — the SAME class and the SAME proof (its lane measured every
+  //     residual row at `streak 1` because the override SUCCEEDS BETWEEN
+  //     failures, so the rate tracks third-party latency, not the fix), but its
+  //     STORED metric (`<= 0`) was HAND-AUTHORED by the filing lane, so the
+  //     verifier's escape-hatch guard correctly refuses to redirect it. The
+  //     autofiler fix covers the class going forward; that one row is its
+  //     lane's/supervisor's to re-point. Recorded so the gap is not misread as
+  //     "this ticket's verifier change clears 3769b1b3" — it does not.
+  //   - e35f9985 was stamped `<= 2` on the action-verifier drop guard's warn.
+  //     It reopened at 3 — and all three rows were this ticket's OWN class (the
+  //     ticket's "shared with a sibling" claim was REFUTED: PR #2583's
+  //     discriminator had already separated the `no verbatim support` sibling).
+  //     So the collision half was not the cause; the VOLUME bar is.
+  //
+  // CHECKED HERE, NOT AT THE FILING STOP — deliberately. `designedAlarmOfFingerprint`
+  // also gates whether a class files at all; these classes must KEEP FILING
+  // (3769b1b3's remedy is an OWNER action and its recurrences are the only
+  // evidence of a sustained override failure — pinned in utils/utility-llm.test.ts;
+  // e35f9985's warn is the only prose account of which claims a lane attributed
+  // to other lanes — pinned in log-signal-family.3769b1b3.pin.test.ts). Only the
+  // METRIC decision consults this set.
+  const designedObservability = designedObservabilityOfFingerprint(signal.fingerprint, signal.exampleMessage);
+  if (designedObservability) return { acceptanceMetricMissing: true, acceptanceMetricDesignedObservability: designedObservability.id };
   const redactedFp = redactSweepSignal(signal.fingerprint);
   const redactedEx = signal.exampleMessage ? redactSweepSignal(signal.exampleMessage) : null;
   // FRAGMENT DISCRIMINATION (ticket 30dfad06, 2026-11-06). The default bar is a

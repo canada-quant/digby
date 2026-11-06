@@ -1,5 +1,5 @@
 /** web_pipe — deterministic search→scrape→embed→digest pipeline. */
-import { runWebPipe, isTextLikeUrl, looksLikeJsShell, JS_SHELL_NOTE, nextSameHostGap, topLinks, WEB_PIPE_SERP_RESUME_BUDGET_MS, htmlToText, looksLikeHtmlBody, directFetchBlockedReason, HTML_DIRECT_NOTE, HTML_CHALLENGE_NOTE } from './web-pipe';
+import { runWebPipe, isTextLikeUrl, looksLikeJsShell, JS_SHELL_NOTE, nextSameHostGap, topLinks, WEB_PIPE_SERP_RESUME_BUDGET_MS, htmlToText, looksLikeHtmlBody, directFetchBlockedReason, isPrivateAddress, directFetchResolveBlockedReason, HTML_DIRECT_NOTE, HTML_CHALLENGE_NOTE } from './web-pipe';
 import { callMcpTool, extractPdfTextFromUrl } from '../mcp-search';
 import { clearSerpRedirectCache } from '../serp-redirects';
 import { storeFindings } from './coding-retrieval.service';
@@ -23,6 +23,13 @@ jest.mock('../model-endpoints/model-endpoints.service', () => ({
 const mockNoteSeatFallback = jest.fn();
 jest.mock('../platform/loop-metrics.service', () => ({ __esModule: true, noteSeatFallback: (...a: any[]) => mockNoteSeatFallback(...a) }));
 jest.mock('axios');
+// DNS seam (review finding 2026-11-06): the direct fetch now resolves the host
+// and refuses a non-public answer. Mocked so that guard is proven
+// DETERMINISTICALLY — a sandbox resolver is not part of the assertion.
+jest.mock('node:dns', () => ({
+  promises: { lookup: jest.fn() },
+  lookup: jest.fn(),
+}));
 jest.mock('../../../utils/logger', () => ({ warn: jest.fn(), info: jest.fn(), error: jest.fn() }));
 
 import { resolveRoleModel } from '../model-endpoints/model-roles.service';
@@ -34,6 +41,7 @@ const mockPdf = extractPdfTextFromUrl as jest.Mock;
 const mockStore = storeFindings as jest.Mock;
 const mockPost = (axios.post as jest.Mock);
 const mockGet = (axios.get as jest.Mock);
+const mockDnsLookup = (require('node:dns').promises.lookup as jest.Mock);
 
 const SERP = JSON.stringify({
   organic: [
@@ -52,6 +60,10 @@ beforeEach(() => {
   process.env.DASHSCOPE_API_KEY = 'test-key';
   mockPost.mockResolvedValue({ data: { choices: [{ message: { content: 'DIGEST: facts + rag hints' } }] } });
   mockGet.mockRejectedValue(new Error('no direct fetch in this test'));
+  // The direct fetch resolves the host before connecting (review finding
+  // 2026-11-06). Default every test to a public answer; the guard tests below
+  // override it with a private one.
+  mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
   mockPdf.mockResolvedValue(null);
 });
 
@@ -1180,6 +1192,64 @@ describe('provider-independent HTML fallback (2026-11-05)', () => {
     expect(r.sources[0].note).toBe(HTML_CHALLENGE_NOTE);
     expect(r.sources[0].chars).toBe(0);
     expect(mockStore).not.toHaveBeenCalled();
+  });
+
+  // REGRESSION (review finding, 2026-11-06): the challenge length gate sliced
+  // `head = body.slice(0, 8000)` and then tested `head.length <= 8000` — always
+  // true — so the regex ran against the first 8 KB of ANY long page. Every
+  // article whose opening mentions "too many requests", "access denied",
+  // "attention required" or "enable cookies" (HTTP-429 references, security
+  // write-ups, privacy policies) was misreported as a bot challenge and dropped.
+  test('a LONG legitimate article that merely MENTIONS challenge phrases is READ, not blocked', async () => {
+    mockMcp.mockResolvedValue(null);
+    const body = '<html><body><h1>HTTP 429 Too Many Requests</h1>'
+      + `<p>${'This status code means the client exceeded a rate limit. '.repeat(400)}</p>`
+      + '</body></html>';
+    expect(body.length).toBeGreaterThan(8_000); // the shape that used to falsify the guard
+    mockGet.mockResolvedValue({ status: 200, data: body, headers: { 'content-type': 'text/html' } });
+    const r = await runWebPipe('sess-html-long-article', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.sources[0].note).not.toBe(HTML_CHALLENGE_NOTE);
+    expect(r.sources[0].note).toBe(HTML_DIRECT_NOTE);
+    expect(r.sources[0].chars).toBeGreaterThan(200);
+  });
+
+  // ── REVIEW FINDING 2 (2026-11-06): the SSRF guard was NAME-SHAPE only ───────
+  // The shipped guard refused IP literals and .local-ish names but never
+  // resolved, so public hostnames pointing at loopback/RFC1918/link-local were
+  // ALLOWED (repro: localtest.me→::1, 10.0.0.1.nip.io→10.0.0.1,
+  // foo.127.0.0.1.nip.io→127.0.0.1). These pin the resolved-address half.
+  test('isPrivateAddress refuses loopback/RFC1918/link-local/CGNAT and allows public', () => {
+    for (const ip of ['127.0.0.1', '10.1.2.3', '172.16.0.1', '172.31.255.255', '192.168.1.1',
+      '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', '::', 'fe80::1', 'fd00::1', '::ffff:127.0.0.1']) {
+      expect(isPrivateAddress(ip)).toBe(true);
+    }
+    for (const ip of ['93.184.216.34', '8.8.8.8', '172.32.0.1', '2606:4700::1111']) {
+      expect(isPrivateAddress(ip)).toBe(false);
+    }
+  });
+
+  test('a public hostname resolving to a PRIVATE address is REFUSED before any fetch', async () => {
+    mockDnsLookup.mockResolvedValue([{ address: '127.0.0.1', family: 4 }]);
+    mockMcp.mockResolvedValue(null);
+    const why = await directFetchResolveBlockedReason('http://localtest.me/');
+    expect(why).toMatch(/resolves to the non-public address 127\.0\.0\.1/);
+    const r = await runWebPipe('sess-ssrf-rebind', { urls: ['http://localtest.me/'] }, undefined, { sameHostGapMs: 0 });
+    expect(mockGet).not.toHaveBeenCalled(); // never fetched
+    expect(r.ok).toBe(false);
+  });
+
+  test('a public hostname resolving to a PUBLIC address still fetches (no false refusal)', async () => {
+    mockDnsLookup.mockResolvedValue([{ address: '93.184.216.34', family: 4 }]);
+    expect(await directFetchResolveBlockedReason('https://example.com/')).toBeNull();
+    mockMcp.mockResolvedValue(null);
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: `<html><body><p>${'real page prose. '.repeat(40)}</p></body></html>`,
+      headers: { 'content-type': 'text/html' },
+    });
+    const r = await runWebPipe('sess-ssrf-public', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(r.sources[0].note).toBe(HTML_DIRECT_NOTE);
   });
 
   test('an HTTP error status is NOT converted into content', async () => {

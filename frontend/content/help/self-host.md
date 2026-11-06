@@ -77,25 +77,36 @@ docker compose -f docker-compose.selfhost.published.yml up -d
 ### Pinning a release
 
 `:latest` is convenient; a pinned tag is reproducible. The published images
-carry exactly two tag families today:
+carry three tag families:
 
 - `latest` — the newest publish of the default branch (what the published
   compose file uses when `DIGBY_IMAGE_TAG` is unset).
 - `sha-<full 40-char commit sha>` — one per published commit. This is the
   reproducible pin: it names the precise source the image was built from.
+- `<version>` — a released version, e.g. `1.0.0`. The workflow strips the
+  leading `v` from the git tag, so git tag `v1.0.0` produces image tag `1.0.0`.
 
 ```bash
-# pin to an exact build (get the sha from the release notes or the package tags)
-DIGBY_IMAGE_TAG=sha-eda9a18f0e4db153df7381acfb49191fa415a487 \
+# pin to the current release
+DIGBY_IMAGE_TAG=1.0.0 \
   docker compose -f docker-compose.selfhost.published.yml up -d
 ```
 
-> ⚠ **STALE (2026-11-06): a `1.0.0` tag does not exist.** Earlier revisions of
-> this page showed `DIGBY_IMAGE_TAG=1.0.0`. No `1.0.0` image tag, git tag or
-> GitHub release has been published — `canada-quant/digby` has **zero** tags and
-> **zero** releases, and the only image tags published so far are `latest`,
-> `latest-build` and `sha-…` families. Using `1.0.0` fails the pull. A real
-> versioned release is tracked work; until it ships, pin by `sha-<commit>`.
+**Releases.** `canada-quant/digby` publishes a git tag and a GitHub release per
+version, and `publish-images.yml` builds every image from that exact tagged
+commit. `v1.0.0` was cut at commit
+`0330c8714d78fc0d6aa5a9d632155ec566d05f91`; its images are published as both
+`1.0.0` and `sha-0330c8714d78fc0d6aa5a9d632155ec566d05f91`, so you can pin by
+version or by source commit and get byte-identical images.
+
+> ℹ️ **Earlier revisions of this page were wrong in both directions.** They first
+> showed a bare `DIGBY_IMAGE_TAG=1.0.0` when no such tag existed (the pull
+> failed); a later revision marked that as `⚠ STALE` and said the repository had
+> **zero** tags and **zero** releases. Both statements were true when written and
+> are false now — `v1.0.0` exists and its images are pullable anonymously. If a
+> documented tag ever fails to pull, check
+> `https://github.com/canada-quant/digby/releases` before assuming the docs are
+> current.
 
 ### What is different from the from-source path
 

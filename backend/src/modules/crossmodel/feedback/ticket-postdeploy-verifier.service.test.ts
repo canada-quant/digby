@@ -218,6 +218,40 @@ describe('verifyTicketRow (6665fff6)', () => {
     expect(dispatcher.releaseTicketDispatchClaim).not.toHaveBeenCalled();
   });
 
+  it('routes a DESIGNED-OBSERVABILITY auto-filer metric to review instead of reopening a correct fix (dc4f7ff5)', async () => {
+    // REPLAY, both live specimens: 3769b1b3's derived fragment and e35f9985's
+    // ACTUAL stored fragment (read from the ticket store, not invented). Before
+    // this change each measured > target ⇒ CERTAIN fail ⇒ a correct, deployed
+    // fix reopened and the drain dispatched a fresh lane onto a non-defect.
+    const dispatcher = require('./ticket-dispatch.service');
+    // Both live windows MEASURED OVER their bar (2 for 3769b1b3's autofiler
+    // shape, 3 vs 2 for e35f9985) and the 24h window had elapsed — the exact
+    // combination `certainEarlyVerdict`/`fail` rules as a CERTAIN reopen.
+    for (const [pattern, measured] of [
+      ['utilitychat: utility role override unreachable (timeout of', 3],
+      ['llm-extracted note claim(s) narrating third-party lane status — real artifacts owned by oth', 3],
+    ] as Array<[string, number]>) {
+      dispatcher.releaseTicketDispatchClaim.mockClear();
+      updateMock.mockClear();
+      setMeasured(measured);
+      const verdict = await verifyTicketRow(row({
+        context: {
+          ...AUTOFILER,
+          acceptanceMetric: { probe: 'app_error_log_count', params: { level: 'warn', source: 'log-signal', messagePattern: pattern, excludeLogClass: 'external' }, operator: '<=', target: 2, windowHours: 24 },
+          verification: { firstLiveAt: ANCHORED_25H_AGO },
+        },
+      }), NOW);
+      expect(verdict).toBe('review_required');
+      const arg = updateMock.mock.calls[0][0];
+      // NEVER a reopen, NEVER a false 'done' — nothing was verified.
+      expect(arg.data.status).toBeUndefined();
+      expect(arg.data.context.verification.lastVerdict).toBe('review_required');
+      expect(arg.data.adminNote).toContain('NEEDS METRIC REVIEW');
+      expect(arg.data.adminNote).not.toContain('REOPENED');
+      expect(dispatcher.releaseTicketDispatchClaim).not.toHaveBeenCalled();
+    }
+  });
+
   it('the review note is written ONCE (idempotent) — no per-tick churn', async () => {
     setMeasured(28);
     await verifyTicketRow(row({

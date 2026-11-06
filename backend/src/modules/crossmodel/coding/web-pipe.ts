@@ -19,6 +19,10 @@
  */
 
 import axios from 'axios';
+import * as net from 'node:net';
+import * as dns from 'node:dns';
+import * as http from 'node:http';
+import * as https from 'node:https';
 import logger from '../../../utils/logger';
 import { callMcpTool, extractPdfTextFromUrl } from '../mcp-search';
 // Web-search not-configured signal (ticket 6f4d42f2): pure import-free leaf —
@@ -329,6 +333,65 @@ export function directFetchBlockedReason(raw: string): string | null {
   return null;
 }
 
+/** True when an IP address is NOT a public internet address. Pure.
+ *
+ *  REVIEW FINDING 2026-11-06: `directFetchBlockedReason` above is NAME-SHAPE
+ *  only — it refuses IP literals and `.local`-ish names but never resolves, so
+ *  any public hostname that points somewhere private passes it. Repro on the
+ *  shipped code: `http://localtest.me/` → ::1, `http://10.0.0.1.nip.io/` →
+ *  10.0.0.1, `http://foo.127.0.0.1.nip.io/` → 127.0.0.1 were ALL allowed. This
+ *  classifier is the missing half: it judges the RESOLVED address, and it is
+ *  applied both before the fetch and by the connection-level `lookup` guard
+ *  below (which runs per socket, so every redirect hop is covered too). */
+export function isPrivateAddress(ip: string): boolean {
+  const addr = String(ip || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!addr) return true;
+  if (net.isIPv4(addr)) {
+    const p = addr.split('.').map(Number);
+    if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return true;
+    const [a, b] = p;
+    if (a === 0 || a === 10 || a === 127) return true;          // this-network / RFC1918 / loopback
+    if (a === 169 && b === 254) return true;                    // link-local (cloud metadata)
+    if (a === 172 && b >= 16 && b <= 31) return true;           // RFC1918
+    if (a === 192 && (b === 168 || b === 0)) return true;       // RFC1918 / IETF assignments
+    if (a === 100 && b >= 64 && b <= 127) return true;          // CGNAT 100.64/10
+    if (a === 198 && (b === 18 || b === 19)) return true;       // benchmarking
+    if (a >= 224) return true;                                  // multicast / reserved / broadcast
+    return false;
+  }
+  if (net.isIPv6(addr)) {
+    if (addr === '::' || addr === '::1') return true;
+    if (/^fe[89ab]/.test(addr)) return true;                    // link-local fe80::/10
+    if (/^f[cd]/.test(addr)) return true;                       // unique-local fc00::/7
+    const mapped = addr.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/); // IPv4-mapped
+    if (mapped) return isPrivateAddress(mapped[1]);
+    return false;
+  }
+  return true; // unparseable — refuse rather than guess
+}
+
+/** Resolve `raw`'s host and refuse when ANY answer is non-public. Not pure (DNS).
+ *  A lookup failure is NOT a refusal (a host that does not resolve cannot be
+ *  reached anyway; axios will fail honestly and the caller reports unreadable). */
+export async function directFetchResolveBlockedReason(raw: string): Promise<string | null> {
+  const shape = directFetchBlockedReason(raw);
+  if (shape) return shape;
+  let host: string;
+  try { host = new URL(raw).hostname.toLowerCase().replace(/^\[|\]$/g, ''); } catch { return 'not a valid absolute URL'; }
+  let answers: Array<{ address: string }>;
+  try {
+    answers = await dns.promises.lookup(host, { all: true });
+  } catch {
+    return null; // unresolvable: let the fetch fail honestly, do not invent a refusal
+  }
+  for (const a of answers) {
+    if (isPrivateAddress(String(a?.address || ''))) {
+      return `hostname ${host} resolves to the non-public address ${a?.address}`;
+    }
+  }
+  return null;
+}
+
 /** Decode the entity set that shows up in real page text. Bounded: a numeric
  *  entity is only decoded in the Unicode scalar range, so a hostile `&#99999999;`
  *  is left alone rather than throwing. Pure. */
@@ -409,8 +472,34 @@ interface DirectFetchResult { body: string; status?: number; contentType?: strin
  *  re-applied to every redirect hop); no auth, no cookies. Returns null on
  *  failure, an HTTP error status, or an empty/PDF body. `diag` (optional
  *  out-param, ticket e72d9def) records the status for per-URL classification. */
+/** A DNS lookup that refuses to hand a non-public address to the socket.
+ *  Attached to the agents below, so it runs for EVERY connection — including
+ *  each redirect hop — which is what makes the guard hold against a
+ *  hostname→private-IP rebind or a 30x to an internal host. */
+function guardedLookup(hostname: string, options: any, callback: any): void {
+  const wantAll = !!(options && typeof options === 'object' && options.all);
+  dns.lookup(hostname, { ...(typeof options === 'object' ? options : {}), all: true } as any, (err: any, addresses: any) => {
+    if (err) return callback(err);
+    const list: any[] = Array.isArray(addresses) ? addresses : [];
+    const bad = list.find((a) => isPrivateAddress(String(a?.address || '')));
+    if (bad) {
+      const e: any = new Error(`refused a non-public address (${bad.address}) for ${hostname}`);
+      e.code = 'ENONPUBLIC';
+      return callback(e);
+    }
+    if (wantAll) return callback(null, list);
+    return callback(null, list[0]?.address, list[0]?.family);
+  });
+}
+
+const guardedHttpAgent = new http.Agent({ lookup: guardedLookup as any });
+const guardedHttpsAgent = new https.Agent({ lookup: guardedLookup as any });
+
 async function directFetchRaw(url: string, diag?: { status?: number }): Promise<DirectFetchResult | null> {
-  const blocked = directFetchBlockedReason(url);
+  // Name-shape refusal first (cheap, pure), then the RESOLVED-address refusal:
+  // a public hostname that points at loopback/RFC1918/link-local is refused too
+  // (review finding 2026-11-06 — the shape test alone allowed localtest.me).
+  const blocked = directFetchBlockedReason(url) || (await directFetchResolveBlockedReason(url));
   if (blocked) {
     logger.info(`web_pipe: direct fetch refused for "${url.slice(0, 60)}" — ${blocked}`);
     return null;
@@ -423,6 +512,11 @@ async function directFetchRaw(url: string, diag?: { status?: number }): Promise<
       maxContentLength: DIRECT_FETCH_MAX_BYTES,
       maxBodyLength: DIRECT_FETCH_MAX_BYTES,
       maxRedirects: MAX_REDIRECTS,
+      // Belt AND braces on every hop: the name test below refuses an obviously
+      // private target early with a clear reason, and the agents' guarded
+      // lookup refuses the actual SOCKET address even when the name looks fine.
+      httpAgent: guardedHttpAgent,
+      httpsAgent: guardedHttpsAgent,
       // Every hop is held to the same public-target rule: a redirect to
       // localhost/RFC1918/an IP literal is refused rather than followed.
       beforeRedirect: (opts: any) => {
@@ -466,8 +560,12 @@ async function directFetchReadableText(url: string, diag?: { status?: number }):
   }
   // An explicit challenge / interstitial is a REFUSAL, not content: the host said
   // no. There is nothing to bypass and nothing to store.
-  const head = r.body.slice(0, CHALLENGE_MAX_CHARS);
-  if (head.length <= CHALLENGE_MAX_CHARS && CHALLENGE_HTML_RE.test(head)) {
+  // The length test MUST be on the WHOLE body: a challenge page is short by
+  // construction, while a real article (an HTTP-429 reference, a security
+  // write-up, a privacy policy) is long and merely MENTIONS these phrases.
+  // Testing a pre-sliced `head` makes the length guard always true and misreads
+  // every such article as a refusal (review finding, 2026-11-06).
+  if (r.body.length <= CHALLENGE_MAX_CHARS && CHALLENGE_HTML_RE.test(r.body)) {
     logger.info(`web_pipe: direct fetch got a challenge/interstitial page for "${url.slice(0, 60)}" — reporting blocked`);
     return { kind: 'blocked' };
   }
