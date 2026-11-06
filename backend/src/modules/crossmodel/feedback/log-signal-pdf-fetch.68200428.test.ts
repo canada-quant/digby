@@ -172,6 +172,15 @@ describe('68200428 — the web-search PDF fetch/extract class gets NO volume bar
   //   swallow a regression in extraction (<`RECALL GUARD: the pdf-parse
   //   extractor warn keeps its volume bar`>).
   //
+  //   DETECTOR-RECALL REPLAY (metric true positive #4 — the one our first cut
+  //   MISSED): the `URI malformed` arm is OUR OWN bug, not a third-party
+  //   condition. `extractPdfTextFromUrl` ran `decodeURIComponent(<last
+  //   segment>)` inside the fetch's try, and a bare `%` throws for a PDF we had
+  //   ALREADY downloaded (real target: asbca.mil `…/56355%MAC`). A
+  //   template-wide signature would have retired the bar on a fixable defect
+  //   (adversarial review, 2026-11-06). It keeps its volume bar
+  //   (<`RECALL GUARD: the URI malformed arm keeps its bar`>).
+  //
   // The EXTRACTOR's own warn is a DIFFERENT message measuring whether the
   // extractor works — a regression there must stay measurable.
   it('RECALL GUARD: the pdf-parse extractor warn keeps its volume bar', () => {
@@ -180,6 +189,35 @@ describe('68200428 — the web-search PDF fetch/extract class gets NO volume bar
     const ctx = metricCtx(extractor);
     expect(ctx.acceptanceMetricMissing).toBeUndefined();
     expect(ctx.acceptanceMetric).toBeDefined();
+  });
+
+  it('RECALL GUARD: the URI malformed arm keeps its bar (our bug, not a third party\u2019s)', () => {
+    const ours = 'Digby Web Search: PDF fetch/extract failed for "https://www.asbca.mil/Portals/143/Decisions/2013/56355%MAC": URI malformed';
+    // NOT designed observability — the signature excludes it.
+    expect(designedObservabilityOfFingerprint(normalizeLogMessage(ours), ours)).toBeNull();
+    const ctx = metricCtx(ours);
+    expect(ctx.acceptanceMetricMissing).toBeUndefined();
+    expect(ctx.acceptanceMetric).toBeDefined();
+    // And a legacy STORED bar for this arm is never redirected away.
+    expect(
+      designedAlarmOfMetric(
+        autofilerMetric('digby web search: pdf fetch/extract failed for "https://www.asbca.mil/portals/'),
+        AUTOFILER_DEFAULT_METRIC_SOURCE,
+      )?.id,
+    ).toBe('websearch-pdf-fetch-target');
+  });
+
+  // THE REPAIR ITSELF: the bug that minted that arm. `decodeURIComponent` throws
+  // on a bare `%`; the safe decode returns the raw segment so extraction
+  // proceeds on the already-downloaded bytes.
+  it('REPAIR: a bare % in the filename no longer throws (our bug is fixed at the emit site)', () => {
+    const { safeDecodeUrlSegment } = require('../mcp-search');
+    // The exact shape a real asbca.mil target carries.
+    expect(() => decodeURIComponent('56355%MAC')).toThrow(/URI malformed/);
+    expect(safeDecodeUrlSegment('56355%MAC')).toBe('56355%MAC');
+    // Well-formed escapes still decode as before (the encodings in the live rows).
+    expect(safeDecodeUrlSegment('56355%20MAC')).toBe('56355 MAC');
+    expect(safeDecodeUrlSegment('normal-file.pdf')).toBe('normal-file.pdf');
   });
 
   it('RECALL GUARD: an ordinary web-search fault still gets its volume bar', () => {
@@ -254,16 +292,62 @@ describe('68200428 — a STORED unattainable bar is redirected, never reopened',
 });
 
 describe('68200428 — the emit site is a per-target warn, never a retry storm', () => {
-  const read = (rel: string) => require('fs').readFileSync(require('path').join(__dirname, rel), 'utf8') as string;
+  const fs = require('fs');
+  const path = require('path');
+  const read = (rel: string) => fs.readFileSync(path.join(__dirname, rel), 'utf8') as string;
+
+  /** Every .ts/.tsx file under src, excluding tests and node_modules. */
+  const sourceFiles = (dir: string, out: string[] = []): string[] => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+        sourceFiles(p, out);
+      } else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) {
+        out.push(p);
+      }
+    }
+    return out;
+  };
+
+  /**
+   * Lines that actually EMIT, not lines that merely MENTION the template.
+   *
+   * A prose mention must never satisfy (or fail) a "one emitter" pin: the first
+   * cut of this test counted comment lines, so the very doc comment explaining
+   * the repair made the pin fail (caught by the verify chain, not by review).
+   * Code-context only: drop `//` and block-comment `*` lines.
+   */
+  const emitLines = (src: string) =>
+    src.split('\n').filter((l) => {
+      const t = l.trim();
+      if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return false;
+      return l.includes('PDF fetch/extract failed');
+    });
 
   // SOURCE-LEVEL PIN — the basis for a template-wide signature. Exactly ONE
-  // emitter; if a future refactor adds a second one (or a retry inside it) the
-  // class stops being "one warn per target" and this pin fails, forcing the
-  // signature to be revisited instead of silently widening.
-  it('PIN: exactly one emit site, and the fetch is never retried', () => {
+  // emitter REPO-WIDE; if a future refactor adds a second one (or a retry
+  // inside it) the class stops being "one warn per target" and this pin fails,
+  // forcing the signature to be revisited instead of silently widening.
+  //
+  // REPO-WIDE, not one file: a sibling call site already exists
+  // (`coding/web-pipe.ts` calls `extractPdfTextFromUrl(...).catch(() => null)`),
+  // and a single-file scan could not see a SECOND emitter added elsewhere
+  // (adversarial review of this ticket, 2026-11-06).
+  it('PIN: exactly one emit site REPO-WIDE, and the fetch is never retried', () => {
+    const roots = [path.join(__dirname, '../../..')]; // backend/src
+    const files = roots.flatMap((r) => sourceFiles(r));
+    expect(files.length).toBeGreaterThan(500); // the scan really walked the tree
+
+    const emitters = files
+      .map((f) => ({ file: path.relative(path.join(__dirname, '../../..'), f), lines: emitLines(fs.readFileSync(f, 'utf8')) }))
+      .filter((x) => x.lines.length > 0);
+
+    expect(emitters).toHaveLength(1);
+    expect(emitters[0].file).toBe(path.join('modules', 'crossmodel', 'mcp-search.ts'));
+    expect(emitters[0].lines).toHaveLength(1);
+
     const src = read('../mcp-search.ts');
-    const emits = src.split('\n').filter((l) => l.includes('PDF fetch/extract failed'));
-    expect(emits).toHaveLength(1);
 
     // The emit is the catch of extractPdfTextFromUrl, whose ONLY outcome on
     // failure is `return null` — the caller falls through, it never re-calls.
@@ -275,6 +359,10 @@ describe('68200428 — the emit site is a per-target warn, never a retry storm',
     // No loop/retry construct wraps the fetch, and the function is called once
     // per target from the scrape path (not inside a retry ladder).
     expect(body).not.toMatch(/for\s*\(|while\s*\(|maxRetries|attempt\s*</);
+    // The filename decode must NOT be able to throw (our own bug, ticket
+    // 68200428 review): `safeDecodeUrlSegment` swallows URIError.
+    expect(body).toContain('safeDecodeUrlSegment(');
+    expect(body).not.toContain('decodeURIComponent(');
     // The 20 MiB cap is a deliberate bound, not an accident to be "fixed" up.
     expect(src).toContain('const PDF_FETCH_MAX_BYTES = 20 * 1024 * 1024;');
     expect(src).toContain('const PDF_FETCH_TIMEOUT_MS = 20_000;');

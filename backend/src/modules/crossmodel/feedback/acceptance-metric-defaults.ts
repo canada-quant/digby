@@ -366,6 +366,30 @@ const SHARED_HEAD_RE = /^tool-call stream \[[^\]]*$/i;
  */
 const OURS_CULPRIT_RE = /\bours recv=/i;
 
+/**
+ * The web-search PDF fetch/extract warn's arm that is OUR OWN bug, not a
+ * third-party condition (ticket 68200428, adversarial review 2026-11-06).
+ *
+ * `extractPdfTextFromUrl` runs `decodeURIComponent(<last path segment>)` inside
+ * the same try as the fetch. A bare `%` in that segment throws
+ * `URIError: URI malformed`, aborting extraction for a PDF already downloaded —
+ * and real targets carry that shape (asbca.mil serves `…/56355%MAC`). The
+ * emitter then reports it through the same `PDF fetch/extract failed` template,
+ * so a template-wide designed-observability signature would have retired the
+ * bar on a defect a fix CAN drive to zero. This guard keeps that arm
+ * measurable.
+ *
+ * RECALL GUARD, same posture as OURS_CULPRIT_RE above: it is the only thing
+ * stopping a designed signature from swallowing our own bug. The bug itself is
+ * fixed at the emit site (`safeDecodeUrlSegment`, mcp-search.ts), so this arm
+ * can no longer be minted going forward; the guard exists so that if it is ever
+ * reintroduced (or a legacy row is re-measured) it keeps a bar.
+ *
+ * `uri malformed` is the exact `.message` Node's URIError carries, so this can
+ * never match a third-party status/redirect/size arm.
+ */
+const OURS_PDF_FETCH_ARM_RE = /uri malformed/i;
+
 const DESIGNED_ALARM_SIGNATURES: ReadonlyArray<{ id: string; test: (pattern: string, surface: 'fingerprint' | 'metric', raw: string) => boolean; why: string }> = [
   {
     // The finalize/GATEWAY-OR-OURS line is an INSTRUMENT, not a fault report: it
@@ -505,20 +529,29 @@ const DESIGNED_OBSERVABILITY_SIGNATURES: ReadonlyArray<{
     // the caller falls through to the remaining search results; the fetch is
     // never retried inside the function.
     //
-    // WHY THE WHOLE CLASS AND NOT ONE ARM. The two signatures above key on a
-    // distinguishing token because their emit sites carry SILENCED and
-    // MUST-STILL-FILE arms side by side. This one does not: EVERY arm of this
-    // message is a per-target property of a third-party server or of a
-    // deliberate bound of ours, and the open-the-loop defect is identical for
-    // each — measured in the ticket's own window, the class filed as
-    // `Request failed with status code 403` (asbca.mil, dupont.com,
-    // accessdata.fda.gov), `402` (globalsecurity.org) and `503`
-    // (rockwool.com) plus `maxContentLength size of 20971520 exceeded`, i.e.
-    // the cap designed into PDF_FETCH_MAX_BYTES. None is a defect a fix could
-    // drive to zero: an external host refusing us stays refused (re-probed
-    // 2026-11-06 with a full browser User-Agent — the same AkamaiGHost
-    // `Access Denied` 403 body, so it is not bot-blocking we could mitigate),
-    // and the size cap is memory safety, not a bug.
+    // WHY THE CLASS AND NOT ONE ARM — WITH ONE EXCEPTION, WHICH IS OURS.
+    // The two signatures above key on a distinguishing token because their emit
+    // sites carry SILENCED and MUST-STILL-FILE arms side by side. This one's
+    // arms are almost all a per-target property of a third-party server or of a
+    // deliberate bound of ours — measured in the ticket's own window the class
+    // filed as `Request failed with status code 403` (asbca.mil, dupont.com,
+    // accessdata.fda.gov), `402` (globalsecurity.org), `503` (rockwool.com) and
+    // `maxContentLength size of 20971520 exceeded`, i.e. the cap designed into
+    // PDF_FETCH_MAX_BYTES. None is a defect a fix could drive to zero: an
+    // external host refusing us stays refused (re-probed 2026-11-06 with a full
+    // browser User-Agent — the same AkamaiGHost `Access Denied` 403 body, so it
+    // is not bot-blocking we could mitigate), and the size cap is memory
+    // safety, not a bug.
+    //
+    // THE EXCEPTION (adversarial review of this very ticket, 2026-11-06): the
+    // same try also caught `decodeURIComponent(<last path segment>)`, and a bare
+    // `%` in that segment (real target: asbca.mil `…/56355%MAC`) threw
+    // `URIError: URI malformed`, aborting extraction for a PDF we had ALREADY
+    // downloaded. That is OUR bug, not a third-party condition — so it is
+    // excluded from this signature (OURS_PDF_FETCH_ARM_RE) and keeps a volume
+    // bar, and the bug itself is FIXED at the emit site
+    // (`safeDecodeUrlSegment`). Both halves are pinned: the repair in this
+    // signature's replay suite, the retained bar in its recall guards.
     //
     // WHY A PATTERN MATCH RATHER THAN A FRAGMENT SHAPE (the F1 trap, avoided).
     // The autofiler's derived fragment for a row of this class is the message
@@ -533,22 +566,26 @@ const DESIGNED_OBSERVABILITY_SIGNATURES: ReadonlyArray<{
     //     the class is designed end to end;
     //   - the bar the autofiler stamped is therefore per-host, and a fix could
     //     never clear it. That is the loop this closes.
+    // The truncation is also why the ours-arm exclusion reads the pattern it is
+    // GIVEN: a per-host prefix cannot contain `uri malformed`, so it falls
+    // through to the designed verdict exactly as before — and after the repair
+    // above our code can no longer mint that reason anyway.
     //
     // NOT A FILING-STOP, and NOT a logClass tag: the sweep keeps fingerprinting
     // and filing this class (the per-target warn is the only account of which
     // research targets are unreachable, and it is what surfaced this ticket).
     // Only the METRIC decision consults this set. Source-level pinned below in
-    // log-signal-pdf-fetch.68200428.test.ts: exactly ONE emit site, one warn per
-    // target, never retried — if a future refactor adds a retry or a second
-    // emitter the pin fails and this signature must be revisited rather than
-    // silently widening.
+    // log-signal-pdf-fetch.68200428.test.ts: exactly ONE emit site REPO-WIDE, one
+    // warn per target, never retried — if a future refactor adds a retry or a
+    // second emitter the pin fails and this signature must be revisited rather
+    // than silently widening.
     //
     // THE EXTRACTOR IS A DIFFERENT MESSAGE AND KEEPS ITS BAR — `pdf-parse
     // getText() failed for <filename>` (pdf-extract.ts) measures the extractor
     // working, so a regression there must stay measurable. This pattern cannot
     // match it (pinned).
     id: 'websearch-pdf-fetch-target',
-    test: (p) => /pdf fetch\/extract failed/i.test(p),
+    test: (p) => /pdf fetch\/extract failed/i.test(p) && !OURS_PDF_FETCH_ARM_RE.test(p),
     why: 'the web-search PDF fetch/extract warn is per-target observability for an external document host refusing us or exceeding a deliberate size bound — one warn per target, never retried, so its volume tracks which third-party URLs a research session cites, never whether a fix works',
   },
 ];
