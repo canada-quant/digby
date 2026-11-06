@@ -94,9 +94,12 @@ reported by `/api/health` equals the running image's
 instance runs*).
 
 Start it yourself from **Actions → Install smoke → Run workflow**, choosing
-`from_tag` (what a new user currently gets, default `latest`) and `to_tag` (the
-release under test). It also fires weekly. A green run is the evidence that a
-release is installable — not merely published.
+`from_tag` (the upgrade baseline — an older release, default `1.0.0`) and
+`to_tag` (the release under test, default `1.0.1`). The two must be **different
+releases**: the run asserts the revision actually changed, so a pair that
+resolves to the same build is rejected as not-an-upgrade. It also fires weekly
+against that pair. A green run is the evidence that a release is installable —
+not merely published.
 
 The two session secrets this path requires are generated **on the runner** at
 run time with `openssl rand -hex 32`, exactly as this guide tells you to; the
@@ -108,8 +111,16 @@ unconditionally when the job ends.
 `:latest` is convenient; a pinned tag is reproducible. The published images
 carry three tag families:
 
-- `latest` — the newest publish of the default branch (what the published
-  compose file uses when `DIGBY_IMAGE_TAG` is unset).
+- `latest` — the newest **manual** publish of the default branch. ⚠ **Not
+  currently the newest release:** on a `v*` tag push the publish workflow
+  applies the version tag and the sha tag, so a release does not advance
+  `latest`. Measured 2026-11-06: `latest` resolved to `sha-eda9a18f…`, an image
+  built *before* the revision stamp existed (it carries no
+  `org.opencontainers.image.revision` label at all), while `1.0.1` is
+  `743c9c7e…`. **Pin a version or a sha rather than relying on `latest`** —
+  this is also why the install smoke test defaults to a version pair.
+  (Workflow: `.github/workflows/publish-images.yml`; the tag step yields the
+  version on a tag push, else the dispatch input.)
 - `sha-<full 40-char commit sha>` — one per published commit. This is the
   reproducible pin: it names the precise source the image was built from.
 - `<version>` — a released version, e.g. `1.0.1`. The workflow strips the

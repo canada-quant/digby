@@ -494,6 +494,28 @@ function looksLikePdfBody(text: string): boolean {
 }
 
 /**
+ * Decode a URL's last path segment, TOLERANT of a bare `%`.
+ *
+ * `decodeURIComponent('56355%MAC')` throws `URIError: URI malformed`, and real
+ * targets carry exactly that shape (asbca.mil serves `…/56355%MAC`). Because the
+ * call sat INSIDE the fetch's try, the throw aborted extraction for a PDF we had
+ * ALREADY downloaded successfully and surfaced as a "PDF fetch/extract failed"
+ * warn — our own bug wearing a third-party failure's clothes, invisible because
+ * the reason read `URI malformed` and every ticket row read `status code 403`
+ * (adversarial review of ticket 68200428, 2026-11-06).
+ *
+ * The filename is only a hint to the extractor, so on a malformed escape the raw
+ * segment is strictly better than throwing.
+ */
+export function safeDecodeUrlSegment(seg: string): string {
+  try {
+    return decodeURIComponent(seg);
+  } catch {
+    return seg;
+  }
+}
+
+/**
  * Fetch a PDF's bytes directly (bounded) and extract readable text via the
  * shared tiered extractor. Returns null when the target is not actually a PDF
  * (caller falls through to a normal scrape), or when fetch/extraction fails —
@@ -511,7 +533,7 @@ export async function extractPdfTextFromUrl(url: string): Promise<string | null>
     const contentType = String(r.headers?.['content-type'] || '');
     const isPdf = buf.subarray(0, 5).toString('latin1') === '%PDF-' || contentType.includes('application/pdf');
     if (!isPdf) return null; // not actually a PDF — let the normal scrape handle it
-    const filename = decodeURIComponent(url.split('/').pop()?.split(/[?#]/)[0] || '') || 'document.pdf';
+    const filename = safeDecodeUrlSegment(url.split('/').pop()?.split(/[?#]/)[0] || '') || 'document.pdf';
     const text = (await extractPdfText(buf, filename)).trim();
     if (!text) return null;
     logger.info(`Digby Web Search: extracted PDF text for "${url.slice(0, 60)}" (${text.length} chars from ${buf.length} bytes)`);
