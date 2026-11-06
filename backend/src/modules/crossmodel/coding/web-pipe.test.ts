@@ -1,5 +1,5 @@
 /** web_pipe — deterministic search→scrape→embed→digest pipeline. */
-import { runWebPipe, isTextLikeUrl, looksLikeJsShell, JS_SHELL_NOTE, nextSameHostGap, topLinks, WEB_PIPE_SERP_RESUME_BUDGET_MS } from './web-pipe';
+import { runWebPipe, isTextLikeUrl, looksLikeJsShell, JS_SHELL_NOTE, nextSameHostGap, topLinks, WEB_PIPE_SERP_RESUME_BUDGET_MS, htmlToText, looksLikeHtmlBody, directFetchBlockedReason, HTML_DIRECT_NOTE, HTML_CHALLENGE_NOTE } from './web-pipe';
 import { callMcpTool, extractPdfTextFromUrl } from '../mcp-search';
 import { clearSerpRedirectCache } from '../serp-redirects';
 import { storeFindings } from './coding-retrieval.service';
@@ -257,11 +257,11 @@ describe('raw-text fallback for text-like URLs', () => {
     expect(r.sources[0].stored).toBe(true);
   });
 
-  test('non-text-like URL never gets a direct fetch', async () => {
+  test('non-text-like URL gets AT MOST ONE bounded direct fetch (2026-11-05: previously it got none — that was the defect)', async () => {
     mockMcp.mockResolvedValue(null);
     const r = await runWebPipe('sess-none', { urls: ['https://example.com/page'] });
     expect(r.ok).toBe(false);
-    expect(mockGet).not.toHaveBeenCalled();
+    expect(mockGet).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -379,13 +379,15 @@ describe('same-host politeness (ticket e72d9def)', () => {
     expect(mockGet).toHaveBeenCalledTimes(1); // text-like (.json) → one direct fetch
   });
 
-  test('scrape null on a non-text-like URL → unreadable note, no direct fetch attempted', async () => {
+  test('scrape null on a non-text-like URL → ONE bounded direct fetch, and a failing fetch stays an explicit unreadable note', async () => {
     mockMcp.mockResolvedValue(null);
     const r = await runWebPipe('sess-unreadable', { urls: ['https://x.example/page'] }, undefined, { sameHostGapMs: 0 });
     expect(r.ok).toBe(false);
     expect(r.sources[0].note).toMatch(/unreadable/);
     expect(r.sources[0].status).toBeUndefined();
-    expect(mockGet).not.toHaveBeenCalled();
+    // 2026-11-05: the ordinary-HTML alternate now makes exactly ONE attempt —
+    // previously this URL got none at all, which is the defect.
+    expect(mockGet).toHaveBeenCalledTimes(1);
   });
 
   test('a thin 2xx direct fetch is NOT mislabeled as a block/rate-limit', async () => {
@@ -1020,5 +1022,243 @@ describe('fast digest — shorter digest, store in parallel, RAG hints only when
     mockStore.mockResolvedValueOnce(5);
     const some = await runWebPipe('sess-fd7', { query: 'q' }, undefined, { sameHostGapMs: 0 });
     expect(some.summary).toMatch(/\(500 chars stored\)/);
+  });
+});
+
+// ── Provider-independent HTML fallback (2026-11-05, digby.cql.ca report) ──────
+// THE DEFECT: scrapeOne only escalated to a direct fetch for a TEXT-LIKE url or a
+// JS-shell body. An ordinary HTML page whose provider scrape returned null/thin
+// got NO alternate, so web_pipe({urls:['https://example.com/']}) answered
+// "could not read any of the 1 source(s) … scrape returned no usable content"
+// while scrape_as_markdown on the same URL read fine.
+
+describe('provider-independent HTML fallback (2026-11-05)', () => {
+  // The page shape from the owner's report: a normal, tiny, static HTML document.
+  const EXAMPLE_HTML = '<!DOCTYPE html>\n<html><head><title>Example Domain</title>'
+    + '<style>body{background:#fff}</style></head><body><div><h1>Example Domain</h1>'
+    + '<p>This domain is for use in illustrative examples in documents. You may use this '
+    + 'domain in literature without prior coordination or asking for permission.</p>'
+    + '<p><a href="https://www.iana.org/domains/example">More information...</a></p>'
+    + '</div><script>window.tracker=1;</script></body></html>';
+
+  test('htmlToText: tags dropped, block boundaries kept, entities decoded, script/style never leak', () => {
+    const text = htmlToText(EXAMPLE_HTML);
+    expect(text).toContain('Example Domain');
+    expect(text).toContain('illustrative examples in documents');
+    expect(text).toContain('More information...');
+    // NO raw markup survives — this is what keeps markup out of RAG and the digest.
+    expect(text).not.toContain('<');
+    expect(text).not.toContain('>');
+    // script/style BODIES are dropped, not just their tags.
+    expect(text).not.toContain('window.tracker');
+    expect(text).not.toContain('background:#fff');
+    // entities + block boundaries
+    expect(htmlToText('<p>a &amp; b</p><p>c&nbsp;d</p>')).toContain('a & b');
+    expect(htmlToText('<p>a &amp; b</p><p>c&nbsp;d</p>')).toMatch(/a & b\s*\n+\s*c d/);
+    expect(htmlToText('&#8212;x')).toContain('—');
+    expect(htmlToText('')).toBe('');
+  });
+
+  test('htmlToText: ENTITY-ESCAPED markup never re-materialises after decoding (found on unseen real pages)', () => {
+    // The defect a generalization run exposed: decoding happens AFTER the tag
+    // strip, so `&lt;!-- … --&gt;` / `&lt;ref&gt;` — routine in Wikipedia
+    // template source and on any page documenting HTML — decoded back into
+    // literal markup and reached the stored text. 10 such strings survived on
+    // a real 119 KB Wikipedia article; the IANA page leaked none. The pipeline
+    // forbids storing raw markup, so this must stay closed.
+    const escaped = '<html><body><p>Docs below</p>'
+      + '<p>&lt;!-- or: | logo_caption = --&gt; and &lt;ref&gt;cite&lt;/ref&gt;</p>'
+      + '<p>&lt;script&gt;alert(1)&lt;/script&gt;</p></body></html>';
+    const text = htmlToText(escaped);
+    expect(text).toContain('Docs below');
+    // No tag-shaped run and no comment delimiter survives.
+    expect(text).not.toContain('<!--');
+    expect(text).not.toContain('-->');
+    expect(text).not.toMatch(/<\/?[a-zA-Z]/);
+    // And the genuinely-escaped characters that are NOT markup still decode.
+    expect(htmlToText('<p>5 &lt; 3 &amp;&amp; a &gt; b</p>')).toContain('5 < 3 && a > b');
+  });
+
+  test('htmlToText: an UNCLOSED <script> (truncated body) does not leak its source into the text', () => {
+    const text = htmlToText('<html><body><p>real words here</p><script>var leak = "SECRET_SOURCE";');
+    expect(text).toContain('real words here');
+    expect(text).not.toContain('SECRET_SOURCE');
+  });
+
+  test('directFetchBlockedReason: every non-public target shape is refused, ordinary hosts allowed', () => {
+    // Ordinary public targets — allowed.
+    expect(directFetchBlockedReason('https://example.com/')).toBeNull();
+    expect(directFetchBlockedReason('http://example.com/a?b=c')).toBeNull();
+    expect(directFetchBlockedReason('https://example.com:443/x')).toBeNull();
+    // Refusals: loopback / private names / IP literals / ports / schemes / creds.
+    expect(directFetchBlockedReason('http://localhost/')).toMatch(/private hostname/);
+    expect(directFetchBlockedReason('http://foo.localhost/')).toMatch(/private hostname/);
+    expect(directFetchBlockedReason('http://svc.internal/')).toMatch(/private hostname/);
+    expect(directFetchBlockedReason('http://printer.local/')).toMatch(/private hostname/);
+    expect(directFetchBlockedReason('http://127.0.0.1/')).toMatch(/IP-literal/);
+    expect(directFetchBlockedReason('http://10.0.0.5/')).toMatch(/IP-literal/);
+    expect(directFetchBlockedReason('http://169.254.169.254/latest/meta-data/')).toMatch(/IP-literal/);
+    expect(directFetchBlockedReason('http://[::1]/')).toMatch(/IP-literal/);
+    expect(directFetchBlockedReason('https://example.com:8443/')).toMatch(/non-standard port/);
+    expect(directFetchBlockedReason('ftp://example.com/x')).toMatch(/unsupported scheme/);
+    expect(directFetchBlockedReason('https://user:pw@example.com/')).toMatch(/credentials/);
+    expect(directFetchBlockedReason('not a url')).toMatch(/not a valid absolute URL/);
+  });
+
+  test('looksLikeHtmlBody: content-type wins, else the first bytes; JSON/text is never HTML', () => {
+    expect(looksLikeHtmlBody(EXAMPLE_HTML, 'text/html; charset=utf-8')).toBe(true);
+    expect(looksLikeHtmlBody(EXAMPLE_HTML)).toBe(true);        // no content-type, doctype decides
+    expect(looksLikeHtmlBody('<html><body>x</body></html>')).toBe(true);
+    expect(looksLikeHtmlBody('{"organic":[]}', 'application/json')).toBe(false);
+    expect(looksLikeHtmlBody('{"organic":[]}')).toBe(false);
+    expect(looksLikeHtmlBody('plain words', 'text/plain')).toBe(false);
+    expect(looksLikeHtmlBody('%PDF-1.4', 'application/pdf')).toBe(false);
+  });
+
+  test('REGRESSION: example.com-style normal HTML, provider scrape null → direct fetch SUCCEEDS and text (not markup) is stored', async () => {
+    mockMcp.mockResolvedValue(null); // the provider scrape the owner's Edge returned
+    mockGet.mockResolvedValue({ status: 200, data: EXAMPLE_HTML, headers: { 'content-type': 'text/html; charset=utf-8' } });
+    const r = await runWebPipe('sess-html-ok', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(true);
+    expect(r.sources[0].stored).toBe(true);
+    expect(r.sources[0].chars).toBeGreaterThan(200);
+    // The per-source note ATTRIBUTES the read — never a silent provider success.
+    expect(r.sources[0].note).toBe(HTML_DIRECT_NOTE);
+    // Exactly ONE bound attempt (no retry storm).
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    // RAG got TEXT, never raw markup.
+    const stored = mockStore.mock.calls[0][2] as Array<{ content: string }>;
+    expect(stored[0].content).toContain('illustrative examples in documents');
+    expect(stored[0].content).not.toContain('<html');
+    expect(stored[0].content).not.toContain('<script');
+    // The digest saw the extracted text too (axios.post(url, body, config) — body is arg 1).
+    expect(mockPost.mock.calls[0][1].messages[0].content).toContain('illustrative examples in documents');
+  });
+
+  test('a page whose FULL extracted text is still thinner than the floor stays honestly UNREADABLE — no "read via direct fetch" note', async () => {
+    // MEASURED this run against the real https://example.com/ (577-byte body):
+    // htmlToText yields 172 chars — real text, but below MIN_GOOD_CHARS (200).
+    // That page is NOT fixed by this fallback and the note must not say it was
+    // read; the delivered verdict for it is unchanged.
+    const TINY = '<!DOCTYPE html><html><head><title>Example Domain</title></head><body>'
+      + '<h1>Example Domain</h1><p>This domain is for use in documentation examples '
+      + 'without needing permission.</p></body></html>';
+    mockMcp.mockResolvedValue(null);
+    mockGet.mockResolvedValue({ status: 200, data: TINY, headers: { 'content-type': 'text/html' } });
+    const r = await runWebPipe('sess-html-tiny', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(false);
+    // It DID get the one provider-independent attempt (the gap that was closed)…
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    // …but it must NOT be reported as read, and nothing is stored.
+    expect(r.sources[0].note).not.toBe(HTML_DIRECT_NOTE);
+    expect(r.sources[0].note).toMatch(/unreadable/);
+    expect(r.sources[0].stored).toBe(false);
+    expect(mockStore).not.toHaveBeenCalled();
+  });
+
+  test('the direct fetch FAILING leaves the failure EXPLICIT (no fabricated success)', async () => {
+    mockMcp.mockResolvedValue(null);
+    mockGet.mockRejectedValue(new Error('getaddrinfo ENOTFOUND'));
+    const r = await runWebPipe('sess-html-fail', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(false);
+    expect(r.sources[0].note).toMatch(/unreadable/);
+    expect(r.sources[0].chars).toBe(0);
+    expect(mockStore).not.toHaveBeenCalled();
+    expect(mockGet).toHaveBeenCalledTimes(1);
+  });
+
+  test('a bot-challenge / interstitial page is reported BLOCKED — never converted into content', async () => {
+    mockMcp.mockResolvedValue(null);
+    mockGet.mockResolvedValue({
+      status: 200,
+      data: '<html><head><title>Just a moment...</title></head><body><div id="challenge-platform"></div>'
+        + '<p>Checking your browser before accessing. Verify you are human.</p></body></html>',
+      headers: { 'content-type': 'text/html' },
+    });
+    const r = await runWebPipe('sess-html-challenge', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(false);
+    expect(r.sources[0].note).toBe(HTML_CHALLENGE_NOTE);
+    expect(r.sources[0].chars).toBe(0);
+    expect(mockStore).not.toHaveBeenCalled();
+  });
+
+  test('an HTTP error status is NOT converted into content', async () => {
+    mockMcp.mockResolvedValue(null);
+    mockGet.mockRejectedValue(Object.assign(new Error('forbidden'), { response: { status: 403 } }));
+    const r = await runWebPipe('sess-html-403', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(false);
+    // The status-aware wording from ticket e72d9def survives.
+    expect(r.sources[0].note).toMatch(/HTTP 403/);
+    expect(r.sources[0].status).toBe(403);
+  });
+
+  test('a non-public target is never fetched at all', async () => {
+    mockMcp.mockResolvedValue(null);
+    const r = await runWebPipe('sess-html-ssrf', { urls: ['http://169.254.169.254/latest/meta-data/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(false);
+    expect(mockGet).not.toHaveBeenCalled();
+    expect(r.sources[0].note).toMatch(/unreadable/);
+  });
+
+  test('JSON served with a JSON content type keeps the RAW-TEXT path (no HTML extraction)', async () => {
+    mockMcp.mockResolvedValue(null);
+    mockGet.mockResolvedValue({ status: 200, data: 'x'.repeat(400), headers: { 'content-type': 'application/json' } });
+    const r = await runWebPipe('sess-html-json', { urls: ['https://api.example/data.json'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(true);
+    // Text-like URLs keep their existing behaviour: verbatim body, no HTML note.
+    expect(r.sources[0].note).toBeUndefined();
+    expect(mockGet).toHaveBeenCalledTimes(1);
+    expect(mockStore.mock.calls[0][2][0].content).toBe('x'.repeat(400));
+  });
+
+  test('PDF behaviour is preserved: a %PDF- body is never stored as text', async () => {
+    mockMcp.mockResolvedValue(null);
+    mockPdf.mockResolvedValue(null);
+    mockGet.mockResolvedValue({ status: 200, data: '%PDF-1.4 binary', headers: { 'content-type': 'application/pdf' } });
+    const r = await runWebPipe('sess-html-pdf', { urls: ['https://example.com/paper'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(false);
+    expect(r.sources[0].chars).toBe(0);
+  });
+
+  test('JS-shell behaviour is preserved: a shell + a shell-y direct body reports JS_SHELL_NOTE (not an HTML read)', async () => {
+    const SHELL = '# onepiece.gg\n\nLoading...\n\n<div id="root"></div>';
+    mockMcp.mockResolvedValue(SHELL.padEnd(500, ' filler'));
+    mockGet.mockResolvedValue({ status: 200, data: SHELL, headers: { 'content-type': 'text/html' } });
+    const r = await runWebPipe('sess-html-shell', { urls: ['https://gumgum.gg/decks'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(false);
+    expect(r.sources[0].note).toBe(JS_SHELL_NOTE);
+    expect(mockGet).toHaveBeenCalledTimes(1); // the shell alternate, NOT a second HTML attempt
+  });
+
+  test('a PROVIDER scrape that already succeeded is never replaced by a direct fetch', async () => {
+    const good = 'provider markdown '.repeat(40);
+    mockMcp.mockResolvedValue(good);
+    const r = await runWebPipe('sess-html-good', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(true);
+    expect(r.sources[0].note).toBeUndefined();
+    expect(mockGet).not.toHaveBeenCalled();
+  });
+
+  test('kill switch WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED=1 → the old behaviour (no attempt, explicit unreadable)', async () => {
+    process.env.WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED = '1';
+    try {
+      mockMcp.mockResolvedValue(null);
+      const r = await runWebPipe('sess-html-off', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+      expect(r.ok).toBe(false);
+      expect(r.sources[0].note).toMatch(/unreadable/);
+      expect(mockGet).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED;
+    }
+  });
+
+  test('noSearch sources still fail honestly: the all-unreadable summary names the configuration when search is unconfigured', async () => {
+    mockMcp.mockResolvedValue(null);
+    mockGet.mockRejectedValue(new Error('nope'));
+    const r = await runWebPipe('sess-html-cfg', { urls: ['https://example.com/'] }, undefined, { sameHostGapMs: 0 });
+    expect(r.ok).toBe(false);
+    expect(r.summary).toContain('could not read any of the 1 source(s)');
+    // The per-source note lines survive into the summary.
+    expect(r.summary).toContain('https://example.com/');
   });
 });

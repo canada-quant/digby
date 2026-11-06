@@ -24,7 +24,7 @@ implementation was written for any capability that did not already have one.
 | **SAA-1.3** inline & spill | ✅ `inline-spill.ts` — **Phase 1**, three-state switch (`observe`/`apply`/`off`) | ✅ (registry row `INLINE_SPILL_INJECTION_DISABLED`, added 2026-11-02) | ✅ ancestor of `e05efd35` | ⚠ **observe only** — 526 `inline_spill_observe` rows, `applied:false`. `apply` has **never** been exercised in production | Switch must stay at the observe floor until Cluster 7's box-A canary passes. Flipping to `apply` is the Cluster 7 deliverable, not this audit's |
 | **SAA-1.4** chain of recall | ✅ `chain-of-recall.ts` — **Phase 1**, three-state switch | ✅ (registry row `CHAIN_OF_RECALL_DISABLED`) | ✅ ancestor of `e05efd35` | ⚠ **observe only** — 1,122 `chain_of_recall_observe` rows, `applied:false`; a live row on chat `5c3f302e` confirms the surface is wired and computing hops | Same as SAA-1.3 — the `next:` append has never rendered in production |
 | **SAA-1.6** async tools | ✅ `async-tool-calls.ts` + `async-tool-registry.ts` — **Phase 3b, the armed path** | ✅ `45c4deac7` (`#2462`) | ✅ ancestor of `e05efd35` | ✅ **ARMED IN PRODUCTION** — 424 `async_tool_calls_deliver` rows, `mode:"apply"`, **`ok:191 / fail:0` (rate 1.0)**, `p50 60,001 ms`, `p95 240,798 ms` | None outstanding for the 60 s path. Sub-60 s invariance pinned by drill, not by production (no sub-60 s row is emitted by design) |
-| **MERGE-1** plain↔coding↔plain | ✅ `send-profile.ts` resolver + lazy-attach gate | ✅ | ✅ | ⚠ **NOT behavior-verified** — guard-order proven reachable **without a DB**; delivered-transcript duplication **8 real duplicate pairs / 30 d** (vs 56 content-identical *repetitions* that are legitimate) via `probe-merge1-dupclassify.js`; **no-loss leg VACUOUS in production** (`pending_chat_messages` = **0 rows in 30 d** — the queue never engaged); **plain→coding→plain continuity now pinned by test** (`send-profile.merge1-transcript-continuity.test.ts` 4/4 — one chat, 6 ordered messages, one id, reversible); **blue-green leg REPLAYED synthetically**: `message-queue.merge1-bluegreen.test.ts` 6/6 PASS (JEST_RC=0) proves normal handover is no-loss + no-duplication against the REAL `claimChatLiveRun` SET-NX gate. **Per this matrix's own legend these are pre-conditions, not a behavior-verified stamp** — production telemetry has not shown it | **Blue-green is proven for the NORMAL handover BY REPLAY ONLY, and a REACHABLE gap is pinned for the CUTOVER kill window.** `drainChatQueue` starts the run (`chat-agent.service.ts:1541`) and deletes the row AFTER (`:1607`), logging *"message may re-run"* — a colour killed in between leaves the row, and once `LIVE_RUN_TTL_SEC` (60 s) expires the surviving colour starts a SECOND run for the same content. The KILL WINDOW test reproduces exactly that (content begun twice), and a plain chat creates **no `agent_runs` row**, so busy-layer 3 cannot hold the survivor off. Mutation proof: delete-before-start turns it into LOSS. `coding_messages` DROP remains **unauthorised** |
+| **MERGE-1** plain↔coding↔plain | ✅ `send-profile.ts` resolver + lazy-attach gate | ✅ | ✅ | ⚠ **NOT behavior-verified** — guard-order proven reachable **without a DB**; delivered-transcript duplication **8 real duplicate pairs / 30 d** (vs 56 content-identical *repetitions* that are legitimate) via `probe-merge1-dupclassify.js`; **no-loss leg VACUOUS in production** (`pending_chat_messages` = **0 rows in 30 d** — the queue never engaged); **plain→coding→plain continuity now pinned by test** (`send-profile.merge1-transcript-continuity.test.ts` 4/4 — one chat, 6 ordered messages, one id, reversible); **blue-green leg REPLAYED synthetically**: `message-queue.merge1-bluegreen.test.ts` 6/6 PASS (JEST_RC=0) proves normal handover is no-loss + no-duplication against the REAL `claimChatLiveRun` SET-NX gate. **Per this matrix's own legend these are pre-conditions, not a behavior-verified stamp** — production telemetry has not shown it | **The CUTOVER kill-window gap is now FIXED AND DEPLOYED** (`1598919c`, PR `#2563`, 2026-11-05). The drain no longer deletes-then-starts: `createMessagesConsumingPending` (`message-queue.service.ts`) writes the transcript row(s) and consumes the queued rows in **one `$transaction`**, so a colour killed *before* the commit leaves the row queued (re-delivered once, never lost) and a kill *after* the commit leaves both effects exactly once (never duplicated). Gate: `message-queue.merge1-killwindow.test.ts` drives the **REAL `drainChatQueue`** (not a model) and mutation-proofs both directions — delete-before-start fails the LOSS/atomicity assertions, restore is green. **Still NOT behavior-verified in production**: `pending_chat_messages` remains **0 rows / 30 d**, so the queue never engaged and the no-loss leg is **VACUOUS live**. Note the older `message-queue.merge1-bluegreen.test.ts` is a **MODEL** that by its own header "would NOT flip" on a fix inside `chat-agent.service.ts` — it is not the gate for this fix. `coding_messages` DROP remains **unauthorised** |
 
 ### Legend
 ✅ verified by a receipt cited below · ⚠ proven only to the observe/partial floor ·
@@ -45,6 +45,24 @@ cb9f6dd7d -> e05efd35 CONTAINS (RC=0)   # SAA-1.2 (#2447)
 
 All four likewise `CONTAINS (RC=0)` on `origin/main` = `4bf7d841`. So the **Deployed**
 column rests on ancestry, not on a deploy log's success line.
+
+**RE-VERIFIED 2026-11-05T22:54Z on the sha the fleet is actually serving.** The boxes
+moved past `e05efd35`, so the four SAA-1 commits were checked again against the live
+serving build `1598919c` (`get_fleet_telemetry view:'deploy'`: box-a/web, box-a/worker,
+box-b/web, box-c/worker all report `sha: 1598919c`; `deployHealth` healthy, frontend 200 /
+backend 200; deploy run `42119623276` conclusion **success**):
+
+```
+45c4deac7 -> 1598919c CONTAINS (RC=0)   # SAA-1.6 Phase 3b (#2462)
+80842d092 -> 1598919c CONTAINS (RC=0)   # SAA-1.6 supporting
+944315ad6 -> 1598919c CONTAINS (RC=0)   # SAA-1.1 (#2402)
+cb9f6dd7d -> 1598919c CONTAINS (RC=0)   # SAA-1.2 (#2447)
+1598919c  -> origin/main CONTAINS (RC=0)
+```
+
+So the **Deployed** column still holds — now on the *current* serving sha, not only on the
+audit-time one. This is an ancestry fact about the deployed tree; it is **not** a
+behavior-verified stamp (behaviour needs production telemetry, per the legend above).
 
 ---
 
@@ -213,15 +231,19 @@ presence.
    them needs the Cluster 7 box-A canary/wake probes first — and those are blocked on
    `shaEvidence.settled:true`, which read `false` at 05:19:37.912Z (`wave_in_flight`,
    runs `41971096152` `04e1917f` in_progress and `41972836305` `4bf7d841` pending).
-2. **MERGE-1 blue-green integrity is proven BY SYNTHETIC REPLAY ONLY — it is NOT
-   behavior-verified in this matrix's sense** (production telemetry has not shown it
-   doing the thing). The replay
-   (`message-queue.merge1-bluegreen.test.ts`, 6/6) drives the shipped drain ordering
-   against the real SET-NX gate; it does not observe a production cutover. It also
-   **exposed a reachable defect**: the row is deleted AFTER the run starts
-   (`chat-agent.service.ts:1607`), so a colour killed mid-drain leaves the row and the
-   surviving colour re-delivers it once the 60 s liveness key expires. That gap is
-   pinned as a failing-behaviour test, not claimed closed.
+2. **MERGE-1 blue-green integrity is NOT behavior-verified in this matrix's sense**
+   (production telemetry has not shown it doing the thing). **The cutover kill-window
+   defect the replay exposed is now FIXED, MERGED AND DEPLOYED** (`1598919c`, PR `#2563`,
+   2026-11-05): `createMessagesConsumingPending` persists the transcript row(s) and
+   consumes the queued rows in ONE `$transaction`, so a kill before the commit re-delivers
+   exactly once (no loss) and a kill after leaves both effects exactly once (no
+   duplication). Its gate is `message-queue.merge1-killwindow.test.ts`, which drives the
+   **REAL `drainChatQueue`** and mutation-proofs both failures. The no-loss leg stays
+   **VACUOUS live** (`pending_chat_messages` = 0 rows / 30 d — the queue never engaged),
+   so this is *deployed and test-proven*, NOT *behavior-verified in production*.
+   Caveat that survives: `message-queue.merge1-bluegreen.test.ts` is a **MODEL** of the
+   ordering — by its own header a fix inside `chat-agent.service.ts` "would NOT flip it",
+   so a green run there is **not** evidence either way.
 3. **The drill runs against source, not the deployed dist.** It proves the shipped logic;
    the dist-level proof is the Cluster 7 probes' job. These are complementary, not
    interchangeable.
@@ -243,7 +265,7 @@ presence.
 | SAA-1.1 flip to `ignore` | needs a 48 h LATER-labelled precision window; no owner assigned — **not** something a test can manufacture |
 | SAA-1.2 thread-key continuity | tracked separately in the backlog; not claimed closed here |
 | MERGE-1 blue-green no-loss/no-duplicate (NORMAL handover) | **REPLAYED 2026-11-05T14:44Z** — `message-queue.merge1-bluegreen.test.ts` 6/6 (JEST_RC=0). Still owed: a live deploy-boundary observation |
-| MERGE-1 **cutover kill-window duplication** (NEW, found by the replay) | Row deleted AFTER the run starts (`chat-agent.service.ts:1607`) -> a colour killed mid-drain leaves it queued; after `LIVE_RUN_TTL_SEC` (60 s) the surviving colour re-delivers the same content. **Not fixed here** (an ordering change to the drain is a production behaviour change needing its own focused fix + CI + deploy verification). Recommended fix: claim-then-delete atomically before starting the run, or stamp the row with a claim token and make the re-drain a no-op for a delivered row |
+| MERGE-1 **cutover kill-window duplication** (found by the replay) | **FIXED — MERGED — DEPLOYED 2026-11-05.** PR `#2563`, merge sha `1598919c`. The drain now persists the transcript row(s) AND consumes the pending rows in ONE `$transaction` (`createMessagesConsumingPending`, `message-queue.service.ts`), replacing the old delete-after-start ordering, so a kill before the commit re-delivers exactly once (no loss) and a kill after commits both effects exactly once (no duplication). Gate: `message-queue.merge1-killwindow.test.ts` drives the **REAL `drainChatQueue`** (4/4), mutation-proven (pre-fix ordering ⇒ 4 failed / 4, LOSS assertions fire; restore ⇒ RC=0). Deploy: run `42119623276` conclusion **success**; fleet telemetry shows box-a/web, box-a/worker, box-b/web, box-c/worker all serving `1598919c`; `deployHealth` healthy (frontend 200 / backend 200). **Residual: NOT behavior-verified in production** — `pending_chat_messages` is still 0 rows / 30 d, so the live no-loss leg is vacuous (a production-volume fact, not a missing fixture) |
 | `coding_messages` DROP | **owner-gated, NOT authorised** — untouched by this audit |
 
 **Deploy convergence (observed, not this lane's to fix):** box-a moved **backward**

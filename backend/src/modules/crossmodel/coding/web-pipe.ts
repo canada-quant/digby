@@ -262,11 +262,159 @@ export function looksLikeJsShell(text: string): boolean {
   return JS_SHELL_MARKERS.some(re => re.test(text));
 }
 
-/** One bounded plain-HTTP fetch of the URL body. Returns null on failure,
- *  emptiness, or a PDF byte stream (that path belongs to the PDF extractor).
- *  `diag` (optional out-param, ticket e72d9def) records the HTTP status on
- *  success or the response status on failure for per-URL classification. */
-async function directFetchText(url: string, diag?: { status?: number }): Promise<string | null> {
+// ── Provider-independent HTML fallback (2026-11-05, digby.cql.ca web_pipe report) ──────────
+// THE DEFECT: `scrapeOne` only ever escalated to a direct fetch on TWO shapes — a
+// text-like URL (raw .yaml/.json/.md, ticket 41631647) or a JS-shell page (ticket
+// 7f236c00). An ORDINARY HTML page whose provider scrape came back null/thin
+// therefore got no alternate at all, so when the scrape tier was degraded (a
+// self-hosted Edge with a store-only Bright Data key, a gateway hiccup, a host
+// Bright Data refuses by policy) EVERY normal page read as "no usable content" —
+// `web_pipe({urls:['https://example.com/']})` failed while `scrape_as_markdown`
+// on the same URL succeeded. This block closes that: ONE bounded plain-HTTPS
+// fetch, converted to TEXT (raw markup is never stored or digested).
+//
+// Bounds and refusals, all deliberate (this is a network call we did not need
+// before, so it must be narrower than the scrape it stands in for):
+//   - public http(s) hosts only — no loopback/private/.local/.internal name, no
+//     IP literal, no credentials in the URL, ports 80/443 only, and the same
+//     guard is re-applied to every redirect hop (max 3);
+//   - no auth, no cookies: a plain Accept header only (a page behind a login
+//     must stay unreadable, never harvested);
+//   - bounded time (DIRECT_FETCH_TIMEOUT_MS) and size (DIRECT_FETCH_MAX_BYTES);
+//   - an HTTP error status, a bot-challenge/interstitial page, or a non-HTML
+//     content type is NOT converted into "content" — it stays an honest note;
+//   - ONE attempt per URL, only after the provider scrape already failed, so no
+//     retry storm and no extra load on a host that just blocked us;
+//   - WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED=1 restores the previous behaviour
+//     (text-like + JS-shell alternates only) from box env with no deploy.
+export function webPipeHtmlDirectFallbackDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED === '1';
+}
+
+/** Note on a source read through the HTML fallback — says HOW it was read, so an
+ *  operator never mistakes it for a provider scrape and a model never presents
+ *  it as the same evidence class. */
+export const HTML_DIRECT_NOTE = 'read via direct fetch — provider scrape returned nothing, page HTML converted to text';
+
+/** Note when the direct fetch got a bot challenge / block interstitial instead of content. */
+export const HTML_CHALLENGE_NOTE = 'blocked — the host answered the direct fetch with a bot-challenge/interstitial page (no content read; nothing to bypass)';
+
+const MAX_REDIRECTS = 3;
+const HTML_CONTENT_TYPE_RE = /^\s*(?:text\/html|application\/xhtml\+xml)/i;
+const HTML_DOC_RE = /^\s*(?:<!doctype\s+html|<html[\s>])/i;
+// A challenge/interstitial is SHORT by construction. Gating on length keeps a
+// real article ABOUT captchas (long, has the word) from being misread as one.
+const CHALLENGE_MAX_CHARS = 8_000;
+const CHALLENGE_HTML_RE = /(?:cf-browser-verification|cf-challenge|challenge-platform|g-recaptcha|hcaptcha|captcha-delivery|are you a robot|unusual traffic|verify you are (?:a )?human|checking your browser|attention required|access denied|too many requests|rate limit exceeded|request (?:was )?blocked|enable (?:javascript|) ?cookies)/i;
+const HTML_TEXT_MAX_CHARS = 200_000;
+
+/** Why a plain direct fetch must NOT be made to this URL, or null when it is a
+ *  public http(s) target. Pure. Mirrors the policy the scrape tier refuses on
+ *  (brightdata-direct classifyUnfetchableTarget) so a host the provider will not
+ *  serve is not silently fetched by us either — but WITHOUT that module's
+ *  provider-refusal memo, which records Bright Data's own policy decisions. */
+export function directFetchBlockedReason(raw: string): string | null {
+  let u: URL;
+  try { u = new URL(raw); } catch { return 'not a valid absolute URL'; }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return `unsupported scheme ${u.protocol}`;
+  if (u.username || u.password) return 'URL carries credentials';
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host) return 'no host';
+  if (host === 'localhost' || host.endsWith('.local') || host.endsWith('.internal') || host.endsWith('.localhost')) return `private hostname ${host}`;
+  // Every IP literal is refused — a hostname the provider can resolve is the only
+  // shape a cloud fetcher should reach (this also covers 127/8, 10/8, 192.168/16,
+  // 172.16/12, 169.254/16 link-local, ::1 and IPv6 literals).
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host.includes(':')) return `IP-literal host ${host}`;
+  if (u.port && u.port !== '80' && u.port !== '443') return `non-standard port ${u.port}`;
+  return null;
+}
+
+/** Decode the entity set that shows up in real page text. Bounded: a numeric
+ *  entity is only decoded in the Unicode scalar range, so a hostile `&#99999999;`
+ *  is left alone rather than throwing. Pure. */
+function decodeHtmlEntities(s: string): string {
+  const named: Record<string, string> = {
+    amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—',
+    hellip: '…', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', middot: '·', bull: '•', copy: '©', reg: '®', trade: '™',
+  };
+  return s
+    .replace(/&#(\d{1,7});/g, (_m, d: string) => {
+      const code = Number(d);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : _m;
+    })
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_m, h: string) => {
+      const code = parseInt(h, 16);
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : _m;
+    })
+    .replace(/&([a-z]{2,8});/gi, (m, name: string) => named[name.toLowerCase()] ?? m);
+}
+
+/** A residual markup SHAPE — a tag with a letter-led name, or an HTML comment.
+ *  Deliberately narrow: a bare `<` in prose ("5 < 3", "a < b") has no letter
+ *  immediately after the `<` or `/`, so it never matches. */
+const RESIDUAL_COMMENT_RE = /<!--[\s\S]*?-->/g;
+const RESIDUAL_TAG_RE = /<\/?[a-zA-Z][a-zA-Z0-9:-]*(?:\s[^<>]*)?\/?>/g;
+
+/** Convert an HTML document to readable TEXT — script/style/noscript/svg/
+ *  iframe/template bodies and every tag are dropped, block boundaries become
+ *  newlines, entities are decoded, whitespace is collapsed. The result is what
+ *  the pipe stores in session RAG and feeds the digest; raw markup NEVER
+ *  survives this function's output. Pure + exported for unit tests. */
+export function htmlToText(html: string): string {
+  if (!html) return '';
+  let s = html.slice(0, DIRECT_FETCH_MAX_BYTES);
+  s = s.replace(RESIDUAL_COMMENT_RE, ' ');
+  s = s.replace(/<(script|style|noscript|template|svg|iframe|object|canvas|form|select|button)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, ' ');
+  // An UNCLOSED script/style (truncated body) would otherwise leak its source into the text.
+  s = s.replace(/<(script|style)\b[^>]*>[\s\S]*$/gi, ' ');
+  s = s.replace(/<\/?(?:p|div|section|article|header|footer|main|aside|nav|h[1-6]|ul|ol|li|tr|td|th|table|thead|tbody|blockquote|pre|hr|br|figure|figcaption|dl|dt|dd|title|body|html)\b[^>]*>/gi, '\n');
+  s = s.replace(/<[^>]*>/g, ' ');
+  s = decodeHtmlEntities(s);
+  // SECOND strip pass — the one that makes "no raw markup" actually TRUE.
+  // Decoding runs after the first strip, so markup that the SOURCE carried
+  // entity-escaped (`&lt;!-- … --&gt;`, `&lt;ref&gt;` — routine in Wikipedia
+  // template/lua source shown as text, and in any page documenting HTML)
+  // re-materialises as literal markup in the decoded string. Found by running
+  // the extractor on two real pages it was never tuned on (IANA 6.7 KB and
+  // Wikipedia 119 KB): 10 markup-shaped strings survived. Stripping again after
+  // decode is what closes it; a single pre-decode pass cannot, by construction.
+  // Trade-off, accepted deliberately: prose containing a tag-shaped run
+  // ("x <y and y> z") loses that fragment. Losing a rare fragment is strictly
+  // better than storing markup, which the pipe's contract forbids.
+  s = s.replace(RESIDUAL_COMMENT_RE, ' ').replace(RESIDUAL_TAG_RE, ' ');
+  s = s
+    .replace(/[ \t\f\v\u00a0\u200b]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return s.slice(0, HTML_TEXT_MAX_CHARS);
+}
+
+/** Does this response body look like an HTML document? Content type wins when it
+ *  names one; otherwise the first bytes decide (many hosts mislabel or omit it).
+ *  A JSON/text body is never treated as HTML. Pure. */
+export function looksLikeHtmlBody(body: string, contentType?: string): boolean {
+  const ct = (contentType || '').trim();
+  if (ct) {
+    if (HTML_CONTENT_TYPE_RE.test(ct)) return true;
+    // An explicitly non-text type (json/xml/plain/pdf/binary) is NOT html.
+    if (/^text\/|json|xml|javascript|csv/i.test(ct)) return false;
+  }
+  return HTML_DOC_RE.test(body.slice(0, 512));
+}
+
+interface DirectFetchResult { body: string; status?: number; contentType?: string }
+
+/** ONE bounded plain-HTTP GET. Public targets only (directFetchBlockedReason,
+ *  re-applied to every redirect hop); no auth, no cookies. Returns null on
+ *  failure, an HTTP error status, or an empty/PDF body. `diag` (optional
+ *  out-param, ticket e72d9def) records the status for per-URL classification. */
+async function directFetchRaw(url: string, diag?: { status?: number }): Promise<DirectFetchResult | null> {
+  const blocked = directFetchBlockedReason(url);
+  if (blocked) {
+    logger.info(`web_pipe: direct fetch refused for "${url.slice(0, 60)}" — ${blocked}`);
+    return null;
+  }
   try {
     const r = await axios.get(url, {
       timeout: DIRECT_FETCH_TIMEOUT_MS,
@@ -274,18 +422,69 @@ async function directFetchText(url: string, diag?: { status?: number }): Promise
       transformResponse: [(d: any) => d],
       maxContentLength: DIRECT_FETCH_MAX_BYTES,
       maxBodyLength: DIRECT_FETCH_MAX_BYTES,
-      headers: { Accept: 'text/plain, text/*, application/json, */*' },
+      maxRedirects: MAX_REDIRECTS,
+      // Every hop is held to the same public-target rule: a redirect to
+      // localhost/RFC1918/an IP literal is refused rather than followed.
+      beforeRedirect: (opts: any) => {
+        const next = typeof opts?.href === 'string'
+          ? opts.href
+          : `${opts?.protocol || 'https:'}//${opts?.hostname || ''}${opts?.path || ''}`;
+        const why = directFetchBlockedReason(next);
+        if (why) throw new Error(`blocked redirect to a non-public target (${why})`);
+      },
+      headers: { Accept: 'text/html, text/plain, application/xhtml+xml, application/json;q=0.8, */*;q=0.5' },
     });
     if (diag) diag.status = r.status;
-    const body = (typeof r.data === 'string' ? r.data : JSON.stringify(r.data ?? '')).trim();
-    if (!body || body.startsWith('%PDF-')) return null;
-    logger.info(`web_pipe: direct fetch fallback ok for "${url.slice(0, 60)}" (${body.length} chars)`);
-    return body.slice(0, DIRECT_FETCH_MAX_BYTES);
+    // Never convert an error page into content — that is how a 403 wall becomes
+    // a "source". (axios only rejects on 4xx/5xx; this is the validateStatus seam.)
+    if (typeof r.status === 'number' && r.status >= 400) return null;
+    const body = (typeof r.data === 'string' ? r.data : JSON.stringify(r.data ?? '')) || '';
+    if (!body.trim() || body.trimStart().startsWith('%PDF-')) return null;
+    return { body, status: r.status, contentType: String(r.headers?.['content-type'] || '') };
   } catch (err: any) {
     if (diag) diag.status = err?.response?.status;
-    logger.info(`web_pipe: direct fetch fallback failed for "${url.slice(0, 60)}" (${err?.message || err})`);
+    logger.info(`web_pipe: direct fetch failed for "${url.slice(0, 60)}" (${err?.message || err})`);
     return null;
   }
+}
+
+/** The outcome of ONE bounded plain-HTTP read, as TEXT — never raw markup. */
+type DirectRead =
+  | { kind: 'text'; text: string; html: boolean }
+  | { kind: 'blocked' }  // a bot-challenge / interstitial: the host refused
+  | { kind: 'none' };    // failed / empty / PDF / non-public target
+
+/** ONE bounded plain-HTTP read converted to TEXT. An HTML body goes through
+ *  htmlToText (so raw markup is never stored or digested); a challenge or an
+ *  interstitial is reported as `blocked`, never converted into content. */
+async function directFetchReadableText(url: string, diag?: { status?: number }): Promise<DirectRead> {
+  const r = await directFetchRaw(url, diag);
+  if (!r) return { kind: 'none' };
+  if (!looksLikeHtmlBody(r.body, r.contentType)) {
+    const body = r.body.trim();
+    return body ? { kind: 'text', text: body.slice(0, DIRECT_FETCH_MAX_BYTES), html: false } : { kind: 'none' };
+  }
+  // An explicit challenge / interstitial is a REFUSAL, not content: the host said
+  // no. There is nothing to bypass and nothing to store.
+  const head = r.body.slice(0, CHALLENGE_MAX_CHARS);
+  if (head.length <= CHALLENGE_MAX_CHARS && CHALLENGE_HTML_RE.test(head)) {
+    logger.info(`web_pipe: direct fetch got a challenge/interstitial page for "${url.slice(0, 60)}" — reporting blocked`);
+    return { kind: 'blocked' };
+  }
+  const text = htmlToText(r.body);
+  if (!text) return { kind: 'none' };
+  logger.info(`web_pipe: direct fetch read "${url.slice(0, 60)}" as HTML → ${text.length} chars of text from ${r.body.length} bytes`);
+  return { kind: 'text', text, html: true };
+}
+
+/** The raw-text shape used by the text-like and JS-shell alternates: the body as
+ *  text. An HTML document is converted to text here too (the SSR-body alternate
+ *  used to store raw markup); a challenge or a non-public target yields null. */
+async function directFetchText(url: string, diag?: { status?: number }): Promise<string | null> {
+  const r = await directFetchReadableText(url, diag);
+  if (r.kind !== 'text') return null;
+  logger.info(`web_pipe: direct fetch fallback ok for "${url.slice(0, 60)}" (${r.text.length} chars)`);
+  return r.text;
 }
 
 /** Extract top organic links from the SERP JSON text search_engine returns.
@@ -392,12 +591,48 @@ async function scrapeOne(t: { url: string; title?: string }): Promise<ScrapedSou
   // content. ONE alternate — the direct fetch (some SPAs serve SSR to plain
   // fetch) — else report the page honestly unavailable.
   if (text && looksLikeJsShell(text)) {
-    const direct = triedDirect ? null : await directFetchText(t.url, diag);
-    if (direct && direct.length > MIN_GOOD_CHARS && !looksLikeJsShell(direct)) {
-      text = direct;
+    if (!triedDirect) {
+      triedDirect = true;
+      const direct = await directFetchText(t.url, diag);
+      if (direct && direct.length > MIN_GOOD_CHARS && !looksLikeJsShell(direct)) {
+        text = direct;
+      } else {
+        text = '';
+        note = JS_SHELL_NOTE;
+      }
     } else {
       text = '';
       note = JS_SHELL_NOTE;
+    }
+  }
+
+  // ── Provider-independent HTML fallback (2026-11-05) ─────────────────────────
+  // THE GAP THIS CLOSES: the two alternates above fire only on a TEXT-LIKE url or
+  // a JS-shell body. An ORDINARY HTML page whose provider scrape came back
+  // null/thin (a degraded scrape tier, a store-only Edge key, a host the provider
+  // refuses by policy) therefore had NO alternate and read as "no usable
+  // content" — `web_pipe({urls:['https://example.com/']})` failed on a page
+  // `scrape_as_markdown` reads fine. ONE bounded direct read, HTML converted to
+  // TEXT (htmlToText — raw markup is never stored or digested), guarded by
+  // directFetchBlockedReason + the redirect re-check + the challenge refusal.
+  // `triedDirect` keeps it to at most ONE direct attempt per URL (no storm), and
+  // a host that answered with a challenge/interstitial is reported as BLOCKED,
+  // never converted into content.
+  if (!note && !triedDirect && text.length <= MIN_GOOD_CHARS && !webPipeHtmlDirectFallbackDisabled()) {
+    triedDirect = true;
+    const read = await directFetchReadableText(t.url, diag);
+    if (read.kind === 'text' && read.text.length > text.length) {
+      text = read.text;
+      // Attribution, not a warning — and ONLY when the read actually cleared the
+      // same usability floor every other source is held to. A page whose full
+      // text is thinner than MIN_GOOD_CHARS (the real https://example.com/ is
+      // 172 chars of boilerplate) is NOT a success: claiming "read via direct
+      // fetch" there while the pipe still counts the source unreadable is the
+      // same class of dishonesty as calling a 403 wall content. Leave the note
+      // unset so the failure classification below reports it truthfully.
+      note = read.html && read.text.length > MIN_GOOD_CHARS ? HTML_DIRECT_NOTE : undefined;
+    } else if (read.kind === 'blocked' && !text.trim()) {
+      note = HTML_CHALLENGE_NOTE;
     }
   }
 

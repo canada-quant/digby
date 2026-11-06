@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-05T22:43:33.809Z",
+  "generatedAt": "2026-11-06T02:01:25.365Z",
   "docs": [
     {
       "slug": "self-host",
@@ -21,8 +21,58 @@
         },
         {
           "depth": 2,
+          "text": "Install from published images (no source clone)",
+          "id": "install-from-published-images-no-source-clone"
+        },
+        {
+          "depth": 3,
+          "text": "Pinning a release",
+          "id": "pinning-a-release"
+        },
+        {
+          "depth": 3,
+          "text": "What is different from the from-source path",
+          "id": "what-is-different-from-the-from-source-path"
+        },
+        {
+          "depth": 3,
+          "text": "The frontend image is hostname-portable",
+          "id": "the-frontend-image-is-hostname-portable"
+        },
+        {
+          "depth": 2,
           "text": "What you get",
           "id": "what-you-get"
+        },
+        {
+          "depth": 2,
+          "text": "Operator credentials (what to generate, what to paste, what to leave empty)",
+          "id": "operator-credentials-what-to-generate-what-to-paste-what-to-leave-empty"
+        },
+        {
+          "depth": 3,
+          "text": "1. Generate these (never paste one from a guide, including this one)",
+          "id": "1-generate-these-never-paste-one-from-a-guide-including-this-one"
+        },
+        {
+          "depth": 3,
+          "text": "2. Paste these from a vendor console (Digby issues none of them)",
+          "id": "2-paste-these-from-a-vendor-console-digby-issues-none-of-them"
+        },
+        {
+          "depth": 3,
+          "text": "3. Choose these (not secrets, but instance-defining)",
+          "id": "3-choose-these-not-secrets-but-instance-defining"
+        },
+        {
+          "depth": 3,
+          "text": "4. Leave empty until you want the feature",
+          "id": "4-leave-empty-until-you-want-the-feature"
+        },
+        {
+          "depth": 3,
+          "text": "The shared-secret rule for a public install",
+          "id": "the-shared-secret-rule-for-a-public-install"
         },
         {
           "depth": 2,

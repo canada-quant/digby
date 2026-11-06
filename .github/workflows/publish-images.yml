@@ -1,0 +1,270 @@
+name: Publish self-host images
+
+# Builds the self-host container images from THIS (the public) source tree and
+# pushes them to GitHub Container Registry, so a stranger can run Digby with
+# `docker compose pull` and never needs the source at all.
+#
+# ── WHY THIS BUILDS HERE AND NOT IN THE PRIVATE REPO ────────────────────────
+# The owner ruling of 2026-11-05T18:07Z is that this public repo carries ZERO
+# production credentials, and public CI is build/test-only. Publishing from the
+# PRIVATE tree would satisfy neither: the private tree is where every scrubbed
+# value still lives, and an image built there is only as clean as a post-hoc
+# scan can prove. Building HERE inverts that — the image is built from exactly
+# the bytes a stranger can read, so a private value cannot be baked in BY
+# CONSTRUCTION, not merely by inspection.
+#
+# ── CREDENTIALS: NONE STORED ────────────────────────────────────────────────
+# The only credential used is `secrets.GITHUB_TOKEN`, which GitHub injects into
+# every workflow run automatically. It is NOT a provisioned secret: it does not
+# exist in repo settings, cannot be read out of the repo, expires with the run,
+# and is scoped to this repository. This repo keeps 0 secrets and 0 vars, and
+# `scripts/publish/scan-public-tree.sh` leg C2 explicitly exempts GITHUB_TOKEN
+# for this reason — every other use of secrets./vars. here would fail that gate.
+#
+# ── RELEASE CHANNEL ─────────────────────────────────────────────────────────
+# Images publish on a `v*` tag (a release) or manual dispatch — deliberately
+# NOT on every push to main. A push-to-main trigger would make `:latest` move
+# under running self-hosters on every merge; a tagged release is reproducible
+# and a stranger can pin it. `workflow_dispatch` covers the first cut and any
+# re-publish of an existing sha.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Extra image tag to apply (in addition to the sha). Defaults to "latest".'
+        required: false
+        default: 'latest'
+        type: string
+
+# One publish at a time. Never cancel a run mid-push: a half-uploaded manifest
+# is worse than a queued one.
+concurrency:
+  group: publish-images-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  # ghcr.io lowercases the repository owner; `canada-quant/digby` is already
+  # lowercase, but ${{ github.repository_owner }} is used rather than a literal
+  # so a fork publishes under its own namespace without editing this file.
+  REGISTRY: ghcr.io
+
+jobs:
+  # ── backend: the API/worker/relay image AND its build stage ────────────────
+  # TWO tags from ONE Dockerfile, deliberately:
+  #   :<tag>        target `production` — backend, relay and worker all run this
+  #                 (they differ only in `command:`)
+  #   :<tag>-build  target `build`      — the `migrate` service needs the prisma
+  #                 CLI, which the production stage does not ship (deps-only).
+  # Without the second tag, `migrate` has nothing to pull and a source-free
+  # install cannot apply schema migrations — the stack would come up with no
+  # tables. That is why this is not simply "build the production stage".
+  backend:
+    name: backend (production + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ inputs.tag || 'latest' }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build + push production stage
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: production
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}-backend:${{ steps.tag.outputs.value }}
+            ${{ env.REGISTRY }}/${{ github.repository }}-backend:sha-${{ github.sha }}
+          # Layer cache only — buildx pushes these to the registry's cache
+          # backend, not into the published image.
+          cache-from: type=gha,scope=backend-prod
+          cache-to: type=gha,mode=max,scope=backend-prod
+
+      - name: Build + push build stage (prisma CLI, for the migrate service)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          target: build
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}-backend:${{ steps.tag.outputs.value }}-build
+            ${{ env.REGISTRY }}/${{ github.repository }}-backend:sha-${{ github.sha }}-build
+          cache-from: type=gha,scope=backend-build
+          cache-to: type=gha,mode=min,scope=backend-build
+
+  # ── frontend: hostname-PORTABLE by design ─────────────────────────────────
+  # `NEXT_PUBLIC_API_URL` is baked into the client bundle at build time, which
+  # is why the from-source path has to rebuild the frontend whenever an
+  # operator's URL changes. A PUBLISHED image cannot do that — it is built once
+  # and pulled by everyone, on every hostname.
+  #
+  # The fix is a RELATIVE base: `/api`. Every client call site already resolves
+  # `apiBase + '/crossmodel/...'`, so a relative base makes the browser request
+  # `<page-origin>/api/...` — which Caddy routes to the backend. The image is
+  # therefore correct on http://localhost:8080, on a LAN IP, and on a real
+  # domain, with no rebuild.
+  #
+  # Verified before publishing (2026-11-06): a full `next build` with
+  # NEXT_PUBLIC_API_URL=/api completed exit 0, left ZERO absolute
+  # `localhost:4000/api` fallbacks in the client chunks, and emitted `"/api"`
+  # across 11 chunks. The one `new URL(...)` consumer
+  # (components/ui/custom/prompt/file-link-card.tsx) is wrapped in try/catch and
+  # already pushes `window.location.origin` first, so a relative base costs it
+  # nothing.
+  #
+  # Unless an operator deliberately overrides it, a published frontend carries
+  # the SHIPPED Digby identity: every DIGBY_BRAND_* default below is empty, and
+  # an empty value resolves to the shipped identity byte-for-byte
+  # (frontend/lib/branding/index.ts). Rebranding a pre-built image is done with
+  # `DIGBY_BRANDING_DIR` + the asset directory at RUNTIME (served live at
+  # /branding/asset/*), and by rebuilding only if the operator wants different
+  # *text* — documented in docs/SELF_HOST.md § Branding.
+  frontend:
+    name: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ inputs.tag || 'latest' }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          target: production
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}-frontend:${{ steps.tag.outputs.value }}
+            ${{ env.REGISTRY }}/${{ github.repository }}-frontend:sha-${{ github.sha }}
+          build-args: |
+            NEXT_PUBLIC_API_URL=/api
+            DIGBY_INSTANCE=selfhost
+            NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED=1
+            NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED=1
+            NEXT_PUBLIC_META_PIXEL_DISABLED=1
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ── the optional-profile images ───────────────────────────────────────────
+  # Each of these is a `build:` block in docker-compose.selfhost.yml. They are
+  # optional to run, but publishing them is what lets a source-free install
+  # enable `--profile mcp` and `--profile browser` at all: without an image, a
+  # profile that only has a `build:` block cannot start on a machine with no
+  # source tree.
+  images:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: google-mcp,      context: google-mcp }
+          - { name: github-mcp,      context: github-mcp }
+          - { name: x-mcp,           context: x-mcp }
+          - { name: slack-mcp,       context: slack-mcp }
+          - { name: asana-mcp,       context: asana-mcp }
+          - { name: discord-mcp,     context: discord-mcp }
+          - { name: digby-mcp,       context: digby-mcp }
+          - { name: mcp-gateway,     context: mcp-gateway }
+          - { name: browser-service, context: browser-service }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ inputs.tag || 'latest' }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.context }}
+          file: ./${{ matrix.context }}/Dockerfile
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.name }}:${{ steps.tag.outputs.value }}
+            ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.name }}:sha-${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # ── the release note a stranger actually reads ────────────────────────────
+  # Emits the exact pull refs + digests into the run summary, so the artifact is
+  # receipted in the workflow log rather than only living in the registry.
+  summary:
+    name: release summary
+    needs: [backend, frontend, images]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write image summary
+        run: |
+          {
+            echo "## Published self-host images"
+            echo
+            echo "Registry: \`${REGISTRY}/${{ github.repository }}-*\`"
+            echo "Commit: \`${{ github.sha }}\`"
+            echo
+            echo "Install with:"
+            echo
+            echo '```bash'
+            echo "curl -fsSLO https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/selfhost/install.sh"
+            echo "sh install.sh"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

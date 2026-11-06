@@ -1,0 +1,797 @@
+# Digby — self-hosted, single-host, full isolated stack (PRE-BUILT IMAGES).
+#
+# ██ GENERATED FILE — DO NOT EDIT ██
+# Produced by scripts/selfhost/render-published-compose.mjs from
+# docker-compose.selfhost.yml. Edit the source file (or that script), never
+# this one; scripts/selfhost/render-published-compose.test.mjs fails the build
+# if this file and a fresh render disagree.
+#
+# This is the NO-SOURCE-CLONE install: every service that would build from the
+# source tree instead pulls a published image. You do not need the repository.
+#
+# Quick start (full guide: docs/SELF_HOST.md § Install from published images):
+#   curl -fsSLO https://raw.githubusercontent.com/canada-quant/digby/main/scripts/selfhost/install.sh
+#   sh install.sh
+#
+# Or by hand:
+#   cp selfhost.env.example .env      # then edit — set at least ONE model key
+#   mkdir -p branding
+#   docker compose -f docker-compose.selfhost.published.yml pull
+#   docker compose -f docker-compose.selfhost.published.yml up -d
+#
+# Pinning a release (recommended for anything you care about):
+#   DIGBY_IMAGE_TAG=1.0.0 docker compose -f docker-compose.selfhost.published.yml up -d
+#
+# NOTE ON THE FRONTEND: the image is built with a RELATIVE API base (/api), so
+# it is correct on http://localhost:8080, on a LAN IP and on a real domain with
+# no rebuild. SELFHOST_PUBLIC_URL is still read by the BACKEND (cookie scope,
+# links, OAuth redirects) — set it to the URL browsers actually use.
+
+# Digby — self-hosted, single-host, full isolated stack.
+#
+# This is the ENTIRE product on one machine: own Postgres, Redis, STT, backend,
+# coding worker, frontend, and (optionally) the MCP integration servers. Nothing
+# here talks to digby.ai unless you configure it to.
+#
+# Quick start (full guide: docs/SELF_HOST.md):
+#   cp selfhost.env.example .env   # then edit — set at least ONE model API key
+#   docker compose -f docker-compose.selfhost.yml up -d --build
+#   open http://localhost:8080
+#
+# Database migrations run automatically via the one-shot `migrate` service
+# before the backend starts. Optional services:
+#   --profile mcp    Google/GitHub/X/Slack/Asana/Digby/BrightData MCP servers
+#                    (each needs its own OAuth app credentials in .env)
+#   --profile tools  Adminer DB UI on http://localhost:9521
+#
+# NOTE: this file builds images from the local source tree. Once published
+# images land (ghcr.io), the `build:` blocks will switch to `image:` refs so
+# self-hosters never need the source.
+
+name: digby-selfhost
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: digby-postgres
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-digby-local-password-change-me}
+      - POSTGRES_DB=admin_db
+    volumes:
+      - digby_postgres_data:/var/lib/postgresql/data
+    networks:
+      - digby-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d admin_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    stop_grace_period: 60s
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: digby-redis
+    volumes:
+      - digby_redis_data:/data
+    networks:
+      - digby-network
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Self-hosted open-source STT (NVIDIA Parakeet-TDT-0.6B-v3, OpenAI-compatible
+  # /v1/audio/transcriptions, CPU-only). Powers chat voice notes + the
+  # youtube_pipe audio fallback. Internal only — backend reaches it at
+  # http://stt:5092/v1. DashScope qwen3-asr-flash is the automatic fallback when unset.
+  stt:
+    image: ghcr.io/achetronic/parakeet:latest
+    container_name: digby-stt
+    networks:
+      digby-network:
+        aliases:
+          - stt
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4g
+
+  # Digby Code — filtered Docker API for per-session runner containers. The
+  # backend never touches the raw host socket. Internal only.
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: digby-docker-proxy
+    environment:
+      - CONTAINERS=1
+      - EXEC=1
+      - IMAGES=1
+      - INFO=1
+      - POST=1
+      - NETWORKS=0
+      - VOLUMES=0
+      - SWARM=0
+      - SYSTEM=0
+      - SECRETS=0
+      - CONFIGS=0
+      - PLUGINS=0
+      - NODES=0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - digby-network
+    restart: unless-stopped
+
+  # One-shot schema migrations (Prisma migrate deploy) — runs to completion
+  # before the backend/worker start. Uses the build stage (has the prisma CLI;
+  # the production image is deps-only).
+  migrate:
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-backend:${DIGBY_IMAGE_TAG:-latest}-build
+    container_name: digby-migrate
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/admin_db?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - digby-network
+    restart: "no"
+
+  backend:
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-backend:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-backend
+    # Published on localhost only, for debugging/probing. Normal traffic goes
+    # through Caddy (http://localhost:8080/api → this service).
+    ports:
+      - "127.0.0.1:4000:4000"
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      # ── Instance isolation boundary (ticket c75b5f34) ──────────────────────
+      # This instance is SELF-HOSTED: its autonomous self-improvement loop
+      # (merge → deploy → verify → auto-fix) targets ITS OWN repo/DB/deploy
+      # surfaces, never production Digby. DIGBY_INSTANCE=selfhost arms the
+      # backend guards: any attempt to resolve the production repo
+      # (example-org/crossmodel) hard-fails with a clear error, and the
+      # historical prod-defaulted resolvers (SELF_REPO / GITHUB_REPO_SLUG /
+      # INFRA_WATCH_REPO) read this instance's env ONLY.
+      # Point the loop at YOUR fork to let this instance self-improve:
+      #   GITHUB_REPO_SLUG=you/digby-fork   (or SELF_REPO for self-merge)
+      - DIGBY_INSTANCE=selfhost
+      - GITHUB_REPO_SLUG=${GITHUB_REPO_SLUG:-}
+      - SELF_REPO=${SELF_REPO:-}
+      - INFRA_WATCH_REPO=${INFRA_WATCH_REPO:-}
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/admin_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env — openssl rand -hex 32}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env — openssl rand -hex 32}
+      - JWT_EXPIRES_IN=7d
+      - JWT_REFRESH_EXPIRES_IN=7d
+      # Public URL of THIS instance (what browsers use). CORS allowlist.
+      - SELFHOST_PUBLIC_URL=${SELFHOST_PUBLIC_URL:-http://localhost:8080}
+      - FRONTEND_URL=${SELFHOST_PUBLIC_URL:-http://localhost:8080}
+      # Deploy-health probe target (c75b5f34 follow-up, cross-family review
+      # finding 2): probeDeployHealth runs INSIDE this container, where
+      # SELFHOST_PUBLIC_URL's http://localhost:8080 points at nothing (Caddy
+      # is its own container on digby-network). Probe the compose-internal
+      # Caddy service directly — same routes the public URL fronts
+      # (frontend / + backend /api/health) — reachable from this container.
+      # DEPLOY_HEALTH_PROBE_BASE_URL wins when the operator sets it.
+      - DEPLOY_HEALTH_PROBE_BASE_URL=${DEPLOY_HEALTH_PROBE_BASE_URL:-http://digby-caddy:8080}
+      # Plain-http LAN default: no Secure cookies (TLS mode sets this true).
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      # STT (self-hosted Parakeet) + youtube_pipe fallback
+      - STT_BASE_URL=${STT_BASE_URL:-http://stt:5092/v1}
+      - STT_API_KEY=${STT_API_KEY:-}
+      - STT_MODEL=${STT_MODEL:-whisper-1}
+      - YTDLP_PATH=${YTDLP_PATH:-yt-dlp}
+      # Model providers — set at least one in .env
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - XAI_GROK_API_KEY=${XAI_GROK_API_KEY:-}
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - ZAI_API_KEY=${ZAI_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - DASHSCOPE_UTILITY_MODEL=${DASHSCOPE_UTILITY_MODEL:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - HF_API_KEY=${HF_API_KEY:-}
+      # Decision gate (Jev / TypeSafe) — 2026-09-29: not forwarded before, so a self-hosted
+      # instance's decision seat was never servable (the TB bench made 0 decision calls).
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+      - TYPESAFE_MODEL=${TYPESAFE_MODEL:-}
+      - TYPESAFE_BASE_URL=${TYPESAFE_BASE_URL:-}
+      # Image generation timeouts (bd51693b, 04c8ffd1 follow-up): a self-hosted
+      # instance is the EXACT home of slow local image backends (Qwen-Image
+      # behind LiteLLM, 5-10 min/generation) — forwarding these was missing, so
+      # IMAGE_CUSTOM_TIMEOUT_MS set in .env never reached the container. The
+      # per-model registry value (imageTimeoutMs) always worked; this is the
+      # instance-wide knob (clamped [120 s, 12 min]) plus the probe knobs the
+      # prod compose (docker-compose.app.yml) already forwards.
+      - IMAGE_CUSTOM_TIMEOUT_MS=${IMAGE_CUSTOM_TIMEOUT_MS:-}
+      - IMAGE_PROBE_TIMEOUT_MS=${IMAGE_PROBE_TIMEOUT_MS:-}
+      - IMAGE_PROBE_TIMEOUT_DISABLED=${IMAGE_PROBE_TIMEOUT_DISABLED:-}
+      # Web search. Two options, both optional (search degrades gracefully):
+      #  a) --profile mcp runs the local brightdata-mcp gateway → set
+      #     MCP_DIGBY_URL=http://brightdata-mcp:8000/mcp + MCP_DIGBY_TOKEN
+      #  b) BRIGHTDATA_API_TOKEN direct-API failover (no gateway needed)
+      - MCP_DIGBY_TOKEN=${MCP_DIGBY_TOKEN:-}
+      - MCP_DIGBY_URL=${MCP_DIGBY_URL:-}
+      - BRIGHTDATA_API_TOKEN=${BRIGHTDATA_API_TOKEN:-}
+      - BRIGHTDATA_WEB_UNLOCKER_ZONE=${BRIGHTDATA_WEB_UNLOCKER_ZONE:-web_unlocker1}
+      # Ticket lane (agent-filed feedback dispatch) — dark unless enabled.
+      - TICKET_DISPATCH_ENABLED=${TICKET_DISPATCH_ENABLED:-}
+      - PLATFORM_ENGINEER_CHAT_ID=${PLATFORM_ENGINEER_CHAT_ID:-}
+      - TICKET_DISPATCH_DAILY_CAP=${TICKET_DISPATCH_DAILY_CAP:-}
+      # Digby Edge (Phase 3): set to 1 to disable the cloud-link tunnel client.
+      - CLOUD_LINK_DISABLED=${CLOUD_LINK_DISABLED:-}
+      # Optional integrations (need --profile mcp + OAuth app credentials;
+      # redirect URIs must point at THIS instance — see docs/SELF_HOST.md).
+      # GITHUB_TOKEN_ENCRYPTION_KEY is required to save ANY GitHub account
+      # (OAuth or pasted PAT) — unset it 503s on save naming this var, and the
+      # backend exits at boot when GITHUB_OAUTH_CLIENT_ID/GITHUB_MCP_API_KEY
+      # is set without it (ticket 387a5760).
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI:-}
+      - GOOGLE_TOKEN_ENCRYPTION_KEY=${GOOGLE_TOKEN_ENCRYPTION_KEY:-}
+      - GOOGLE_MCP_API_KEY=${GOOGLE_MCP_API_KEY:-}
+      - GOOGLE_MCP_URL=${GOOGLE_MCP_URL:-http://google-mcp:8000/mcp}
+      - GITHUB_OAUTH_CLIENT_ID=${GITHUB_OAUTH_CLIENT_ID:-}
+      - GITHUB_OAUTH_CLIENT_SECRET=${GITHUB_OAUTH_CLIENT_SECRET:-}
+      - GITHUB_OAUTH_REDIRECT_URI=${GITHUB_OAUTH_REDIRECT_URI:-}
+      - GITHUB_TOKEN_ENCRYPTION_KEY=${GITHUB_TOKEN_ENCRYPTION_KEY:-}
+      - GITHUB_MCP_API_KEY=${GITHUB_MCP_API_KEY:-}
+      - GITHUB_MCP_URL=${GITHUB_MCP_URL:-http://github-mcp:8000/mcp}
+      - X_OAUTH_CLIENT_ID=${X_OAUTH_CLIENT_ID:-}
+      - X_OAUTH_CLIENT_SECRET=${X_OAUTH_CLIENT_SECRET:-}
+      - X_OAUTH_REDIRECT_URI=${X_OAUTH_REDIRECT_URI:-}
+      - X_TOKEN_ENCRYPTION_KEY=${X_TOKEN_ENCRYPTION_KEY:-}
+      - X_MCP_API_KEY=${X_MCP_API_KEY:-}
+      - X_MCP_URL=${X_MCP_URL:-http://x-mcp:8000/mcp}
+      - X_BEARER_TOKEN=${X_BEARER_TOKEN:-}
+      - XERO_CLIENT_ID=${XERO_CLIENT_ID:-}
+      - XERO_CLIENT_SECRET=${XERO_CLIENT_SECRET:-}
+      - XERO_OAUTH_REDIRECT_URI=${XERO_OAUTH_REDIRECT_URI:-}
+      - PLAID_CLIENT_ID=${PLAID_CLIENT_ID:-}
+      - PLAID_SECRET=${PLAID_SECRET:-}
+      - PLAID_ENV=${PLAID_ENV:-sandbox}
+      - PLAID_COUNTRY_CODES=${PLAID_COUNTRY_CODES:-US}
+      - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
+      - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
+      - SLACK_OAUTH_REDIRECT_URI=${SLACK_OAUTH_REDIRECT_URI:-}
+      - SLACK_TOKEN_ENCRYPTION_KEY=${SLACK_TOKEN_ENCRYPTION_KEY:-}
+      - SLACK_MCP_API_KEY=${SLACK_MCP_API_KEY:-}
+      - SLACK_MCP_URL=${SLACK_MCP_URL:-http://slack-mcp:8000/mcp}
+      - ASANA_CLIENT_ID=${ASANA_CLIENT_ID:-}
+      - ASANA_CLIENT_SECRET=${ASANA_CLIENT_SECRET:-}
+      - ASANA_OAUTH_REDIRECT_URI=${ASANA_OAUTH_REDIRECT_URI:-}
+      - ASANA_TOKEN_ENCRYPTION_KEY=${ASANA_TOKEN_ENCRYPTION_KEY:-}
+      - ASANA_MCP_API_KEY=${ASANA_MCP_API_KEY:-}
+      - ASANA_MCP_URL=${ASANA_MCP_URL:-http://asana-mcp:8000/mcp}
+      # Discord MCP — shared bot (bot token lives only in the discord-mcp container)
+      - DISCORD_MCP_API_KEY=${DISCORD_MCP_API_KEY:-}
+      - DISCORD_MCP_URL=${DISCORD_MCP_URL:-http://discord-mcp:8000/mcp}
+      # Telegram bot (public webhook — needs a real TLS public URL)
+      # Hosted hardened browser (ticket ea3ad8a8): both vars, same secret as the
+      # browser-service container; unset = browser_task uses a paired Mac or cloud read.
+      - BROWSER_SERVICE_ENABLED=${BROWSER_SERVICE_ENABLED:-}
+      - BROWSER_SERVICE_SECRET=${BROWSER_SERVICE_SECRET:-}
+      - BROWSER_SERVICE_URL=${BROWSER_SERVICE_URL:-http://browser-service:3100}
+      # User-added MCP servers (Account → Integrations → MCP servers) refuse private
+      # hosts / plain http by default (SSRF fence). A LAN-only instance may allow them.
+      - USER_MCP_ALLOW_PRIVATE_HOSTS=${USER_MCP_ALLOW_PRIVATE_HOSTS:-}
+      - USER_MCP_ALLOW_HTTP=${USER_MCP_ALLOW_HTTP:-}
+      # Meta Conversions API (sign-up events to Digby's ad account) — OFF on a
+      # self-host unless you point it at your own pixel.
+      - META_CAPI_DISABLED=${META_CAPI_DISABLED:-1}
+      # First admin: the account registered (or next signed in) with this email
+      # becomes ADMIN on THIS instance — no psql needed (Account → Admin → Setup).
+      - SELFHOST_ADMIN_EMAIL=${SELFHOST_ADMIN_EMAIL:-}
+      # Telegram needs a real TLS public URL, then ONE setWebhook call
+      # (Account → Admin → Setup → Telegram prints it).
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      # Email as Digby (ticket 54f237bf) — send_email_as_digby SMTP (all optional; unset = not configured)
+      - DIGBY_SMTP_HOST=${DIGBY_SMTP_HOST:-smtp.gmail.com}
+      - DIGBY_SMTP_PORT=${DIGBY_SMTP_PORT:-587}
+      - DIGBY_SMTP_USER=${DIGBY_SMTP_USER:-}
+      - DIGBY_SMTP_PASS=${DIGBY_SMTP_PASS:-}
+      # From: defaults to the SMTP user — never a digby.ai address on your instance.
+      - DIGBY_SMTP_FROM=${DIGBY_SMTP_FROM:-${DIGBY_SMTP_USER:-}}
+      - NODE_OPTIONS=--max-old-space-size=2560
+      # Digby Code — workspaces/env/feedback volumes (named explicitly below so
+      # the worker mounts the SAME volumes).
+      - CODING_WORKSPACE_ROOT=/app/coding-workspaces
+      - CODING_CONTAINER_MODE=1
+      - CODING_WORKSPACE_VOLUME=digby_coding_workspaces
+      - CODING_ENV_ROOT=/app/coding-session-env
+      - FEEDBACK_IMAGES_ROOT=/app/feedback-images
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+    volumes:
+      - digby_coding_workspaces:/app/coding-workspaces
+      - digby_coding_session_env:/app/coding-session-env
+      - digby_feedback_images:/app/feedback-images
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    networks:
+      - digby-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 9
+      start_period: 120s
+    stop_grace_period: 60s
+
+  # Digby Edge (Phase 3) relay — holds every paired edge's outbound WebSocket
+  # tunnel IN THIS ONE PROCESS (deliberate single-process design; run exactly
+  # one replica) and proxies authenticated admin API/SSE requests down the
+  # matching tunnel. Same image as the backend, different entry. Caddy routes
+  # the tunnel + proxy path families here directly (deploy/selfhost/Caddyfile).
+  relay:
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-backend:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-relay
+    command: ["node", "dist/relay.js"]
+    # Published on localhost only, for debugging/probing. Normal traffic goes
+    # through Caddy.
+    ports:
+      - "127.0.0.1:4100:4100"
+    environment:
+      - NODE_ENV=production
+      - RELAY_PORT=4100
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/admin_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env — openssl rand -hex 32}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env — openssl rand -hex 32}
+      - JWT_EXPIRES_IN=7d
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - NODE_OPTIONS=--max-old-space-size=512
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    networks:
+      - digby-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 9
+      start_period: 30s
+
+  # Coding-session worker — claims agent_runs from Postgres; no ports.
+  worker:
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-backend:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-worker
+    command: ["node", "dist/worker.js"]
+    environment:
+      - NODE_ENV=production
+      - PORT=4000
+      # ── Instance isolation boundary (ticket c75b5f34) ──────────────────────
+      # Same guards as the backend (the worker executes coding runs): a
+      # self-hosted instance's autonomous loop targets ITS OWN repo — the
+      # production repo is never a fallback, and resolving it hard-fails.
+      - DIGBY_INSTANCE=selfhost
+      - GITHUB_REPO_SLUG=${GITHUB_REPO_SLUG:-}
+      - SELF_REPO=${SELF_REPO:-}
+      - INFRA_WATCH_REPO=${INFRA_WATCH_REPO:-}
+      # Deploy-health probe target — same container-internal Caddy rationale
+      # as the backend service above (c75b5f34 follow-up, review finding 2).
+      - DEPLOY_HEALTH_PROBE_BASE_URL=${DEPLOY_HEALTH_PROBE_BASE_URL:-http://digby-caddy:8080}
+      - DATABASE_URL=postgresql://admin:${POSTGRES_PASSWORD:-digby-local-password-change-me}@postgres:5432/admin_db?sslmode=disable
+      - REDIS_URL=redis://redis:6379
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env — openssl rand -hex 32}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in .env — openssl rand -hex 32}
+      - JWT_EXPIRES_IN=7d
+      - JWT_REFRESH_EXPIRES_IN=7d
+      - SELFHOST_PUBLIC_URL=${SELFHOST_PUBLIC_URL:-http://localhost:8080}
+      - FRONTEND_URL=${SELFHOST_PUBLIC_URL:-http://localhost:8080}
+      - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - STT_BASE_URL=${STT_BASE_URL:-http://stt:5092/v1}
+      - STT_API_KEY=${STT_API_KEY:-}
+      - STT_MODEL=${STT_MODEL:-whisper-1}
+      - YTDLP_PATH=${YTDLP_PATH:-yt-dlp}
+      - TICKET_DISPATCH_ENABLED=${TICKET_DISPATCH_ENABLED:-}
+      - PLATFORM_ENGINEER_CHAT_ID=${PLATFORM_ENGINEER_CHAT_ID:-}
+      - TICKET_DISPATCH_DAILY_CAP=${TICKET_DISPATCH_DAILY_CAP:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - XAI_GROK_API_KEY=${XAI_GROK_API_KEY:-}
+      - GOOGLE_GEMINI_API_KEY=${GOOGLE_GEMINI_API_KEY:-}
+      - MOONSHOT_API_KEY=${MOONSHOT_API_KEY:-}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - ZAI_API_KEY=${ZAI_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - DASHSCOPE_UTILITY_MODEL=${DASHSCOPE_UTILITY_MODEL:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - HF_API_KEY=${HF_API_KEY:-}
+      # Decision gate (Jev / TypeSafe) — 2026-09-29: not forwarded before, so a self-hosted
+      # instance's decision seat was never servable (the TB bench made 0 decision calls).
+      - TYPESAFE_API_KEY=${TYPESAFE_API_KEY:-}
+      - TYPESAFE_MODEL=${TYPESAFE_MODEL:-}
+      - TYPESAFE_BASE_URL=${TYPESAFE_BASE_URL:-}
+      # Image generation timeouts (bd51693b): same three vars as the backend
+      # service above — the worker runs coding-session image legs too.
+      - IMAGE_CUSTOM_TIMEOUT_MS=${IMAGE_CUSTOM_TIMEOUT_MS:-}
+      - IMAGE_PROBE_TIMEOUT_MS=${IMAGE_PROBE_TIMEOUT_MS:-}
+      - IMAGE_PROBE_TIMEOUT_DISABLED=${IMAGE_PROBE_TIMEOUT_DISABLED:-}
+      - MCP_DIGBY_TOKEN=${MCP_DIGBY_TOKEN:-}
+      - MCP_DIGBY_URL=${MCP_DIGBY_URL:-}
+      - BRIGHTDATA_API_TOKEN=${BRIGHTDATA_API_TOKEN:-}
+      - BRIGHTDATA_WEB_UNLOCKER_ZONE=${BRIGHTDATA_WEB_UNLOCKER_ZONE:-web_unlocker1}
+      - GOOGLE_OAUTH_CLIENT_ID=${GOOGLE_OAUTH_CLIENT_ID:-}
+      - GOOGLE_OAUTH_CLIENT_SECRET=${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      - GOOGLE_OAUTH_REDIRECT_URI=${GOOGLE_OAUTH_REDIRECT_URI:-}
+      - GOOGLE_TOKEN_ENCRYPTION_KEY=${GOOGLE_TOKEN_ENCRYPTION_KEY:-}
+      - GOOGLE_MCP_API_KEY=${GOOGLE_MCP_API_KEY:-}
+      - GOOGLE_MCP_URL=${GOOGLE_MCP_URL:-http://google-mcp:8000/mcp}
+      - GITHUB_OAUTH_CLIENT_ID=${GITHUB_OAUTH_CLIENT_ID:-}
+      - GITHUB_OAUTH_CLIENT_SECRET=${GITHUB_OAUTH_CLIENT_SECRET:-}
+      - GITHUB_OAUTH_REDIRECT_URI=${GITHUB_OAUTH_REDIRECT_URI:-}
+      - GITHUB_TOKEN_ENCRYPTION_KEY=${GITHUB_TOKEN_ENCRYPTION_KEY:-}
+      - GITHUB_MCP_API_KEY=${GITHUB_MCP_API_KEY:-}
+      - GITHUB_MCP_URL=${GITHUB_MCP_URL:-http://github-mcp:8000/mcp}
+      - X_OAUTH_CLIENT_ID=${X_OAUTH_CLIENT_ID:-}
+      - X_OAUTH_CLIENT_SECRET=${X_OAUTH_CLIENT_SECRET:-}
+      - X_OAUTH_REDIRECT_URI=${X_OAUTH_REDIRECT_URI:-}
+      - X_TOKEN_ENCRYPTION_KEY=${X_TOKEN_ENCRYPTION_KEY:-}
+      - X_MCP_API_KEY=${X_MCP_API_KEY:-}
+      - X_MCP_URL=${X_MCP_URL:-http://x-mcp:8000/mcp}
+      - X_BEARER_TOKEN=${X_BEARER_TOKEN:-}
+      - XERO_CLIENT_ID=${XERO_CLIENT_ID:-}
+      - XERO_CLIENT_SECRET=${XERO_CLIENT_SECRET:-}
+      - XERO_OAUTH_REDIRECT_URI=${XERO_OAUTH_REDIRECT_URI:-}
+      - PLAID_CLIENT_ID=${PLAID_CLIENT_ID:-}
+      - PLAID_SECRET=${PLAID_SECRET:-}
+      - PLAID_ENV=${PLAID_ENV:-sandbox}
+      - PLAID_COUNTRY_CODES=${PLAID_COUNTRY_CODES:-US}
+      - SLACK_CLIENT_ID=${SLACK_CLIENT_ID:-}
+      - SLACK_CLIENT_SECRET=${SLACK_CLIENT_SECRET:-}
+      - SLACK_OAUTH_REDIRECT_URI=${SLACK_OAUTH_REDIRECT_URI:-}
+      - SLACK_TOKEN_ENCRYPTION_KEY=${SLACK_TOKEN_ENCRYPTION_KEY:-}
+      - SLACK_MCP_API_KEY=${SLACK_MCP_API_KEY:-}
+      - SLACK_MCP_URL=${SLACK_MCP_URL:-http://slack-mcp:8000/mcp}
+      - ASANA_CLIENT_ID=${ASANA_CLIENT_ID:-}
+      - ASANA_CLIENT_SECRET=${ASANA_CLIENT_SECRET:-}
+      - ASANA_OAUTH_REDIRECT_URI=${ASANA_OAUTH_REDIRECT_URI:-}
+      - ASANA_TOKEN_ENCRYPTION_KEY=${ASANA_TOKEN_ENCRYPTION_KEY:-}
+      - ASANA_MCP_API_KEY=${ASANA_MCP_API_KEY:-}
+      - ASANA_MCP_URL=${ASANA_MCP_URL:-http://asana-mcp:8000/mcp}
+      # Discord MCP — shared bot (bot token lives only in the discord-mcp container)
+      - DISCORD_MCP_API_KEY=${DISCORD_MCP_API_KEY:-}
+      - DISCORD_MCP_URL=${DISCORD_MCP_URL:-http://discord-mcp:8000/mcp}
+      # Hosted hardened browser (ticket ea3ad8a8): both vars, same secret as the
+      # browser-service container; unset = browser_task uses a paired Mac or cloud read.
+      - BROWSER_SERVICE_ENABLED=${BROWSER_SERVICE_ENABLED:-}
+      - BROWSER_SERVICE_SECRET=${BROWSER_SERVICE_SECRET:-}
+      - BROWSER_SERVICE_URL=${BROWSER_SERVICE_URL:-http://browser-service:3100}
+      # User-added MCP servers (Account → Integrations → MCP servers) refuse private
+      # hosts / plain http by default (SSRF fence). A LAN-only instance may allow them.
+      - USER_MCP_ALLOW_PRIVATE_HOSTS=${USER_MCP_ALLOW_PRIVATE_HOSTS:-}
+      - USER_MCP_ALLOW_HTTP=${USER_MCP_ALLOW_HTTP:-}
+      # Meta Conversions API (sign-up events to Digby's ad account) — OFF on a
+      # self-host unless you point it at your own pixel.
+      - META_CAPI_DISABLED=${META_CAPI_DISABLED:-1}
+      # First admin: the account registered (or next signed in) with this email
+      # becomes ADMIN on THIS instance — no psql needed (Account → Admin → Setup).
+      - SELFHOST_ADMIN_EMAIL=${SELFHOST_ADMIN_EMAIL:-}
+      # Telegram needs a real TLS public URL, then ONE setWebhook call
+      # (Account → Admin → Setup → Telegram prints it).
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_BOT_USERNAME=${TELEGRAM_BOT_USERNAME:-}
+      - TELEGRAM_WEBHOOK_SECRET=${TELEGRAM_WEBHOOK_SECRET:-}
+      # Email as Digby (ticket 54f237bf) — send_email_as_digby SMTP (all optional; unset = not configured)
+      - DIGBY_SMTP_HOST=${DIGBY_SMTP_HOST:-smtp.gmail.com}
+      - DIGBY_SMTP_PORT=${DIGBY_SMTP_PORT:-587}
+      - DIGBY_SMTP_USER=${DIGBY_SMTP_USER:-}
+      - DIGBY_SMTP_PASS=${DIGBY_SMTP_PASS:-}
+      # From: defaults to the SMTP user — never a digby.ai address on your instance.
+      - DIGBY_SMTP_FROM=${DIGBY_SMTP_FROM:-${DIGBY_SMTP_USER:-}}
+      - NODE_OPTIONS=--max-old-space-size=2560
+      # 4 concurrent coding runs is a sane default for a home box; tune up/down.
+      - CODING_WORKER_CONCURRENCY=${CODING_WORKER_CONCURRENCY:-4}
+      - CODING_WORKSPACE_ROOT=/app/coding-workspaces
+      - CODING_CONTAINER_MODE=1
+      - CODING_WORKSPACE_VOLUME=digby_coding_workspaces
+      - CODING_ENV_ROOT=/app/coding-session-env
+      - FEEDBACK_IMAGES_ROOT=/app/feedback-images
+      - DOCKER_HOST=tcp://docker-socket-proxy:2375
+      # Dev-container memory ceiling for coding sessions. Unset = derived from
+      # the host (host − 8 GiB, floor 12g); set e.g. 6g on a small box.
+      - CODING_DEV_CONTAINER_MEMORY=${CODING_DEV_CONTAINER_MEMORY:-}
+    volumes:
+      - digby_coding_workspaces:/app/coding-workspaces
+      - digby_coding_session_env:/app/coding-session-env
+      - digby_feedback_images:/app/feedback-images
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_started
+    networks:
+      - digby-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "const fs=require('fs');try{const s=fs.statSync('/tmp/worker-alive');process.exit(Date.now()-s.mtimeMs<15000?0:1)}catch{process.exit(1)}"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 45s
+    stop_grace_period: 45s
+
+  frontend:
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-frontend:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-frontend
+    environment:
+      - NODE_ENV=production
+      - HOSTNAME=0.0.0.0
+      - DIGBY_INSTANCE=selfhost
+      - NEXT_PUBLIC_API_URL=${SELFHOST_PUBLIC_URL:-http://localhost:8080}/api
+      # Server-side /api/[...path] catch-all proxy target (internal).
+      - BACKEND_URL=http://backend:4000
+      - NODE_OPTIONS=--max-old-space-size=640
+      # ── Branding, runtime half (docs/SELF_HOST.md § Branding) ──
+      # ONLY the asset directory is read at request time: files dropped in it
+      # are served live at /branding/asset/* and can be swapped WITHOUT a
+      # rebuild. Every DIGBY_BRAND_* VALUE is baked at build time (it feeds page
+      # metadata, the PWA manifest and the social cards), so changing one means
+      # `docker compose -f docker-compose.selfhost.yml up -d --build frontend`.
+      - DIGBY_BRANDING_DIR=/branding
+    # The operator's branding assets, read-only. Create ./branding/ next to
+    # this compose file and point DIGBY_BRAND_* at /branding/asset/<file>.
+    volumes:
+      - ./branding:/branding:ro
+    depends_on:
+      - backend
+    networks:
+      - digby-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    stop_grace_period: 30s
+
+  # Single public entrypoint: /api/* → backend, everything else → frontend.
+  # Edit deploy/selfhost/Caddyfile to enable TLS with a real domain.
+  caddy:
+    image: caddy:2-alpine
+    container_name: digby-caddy
+    ports:
+      # Bind address is configurable: default 0.0.0.0 (all interfaces); set
+      # SELFHOST_BIND_ADDR to a Tailscale IP (e.g. 100.x.y.z) for tailnet-only
+      # exposure, or 127.0.0.1 for localhost-only.
+      - "${SELFHOST_BIND_ADDR:-0.0.0.0}:${SELFHOST_PORT:-8080}:8080"
+    volumes:
+      - ./deploy/selfhost/Caddyfile:/etc/caddy/Caddyfile:ro
+      - digby_caddy_data:/data
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - digby-network
+    restart: unless-stopped
+
+  # ── Optional: MCP integration servers (--profile mcp) ─────────────────────
+  # Each also needs its OAuth app credentials + redirect URI set in .env —
+  # see docs/SELF_HOST.md. Published on localhost only.
+  google-mcp:
+    profiles: ["mcp"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-google-mcp:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-google-mcp
+    ports:
+      - "127.0.0.1:8201:8000"
+    environment:
+      - GOOGLE_MCP_API_KEY=${GOOGLE_MCP_API_KEY:-}
+      - NODE_OPTIONS=--max-old-space-size=512
+    networks:
+      digby-network:
+        aliases:
+          - google-mcp
+    restart: unless-stopped
+
+  github-mcp:
+    profiles: ["mcp"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-github-mcp:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-github-mcp
+    ports:
+      - "127.0.0.1:8202:8000"
+    environment:
+      - GITHUB_MCP_API_KEY=${GITHUB_MCP_API_KEY:-}
+      - NODE_OPTIONS=--max-old-space-size=512
+    networks:
+      digby-network:
+        aliases:
+          - github-mcp
+    restart: unless-stopped
+
+  x-mcp:
+    profiles: ["mcp"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-x-mcp:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-x-mcp
+    ports:
+      - "127.0.0.1:8203:8000"
+    environment:
+      - X_MCP_API_KEY=${X_MCP_API_KEY:-}
+      - MCP_DIGBY_TOKEN=${MCP_DIGBY_TOKEN:-}
+      - BRIGHTDATA_MCP_URL=${BRIGHTDATA_MCP_URL:-http://brightdata-mcp:8000/mcp}
+      - NODE_OPTIONS=--max-old-space-size=512
+    networks:
+      digby-network:
+        aliases:
+          - x-mcp
+    restart: unless-stopped
+
+  slack-mcp:
+    profiles: ["mcp"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-slack-mcp:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-slack-mcp
+    ports:
+      - "127.0.0.1:8204:8000"
+    environment:
+      - SLACK_MCP_API_KEY=${SLACK_MCP_API_KEY:-}
+      - NODE_OPTIONS=--max-old-space-size=512
+    networks:
+      digby-network:
+        aliases:
+          - slack-mcp
+    restart: unless-stopped
+
+  asana-mcp:
+    profiles: ["mcp"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-asana-mcp:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-asana-mcp
+    ports:
+      - "127.0.0.1:8205:8000"
+    environment:
+      - ASANA_MCP_API_KEY=${ASANA_MCP_API_KEY:-}
+      - NODE_OPTIONS=--max-old-space-size=512
+    networks:
+      digby-network:
+        aliases:
+          - asana-mcp
+    restart: unless-stopped
+
+  # Discord MCP — shared bot (no per-user OAuth). AUTH IS THE SHARED BOT
+  # TOKEN: the backend calls with DISCORD_MCP_API_KEY, the bot token lives
+  # ONLY in this container. Mirrors slack-mcp/x-mcp.
+  discord-mcp:
+    profiles: ["mcp"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-discord-mcp:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-discord-mcp
+    ports:
+      - "127.0.0.1:8207:8000"
+    environment:
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - DISCORD_MCP_API_KEY=${DISCORD_MCP_API_KEY:-}
+      - NODE_OPTIONS=--max-old-space-size=512
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      digby-network:
+        aliases:
+          - discord-mcp
+    restart: unless-stopped
+
+  # Digby platform API as MCP tools — per-user pass-through auth, pointed at
+  # THIS instance's backend (not digby.ai).
+  digby-mcp:
+    profiles: ["mcp"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-digby-mcp:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-digby-mcp
+    ports:
+      - "127.0.0.1:8206:8000"
+    environment:
+      - DIGBY_API_URL=${DIGBY_API_URL:-http://backend:4000}
+      - NODE_OPTIONS=--max-old-space-size=512
+    networks:
+      - digby-network
+    restart: unless-stopped
+
+  # BrightData MCP gateway (web search/scrape). When running this, set
+  # MCP_DIGBY_URL=http://brightdata-mcp:8000/mcp + MCP_DIGBY_TOKEN in .env so
+  # the backend uses the LOCAL gateway (a self-host never defaults to
+  # mcp.digby.ai). It still needs YOUR BRIGHTDATA_API_TOKEN — without one the
+  # gateway runs but every search comes back empty; the simpler route is to set
+  # BRIGHTDATA_API_TOKEN alone (direct API, no gateway).
+  brightdata-mcp:
+    profiles: ["mcp"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-mcp-gateway:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-brightdata-mcp
+    ports:
+      - "127.0.0.1:8200:8000"
+    environment:
+      - BRIGHTDATA_API_TOKEN=${BRIGHTDATA_API_TOKEN:-}
+      - BRIGHTDATA_WEB_UNLOCKER_ZONE=${BRIGHTDATA_WEB_UNLOCKER_ZONE:-web_unlocker1}
+      - BRIGHTDATA_BROWSER_ZONE=${BRIGHTDATA_BROWSER_ZONE:-scraping_browser1}
+      - MCP_API_KEY=${MCP_DIGBY_TOKEN:-}
+      - NODE_OPTIONS=--max-old-space-size=768
+    networks:
+      digby-network:
+        aliases:
+          - brightdata-mcp
+    restart: unless-stopped
+
+  # ── Optional: hosted hardened browser (--profile browser) ─────────────────
+  # Per-session persistent Chromium contexts for browser_task when no Mac is
+  # paired (ticket ea3ad8a8). Needs BROWSER_SERVICE_ENABLED=1 + the same
+  # BROWSER_SERVICE_SECRET in .env (the backend / worker forward them).
+  browser-service:
+    profiles: ["browser"]
+    image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-browser-service:${DIGBY_IMAGE_TAG:-latest}
+    container_name: digby-browser-service
+    environment:
+      - BROWSER_SERVICE_SECRET=${BROWSER_SERVICE_SECRET:-}
+      - BROWSER_SERVICE_PORT=3100
+      - BROWSER_SERVICE_DATA_DIR=/data/contexts
+      - BROWSER_CONTEXTS_MAX=${BROWSER_CONTEXTS_MAX:-8}
+      - BROWSER_CONTEXT_IDLE_MS=${BROWSER_CONTEXT_IDLE_MS:-900000}
+    volumes:
+      - digby_browser_contexts:/data/contexts
+    healthcheck:
+      test: ["CMD", "node", "-e", "const h=require('http');h.get('http://127.0.0.1:3100/health',r=>{process.exit(r.statusCode===200?0:1)}).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      digby-network:
+        aliases:
+          - browser-service
+    restart: unless-stopped
+    # The playwright base image ships no tini — Docker's init reaps the Chromium trees.
+    init: true
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  # ── Optional: DB UI (--profile tools) ─────────────────────────────────────
+  adminer:
+    profiles: ["tools"]
+    image: adminer:latest
+    container_name: digby-adminer
+    ports:
+      - "127.0.0.1:9521:8080"
+    environment:
+      - ADMINER_DEFAULT_SERVER=postgres
+    networks:
+      - digby-network
+    restart: unless-stopped
+
+volumes:
+  digby_postgres_data:
+  digby_redis_data:
+  digby_caddy_data:
+  digby_coding_workspaces:
+    name: digby_coding_workspaces
+  digby_coding_session_env:
+    name: digby_coding_session_env
+  digby_feedback_images:
+    name: digby_feedback_images
+  digby_browser_contexts:
+
+networks:
+  digby-network:
+    driver: bridge

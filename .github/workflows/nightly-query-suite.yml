@@ -1,3 +1,16 @@
+# ██ GENERATED PUBLIC VARIANT — DO NOT EDIT ██
+# Derived from .github/workflows/nightly_query_suite.yml by
+# scripts/selfhost/render-public-workflows.mjs.
+#
+# ONE change from the private workflow: the job guard is OPT-IN
+#   if: vars.NIGHTLY_QUERY_SUITE_ENABLED == '1'      (FALSE when unset)
+# instead of opt-out
+#   if: vars.NIGHTLY_QUERY_SUITE_DISABLED != '1'     (TRUE when unset)
+#
+# Why: this repo carries ZERO production credentials by owner ruling, so
+# the opt-out form fired these jobs nightly and failed them. To run this
+# workflow on your own fork, provision the credential AND set
+#   vars.NIGHTLY_QUERY_SUITE_ENABLED = 1
 # Nightly live query suite (2026-10-04) — the SYNTHETIC leg of the nightly hardening loop.
 #
 # The REAL-chat leg is the worker cron `live-chat-audit` (backend platform/live-chat-audit.ts): signals + a
@@ -41,7 +54,7 @@ concurrency:
 
 jobs:
   suite:
-    if: ${{ vars.NIGHTLY_QUERY_SUITE_DISABLED != '1' }}
+    if: ${{ vars.NIGHTLY_QUERY_SUITE_ENABLED == '1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:

@@ -88,6 +88,15 @@ n_oidc=$(grep -rlE 'SSH_GATE_ROLE_ARN|configure-aws-credentials|id-token:[[:spac
                     || fail "B2. $n_oidc .github file(s) still reference the deploy OIDC role"
 
 # ---------------------------------------------------------------- C. public CI
+# THE DEFECT THIS WIDENING FIXES (self-audit 23:53Z). This leg used to check
+# `ci.yml` ALONE. The flip then took `.github/workflows/` from 1 file to 9, and
+# two of the eight it never looked at reference credentials: trajectory-evals.yml
+# reads 6 secrets and windows.yml reads 6 Azure signing secrets — against a repo
+# with 0 secrets and 0 vars. Their guards are `if: vars.X_DISABLED != '1'`, which
+# is TRUE when the var is unset, so an unprovisioned public repo would FIRE them
+# and fail nightly. A gate that inspects one workflow out of nine answers a
+# question nobody asked; it must enumerate the CLASS (every workflow file), which
+# is the same lesson this rules file already carries twice.
 CI="$DIR/.github/workflows/ci.yml"
 if [ -f "$CI" ]; then
   n_secret_refs=$(grep -cE 'secrets\.|vars\.' "$CI" || true); n_secret_refs=${n_secret_refs:-0}
@@ -96,6 +105,86 @@ if [ -f "$CI" ]; then
     || fail "C. public ci.yml references $n_secret_refs secrets./vars. names"
 else
   fail "C. no .github/workflows/ci.yml — the tree would be green by ABSENCE"
+fi
+# C2: EVERY OTHER workflow, enumerated. `secrets.GITHUB_TOKEN` is exempt: GitHub
+# injects it automatically, so it is not a provisioned credential and requiring
+# one would fail every repo. Everything else must be zero — a public tree with no
+# secrets provisioned cannot honour it, and a workflow that only fails nightly is
+# worse than one that is absent.
+#
+# WHAT COUNTS AS A DEFECT (2026-11-06, todo 9caf3230 — this leg was too blunt).
+# Counting credential NAMES alone conflated three different situations, and only
+# the first is a defect:
+#
+#   (1) FIRES WHEN UNSET — the job guard is an opt-OUT switch
+#       (`if: vars.X_DISABLED != '1'`). That expression is TRUE when the var is
+#       unset, which is exactly the state of this repo (0 secrets / 0 vars), so
+#       the job runs, finds no credential, and fails. Nightly, forever. This is
+#       the class the leg exists to catch, and it stays a FAIL.
+#   (2) INERT WHEN UNSET — the guard is opt-IN (`if: vars.X_ENABLED == '1'`),
+#       FALSE when unset. Same workflow, same steps; it simply does not run on a
+#       repo that has not provisioned the credential. `.digby/publish/*.public.yml`
+#       ship this form (see scripts/selfhost/render-public-workflows.mjs), so this
+#       is what the exported tree carries for the two workflows above.
+#   (3) CANNOT FIRE — the credential appears only as an `env:`/`with:` VALUE, and
+#       every step that consumes it is gated on a computed output derived from
+#       whether it is non-empty. `windows.yml` is this shape: its six Azure
+#       signing secrets fold into a `signing` boolean and every sign step is
+#       `if: ... signing == 'true'`, so a zero-secret repo builds UNSIGNED and
+#       passes with a skip notice (the workflow header states this).
+#
+# So a workflow is a FAIL only if it holds a credential name AND its guards do
+# not prove it inert. Class (3) cannot be proven by grep — it needs the
+# step-gating read above — so it is an EXPLICIT allow-list with its reason
+# written down. A workflow must be named here to be excused, which means a new
+# workflow cannot silently join the exception.
+C2_REVIEWED_INERT="windows"
+if [ -d "$DIR/.github/workflows" ]; then
+  c2_bad=""; c2_inert=""
+  for wf in "$DIR/.github/workflows"/*.yml; do
+    [ -f "$wf" ] || continue
+    wname=$(basename "$wf")
+    [ "$wname" = "ci.yml" ] && continue
+    wbase=${wname%.yml}
+    nref=$(grep -oE '(secrets|vars)\.[A-Z_][A-Z0-9_]*' "$wf" 2>/dev/null \
+           | grep -vE '^secrets\.GITHUB_TOKEN$' \
+           | grep -vE '^vars\.[A-Z0-9_]*DISABLED$' \
+           | grep -vE '^vars\.[A-Z0-9_]*ENABLED$' | sort -u | wc -l | tr -d ' ')
+    [ "${nref:-0}" -eq 0 ] && continue
+
+    # STRIP COMMENTS BEFORE CLASSIFYING (defect found by running this leg on the
+    # real export, 2026-11-06). The generated public variants carry a banner
+    # that QUOTES the opt-out spelling they replaced — so a naive grep matched
+    # the documentation and re-flagged the very workflow the fix had made
+    # inert. A gate that reads its own commentary as evidence will always
+    # convict a documented fix. Match only live YAML.
+    c2_live=$(printf '%s\n' "$(grep -vE '^[[:space:]]*#' "$wf" 2>/dev/null)" \
+              | sed 's/[[:space:]]#[[:space:]].*$//')
+
+    # (1) an opt-out guard is TRUE when everything is unset — always a defect.
+    if printf '%s\n' "$c2_live" | grep -qE "vars\.[A-Z0-9_]+_DISABLED[[:space:]]*!=[[:space:]]*'1'"; then
+      c2_bad="$c2_bad $wname($nref,opt-out-fires-when-unset)"
+      continue
+    fi
+    # (2) an opt-in guard is FALSE when unset — inert by construction.
+    if printf '%s\n' "$c2_live" | grep -qE "vars\.[A-Z0-9_]+_ENABLED[[:space:]]*==[[:space:]]*'1'"; then
+      c2_inert="$c2_inert $wname($nref,opt-in)"
+      continue
+    fi
+    # (3) excused only if explicitly reviewed, with the reason recorded above.
+    case " $C2_REVIEWED_INERT " in
+      *" $wbase "*) c2_inert="$c2_inert $wname($nref,reviewed-inert)" ;;
+      *)            c2_bad="$c2_bad $wname($nref,no-guard)" ;;
+    esac
+  done
+  n_wf=$(ls "$DIR/.github/workflows"/*.yml 2>/dev/null | wc -l | tr -d ' ')
+  if [ -z "$c2_bad" ]; then
+    pass "C2. all $n_wf shipped workflow(s) are credential-inert when unset (GITHUB_TOKEN exempt)"
+    [ -n "$c2_inert" ] && say "        inert:$c2_inert"
+  else
+    fail "C2. workflow(s) would fire or run against credentials the public repo does not have:"
+    printf '        %s\n' $c2_bad >&2
+  fi
 fi
 
 # ------------------------------------------------------- D. prod topology values

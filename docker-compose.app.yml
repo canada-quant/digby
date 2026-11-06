@@ -326,6 +326,8 @@ services:
       - WEB_PIPE_EARLY_EXIT_DISABLED=${WEB_PIPE_EARLY_EXIT_DISABLED:-}
       - WEB_PIPE_SERP_EMPTY_RETRY_DISABLED=${WEB_PIPE_SERP_EMPTY_RETRY_DISABLED:-}
       - WEB_PIPE_FAST_DIGEST_DISABLED=${WEB_PIPE_FAST_DIGEST_DISABLED:-}
+      # web_pipe provider-independent HTML fallback (2026-11-05): an ordinary HTML page gets ONE bounded direct fetch + HTML->text when the scrape fails.
+      - WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED=${WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED:-}
       - FAST_SEAT_QWEN_THINKING_OFF_DISABLED=${FAST_SEAT_QWEN_THINKING_OFF_DISABLED:-}
       # Stream drops (2026-10-20, chat-agent/stream-drops.ts): guest reattach, mirror chunk coalescing, early SSE heartbeat, drop telemetry.
       - GUEST_STREAM_ATTACH_DISABLED=${GUEST_STREAM_ATTACH_DISABLED:-}
@@ -1321,6 +1323,8 @@ services:
       - WEB_PIPE_EARLY_EXIT_DISABLED=${WEB_PIPE_EARLY_EXIT_DISABLED:-}
       - WEB_PIPE_SERP_EMPTY_RETRY_DISABLED=${WEB_PIPE_SERP_EMPTY_RETRY_DISABLED:-}
       - WEB_PIPE_FAST_DIGEST_DISABLED=${WEB_PIPE_FAST_DIGEST_DISABLED:-}
+      # web_pipe provider-independent HTML fallback (2026-11-05): an ordinary HTML page gets ONE bounded direct fetch + HTML->text when the scrape fails.
+      - WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED=${WEB_PIPE_HTML_DIRECT_FALLBACK_DISABLED:-}
       - FAST_SEAT_QWEN_THINKING_OFF_DISABLED=${FAST_SEAT_QWEN_THINKING_OFF_DISABLED:-}
       # Stream drops (2026-10-20, chat-agent/stream-drops.ts): guest reattach, mirror chunk coalescing, early SSE heartbeat, drop telemetry.
       - GUEST_STREAM_ATTACH_DISABLED=${GUEST_STREAM_ATTACH_DISABLED:-}

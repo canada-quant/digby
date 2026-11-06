@@ -808,6 +808,13 @@ fi
 # The METHOD leg below is fully hermetic and always runs, so a skipped network
 # leg can never hide a broken recipe.
 PIN_BASE=b8ce7f2e2
+# THE PUBLIC SIDE IS PINNED TOO (self-audit 23:59Z). These counts were measured
+# against public main at 5870bd0c — the pre-flip tree. The leg used to clone the
+# public repo's CURRENT HEAD, so the P2b flip (5870bd0c -> cc2c0481, 3478 -> 3971
+# files) silently redefined every number and turned 5 checks red on a rule change
+# that had nothing to do with them. A pinned count measured against a moving ref
+# is not a pin: both sides must name their sha, or the leg measures the clock.
+PIN_PUBLIC=5870bd0cf
 # Recorded in docs/PHASE2B_REPO_SWITCHOVER.md §2/§8 and reproduced 2026-11-05.
 PIN_TRACKED=4163
 PIN_PRIVATE_ONLY=698
@@ -863,13 +870,17 @@ if ! git -C "$ROOT" cat-file -e "${PIN_BASE}^{commit}" 2>/dev/null; then
   skip "base $PIN_BASE absent — divergence leg skipped"
 elif [ "${EXPORT_TEST_OFFLINE:-0}" = "1" ]; then
   skip "EXPORT_TEST_OFFLINE=1 — divergence leg skipped by request"
-elif ! timeout 90 git clone -q --depth 1 https://github.com/canada-quant/digby.git "$SBX/pubclone" 2>/dev/null; then
+elif ! { timeout 90 git clone -q --no-checkout https://github.com/canada-quant/digby.git "$SBX/pubclone" 2>/dev/null \
+         && git -C "$SBX/pubclone" -c advice.detachedHead=false checkout -q "$PIN_PUBLIC" 2>/dev/null; }; then
   # No network is a legitimate CI/sandbox state. Skip LOUDLY: a network-less run
   # must never look like a verified measurement.
-  skip "public repo not reachable (offline?) — divergence leg skipped, NOT verified"
+  skip "public repo/$PIN_PUBLIC not reachable (offline?) — divergence leg skipped, NOT verified"
 else
   git -C "$ROOT" ls-tree -r "$PIN_BASE" | awk '{print $3" "$4}' | sort -k2 > "$SBX/om-real.txt"
-  git -C "$SBX/pubclone" ls-tree -r HEAD | awk '{print $3" "$4}' | sort -k2 > "$SBX/pub-real.txt"
+  # PINNED, not HEAD: see the PIN_PUBLIC comment — measuring a pinned private
+  # base against a MOVING public head is what turned 5 checks red after the flip.
+  pub_full=$(git -C "$SBX/pubclone" rev-parse HEAD)
+  git -C "$SBX/pubclone" ls-tree -r "$PIN_PUBLIC" | awk '{print $3" "$4}' | sort -k2 > "$SBX/pub-real.txt"
   r_private_only=$(comm -23 <(cut -d' ' -f2 "$SBX/om-real.txt"|sort) <(cut -d' ' -f2 "$SBX/pub-real.txt"|sort) | wc -l | tr -d ' ')
   r_public_only=$(comm -13 <(cut -d' ' -f2 "$SBX/om-real.txt"|sort) <(cut -d' ' -f2 "$SBX/pub-real.txt"|sort) | wc -l | tr -d ' ')
   r_both=$(comm -12 <(cut -d' ' -f2 "$SBX/om-real.txt"|sort) <(cut -d' ' -f2 "$SBX/pub-real.txt"|sort) | wc -l | tr -d ' ')
@@ -881,7 +892,7 @@ else
   check "shared paths == $PIN_BOTH at $PIN_BASE"         "$PIN_BOTH"          "$r_both"
   check "same-path differ == $PIN_DIFFER"                "$PIN_DIFFER"        "$r_differ"
   check "same-path identical == $PIN_IDENTICAL"          "$PIN_IDENTICAL"     "$r_ident"
-  echo "  measured:  base=$PIN_BASE private_only=$r_private_only public_only=$r_public_only both=$r_both differ=$r_differ identical=$r_ident"
+  echo "  measured:  base=$PIN_BASE pub=$PIN_PUBLIC private_only=$r_private_only public_only=$r_public_only both=$r_both differ=$r_differ identical=$r_ident"
 fi
 
 echo ""

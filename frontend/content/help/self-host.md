@@ -6,9 +6,12 @@ digby.ai unless you configure it to.
 
 > **🔒 Isolation boundary (owner standing requirement, ticket c75b5f34): your self-hosted Digby self-improves on ITS OWN copy only.** `docker-compose.selfhost.yml` sets `DIGBY_INSTANCE=selfhost`: the instance's autonomous loop (merge → deploy → verify → auto-fix) resolves its repo/DB/deploy targets from YOUR environment — never production Digby's repo (`example-org/crossmodel`), DB, or infrastructure. Any attempt to resolve a production target from this instance hard-fails with an `ISOLATION BOUNDARY` error by design; to let it improve itself, point it at YOUR fork (see *Updating* / the `GITHUB_REPO_SLUG` notes in `selfhost.env.example`). This instance shares no secrets, database, or deploy path with digby.ai.
 
-> **Distribution note:** today this builds images from the source tree. The
-> planned distribution is pre-built images + this compose file, so self-hosters
-> won't need the source at all.
+> **Distribution:** two install paths, both supported.
+> **Published images (no source tree needed)** — `scripts/selfhost/install.sh`
+> pulls pre-built images from GHCR; you never clone this repository. See
+> *Install from published images* below.
+> **From source** — clone the repo and `docker compose up -d --build`, which is
+> what the rest of this guide assumes unless a section says otherwise.
 
 ## Requirements
 
@@ -48,6 +51,69 @@ instance — an administrator configures it").
 Schema migrations run automatically on every `up` via the one-shot `migrate`
 service — the backend and worker wait for it to complete.
 
+## Install from published images (no source clone)
+
+The pre-built path. You need Docker, Compose v2, and network — not this
+repository.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/canada-quant/digby/main/scripts/selfhost/install.sh
+sh install.sh
+```
+
+`install.sh` creates `./digby`, writes the published compose file and
+`deploy/selfhost/Caddyfile`, seeds `.env` from `selfhost.env.example`, creates
+`branding/`, and pulls the images. It never overwrites an existing `.env`, and
+it writes **no secrets** — it prints the two commands you must run yourself
+(`openssl rand -hex 32` twice, plus one model provider key).
+
+Then:
+
+```bash
+cd digby
+docker compose -f docker-compose.selfhost.published.yml up -d
+```
+
+### Pinning a release
+
+`:latest` is convenient; a tag is reproducible. Every publishable artifact is
+also tagged with the release version and the commit sha:
+
+```bash
+DIGBY_IMAGE_TAG=1.0.0 docker compose -f docker-compose.selfhost.published.yml up -d
+```
+
+### What is different from the from-source path
+
+Only one thing: `docker-compose.selfhost.published.yml` has an `image:` where
+the source compose has a `build:`. Services, ports, volumes, healthchecks,
+profiles, `depends_on` and every environment variable are identical — the
+published file is **generated** from `docker-compose.selfhost.yml` by
+`scripts/selfhost/render-published-compose.mjs`, and a test fails the build if
+the two disagree. So every other section of this guide applies verbatim; just
+substitute the filename.
+
+Two consequences worth knowing:
+
+- **No `--build`.** `docker compose ... up -d --build` on the published file is
+  harmless but rebuilds nothing — there is no build context. Use
+  `docker compose ... pull && up -d` to update.
+- **Updating is `pull`, not `git pull`.** `DIGBY_IMAGE_TAG` selects what you
+  run; the `migrate` service applies schema migrations on the way up, exactly as
+  in the source path.
+
+### The frontend image is hostname-portable
+
+A published frontend cannot be rebuilt per operator, so it is built with a
+**relative** API base (`/api`) instead of a baked absolute URL. The browser
+therefore calls `<whatever-origin-you-served-it-from>/api/...`, which Caddy
+routes to the backend. One image is correct on `http://localhost:8080`, on a LAN
+IP, and on a real domain.
+
+`SELFHOST_PUBLIC_URL` is still read by the **backend** (cookie scope, OAuth
+redirect URLs, share links) — set it to the URL browsers actually use. Changing
+it does **not** require a frontend rebuild on this path.
+
 ## What you get
 
 | Service | Purpose | Exposed |
@@ -76,6 +142,98 @@ docker compose -f docker-compose.selfhost.yml --profile tools up -d
 docker compose -f docker-compose.selfhost.yml --profile browser up -d --build
 ```
 
+## Operator credentials (what to generate, what to paste, what to leave empty)
+
+Everything an operator must set lives in **one file**: `.env`, next to the
+compose file. `selfhost.env.example` is the contract — copy it and edit. This
+section is the map of it: which values you **generate**, which you **collect**
+from a vendor console, and which you should leave **empty** until you want the
+feature.
+
+**The stack boots with three values.** Two secrets you generate and one model
+key you already have. Everything else is optional, and every feature whose keys
+are unset reports itself unavailable in **Account → Admin → Setup** instead of
+failing silently.
+
+### 1. Generate these (never paste one from a guide, including this one)
+
+| Variable | Command | Notes |
+|---|---|---|
+| `JWT_SECRET` | `openssl rand -hex 32` | signs access tokens. Changing it logs everyone out. |
+| `JWT_REFRESH_SECRET` | `openssl rand -hex 32` **again** | must be a **different** value from `JWT_SECRET`. |
+| `POSTGRES_PASSWORD` | `openssl rand -hex 24` | the DB is not exposed and the default placeholder works, but set it before you have data you care about. |
+
+Compose hard-fails at startup if either JWT secret is empty (`${VAR:?...}`), but
+**deliberately does not fail** on `POSTGRES_PASSWORD` — a missing DB password on
+a first run is a convenience, not a security boundary (the port is not
+published). Set it anyway.
+
+The same "generate, don't reuse" rule applies to every shared secret in the
+integration block — one per service, each generated fresh:
+
+```
+MCP_DIGBY_TOKEN                  openssl rand -hex 32
+BROWSER_SERVICE_SECRET           openssl rand -hex 32
+TELEGRAM_WEBHOOK_SECRET          openssl rand -hex 32
+GOOGLE_TOKEN_ENCRYPTION_KEY      openssl rand -hex 32   (also covers Xero + Plaid)
+GITHUB_TOKEN_ENCRYPTION_KEY      openssl rand -hex 32
+X_TOKEN_ENCRYPTION_KEY           openssl rand -hex 32
+SLACK_TOKEN_ENCRYPTION_KEY       openssl rand -hex 32
+ASANA_TOKEN_ENCRYPTION_KEY       openssl rand -hex 32
+GOOGLE_MCP_API_KEY               openssl rand -hex 32   (one per *_MCP_API_KEY)
+GITHUB_MCP_API_KEY  X_MCP_API_KEY  SLACK_MCP_API_KEY
+ASANA_MCP_API_KEY   DISCORD_MCP_API_KEY
+```
+
+> **⚠ The `*_TOKEN_ENCRYPTION_KEY` values are not rotatable in place.** They
+> encrypt OAuth tokens already stored in your database. Changing one orphans
+> every connection made under the old key — users must reconnect each
+> integration. Generate once, back it up with your `.env`, keep it.
+
+### 2. Paste these from a vendor console (Digby issues none of them)
+
+| Variable | Where it comes from |
+|---|---|
+| `DEEPSEEK_API_KEY` | api.deepseek.com — Digby's lead cross-checker |
+| `MOONSHOT_API_KEY` | api.moonshot.ai — Kimi K3, the orchestrator and supervisors |
+| `ZAI_API_KEY` | api.z.ai — GLM-5.3, coding + Triple Checker |
+| `DASHSCOPE_API_KEY` | dashscope-intl.aliyuncs.com — embeddings, rerank, TTS, Kids |
+| `TYPESAFE_API_KEY` | the decision gate's "decision" seat. Unset = decisions fail open |
+| `BRIGHTDATA_API_TOKEN` | web search. Empty = search is dark (models say so) |
+| Google / GitHub / X / Slack / Asana / Discord | each service's own OAuth app. Register the callback URL the Setup checklist prints for you |
+| `PLAID_CLIENT_ID` / `PLAID_SECRET` | Plaid dashboard (`PLAID_ENV=sandbox` by default) |
+| `DISCORD_BOT_TOKEN`, `TELEGRAM_BOT_TOKEN` | the provider's bot console |
+| `DIGBY_SMTP_USER` / `DIGBY_SMTP_PASS` | your mail provider. Use an **app password**, never an account password |
+
+**At least one of the four model keys is required** — with none, chat has no
+model to call. The lineup adapts to whatever you configure; no frontier key
+(OpenAI / Anthropic / Google / xAI) is read anywhere.
+
+### 3. Choose these (not secrets, but instance-defining)
+
+| Variable | Meaning |
+|---|---|
+| `SELFHOST_PUBLIC_URL` | the URL browsers use. Cookie scope, OAuth redirects and share links derive from it |
+| `SELFHOST_PORT` / `SELFHOST_BIND_ADDR` | Caddy's bind (`8080`, all interfaces by default) |
+| `COOKIE_SECURE` | `true` once you are on HTTPS. Leaving it `false` under TLS is a downgrade |
+| `SELFHOST_ADMIN_EMAIL` | the account that registers with this address becomes ADMIN |
+| `DIGBY_IMAGE_REGISTRY` / `DIGBY_IMAGE_TAG` | published-image path only: which images to pull |
+
+### 4. Leave empty until you want the feature
+
+The MCP integration servers, Telegram, email-as-Digby, the hosted browser,
+Xero/Plaid, the coding sandbox and the self-improvement loop are all off until
+their keys exist. Nothing breaks by leaving them unset — the Setup checklist
+lists exactly which env names are still missing, per feature.
+
+### The shared-secret rule for a public install
+
+This repository is public and contains **zero production credentials**. If you
+are publishing your own fork's images, do not bake `.env` into an image: both
+`backend/.dockerignore` and `frontend/.dockerignore` exclude it, and the
+published images are built from the public tree, which never had one. A
+credential belongs in the operator's `.env` at run time, never in a layer.
+
 ## Branding (rebrand this instance — no source edits)
 
 A self-hosted instance can carry its own product name, logos, spinner, icons
@@ -98,9 +256,25 @@ the page; the route sends `Cache-Control: max-age=60`).
 
 ### The asset directory
 
-Create `branding/` next to `docker-compose.selfhost.yml` (the compose file
-mounts it read-only at `/branding`), drop files in, and point the
-`DIGBY_BRAND_*` path knobs at `/branding/asset/<file>`:
+Create `branding/` next to the compose file (the compose file mounts it
+read-only at `/branding`), drop files in, and point the `DIGBY_BRAND_*` path
+knobs at `/branding/asset/<file>`:
+
+> **On the published-image path this is still the only step**, and it is
+> enough for the common case. Because only the asset *directory* is read at
+> request time, swapping logos, spinner, favicons, app icons and theme colours
+> needs **no rebuild** at all. Only the **text** knobs (name, tagline,
+> description, title) are baked into the image, so changing those means
+> rebuilding your own frontend:
+>
+> ```bash
+> git clone https://github.com/canada-quant/digby && cd digby/frontend
+> docker build --build-arg NEXT_PUBLIC_API_URL=/api \
+>   --build-arg DIGBY_BRAND_NAME="Acme AI" \
+>   -t acme/digby-frontend:1.0.0 .
+> ```
+>
+> Everything else in this section applies unchanged on both paths.
 
 ```
 branding/
