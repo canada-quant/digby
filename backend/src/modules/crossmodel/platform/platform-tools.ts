@@ -4098,7 +4098,7 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
         };
       });
       const secretRedactionNotice = redactedMessages
-        ? `CREDENTIALS REDACTED — ${redactedMessages} message(s) contained credential-shaped strings (${Array.from(redactionHits).join(', ')}); each was replaced with "[REDACTED: looked like a credential]" before you saw it. Never copy, restate or file a credential into a directive, note, ticket or message — refer to it as "the key the owner pasted in chat <id>".`
+        ? `CREDENTIALS REDACTED — ${redactedMessages} message(s) contained credential-shaped strings (${Array.from(redactionHits).join(', ')}); each was replaced with "[REDACTED: looked like a credential]" before you saw it. Never copy, restate or file a credential into a directive, note, ticket or message — refer to it as "the key the owner pasted in chat <id>". This is a READ-side scrub of what you are shown, NOT a rewrite of the stored row (ticket 5fcbdd61): the owner's paste usually survives intact, so do NOT tell the owner their paste was destroyed and do NOT ask them to paste it again. To bank one, call store_secret {envKey, fromMessageId: "<id of the message this notice flagged>"} — it lifts the value server-side from the owner's own row and the value never enters this run. If it answers no_secret_found, the row really was scrubbed at rest and only then is a re-paste the answer.`
         : undefined;
       if (redactedMessages) {
         try {

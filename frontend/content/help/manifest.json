@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T03:07:48.936Z",
+  "generatedAt": "2026-11-06T08:46:46.041Z",
   "docs": [
     {
       "slug": "self-host",
@@ -148,6 +148,11 @@
           "depth": 2,
           "text": "Updating",
           "id": "updating"
+        },
+        {
+          "depth": 3,
+          "text": "Checking which revision an instance runs",
+          "id": "checking-which-revision-an-instance-runs"
         },
         {
           "depth": 3,
@@ -631,8 +636,8 @@
         },
         {
           "depth": 2,
-          "text": "Admin Dashboard Endpoints",
-          "id": "admin-dashboard-endpoints"
+          "text": "Admin Endpoints",
+          "id": "admin-endpoints"
         },
         {
           "depth": 3,

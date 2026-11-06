@@ -151,6 +151,88 @@ describe('runHelperCompletion', () => {
   });
 });
 
+/**
+ * 2026-11-06 — log-signal family 3769b1b3, LEAD of the utility-override class.
+ *
+ * `utilityChat`'s OVERRIDE leg resolves the Utility seat through
+ * resolveRoleModel and admits a BUILT-IN there (`!spec.includes(':')`). When the
+ * seat reads back as the built-in `qwen3.6-27b`, that leg posts to DashScope —
+ * and this seam applied a thinking-off shape only to DeepSeek built-ins and
+ * CUSTOM endpoints, so the DashScope built-in reasoned on every call.
+ *
+ * Measured live against dashscope-intl (same key, same memory-extraction
+ * prompt, 2026-11-06): enable_thinking:false → HTTP 200 in 2,729 ms with zero
+ * reasoning tokens; omitted → HTTP 200 in 30,782 ms with 2,008 reasoning
+ * tokens. Prod's own warn timeouts were 10/12/15/30 s — all below 30.8 s — so
+ * every bounded caller blew its deadline, latched the override off, and the
+ * sweep re-filed a REAL recurrence (248 rows/24 h) that had been mis-adjudicated
+ * as designed observability. These tests pin the arm, its kill switch, and the
+ * keepThinking escape hatch so a later refactor cannot silently drop it again.
+ */
+describe('2026-11-06 (3769b1b3) — a DashScope Qwen BUILT-IN fast seat reasons by default; the bounded seam must switch it off', () => {
+  const DS_QWEN: ProviderConfig = {
+    url: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions',
+    apiKey: 'sk-d', model: 'qwen3.6-27b', label: 'DashScope intl (Qwen)', extra: { temperature: 0.5 },
+  };
+
+  afterEach(() => { delete process.env.FAST_SEAT_QWEN_THINKING_OFF_DISABLED; });
+
+  it('sends enable_thinking:false to a DashScope Qwen3 built-in (the 2.7 s shape, not the 30.8 s one)', async () => {
+    mockPost.mockResolvedValue(reply({ content: 'OK' }));
+    await postNonStreamingCompletion(DS_QWEN, { model: 'qwen3.6-27b', messages: [], max_tokens: 512 }, { timeout: 12000 });
+    const sent = mockPost.mock.calls[0][1];
+    expect(sent.enable_thinking).toBe(false);
+    // Exactly one POST — a built-in must never pay a retry dance for this.
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    // And NOT the vLLM directive (that one belongs to custom endpoints).
+    expect('chat_template_kwargs' in sent).toBe(false);
+    // Everything the caller asked for survives.
+    expect(sent).toMatchObject({ model: 'qwen3.6-27b', max_tokens: 512 });
+  });
+
+  it('keepThinking opts out (reflection\'s advisory consult wants the reasoning)', async () => {
+    mockPost.mockResolvedValue(reply({ content: 'OK' }));
+    await postNonStreamingCompletion(DS_QWEN, { model: 'qwen3.6-27b', messages: [] }, { timeout: 12000, keepThinking: true });
+    expect('enable_thinking' in mockPost.mock.calls[0][1]).toBe(false);
+  });
+
+  it('the shared kill switch restores the untouched payload, exactly as on the streamed path', async () => {
+    process.env.FAST_SEAT_QWEN_THINKING_OFF_DISABLED = '1';
+    mockPost.mockResolvedValue(reply({ content: 'OK' }));
+    await postNonStreamingCompletion(DS_QWEN, { model: 'qwen3.6-27b', messages: [] }, { timeout: 12000 });
+    expect('enable_thinking' in mockPost.mock.calls[0][1]).toBe(false);
+  });
+
+  it('a CUSTOM-endpoint Qwen keeps the vLLM directive (the arm is scoped to DashScope built-ins)', async () => {
+    mockPost.mockResolvedValue(reply({ content: 'OK' }));
+    const customQwen: ProviderConfig = { ...DS_QWEN, url: 'https://llm.cql.ca/v1/chat/completions', label: 'cql-litellm (custom endpoint)' };
+    await postNonStreamingCompletion(customQwen, { model: 'qwen3.6-27b', messages: [] }, { timeout: 12000 });
+    const sent = mockPost.mock.calls[0][1];
+    expect(sent.chat_template_kwargs).toEqual({ enable_thinking: false });
+    // The DashScope switch is NOT sprayed onto a custom endpoint.
+    expect('enable_thinking' in sent).toBe(false);
+  });
+
+  it('a non-Qwen DashScope built-in (glm) is untouched — the predicate is model-scoped', async () => {
+    mockPost.mockResolvedValue(reply({ content: 'OK' }));
+    const dsGlm: ProviderConfig = { ...DS_QWEN, model: 'glm-5.3-flash', label: 'DashScope intl (GLM)' };
+    await postNonStreamingCompletion(dsGlm, { model: 'glm-5.3-flash', messages: [] }, { timeout: 12000 });
+    expect('enable_thinking' in mockPost.mock.calls[0][1]).toBe(false);
+  });
+
+  it('the same predicate the STREAMED path uses decides it — one implementation, never a copy', async () => {
+    // Regression guard for the actual defect: the streamed twin (fastSeatProvider)
+    // already switched DashScope Qwen off; the bounded seam did not. Import both
+    // and assert they agree, so a future edit to either cannot re-open the gap.
+    const { isDashScopeQwenBuiltInProvider, fastSeatProvider } = require('./coding-model');
+    expect(isDashScopeQwenBuiltInProvider(DS_QWEN)).toBe(true);
+    expect(fastSeatProvider(DS_QWEN).extra).toMatchObject({ enable_thinking: false });
+    mockPost.mockResolvedValue(reply({ content: 'OK' }));
+    await postNonStreamingCompletion(DS_QWEN, { model: 'qwen3.6-27b', messages: [] }, { timeout: 12000 });
+    expect(mockPost.mock.calls[0][1]).toMatchObject({ enable_thinking: false });
+  });
+});
+
 describe('2026-09-29 — the agent seats\' max effort never rides a bounded custom-endpoint seat', () => {
   it('reasoning_effort is dropped on both the thinking-off attempt and the fallback; keepThinking keeps it', async () => {
     mockPost.mockRejectedValueOnce(http(400)).mockResolvedValueOnce(reply({ content: 'OK' }));

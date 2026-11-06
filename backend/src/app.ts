@@ -29,6 +29,8 @@ import platformRoutes from './modules/crossmodel/platform/platform.routes';
 import fleetRoutes from './modules/crossmodel/fleet/fleet.routes';
 import modelEndpointsRoutes from './modules/crossmodel/model-endpoints/model-endpoints.routes';
 import { listActiveRunIds } from './modules/crossmodel/coding/live-runs';
+import { buildRevision } from './modules/crossmodel/platform/build-revision';
+import { isProdInstance } from './modules/crossmodel/platform/instance-targets';
 import logger from './utils/logger';
 import { isRetiring, markRetiring, retiringSinceIso } from './modules/crossmodel/coding/retiring';
 import { buildDrainStatus } from './modules/crossmodel/chat-agent/drain-status';
@@ -134,32 +136,44 @@ const buildHealthResponse = async () => {
     redis: redisStatus,
     uptime: process.uptime(),
     inflightRuns,
+    // Source revision this container was BUILT from (ticket b37bf85f) — the
+    // answer to "is this instance up to date?" without a host-side git read.
+    // Read from DEPLOY_SHA, so the worker and relay containers (same image,
+    // same build arg) report the identical value. null = this build carries no
+    // revision (an unstamped local build), stated honestly rather than guessed.
+    revision: buildRevision(),
     httpStatus: isHealthy ? 200 : 503,
   };
 };
 
+/**
+ * The public health payload (ticket b37bf85f).
+ *
+ * `revision` — the commit this container was BUILT from — is the self-host
+ * operator's answer to "is this instance up to date?", and it is reported on
+ * NON-production instances only. Digby's public production endpoint keeps its
+ * existing payload byte-for-byte: the production boxes' sha is already on the
+ * authenticated fleet surfaces, and this endpoint is unauthenticated, so there
+ * is nothing to gain by publishing it here and something to lose.
+ */
+const healthPayload = (health: Awaited<ReturnType<typeof buildHealthResponse>>) => ({
+  status: health.status,
+  timestamp: health.timestamp,
+  db: health.db,
+  redis: health.redis,
+  uptime: health.uptime,
+  inflightRuns: health.inflightRuns,
+  ...(isProdInstance() ? {} : { revision: health.revision }),
+});
+
 // Health check (both paths — /health for direct backend access, /api/health for frontend proxy)
 app.get('/health', async (req, res) => {
   const health = await buildHealthResponse();
-  res.status(health.httpStatus).json({
-    status: health.status,
-    timestamp: health.timestamp,
-    db: health.db,
-    redis: health.redis,
-    uptime: health.uptime,
-    inflightRuns: health.inflightRuns,
-  });
+  res.status(health.httpStatus).json(healthPayload(health));
 });
 app.get('/api/health', async (req, res) => {
   const health = await buildHealthResponse();
-  res.status(health.httpStatus).json({
-    status: health.status,
-    timestamp: health.timestamp,
-    db: health.db,
-    redis: health.redis,
-    uptime: health.uptime,
-    inflightRuns: health.inflightRuns,
-  });
+  res.status(health.httpStatus).json(healthPayload(health));
 });
 
 // Drain status (feedback 56159c5a): the blue-green deploy script polls the OLD

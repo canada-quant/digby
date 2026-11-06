@@ -23,7 +23,8 @@
 import axios from 'axios';
 import logger from '../../../utils/logger';
 import {
-  ProviderConfig, THINKING_OFF_EXTRA, DEEPSEEK_THINKING_OFF_EXTRA, isDeepSeekBuiltInProvider,
+  ProviderConfig, THINKING_OFF_EXTRA, DEEPSEEK_THINKING_OFF_EXTRA, DASHSCOPE_THINKING_OFF_EXTRA,
+  isDeepSeekBuiltInProvider, isDashScopeQwenBuiltInProvider, fastSeatQwenThinkingOffDisabled,
   latchReasoningEffort, nextReasoningEffortAfterRejection, reasoningEffortLatch,
 } from './coding-model';
 
@@ -104,6 +105,25 @@ export async function postNonStreamingCompletion(
   if (isDeepSeekBuiltIn(p) && !opts.keepThinking) {
     const { reasoning_effort: _reasoningEffort, ...rest } = requested;
     payload = { ...rest, ...DEEPSEEK_THINKING_OFF_EXTRA };
+  }
+  // 2026-11-06 (log-signal family 3769b1b3, lead of the utility-override class):
+  // a DashScope Qwen3 BUILT-IN reasons by default in non-streaming mode, exactly
+  // like the custom-endpoint Qwen3 of the 2026-09-08 report — and this seam only
+  // ever applied a thinking-off shape to DeepSeek built-ins and CUSTOM endpoints,
+  // so a DashScope built-in seat paid the full reasoning latency on EVERY call.
+  // Measured live 2026-11-06 against dashscope-intl, same key, same prompt:
+  //   enable_thinking:false → HTTP 200 in  2,729 ms (no reasoning tokens)
+  //   (omitted)             → HTTP 200 in 30,782 ms (2,008 reasoning tokens)
+  // Why it mattered: the Utility seat's OVERRIDE leg resolves the BUILT-IN
+  // qwen3.6-27b (model-roles resolveRoleModel) and utilityChat admits a built-in
+  // there (`!spec.includes(':')`), so every caller with a bounded budget
+  // (10/12/15/30 s — the prod warn's own timeouts) blew its deadline, latched the
+  // override off, and re-filed 'utility role override unreachable' — a REAL
+  // recurrence, not the designed fallback it had been adjudicated as. Same
+  // constant, same predicate and same kill switch as fastSeatProvider, so a
+  // DashScope Qwen built-in behaves identically on the streamed and bounded paths.
+  if (isDashScopeQwenBuiltInProvider(p) && !opts.keepThinking && !fastSeatQwenThinkingOffDisabled()) {
+    payload = { ...payload, ...DASHSCOPE_THINKING_OFF_EXTRA };
   }
   // 2026-09-29: the agent seats' reasoning_effort 'max' (coding-model.ts
   // customEndpointEffortExtra) never rides a BOUNDED non-streaming seat

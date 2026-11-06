@@ -100,6 +100,14 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-backend:${{ steps.tag.outputs.value }}
             ${{ env.REGISTRY }}/${{ github.repository }}-backend:sha-${{ github.sha }}
+          # Source revision provenance (ticket b37bf85f): the EXACT commit this
+          # workflow checked out, stamped as org.opencontainers.image.revision
+          # on the image and baked in as the backend's DEPLOY_SHA, which
+          # GET /api/health reports as `revision`. A source-free install has no
+          # checkout to compare against, so without this the operator (and any
+          # verification lane) literally cannot name the running revision.
+          build-args: |
+            DEPLOY_SHA=${{ github.sha }}
           # Layer cache only — buildx pushes these to the registry's cache
           # backend, not into the published image.
           cache-from: type=gha,scope=backend-prod
@@ -115,6 +123,8 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-backend:${{ steps.tag.outputs.value }}-build
             ${{ env.REGISTRY }}/${{ github.repository }}-backend:sha-${{ github.sha }}-build
+          build-args: |
+            DEPLOY_SHA=${{ github.sha }}
           cache-from: type=gha,scope=backend-build
           cache-to: type=gha,mode=min,scope=backend-build
 
@@ -181,6 +191,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ github.repository }}-frontend:${{ steps.tag.outputs.value }}
             ${{ env.REGISTRY }}/${{ github.repository }}-frontend:sha-${{ github.sha }}
           build-args: |
+            DEPLOY_SHA=${{ github.sha }}
             NEXT_PUBLIC_API_URL=/api
             DIGBY_INSTANCE=selfhost
             NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED=1

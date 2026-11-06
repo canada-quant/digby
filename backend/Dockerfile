@@ -2,6 +2,23 @@
 # Build stage
 FROM node:20-alpine AS build
 
+# ── Source revision provenance (ticket b37bf85f, 2026-11-06) ────────────────
+# The commit this image was built from. Two consumers, both of which used to
+# have NOTHING to answer "which revision is this container running?":
+#   • the OCI label org.opencontainers.image.revision (readable from the image
+#     with `docker image inspect` — works even before the container starts);
+#   • DEPLOY_SHA, baked into the production stage below, which the backend
+#     reports on GET /api/health as `revision` (app.ts → platform/build-revision).
+# Default is EMPTY, not a fake sha: an unstamped local `docker build` then
+# reports null ("unknown") rather than a plausible-looking lie.
+ARG DEPLOY_SHA=
+# Source URL is a constant, not a knob: it names the PUBLIC repo the image
+# came from and is never instance-specific, so an operator setting it could
+# only make the label lie.
+LABEL org.opencontainers.image.revision=$DEPLOY_SHA \
+      org.opencontainers.image.source=https://github.com/canada-quant/digby \
+      org.opencontainers.image.title="digby-backend"
+
 WORKDIR /app
 
 COPY package*.json ./
@@ -83,6 +100,21 @@ COPY --chown=1001:1001 prisma.config.ts ./
 COPY --from=build --chown=1001:1001 /app/dist ./dist
 COPY --from=build --chown=1001:1001 /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build --chown=1001:1001 /app/openapi.json ./openapi.json
+
+# Source revision (ticket b37bf85f). RE-DECLARED here on purpose: a build-stage
+# ARG does not cross a `FROM` boundary, so without this line the label and the
+# ENV below would expand to empty in the RUNTIME image even when the build was
+# stamped (frontend/Dockerfile documents the same trap for DIGBY_BRANDING_DIR).
+# ENV (not just LABEL) because `docker image inspect` cannot be run from inside
+# the container on every runtime — /api/health reads the ENV.
+ARG DEPLOY_SHA=
+# Source URL is a constant, not a knob: it names the PUBLIC repo the image
+# came from and is never instance-specific, so an operator setting it could
+# only make the label lie.
+ENV DEPLOY_SHA=$DEPLOY_SHA
+LABEL org.opencontainers.image.revision=$DEPLOY_SHA \
+      org.opencontainers.image.source=https://github.com/canada-quant/digby \
+      org.opencontainers.image.title="digby-backend"
 
 ARG BACKEND_CHOWN_RECURSIVE=0
 RUN addgroup -g 1001 -S nodejs && \

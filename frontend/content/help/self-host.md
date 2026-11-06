@@ -76,12 +76,26 @@ docker compose -f docker-compose.selfhost.published.yml up -d
 
 ### Pinning a release
 
-`:latest` is convenient; a tag is reproducible. Every publishable artifact is
-also tagged with the release version and the commit sha:
+`:latest` is convenient; a pinned tag is reproducible. The published images
+carry exactly two tag families today:
+
+- `latest` — the newest publish of the default branch (what the published
+  compose file uses when `DIGBY_IMAGE_TAG` is unset).
+- `sha-<full 40-char commit sha>` — one per published commit. This is the
+  reproducible pin: it names the precise source the image was built from.
 
 ```bash
-DIGBY_IMAGE_TAG=1.0.0 docker compose -f docker-compose.selfhost.published.yml up -d
+# pin to an exact build (get the sha from the release notes or the package tags)
+DIGBY_IMAGE_TAG=sha-eda9a18f0e4db153df7381acfb49191fa415a487 \
+  docker compose -f docker-compose.selfhost.published.yml up -d
 ```
+
+> ⚠ **STALE (2026-11-06): a `1.0.0` tag does not exist.** Earlier revisions of
+> this page showed `DIGBY_IMAGE_TAG=1.0.0`. No `1.0.0` image tag, git tag or
+> GitHub release has been published — `canada-quant/digby` has **zero** tags and
+> **zero** releases, and the only image tags published so far are `latest`,
+> `latest-build` and `sha-…` families. Using `1.0.0` fails the pull. A real
+> versioned release is tracked work; until it ships, pin by `sha-<commit>`.
 
 ### What is different from the from-source path
 
@@ -281,20 +295,25 @@ knobs at `/branding/asset/<file>`:
 >   -t acme/digby-frontend:1.0.0 .
 > ```
 >
-> **`--target production` is required, not optional.** `frontend/Dockerfile`
-> declares `build` first and `production` last; with no `--target` Docker builds
-> the LAST stage, but the args that shape the runtime image are the ones the
-> publish workflow passes explicitly — so pass them here too. The other
-> `NEXT_PUBLIC_*_DISABLED=1` flags are what the published image uses to compile
-> Digby's production ad/analytics tags out of a self-host build; omitting them
-> produces an image that reports page views to Digby's accounts.
+> **The `NEXT_PUBLIC_*_DISABLED=1` flags are required.** They are what the
+> published image uses to compile Digby's production ad/analytics tags out of a
+> self-host build; omitting them produces an image that reports page views to
+> Digby's accounts. Pass exactly these three.
 >
-> Then point the compose frontend service at your tag:
+> `--target production` is stated explicitly for clarity, not necessity:
+> `frontend/Dockerfile` has two stages — `build` then `production` — and Docker
+> builds the LAST stage, which is already `production`. Leaving the flag off
+> gets you the same image; naming it just means the build says which stage it
+> means instead of relying on file order.
+>
+> Then point the compose frontend service at your tag — here `1.0.0` is **your
+> own** tag for the image you just built and pushed to your own registry, not a
+> tag published by this project (see *Pinning a release* above):
 >
 > ```bash
 > # in .env, next to the published compose file
 > DIGBY_IMAGE_REGISTRY=acme        # your namespace
-> DIGBY_IMAGE_TAG=1.0.0
+> DIGBY_IMAGE_TAG=1.0.0            # the tag YOU built and pushed
 > ```
 >
 > Everything else in this section applies unchanged on both paths.
@@ -462,6 +481,21 @@ the Digby experience — Digby the lead, the Double Checker (the one secondary
 model: the preset-2 second opinion — which runs BEHIND the answer since the
 2026-09-26 compute policy, see the "How deep Digby thinks" help page — + first
 preset-3 council chair), the Triple Checker (the preset-3 research council),
+
+> **A single-model instance gets no second opinion (2026-11-06).** If every seat
+> above resolves to the SAME model — the usual shape when you register one
+> endpoint and point every seat at it — a Double Checker on the lead's own model
+> is skipped: a second inference from the identical model cannot disagree, so
+> the run would pay for it while the status line promised an independent check.
+> Such turns render **no check pill at all** — a skipped check is deliberately
+> silent in the UI (`pillFromMeta` maps `state:'skipped'` to no badge: a quiet
+> answer needs no badge). The skip is recorded server-side as
+> `check_state: 'skipped'` plus a `chat-agent: cross-checker skipped …` log
+> line naming the model, so it is provable from the trace rather than from the
+> bubble.
+> Give the Double Checker seat a genuinely different model to get the second
+> opinion back. Set `CHECKER_SAME_MODEL_GUARD_DISABLED=1` to restore the old
+> behaviour (e.g. a deliberate same-model two-sample run).
 The Helper fast tier, the
 background utility model, the RAG **embeddings**/**reranker**, and
 **speech-to-text (ASR)** — can be pointed at a built-in model or any
@@ -727,7 +761,18 @@ on, in resolution order:
 - **Direct API via env** — set `BRIGHTDATA_API_TOKEN` in `.env`
   (https://brightdata.com, a Web Unlocker zone; `BRIGHTDATA_WEB_UNLOCKER_ZONE`
   defaults to `web_unlocker1`). No gateway needed. Takes precedence over the
-  admin store when set.- **Local gateway** — run with `--profile mcp` and set
+  admin store when set.
+
+  ⚠ Verify the zone actually EXISTS on your account before relying on that
+  default — `GET https://api.brightdata.com/zone/get_active_zones` with the same
+  token lists them. A missing zone does NOT surface as an auth error: Bright Data
+  answers **HTTP 200 with a zero-byte body**, and the reason only appears in the
+  headers (`x-brd-err-code: client_10002`, `x-brd-status-code: 407`,
+  `x-brd-error: Zone not found`). Search then fails silently while the settings
+  page still shows a saved key. If your real zones differ (e.g. `web_unlocker2`),
+  set `BRIGHTDATA_WEB_UNLOCKER_ZONE` to the one that exists — the key itself is
+  almost certainly fine, so do not rotate it.
+- **Local gateway** — run with `--profile mcp` and set
   `MCP_DIGBY_URL=http://brightdata-mcp:8000/mcp` plus a `MCP_DIGBY_TOKEN` you
   invent (it gates your own gateway). The gateway container reads
   `BRIGHTDATA_API_TOKEN` from `.env` — it is a front for the same account, so
@@ -882,11 +927,37 @@ backend never sees it.
 
 ```bash
 git pull
-docker compose -f docker-compose.selfhost.yml up -d --build
+DEPLOY_SHA=$(git rev-parse HEAD) docker compose -f docker-compose.selfhost.yml up -d --build
 ```
 
 The `migrate` service applies any new schema migrations on the way up.
-(Once published images exist: `docker compose pull && up -d`.)
+
+`DEPLOY_SHA` is the source revision stamp. Compose forwards it as a build arg,
+the Dockerfiles bake it into the images (`org.opencontainers.image.revision`)
+and the backend reports it as `revision` on `GET /api/health`. Setting it is
+what makes "which commit is this instance running?" answerable from the running
+stack instead of from a host-side `git rev-parse` plus dist mtimes. It is
+optional: leave it out and the build simply carries no revision (reported as
+`null`, never a guess).
+
+### Checking which revision an instance runs
+
+```bash
+# what the running backend was BUILT from (no credentials needed)
+curl -s http://localhost:8080/api/health | grep -o '"revision":"[^"]*"'
+
+# the same value, straight off the image (works before the container starts)
+docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' \
+  "$(docker inspect --format '{{.Image}}' digby-backend)"
+
+# and what the checkout on this host actually is
+git -C /opt/digby rev-parse HEAD
+```
+
+If the first two agree with the third, the instance is up to date. A `null` or
+empty revision means the running image predates this stamp (rebuild) or was
+built without `DEPLOY_SHA` (re-run the command above). The auto-updater below
+sets it for you on every update.
 
 ### Auto-updates (recommended for always-on servers)
 

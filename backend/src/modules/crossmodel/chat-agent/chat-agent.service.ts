@@ -254,6 +254,7 @@ import {
   type CheckStatePayload, type NextRung, type DepthChip,
   computePolicyEnforcementStamp,
   supervisorCheckerSkipDisabled, withoutSupervisorChecker,
+  checkerSameModelAsLead, checkerSameModelGuardDisabled,
 } from './compute-policy-wiring';
 import { labelDraftsAgree, labelComputePolicyFacts, draftsAgreeLabelMaterial, draftsAgreeMeta, type ComputePolicyTurnFacts } from './compute-policy-labels';
 import { pickAvoidingFamily, checkerFamilyGuardDisabled } from '../platform/model-pick';
@@ -3778,7 +3779,19 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
   // mode==='thinking'") — the L2 preset says spawn, the L1 preset says not,
   // the gate in ACT may flip either way; the council never spawns; a machine
   // turn spawns ONLY a checker the gate acted to add (never from its preset).
-  const wantsChecker = shouldSpawnChecker({ plan, machineTurnSkipsChecker: machineTurnSkipsChecker && !gateSpawnedOnMachine, checkerSeatProblem: null, isCouncil: isCouncilMode, ghost: ghostSingleModel });
+  // A "second opinion" from the LEAD'S OWN MODEL is not a second opinion (2026-11-06).
+  // On a single-model self-host (digby.cql.ca: every seat -> cql-llm:spark-red-snow-…) the
+  // Double Checker resolved to the SAME model as the lead, so an Auto "Checked" turn paid a
+  // full second inference (traced: completionMs 204 283) that could not disagree, while the
+  // lane line promised "the Double Checker is researching alongside…". This doctrine line
+  // already says the checker is "a DIFFERENT frontier model" — the guard makes it true.
+  // Decided AFTER the lead/checker picks so it sees what the turn will actually run.
+  const leadSpecForChecker = quickLaneModel ?? pickedLeadModel ?? seatOrchestrator;
+  const checkerSameModel = !checkerSameModelGuardDisabled() && checkerSameModelAsLead(leadSpecForChecker, crossCheckers[0]);
+  if (checkerSameModel && plan.spawnChecker) {
+    logger.info(`chat-agent: cross-checker skipped — the Double Checker seat resolves to the lead's own model ${String(crossCheckers[0])} (no independent second opinion). CHECKER_SAME_MODEL_GUARD_DISABLED=1 restores it.`, { source: 'chat-agent' });
+  }
+  const wantsChecker = shouldSpawnChecker({ plan, machineTurnSkipsChecker: machineTurnSkipsChecker && !gateSpawnedOnMachine, checkerSeatProblem: null, isCouncil: isCouncilMode, ghost: ghostSingleModel, checkerSameModel });
   const checkerSeatProblem = wantsChecker
     ? await seatUnservableReason(crossCheckers[0], runUserId)
     : null;
@@ -3804,6 +3817,11 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
     // the ghost notice already explains that one private answer is coming.
     if (!ghostSingleModel) send('progress', keyedProgress('deeper_findings_started'));
   } else if (plan.source === 'gate_act' && !plan.spawnChecker && plan.preset === 'thinking') checkState = { state: 'skipped' };
+  // SAME-MODEL skip (2026-11-06 review): the plan wanted a checker but the seat IS the
+  // lead's own model, so nothing ran. Mirror the gate_act 'skipped' state above rather
+  // than staying silent — a user who saw "Checked ✓" on the prior turn of this chat must
+  // be able to tell "no check was needed" from "the check was dropped".
+  if (plan.spawnChecker && !spawnChecker && checkerSameModel) checkState = { state: 'skipped' };
 
   // N4 checker-site router (shadow by default): fire the typed request now,
   // beside the regex verdict already taken. Only human Level 2 turns that
@@ -3971,7 +3989,16 @@ async function runChatAgentTurnInner(args: ChatAgentRunArgs): Promise<void> {
         // seat → ONE try on the configured backup model, with time left. The
         // card stays the Double Checker's; modelUsed names what actually served.
         const seatFailed = result.modelErrored === true || !(result.finalText || '').trim();
-        if (seatFailed && checkerFallbackModel && checkerFallbackModel !== model && !checkerStopRequested && checkerHardMs - (Date.now() - t0) > 150_000 && !(await seatUnservableReason(checkerFallbackModel, runUserId).catch(() => 'probe failed'))) {
+        // The SAME-MODEL guard must hold on the FALLBACK too (2026-11-06 review): a
+        // picked/lane checker that errors falls back to `checkerFallbackModel`
+        // (doubleCheckerFallback || seatDoubleChecker), and on a single-model self-host
+        // that seat IS the lead's own model — which would restore the exact defect this
+        // guard exists to prevent, behind the same "independent check" promise.
+        const fallbackSameAsLead = !checkerSameModelGuardDisabled() && checkerSameModelAsLead(leadSpecForChecker, checkerFallbackModel);
+        if (fallbackSameAsLead && checkerFallbackModel) {
+          logger.info(`chat-agent: ${SEAT_LABELS.double} fallback skipped — it resolves to the lead's own model ${String(checkerFallbackModel)} (a second inference that cannot disagree)`, { source: 'chat-agent' });
+        }
+        if (seatFailed && checkerFallbackModel && !fallbackSameAsLead && checkerFallbackModel !== model && !checkerStopRequested && checkerHardMs - (Date.now() - t0) > 150_000 && !(await seatUnservableReason(checkerFallbackModel, runUserId).catch(() => 'probe failed'))) {
           const failedSeat = model;
           const reason = result.modelErrored ? 'provider_error' : 'empty';
           logger.warn(`chat-agent: ${SEAT_LABELS.double} seat ${failedSeat} ${reason === 'empty' ? 'returned nothing' : 'was rejected by its provider'} — trying ${checkerFallbackModel === doubleCheckerFallback ? "the admin's custom fallback" : 'the double_checker seat (picked checker failed)'} ${checkerFallbackModel}`, { source: 'chat-agent' });
@@ -7535,7 +7562,7 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
         meta: {
           ...laneDepthRowMeta({
             access: laneAccess, turnPlan: turnPlanFinal, decision: laneDecision, ranPlan: plan, ranChecker: spawnChecker,
-            checkerModel: spawnChecker ? crossCheckers[0] : null, segment: planSegment,
+            checkerModel: spawnChecker ? (String(models[SEAT_CARD_KEYS.double]?.modelUsed || '') || crossCheckers[0]) : null, segment: planSegment,
             routedLevel: args.routing?.level ?? null, keywordReasonKey: args.routing?.reasonKey ?? null,
             researchRouted: args.routing?.source === 'turn_plan', priorLane: laneDecision ? lanePriorUsed : laneSessionLane(),
           }),

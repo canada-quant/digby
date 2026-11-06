@@ -1,5 +1,6 @@
 {
-  "name": "crossmodel",
+  "name": "digby",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "workspaces": [
     "apps/*",

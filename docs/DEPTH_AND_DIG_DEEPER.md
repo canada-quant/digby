@@ -22,6 +22,7 @@ means.
 | **Checked ✓** | The second opinion agrees — nothing material changed. |
 | **Updated · what changed** | The check found a material difference (a number, a date, a name, a recommendation, a negation). The answer was corrected; the pill shows how many corrections and expands to the previous and revised text side by side. |
 | **Check didn't finish** | The check was interrupted (for example a deploy or a timeout). The pill offers **Dig deeper to retry**. |
+| *(no pill)* | No independent check ran. On a single-model instance the Double Checker seat resolves to the lead's own model, so a second inference could not disagree — it is skipped rather than promised, and a skipped check renders **no badge at all** (recorded server-side as `check_state: 'skipped'`). Point the Double Checker seat at a different model to get the check back. |
 
 If you have already moved on to a newer message when a correction lands,
 Digby posts it as a short addendum under your newer turn instead of rewriting

@@ -643,6 +643,39 @@ describe('executePlatformTool mapping (act-as-user)', () => {
     expect(Object.keys(parsed)[0]).toBe('secretRedactionNotice');
   });
 
+  // Ticket 5fcbdd61 — DETECTOR-RECALL REPLAY: the notice is the ONLY account of
+  // redaction a machine reader gets, so its wording decides what the fleet
+  // believes about the stored row. The old text said only "replaced … before you
+  // saw it", and a fleet reader concluded the paste had been DESTROYED AT WRITE
+  // TIME (ticket 5fcbdd61: the owner's Brev token pair, chat 41bd202a) — it then
+  // dead-ended the owner on a re-paste instead of pointing at the intact row.
+  // The scrub is READ-side (redactChatReadSecrets gates on machineRun) and the
+  // row persists verbatim (chat-agent.service.ts `content: message`), so the
+  // notice must say so AND name the lawful lift (store_secret fromMessageId).
+  // These assertions pin the CORRECTED text; they fail against the old one.
+  it('ticket 5fcbdd61: the redaction notice says the scrub is READ-side, names store_secret {fromMessageId}, and forbids a re-paste demand', async () => {
+    svc.getChatMessages.mockResolvedValue({
+      chatId: 'c1',
+      messages: [{ id: 'm-paste-5fcbdd61', role: 'user', content: `BREV_LOGIN_TOKEN=${FAKE_ZAI}`, createdAt: 't' }],
+      hasMore: false, nextBefore: null,
+    });
+    const { ctx: machineCtx } = makeCtx({ userTurnAt: undefined });
+    const parsed = JSON.parse(await executePlatformTool(machineCtx, 'get_chat_messages', { chatId: 'c1' }));
+    const notice: string = parsed.secretRedactionNotice;
+    // (a) the read/write distinction is stated, not left to inference.
+    expect(notice).toMatch(/READ-side scrub/);
+    expect(notice).toMatch(/NOT a rewrite of the stored row/);
+    // (b) the lawful next move is named, with the argument that makes it work.
+    expect(notice).toContain('store_secret');
+    expect(notice).toContain('fromMessageId');
+    // (c) the exact wrong instruction the old notice permitted is now barred.
+    expect(notice).toMatch(/do NOT ask them to paste it again/);
+    // (d) the honest miss is NOT pre-empted: "scrubbed at rest" stays reachable.
+    expect(notice).toContain('no_secret_found');
+    // The value itself still never reaches the reader.
+    expect(JSON.stringify(parsed)).not.toContain(FAKE_ZAI);
+  });
+
   it('get_chat_messages on a USER-PRESENT turn reads verbatim (no notice) — the owner may read back what they pasted', async () => {
     svc.getChatMessages.mockResolvedValue({
       chatId: 'c1',

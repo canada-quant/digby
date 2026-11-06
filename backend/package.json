@@ -1,7 +1,7 @@
 {
-  "name": "admin-dashboard-backend",
+  "name": "digby-backend",
   "version": "1.0.0",
-  "description": "Admin Dashboard Backend API",
+  "description": "Digby backend API",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",

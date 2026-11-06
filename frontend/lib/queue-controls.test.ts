@@ -79,10 +79,10 @@ describe('the send-mode pill is GONE (b54efe5d) — no sticky interrupt can be a
 
   it('neither the composer nor its host carries the segmented control or a stored mode', () => {
     // Scoped honestly to the two files that owned the mode. The other
-    // <ChatComposer> hosts (page.tsx, SupervisorChatTab.tsx) and
-    // QueuedMessagesPanel are covered by the typechecker instead: the props and
-    // the SendMode type no longer exist, so any surviving use is a compile
-    // error, which is a stronger gate than a substring scan.
+    // <ChatComposer> hosts (page.tsx, SupervisorChatTab.tsx) are covered by the
+    // typechecker instead: the props and the SendMode type no longer exist, so
+    // any surviving use is a compile error, which is a stronger gate than a
+    // substring scan.
     for (const src of [COMPOSER, VIEW]) {
       expect(src).not.toContain('sendMode');
       expect(src).not.toContain('SendMode');
@@ -194,6 +194,30 @@ describe('refusal mapping (ea04454c) — failures are named, not swallowed', () 
     expect(queueRefusalMessage('QUEUE_NOT_USER_ROW')).toContain('machine sender');
     expect(queueRefusalMessage('QUEUE_ITEM_GONE')).toContain('already started or was removed');
     expect(queueRefusalMessage(undefined)).toContain('refreshing');
+  });
+
+  /**
+   * Every code the backend can actually send must have its OWN message here
+   * (ticket ffbf1315). QUEUE_BLOCKED_BY_OTHER was added to the controller
+   * (crossmodel.controller.ts, the 'blocked' refusal — another person's waiting
+   * row is in the way) but never to this mapper, so that real, actionable
+   * refusal fell through to the generic "Could not update the queue —
+   * refreshing it now."
+   *
+   * CAVEAT, stated honestly: this list is a RE-ENCODED literal, not derived
+   * from the server — nothing here reads the controller. It pins that each of
+   * the four codes currently in the wire protocol maps to a distinct message,
+   * so removing a mapping fails. It CANNOT catch a brand-new server code on its
+   * own; the durable guard is the backend suite, which fails if the controller
+   * adds a refusal without a status/code pair.
+   */
+  it('has a distinct message for EVERY code the controller can return (ffbf1315)', () => {
+    const serverCodes = ['QUEUE_NOT_OWNER', 'QUEUE_NOT_USER_ROW', 'QUEUE_BLOCKED_BY_OTHER', 'QUEUE_ITEM_GONE'];
+    const generic = queueRefusalMessage(undefined);
+    for (const code of serverCodes) {
+      expect(queueRefusalMessage(code)).not.toBe(generic);
+    }
+    expect(queueRefusalMessage('QUEUE_BLOCKED_BY_OTHER')).toContain('Someone else is waiting');
   });
 
   it('recovers the FRESH queue from a refusal payload (one hop, no extra GET)', () => {
