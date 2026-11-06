@@ -26,7 +26,10 @@ process.env.CODING_CONTAINER_MODE = '1';
 
 jest.mock('../../../utils/logger', () => ({
   __esModule: true,
-  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  // `log` is required by logExternal (utils/log-level.ts) — a RECOVERED
+  // mid-run container replacement now tags logClass:'external' so the
+  // log-signal sweep stops filing it (family lane 30dfad06, 2026-11-06).
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), log: jest.fn() },
 }));
 jest.mock('../../../config/database', () => ({
   __esModule: true,

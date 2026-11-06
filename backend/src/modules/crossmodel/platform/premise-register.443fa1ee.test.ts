@@ -169,9 +169,28 @@ describe('443fa1ee — af24badf rule: never advise a kpi: write THIS register re
   });
 
   it('unrelated validation errors are passed through byte-identical (the caveat only ever touches barDirection placement)', () => {
-    const r = normalizePremises([{ key: 'bad key!', value: 1 }], GOAL_8F0DCD6F, { mode: 'merge' });
+    // A roomy register, so this call carries exactly ONE defect and the answer
+    // is the validator's own text, untouched.
+    const r = normalizePremises([{ key: 'bad key!', value: 1 }], GOAL_8F0DCD6F.slice(0, 3), { mode: 'merge' });
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.error).toBe(normalizePremise({ key: 'bad key!', value: 1 }, {}));
+  });
+
+  it('…and at the cap it ALSO names the overflow — the caveat still never fires for it (c58f0dc7)', () => {
+    // The same call against the FILED 12/12 register carries a SECOND, genuinely
+    // independent defect (this key would be a 13th). It is now disclosed in the
+    // same answer instead of costing a second round-trip — while the kpi:
+    // caveat remains barDirection-placement-only, as this suite pins.
+    const r = normalizePremises([{ key: 'bad key!', value: 1 }], GOAL_8F0DCD6F, { mode: 'merge' });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toContain(normalizePremise({ key: 'bad key!', value: 1 }, {}));
+    // CERTAINTY RULE: nothing validated here, so the overflow is only POSSIBLE
+    // — it is stated as a bounded upper bound ("up to 13"), never asserted.
+    expect(r.error).toContain('up to 13');
+    expect(r.error).not.toContain('CANNOT LAND');
+    expect(r.error).not.toContain('CLOSED');
+    expect(r.error).not.toContain('at most ONE');
   });
 });

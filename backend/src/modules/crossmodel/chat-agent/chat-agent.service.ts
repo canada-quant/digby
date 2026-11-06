@@ -5495,7 +5495,17 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
       const attribText = result.finalText || adapter.answerText || '';
       const attribMismatches = await artifactAttributionMismatches(chatId, attribText).catch(() => []);
       if (attribMismatches.length) {
-        logger.warn(`chat-agent: supervisor ${chatId.slice(0, 8)} machine wake carried ${attribMismatches.length} artifact-attribution mismatch(es) (observe-only) — spec 13dfa16d`, { source: 'chat-agent' });
+        // Taxonomy (log-signal family 8775266b, 2026-11-06): INFO, not warn.
+        // This line is a SUMMARY of the durable per-mismatch rows written in the
+        // loop below (`artifact_attribution_mismatch`, strictly richer: prefix,
+        // claimed work item, todo status/evidence, verb, leg, phrase) — so
+        // lowering the level loses no data while it stops a weekly ticket for an
+        // OBSERVE-ONLY baseline whose whole point is to accumulate volume before
+        // enforcement (kill switch ARTIFACT_ATTRIBUTION_DISABLED=1). Same
+        // precedent as tripleAggregateLogLevel (unbacked-claim.ts:848): a benign
+        // adjudicated aggregate class logs info so the sweep (warn+ only) stays
+        // quiet while the metric rows keep the full baseline. Text unchanged.
+        logger.info(`chat-agent: supervisor ${chatId.slice(0, 8)} machine wake carried ${attribMismatches.length} artifact-attribution mismatch(es) (observe-only) — spec 13dfa16d`, { source: 'chat-agent' });
         for (const mm of attribMismatches) {
           recordLoopMetric({
             kind: 'artifact_attribution_mismatch',
@@ -5655,7 +5665,10 @@ const reStripForgedChromeOnRetry = (r: typeof result): { r: typeof result; swapp
     {
       const attribMismatches = await artifactAttributionMismatches(chatId, claimText).catch(() => []);
       if (attribMismatches.length) {
-        logger.warn(`chat-agent: supervisor ${chatId.slice(0, 8)} human turn carried ${attribMismatches.length} artifact-attribution mismatch(es) (observe-only) — spec 13dfa16d`, { source: 'chat-agent' });
+        // Taxonomy (log-signal family 8775266b, 2026-11-06): INFO for the same
+        // reason as the machine-wake sibling above — the durable per-mismatch
+        // metric rows below are the record; this line only summarises them.
+        logger.info(`chat-agent: supervisor ${chatId.slice(0, 8)} human turn carried ${attribMismatches.length} artifact-attribution mismatch(es) (observe-only) — spec 13dfa16d`, { source: 'chat-agent' });
         for (const mm of attribMismatches) {
           recordLoopMetric({
             kind: 'artifact_attribution_mismatch',

@@ -546,6 +546,157 @@ export function premiseEvictionNotice(dropped: string[], mode: 'merge' | 'replac
 }
 
 /**
+ * Ticket c58f0dc7 (2026-11-05, lane 0037460b run baedaee5 — a 3×
+ * goal_premise_set streak on goal 8f0dcd6f, the SAME goal as 443fa1ee and
+ * 7862cb2a). The fourth iteration of the af24badf class, and the first one
+ * that was never an individual text's fault: EVERY refusal the lane received
+ * was correct and, after #2243/#2286, self-describing. The defect is the ORDER
+ * and the ARITY of disclosure.
+ *
+ * Reproduced against the shipped code (byte-for-byte, all three texts):
+ *   call 1 → "backlog:auto_decrypt_rate_clips_per_hr": barDirection needs a bar
+ *   call 2 → "target:auto_decrypt_clips_per_hr" is a TARGET premise …
+ *   call 3 → a goal holds at most 12 premises (got 14: 12 already registered +
+ *            2 new key(s) in this call)
+ *
+ * The lane re-sent the SAME array three times. Each call carried THREE
+ * independent defects — two per-premise placement errors AND a whole-call cap
+ * overflow — but `normalizePremises` returned at the FIRST per-premise failure
+ * and evaluated the cap only AFTER the loop (it needs the merged set). So the
+ * caller could not see the cap until both placement errors were fixed, and
+ * fixing them was itself two round-trips. Three defects, three calls, one
+ * breaker trip. The guards were never wrong; the DISCLOSURE was serial.
+ *
+ * af24badf's rule — "NEVER advise a retry this same branch would refuse again"
+ * — generalised: a refusal must never make the caller pay a round-trip for a
+ * defect this call ALREADY knows about. So every independent per-premise
+ * failure is collected and reported together, and — when it is CERTAIN — the
+ * whole-call cap overflow is disclosed in the same answer.
+ *
+ * THE CERTAINTY RULE (adversarial review 2026-11-05, this ticket). The cap is a
+ * property of the MERGED set, so while some premises are still invalid the
+ * final size is not knowable — a repair can collide with an already-registered
+ * key and add nothing. A first cut counted the keys AS SENT and thereby broke
+ * af24badf's rule in the opposite direction: it predicted an overflow the
+ * corrected call would NOT hit (12 valid keys + one keyless stray, replace
+ * mode → "1 key must go" while the repaired call LANDS), which is a refusal
+ * pointing at a retry this branch ACCEPTS. So:
+ *   · CERTAIN — the premises that DID validate already overflow. Every one of
+ *     them is in the final set, so this cannot be repaired away. Assert it.
+ *   · POSSIBLE — only the invalid ones could push it over. State the counts and
+ *     the worst case as an upper bound ("if each lands as its own premise"),
+ *     name the merge-onto-a-registered-key repair that would fit, and never
+ *     claim the call is over.
+ *   · Otherwise say nothing about the cap.
+ * The one thing this must never do is stay SILENT when the caller is about to
+ * hit the cap — that silence is the paid round-trip the ticket exists to
+ * remove.
+ *
+ * Bounds (same review): the answer is bounded, because it is consumed after a
+ * head-slice downstream — `DISPLAY_RESULT_CAP = 8000` in coding/agent.ts and a
+ * 1200-char capture on the breaker path. An unbounded list buried the cap
+ * notice past the cut (8 verbose defects already ran to 11,161 chars, with the
+ * notice at char 10,220). So the cap block goes FIRST and the list is capped.
+ *
+ * Byte-compatibility: a call with exactly ONE blocking defect that does NOT
+ * touch the cap returns exactly the text it returned before (the pins in
+ * af24badf / 7862cb2a / 443fa1ee / faeaa181 and the kpi: contract assert those
+ * verbatim). A one-defect call that ALSO overflows necessarily gets the
+ * enumerated form — that is the whole point, since the bare text is what hid
+ * the cap.
+ *
+ * NOT fixed here (named, not claimed closed): the whole-call ONE-KPI gate
+ * (`at most ONE kpi: premise`) is still evaluated serially after this point, so
+ * a call carrying both a placement error and two `kpi:` keys still needs two
+ * calls. Same class, smaller blast radius; left to its own change.
+ */
+function multiPremiseRefusal(problems: string[], cap: { certain: boolean; text: string } | null): string {
+  const MAX_SHOWN = 5;
+  const one = problems.length === 1;
+  const shown = problems.slice(0, MAX_SHOWN).map((e, i) => `(${i + 1}) ${e}`).join(' ');
+  const more = problems.length > MAX_SHOWN ? ` …and ${problems.length - MAX_SHOWN} more invalid premise(s); every one is checked the same way.` : '';
+  const list = `${shown}${more}`;
+  // The cap block leads: it is the whole-call fact, and a downstream head-slice
+  // must never be able to cut it off.
+  if (cap) {
+    const lead = cap.certain
+      ? `THIS CALL CANNOT LAND EVEN IF THE INVALID PREMISE(S) BELOW ARE FIXED — the premise(s) that DID validate already overflow the cap: ${cap.text}`
+      : `ALSO CHECK THE SIZE BEFORE RE-SENDING — ${cap.text}`;
+    const tail = cap.certain
+      ? `The ${problems.length} invalid premise(s) below are a SEPARATE problem; fix both the list and the size, then re-send once.`
+      : `The ${problems.length} invalid premise(s) below are a SEPARATE problem; fixing them alone may still leave the call over the cap.`;
+    return `${lead} ${tail} ${list}`;
+  }
+  const head = `${problems.length} premise${one ? '' : 's'} in this call ${one ? 'is' : 'are'} invalid. Each is checked independently, so fixing ${one ? 'it' : 'them'} ONE PER CALL costs one refused round-trip per defect — fix ${one ? 'it' : 'ALL of them'} and re-send once.`;
+  return `${head} ${list}`;
+}
+
+/**
+ * The CAP arithmetic, shared with the real cap branch so the two cannot state
+ * different numbers for the same set (the branch's own text is pinned verbatim
+ * by 0aeb8844 / af24badf / 7862cb2a). Returns null when `keys` fits.
+ *
+ * It is fed a KEY LIST, not a call: the certain path passes only the premises
+ * that validated, the possible path passes the union an unrepaired call would
+ * produce. Callers own which question they are asking.
+ */
+function premiseCapError(priorKeys: string[], incomingKeys: string[], mode: 'merge' | 'replace'): string | null {
+  const uniq = (ks: string[]): string[] => {
+    const m = new Map<string, string>();
+    for (const k of ks) if (!m.has(k.toLowerCase())) m.set(k.toLowerCase(), k);
+    return [...m.values()];
+  };
+  const inc = uniq(incomingKeys);
+  // A merge unions onto the stored register ('byKey' is lowercased, so the
+  // union is deduped); a replace keeps only the keys it is sent.
+  const union = mode === 'replace' ? inc : uniq([...priorKeys, ...inc]);
+  if (union.length <= PREMISE_MAX_PER_GOAL) return null;
+  const over = union.length - PREMISE_MAX_PER_GOAL;
+  const n = `${over} key${over === 1 ? '' : 's'}`;
+  if (inc.length > PREMISE_MAX_PER_GOAL) {
+    const why = mode === 'replace'
+      ? 'a replace keeps exactly the keys it is sent, so nothing already registered offsets it'
+      : 'the call itself is over the cap before the goal is even considered';
+    return `a goal holds at most ${PREMISE_MAX_PER_GOAL} premises (got ${union.length}) — this call sends ${inc.length} keys, ${why}, so ${n} must go from this call: the call itself must shrink (re-sending the same set is refused again in either mode)`;
+  }
+  if (priorKeys.length > PREMISE_MAX_PER_GOAL) {
+    return `a goal holds at most ${PREMISE_MAX_PER_GOAL} premises (got ${union.length}) — this goal ALREADY holds ${priorKeys.length}, more than the cap, so dropping keys from this call cannot bring it under it; send the ≤${PREMISE_MAX_PER_GOAL}-key set you want it to KEEP with mode:'replace' (a replace keeps ONLY the keys in the call — re-send the keys you still need and omit the rest)`;
+  }
+  const newKeys = Math.max(0, union.length - priorKeys.length);
+  return `a goal holds at most ${PREMISE_MAX_PER_GOAL} premises (got ${union.length}: ${priorKeys.length} already registered + ${newKeys} new key(s) in this call) — ${n} must go: drop at least ${over} of the NEW key(s) (dropping one you merely re-sent moves nothing — it is already registered), or send the ≤${PREMISE_MAX_PER_GOAL}-key set you want it to KEEP with mode:'replace' (a replace keeps ONLY the keys in the call, so re-send every already-registered key you still need; ANY registered key you omit is RETIRED from the register and named back to you as an eviction). Already registered: ${priorKeys.join(', ')}`;
+}
+
+/**
+ * The cap heads-up for a call that ALSO carries invalid premises. `validKeys`
+ * are the premises that validated (certain to land); `intendedKeys` are every
+ * slot the call sends, INCLUDING a unique placeholder per keyless/!object
+ * element and the RAW (unclipped) text of a key that failed validation, so two
+ * distinct over-long keys never collapse into one phantom slot and a keyless
+ * stub is never silently dropped.
+ *
+ * Returns null when the cap is not in play, so an ordinary refusal's answer is
+ * byte-identical to before.
+ */
+function capNoticeForInvalidCall(
+  priorKeys: string[], validKeys: string[], intendedKeys: string[], mode: 'merge' | 'replace',
+): { certain: boolean; text: string } | null {
+  const certain = premiseCapError(priorKeys, validKeys, mode);
+  if (certain) return { certain: true, text: certain };
+  // Not certain: report the WORST CASE as an upper bound, and name the repair
+  // that makes it fit. Never asserted as an overflow.
+  const possible = premiseCapError(priorKeys, intendedKeys, mode);
+  if (!possible) return null;
+  const uniq = new Set(intendedKeys.map((k) => k.toLowerCase())).size;
+  const upper = mode === 'replace'
+    ? uniq
+    : new Set([...priorKeys.map((k) => k.toLowerCase()), ...intendedKeys.map((k) => k.toLowerCase())]).size;
+  return {
+    certain: false,
+    text: `the goal holds ${priorKeys.length} of its ${PREMISE_MAX_PER_GOAL} premises and this call sends ${uniq} premise slot(s), so if each becomes its own premise the corrected call would hold up to ${upper} (cap ${PREMISE_MAX_PER_GOAL}). If your repair MERGES an invalid premise onto a key that is already registered it fits and no trimming is needed; otherwise drop enough to fit.`,
+  };
+}
+
+/**
  * Append the af24badf caveat to a barDirection-placement refusal when the
  * `kpi:` write it advises would itself be refused by THIS register. Only
  * applied to refusals that actually point at the kpi: path — every other
@@ -647,8 +798,14 @@ export function detectPremiseRevision(prev: GoalPremise | undefined, next: GoalP
 
 /**
  * Validate a whole set. mode 'merge' upserts by key onto `existing` (keeping
- * an unchanged premise's check stamps); 'replace' rewrites the set. Returns
- * either the premises or the first validation error.
+ * an unchanged premise's check stamps); 'replace' rewrites the set.
+ *
+ * Returns the premises, or a refusal. Ticket c58f0dc7: the refusal is no longer
+ * "the first validation error" — every independent per-premise failure is
+ * collected and returned together (see `multiPremiseRefusal`), together with a
+ * cap heads-up when the call's size is in play, so a caller never pays one
+ * refused round-trip per defect. A call with exactly one blocking defect that
+ * does not touch the cap still returns that defect's text verbatim.
  */
 export function normalizePremises(
   rawList: unknown,
@@ -667,12 +824,29 @@ export function normalizePremises(
   // revisions compare against it (a 'replace' that moves a key's value is exactly
   // the silent overwrite C3 names).
   const priorByKey = new Map<string, GoalPremise>((Array.isArray(existing) ? existing : []).map((p) => [String(p.key).toLowerCase(), p]));
+  // Ticket c58f0dc7: every independent per-premise failure is COLLECTED, not
+  // returned at the first one. The filed lane re-sent one payload three times
+  // because each call disclosed a single defect and the whole-call cap was not
+  // even evaluated until the per-premise loop passed. See multiPremiseRefusal.
+  const problems: string[] = [];
+  let kpiRefusalOut: { reason: KpiRefusalReason; key: string } | undefined;
+  // The slots this call SENDS, for the POSSIBLE-overflow side of the cap
+  // heads-up. Review c58f0dc7: a keyless/non-object element must not collapse
+  // into one shared phantom slot, and an over-long key must be kept RAW (not
+  // clipped at PREMISE_KEY_MAX+1) or two distinct over-long keys dedupe into
+  // one — both made the notice silently absent where it was needed.
+  const intendedKeys: string[] = [];
   for (const rawIn of rawList as PremiseInput[]) {
     if (rawIn && typeof rawIn === 'object') {
+      const rawKey = (rawIn as { key?: unknown }).key;
+      // Distinct placeholder per keyless slot so each stays its own slot.
+      intendedKeys.push(typeof rawKey === 'string' && rawKey.trim() ? rawKey.trim().toLowerCase() : `\u0000slot:${intendedKeys.length}`);
       const bd = (rawIn as { barDirection?: unknown }).barDirection;
       if (bd !== undefined && bd !== null && String(bd).trim().toLowerCase() === 'auto') {
         explicitAutoDirection.add(str((rawIn as { key?: unknown }).key, PREMISE_KEY_MAX + 1).toLowerCase());
       }
+    } else {
+      intendedKeys.push(`\u0000slot:${intendedKeys.length}`);
     }
     // A re-send of an UNCHANGED receipted value without its receipt (a full-set
     // mode:'replace' trim, a merge that repeats the KPI) inherits the receipt it
@@ -687,18 +861,37 @@ export function normalizePremises(
     if (typeof p === 'string') {
       // A KPI-contract refusal is tagged so goals.service can record it (every other validation error is a shape error, not a gate).
       const refusedKey = kpiReceiptRefusalKey(p);
+      if (refusedKey && !kpiRefusalOut) kpiRefusalOut = { reason: 'no_receipt' as const, key: refusedKey };
       // Ticket 443fa1ee: never let a refusal point at a kpi: write THIS register
       // would refuse again (af24badf rule — a dead end one turn later). The
       // tag above is computed on the original text; the caveat only ever
       // touches barDirection-placement errors, which carry no tag.
-      return { ok: false, error: withKpiAdviceCaveat(p, existing, mode), ...(refusedKey ? { kpiRefusal: { reason: 'no_receipt' as const, key: refusedKey } } : {}) };
+      problems.push(withKpiAdviceCaveat(p, existing, mode));
+      continue;
     }
     // An inherited receipt is the SAME reading: it keeps its measurement stamp (age on the board = when it was measured).
     if (inheritedFrom?.setAt) p.setAt = inheritedFrom.setAt;
     const k = p.key.toLowerCase();
-    if (seen.has(k)) return { ok: false, error: `premise "${p.key}" given twice` };
+    if (seen.has(k)) { problems.push(`premise "${p.key}" given twice`); continue; }
     seen.add(k);
     incoming.push(p);
+  }
+  // Ticket c58f0dc7: disclose EVERY independent defect in this ONE answer —
+  // the per-premise failures collected above AND, when it can be said with
+  // certainty (or as a bounded upper-bound heads-up), the whole-call cap
+  // overflow that the old code could not even evaluate until the loop had
+  // passed. A single blocking defect that does not touch the cap still returns
+  // exactly the text it returned before (the pins in af24badf / 7862cb2a /
+  // 443fa1ee / faeaa181 / the kpi: contract assert those verbatim).
+  if (problems.length) {
+    const priorKeys = (Array.isArray(existing) ? existing : []).map((p) => String(p.key));
+    // CERTAIN = the premises that DID validate already overflow. Every one is in
+    // the final set, so no repair of the invalid ones can bring it under the cap.
+    const capNotice = capNoticeForInvalidCall(priorKeys, incoming.map((p) => p.key), intendedKeys, mode);
+    const error = (problems.length === 1 && !capNotice)
+      ? problems[0]
+      : multiPremiseRefusal(problems, capNotice);
+    return { ok: false, error, ...(kpiRefusalOut ? { kpiRefusal: kpiRefusalOut } : {}) };
   }
   const prior = Array.isArray(existing) ? existing : [];
   const base = mode === 'replace' ? [] : prior;
@@ -795,47 +988,26 @@ export function normalizePremises(
     // COUNT the caller is trying to keep and how many must go. The hatch is
     // the ≤cap set the goal should END with — never "the full intended set",
     // which is exactly the set that does not fit.
-    const over = premises.length - PREMISE_MAX_PER_GOAL;
-    const n = `${over} key${over === 1 ? '' : 's'}`;
-    // NO HATCH: the call itself already sends more keys than the cap. A
-    // replace keeps exactly the keys it is sent, so an over-cap call is
-    // refused in BOTH modes — naming mode:'replace' here would be the
-    // af24badf dead end again, one turn later.
-    if (incoming.length > PREMISE_MAX_PER_GOAL) {
-      const why = mode === 'replace'
-        ? 'a replace keeps exactly the keys it is sent, so nothing already registered offsets it'
-        : 'the call itself is over the cap before the goal is even considered';
+    //
+    // Ticket c58f0dc7: the TEXT now comes from `premiseCapError` — the same
+    // helper `capNoticeForInvalidCall` uses to warn an invalid call ahead of
+    // time. That is what makes the two statements ONE source of truth instead
+    // of two hand-copied literals (adversarial review, this ticket: the first
+    // cut claimed this and did not do it, so "the projection cannot drift" was
+    // false). `premise-register.c58f0dc7.test.ts` pins the equality.
+    const capError = premiseCapError(prior.map((p) => p.key), incoming.map((p) => p.key), mode);
+    if (capError) {
+      // `prior` can hold a duplicate key only if a legacy row was hand-written;
+      // the union arithmetic above is the authority on the count, so keep its
+      // headline when the helper (which dedupes) disagrees.
+      const dedupedUnion = new Set([...prior, ...incoming].map((p) => p.key.toLowerCase())).size;
       return {
         ok: false,
-        error: `a goal holds at most ${PREMISE_MAX_PER_GOAL} premises (got ${premises.length}) — this call sends ${incoming.length} keys, ${why}, so ${n} must go from this call: the call itself must shrink (re-sending the same set is refused again in either mode)`,
+        error: dedupedUnion === premises.length
+          ? capError
+          : `a goal holds at most ${PREMISE_MAX_PER_GOAL} premises (got ${premises.length}) — ${premises.length - PREMISE_MAX_PER_GOAL} key(s) must go: send the ≤${PREMISE_MAX_PER_GOAL}-key set you want it to KEEP with mode:'replace' (a replace keeps ONLY the keys in the call)`,
       };
     }
-    // Defensive: a stored register already ABOVE the cap (a legacy row from
-    // when the cap, or a hand-written one). Dropping new keys cannot help —
-    // the union is ≥ prior.length — so the ONLY landing call is a trim.
-    if (prior.length > PREMISE_MAX_PER_GOAL) {
-      return {
-        ok: false,
-        error: `a goal holds at most ${PREMISE_MAX_PER_GOAL} premises (got ${premises.length}) — this goal ALREADY holds ${prior.length}, more than the cap, so dropping keys from this call cannot bring it under it; send the ≤${PREMISE_MAX_PER_GOAL}-key set you want it to KEEP with mode:'replace' (a replace keeps ONLY the keys in the call — re-send the keys you still need and omit the rest)`,
-      };
-    }
-    // Merge, fit input: the hatch is real, and the arithmetic is honest.
-    // `premises` is the UNION, so `premises.length - incoming.length` is "prior
-    // keys you did NOT re-send", NOT "already registered" — review af24badf
-    // caught the old head printing that as the registered count, which reads
-    // as "the goal is empty" on a bulk-upsert call. Report what is true: what
-    // the goal already holds, and how many of this call's keys are NEW.
-    const newKeys = Math.max(0, premises.length - prior.length);
-    // Ticket 7862cb2a: name WHICH keys the goal already holds. The cap refused
-    // with a count and an eviction ORDER left entirely to the caller, so a lane
-    // at 12 had to guess which fact to retire — and dropped a live measured one.
-    // The register cannot rank "load-bearing" for the caller, but it can list
-    // the keys so the choice is made against facts instead of memory.
-    const registered = prior.map((p) => p.key);
-    return {
-      ok: false,
-      error: `a goal holds at most ${PREMISE_MAX_PER_GOAL} premises (got ${premises.length}: ${prior.length} already registered + ${newKeys} new key(s) in this call) — ${n} must go: drop at least ${over} of the NEW key(s) (dropping one you merely re-sent moves nothing — it is already registered), or send the ≤${PREMISE_MAX_PER_GOAL}-key set you want it to KEEP with mode:'replace' (a replace keeps ONLY the keys in the call, so re-send every already-registered key you still need; ANY registered key you omit is RETIRED from the register and named back to you as an eviction). Already registered: ${registered.join(', ')}`,
-    };
   }
   return { ok: true, premises, revisions, dropped: droppedKeys };
 }

@@ -28,6 +28,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 import prisma from '../../../config/database';
 import logger from '../../../utils/logger';
+import { logExternal } from '../../../utils/log-level';
 import { CODING_WORKSPACE_ROOT } from './workspace.service';
 import { clearProcessRegistry } from './process.service';
 // build 2026-10-08 ISO — per-user workspace subtree (isolation.md option A).
@@ -1051,8 +1052,17 @@ export async function noteSessionContainerIdentity(sessionId: string): Promise<C
     if (!id) return null;
     const replacement = await recordContainerIdentity(sessionId, target, id);
     if (!replacement) return null;
-    logger.warn(
+    // Taxonomy (log-signal family 488abfa3, 2026-11-06): a container REPLACEMENT
+    // is a RECOVERED outcome — the session runs again in the new container — not
+    // an internal fault, so it is tagged logExternal and the sweep stops filing
+    // a weekly ticket for a class the platform handles by design. Nothing is
+    // lost by the tag: the SAME branch already writes the durable
+    // `container_replaced` loop-metric row below (a wave stays visible as a
+    // burst of those rows), and the lane still gets its run-start notice.
+    // Message text is UNCHANGED so greps and the audit pins keep matching.
+    logExternal(
       `coding container: REPLACED for session ${sessionId} — ${target} now ${id.slice(0, 12)}, previous ${replacement.previousId.slice(0, 12)} first seen ${replacement.previousSeenAt} (deploy/restart wave or reprovision): background processes and container-local state from that container are gone`,
+      { sessionId, container: target },
     );
     // Telemetry (dynamic import keeps this module's static graph unchanged):
     // a wave that swaps many lanes' containers in one minute is visible as a
@@ -1314,7 +1324,15 @@ export async function execInContainer(
       ? addendumForGoneContainer(replacement, replacedName)
       : `\n[coding container: the session container ${replacedName} was replaced under this run and could NOT be re-provisioned — shell tools are unavailable for the rest of this run. The git worktree and $DIGBY_ENV are intact; your LIVE $HOME (/tmp, the writable layer) went with the old container, so reinstall any CLI you put there when the next run re-provisions. Report this rather than retrying in a loop.]`;
     r.stderr = r.stderr ? `${r.stderr}${suffix}` : suffix.trimStart();
-    logger.warn(`coding container: exec found ${replacedName} GONE for session ${sessionId} mid-run (deploy/restart wave) — re-provisioned=${reProvisioned}`);
+    // Taxonomy (log-signal family c71183ab, 2026-11-06): split by RECOVERY, not
+    // by wording. `reProvisioned === true` means the command never ran but the
+    // container is back and the lane can re-run it — a RECOVERED outcome the
+    // platform handles by design, so it is tagged logExternal. The false branch
+    // is the opposite: shell tools are dead for the rest of the run, which stays
+    // an UNTAGGED warn so a total-loss/storm class still files. Never tag both.
+    const goneMessage = `coding container: exec found ${replacedName} GONE for session ${sessionId} mid-run (deploy/restart wave) — re-provisioned=${reProvisioned}`;
+    if (reProvisioned) logExternal(goneMessage, { sessionId, container: replacedName });
+    else logger.warn(goneMessage);
   }
   if (guardNote) r.stderr = r.stderr ? `${guardNote}\n${r.stderr}` : guardNote;
   return r;

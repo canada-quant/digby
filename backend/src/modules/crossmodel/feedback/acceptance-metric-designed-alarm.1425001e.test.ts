@@ -160,6 +160,61 @@ describe('designedAlarmOfFingerprint (ticket 1425001e)', () => {
     // …but a fragment carrying a LATER family's TAIL is not routed away.
     expect(designedAlarmOfMetric({ ...(LIVE_METRIC as any), params: { messagePattern: `${HEAD}folded orphaned continuation` } }, AUTOFILER_DEFAULT_METRIC_SOURCE)).toBeNull();
   });
+
+  // ── ADVERSARIAL REVIEW OF 35cd91a7 (2026-11-06): THE READ CUT IS POSITIONAL ──
+  // The `ours` recall guard is what keeps our OWN stream bugs (unread arg bytes,
+  // skipped raw lines, parse-fail frames) from being retired as an "instrument".
+  // It tested the CULPRIT inside the FINGERPRINT — but the fingerprint is hard-cut
+  // at FINGERPRINT_MAX_LEN (120) and the emit template puts the MODEL NAME before
+  // the summary. A model id long enough therefore cuts `ours recv=` away while the
+  // `gateway-or-ours` TOKEN survives past the cut independently: the culprit guard
+  // misses, the token matches, and every `ours` verdict on that seat becomes a
+  // permanently-silenced class. Measured before the fix: model length 74/78/82
+  // silenced; 24/40/59/71 filed. This is a MISS, not the "safe direction" the
+  // first cut's docblock claimed.
+  const SUMMARY_OURS =
+    'ours recv=812 acc=400 drop=0 frag=0 buf=0 fr=tool_calls sc=1 ur=412 verdict=no_complete_payload — receivedBytes=812 accumulatedBytes=400 droppedBytes=0';
+
+  it('REGRESSION PIN: a long model id that cuts `ours recv=` out of the FINGERPRINT still FILES when the raw row is passed', () => {
+    // The exact live emit template, with a model id long enough to push the
+    // culprit past the 120-char cut but NOT so long that the token goes too
+    // (measured window: 74–84 chars of model id; 90+ cuts the token as well and
+    // then the class correctly files for the ordinary reason).
+    const longModel = 'api-optimize-some-vendor-dated-preview-alias-v4.1-flash-2027-01-01-preview';
+    const raw = `tool-call stream [${longModel}]: GATEWAY-OR-OURS ${SUMMARY_OURS}`;
+    const fp = raw.replace(/\d+/g, '<n>').slice(0, 120);
+
+    // PRECONDITION — prove the confound is real, so this test cannot rot into a
+    // tautology if the cut or the template moves (learnings: pin the subject).
+    expect(fp).toContain('GATEWAY-OR-OURS');   // the token survives the cut …
+    expect(fp).not.toContain('ours recv=');    // … and the culprit does not.
+    expect(raw).toContain('ours recv=');       // the RAW row still carries it.
+
+    // WITHOUT the raw row the guard cannot see the culprit — a miss, NOT the
+    // "safe direction" the first cut's docblock claimed: the token already
+    // matched, so a culprit miss means SILENCE. WITH the raw row, the verdict
+    // reads `ours` ⇒ a defect of ours ⇒ never an instrument.
+    expect(designedAlarmOfFingerprint(fp)?.id).toBe('gateway-or-ours'); // the defect, demonstrated
+    expect(designedAlarmOfFingerprint(fp, raw)).toBeNull();             // the fix
+  });
+
+  it('the same row on a SHORT model id is unaffected (no behaviour change for the shipped population)', () => {
+    const raw = `tool-call stream [api-optimize-alibaba-deepseek-v4.1-flash]: GATEWAY-OR-OURS ${SUMMARY_OURS}`;
+    const fp = raw.replace(/\d+/g, '<n>').slice(0, 120);
+    expect(fp).toContain('ours recv=');
+    expect(designedAlarmOfFingerprint(fp, raw)).toBeNull();
+    expect(designedAlarmOfFingerprint(fp)).toBeNull();
+  });
+
+  it('a genuine `gateway` verdict on the SAME long model id is still an instrument (the guard did not become a blanket refusal)', () => {
+    // Same model id as the regression pin above — its normalized length keeps the
+    // TOKEN inside the 120-char cut (that is the whole confound being tested).
+    const longModel = 'api-optimize-some-vendor-dated-preview-alias-v4.1-flash-2027-01-01-preview';
+    const raw = `tool-call stream [${longModel}]: GATEWAY-OR-OURS gateway recv=0 acc=0 drop=1810 frag=3 buf=0 fr=tool_calls sc=0 verdict=no_complete_payload`;
+    const fp = raw.replace(/\d+/g, '<n>').slice(0, 120);
+    expect(fp).toContain('GATEWAY-OR-OURS');
+    expect(designedAlarmOfFingerprint(fp, raw)?.id).toBe('gateway-or-ours');
+  });
 });
 
 // NOTE: logSignalMetricContext's own behaviour (no metric + a FLAG for a

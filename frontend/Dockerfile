@@ -20,6 +20,10 @@ ENV NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED=$NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED
 # First-party visitor analytics (2026-10-07, lib/visitor-analytics.ts): '1' turns the web capture off (no visitor id, no requests).
 ARG NEXT_PUBLIC_VISITOR_ANALYTICS_DISABLED=
 ENV NEXT_PUBLIC_VISITOR_ANALYTICS_DISABLED=$NEXT_PUBLIC_VISITOR_ANALYTICS_DISABLED
+# Client UI error capture (ticket d4e643a5, lib/client-error-reporter.ts): '1' installs no window.onerror /
+# unhandledrejection listeners and posts nothing.
+ARG NEXT_PUBLIC_CLIENT_ERROR_REPORT_DISABLED=
+ENV NEXT_PUBLIC_CLIENT_ERROR_REPORT_DISABLED=$NEXT_PUBLIC_CLIENT_ERROR_REPORT_DISABLED
 # Meta Pixel kill switch (2026-10-07, frontend/lib/meta-pixel.ts): =1 → no pixel, no browser events.
 ARG NEXT_PUBLIC_META_PIXEL_DISABLED=
 ENV NEXT_PUBLIC_META_PIXEL_DISABLED=$NEXT_PUBLIC_META_PIXEL_DISABLED

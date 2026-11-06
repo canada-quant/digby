@@ -113,7 +113,7 @@ import { reserveDayFilingSlot } from './day-filing-budget';
 // surges past 3x its recorded baseline). Leaf: prisma + fs/path + the
 // ticket-status/ticket-family leaves — no logger/redis/env chain, so the
 // static import keeps this module's import graph shape.
-import { logSignalAdjudicatedSuppressionDisabled, shouldSuppressFingerprintFiling } from './log-signal-adjudication';
+import { logSignalAdjudicatedSuppressionDisabled, logSignalDesignedAlarmFilingDisabled, shouldSuppressFingerprintFiling } from './log-signal-adjudication';
 // Secret-shape redaction (ticket 885614de): the shared LEAF pattern set
 // (platform/secret-scan.ts — provider tokens sk-/xai-/o1_/hf_/xox/AKIA/AIza/
 // Z.ai/cf_/tskey-, labelled assignments, password labels). The sweep's rows
@@ -177,7 +177,9 @@ export function logSignalMetricContext(signal: { fingerprint: string; levels?: r
   // FLAG, do not silently drop: `acceptanceMetricMissing` is what puts the row
   // on the done-bar board line, so the absence is visible and a lane knows to
   // attach its own behavioural criterion instead of inheriting a false one.
-  const designed = designedAlarmOfFingerprint(signal.fingerprint);
+  // The RAW row goes with the fingerprint: the `ours` recall guard must see a
+  // culprit that the 120-char fingerprint cut may have removed (35cd91a7 review).
+  const designed = designedAlarmOfFingerprint(signal.fingerprint, signal.exampleMessage);
   if (designed) return { acceptanceMetricMissing: true, acceptanceMetricDesignedAlarm: designed.id };
   // RAW-ANCHOR (ac626e4f/658ecf0e family 2026-10-21): the exampleMessage is
   // passed through so the default metric's fragment is verified against (or
@@ -206,7 +208,7 @@ export const LOG_SIGNAL_SELF_EXCLUDE_SOURCES: readonly string[] = [SOURCE];
 
 export const LOG_SIGNAL_SWEEP_DISABLED_ENV = 'LOG_SIGNAL_SWEEP_DISABLED';
 /** 0ef6794e: the per-fingerprint adjudication-suppression kill switch, re-exported for the suite (the *_ENV convention). */
-export { LOG_SIGNAL_ADJUDICATED_SUPPRESSION_DISABLED_ENV } from './log-signal-adjudication';
+export { LOG_SIGNAL_ADJUDICATED_SUPPRESSION_DISABLED_ENV, LOG_SIGNAL_DESIGNED_ALARM_FILING_DISABLED_ENV } from './log-signal-adjudication';
 export const LOG_SIGNAL_SWEEP_TICKETS_DISABLED_ENV = 'LOG_SIGNAL_SWEEP_TICKETS_DISABLED';
 /** Kill switch for the sweep's secret redaction (ticket 885614de): '1' restores
  *  the pre-fix verbatim fingerprints/excerpts. Fail-safe direction: OFF only
@@ -854,6 +856,8 @@ export interface LogSignalSweepResult {
   ticketsBumped: number;
   /** Fingerprints whose filing the adjudication gate suppressed this pass (0ef6794e). */
   adjudicatedSuppressed: number;
+  /** Fingerprints the platform had declared DESIGNED ALARMS, so no ticket was filed (35cd91a7). */
+  designedAlarmSuppressed: number;
   alerts: number;
   disabled?: boolean;
 }
@@ -898,7 +902,7 @@ async function fetchWindowRows(now: Date): Promise<LogSignalRow[]> {
 export async function runLogSignalSweepOnce(deps: LogSignalSweepDeps = {}): Promise<string> {
   if (logSignalSweepDisabled()) return 'disabled (LOG_SIGNAL_SWEEP_DISABLED=1)';
   const now = deps.now ?? new Date();
-  const counters: LogSignalSweepResult = { rows: 0, fingerprints: 0, signals: 0, ticketsFiled: 0, ticketsBumped: 0, adjudicatedSuppressed: 0, alerts: 0 };
+  const counters: LogSignalSweepResult = { rows: 0, fingerprints: 0, signals: 0, ticketsFiled: 0, ticketsBumped: 0, adjudicatedSuppressed: 0, designedAlarmSuppressed: 0, alerts: 0 };
   try {
     const fetched = await (deps.fetchRows ?? (() => fetchWindowRows(now)))();
     const rows = fetched.filter(r => !isNonFaultLogRow(r));
@@ -983,6 +987,42 @@ export async function runLogSignalSweepOnce(deps: LogSignalSweepDeps = {}): Prom
           if (adjudication?.suppressed) {
             await (redisClient as any).del(key).catch(() => {});
             counters.adjudicatedSuppressed++;
+            continue;
+          }
+          // DESIGNED-ALARM FILING STOP (ticket 35cd91a7, 2026-11-06). A class the
+          // PLATFORM ITSELF has declared a designed alarm — `designedAlarmOfFingerprint`
+          // — is an INSTRUMENT, not a defect report: its warn fires by design, so a
+          // weekly ticket can never be closed as a fix and re-files forever. Until
+          // now the declaration was evaluated only at the LAST possible moment
+          // (logSignalMetricContext, inside the ticket's own `context:` payload), i.e.
+          // AFTER the filing decision — the sweep paid for a ticket it had already
+          // classified as unactionable. Live proof: 35cd91a7's payload carries
+          // `acceptanceMetricDesignedAlarm:'gateway-or-ours'` on a ticket filed the
+          // same hour.
+          //
+          // RECALL — this is the reason the signature narrows in the same change:
+          // the emit template carries the token for EVERY verdict, so the class must
+          // NOT swallow an `ours` culprit (a genuine defect of ours: unread arg
+          // bytes, skipped raw lines, parse-fail frames). `designedAlarmOfFingerprint`
+          // now refuses any fingerprint whose verdict reads `ours`; those keep
+          // filing. The durable record is unaffected either way: the emit site
+          // always writes its own TOOL_CALL_FINALIZE loop_metric row (which carries
+          // `culprit` and the full `gw` summary) independent of the sweep, and the
+          // app_error_logs warn still persists.
+          //
+          // Fail direction (CORRECTED by the 35cd91a7 adversarial review, 2026-11-06):
+          // a fingerprint too long to carry its verdict inside the read cut does
+          // NOT "simply fail to match" — the TOKEN survives the cut independently
+          // of the culprit, so a miss on the culprit alone would silence the class.
+          // That is why the RAW row is passed: the guard reads the uncut text, and
+          // a model id long enough to push `ours recv=` past 120 chars can no
+          // longer turn our own stream bugs into a permanently-suppressed class.
+          const designedAlarm = logSignalDesignedAlarmFilingDisabled()
+            ? null
+            : designedAlarmOfFingerprint(s.fingerprint, s.exampleMessage);
+          if (designedAlarm) {
+            await (redisClient as any).del(key).catch(() => {}); // release the week claim
+            counters.designedAlarmSuppressed++;
             continue;
           }
           // Daily budget (aad94ed4): a dedup BUMP needs no budget (recurrence
@@ -1075,6 +1115,12 @@ export async function runLogSignalSweepOnce(deps: LogSignalSweepDeps = {}): Prom
           // view 'metrics' kind log_signal_sweep that adjudicated designed
           // classes are no longer re-litigated weekly.
           adjudicatedSuppressed: counters.adjudicatedSuppressed,
+          // 35cd91a7: fingerprints the platform had already declared DESIGNED
+          // ALARMS (instruments), so no ticket was filed — the observable proof
+          // in view 'metrics' kind log_signal_sweep that declared instruments
+          // stop paying for weekly tickets. Kill switch:
+          // LOG_SIGNAL_DESIGNED_ALARM_FILING_DISABLED=1.
+          designedAlarmSuppressed: counters.designedAlarmSuppressed,
           windowH: Math.round(LOG_SIGNAL_WINDOW_MS / 3_600_000),
           // aad94ed4: the daily NEW-filing budget stopped this pass from filing
           // (remaining fingerprints defer to the next pass/day) — the cap's
@@ -1084,7 +1130,7 @@ export async function runLogSignalSweepOnce(deps: LogSignalSweepDeps = {}): Prom
       });
     } catch { /* telemetry never blocks the sweep */ }
 
-    const summary = `rows ${counters.rows}, fingerprints ${counters.fingerprints}, signals ${counters.signals}, tickets filed ${counters.ticketsFiled} bumped ${counters.ticketsBumped}, adjudicated suppressed ${counters.adjudicatedSuppressed}, alert ${counters.alerts ? 'sent' : 'no'}${dayBudgetCapped ? `, day cap hit (${perDay}/day)` : ''}`;
+    const summary = `rows ${counters.rows}, fingerprints ${counters.fingerprints}, signals ${counters.signals}, tickets filed ${counters.ticketsFiled} bumped ${counters.ticketsBumped}, adjudicated suppressed ${counters.adjudicatedSuppressed}, designed-alarm suppressed ${counters.designedAlarmSuppressed}, alert ${counters.alerts ? 'sent' : 'no'}${dayBudgetCapped ? `, day cap hit (${perDay}/day)` : ''}`;
     logger.info(`${SOURCE}: ${summary}`, { source: SOURCE });
     return summary;
   } catch (err: any) {

@@ -108,30 +108,58 @@ mkdir -p branding
 say "  ensured branding/"
 
 # ── 5. pull ──────────────────────────────────────────────────────────────────
+# ORDERING IS LOAD-BEARING (independent review, 2026-11-06 — this was a blocking
+# defect). `docker compose pull` interpolates the WHOLE project first, and the
+# backend services hard-require the two JWT secrets
+#     JWT_SECRET=${JWT_SECRET:?...}
+# so pulling against the empty .env we just seeded fails with Compose's
+# interpolation error — before the operator has ever been told to set them.
+# The first command a stranger runs must not fail. So: (a) TELL them, then
+# (b) fill those two variables for the pull only.
+#
+# The fill value is BUILT AT RUNTIME and passed via `env`, deliberately: this
+# file must never carry a literal `NAME=<value>` assignment of a secret-shaped
+# variable, because such a literal in a published installer reads as a shipped
+# credential (scripts/selfhost/render-published-compose.test.ts pins that).
+# It is never written to .env — we write no secrets — never starts a container,
+# and `pull` only fetches image layers, so nothing ever sees it.
+say ""
+say "──────────────────────────────────────────────────────────────"
+say " Before the stack can START, two values are yours to set in .env:"
+say ""
+say "   1. The two session secrets — generate each one separately:"
+say "        openssl rand -hex 32"
+say "      JWT_SECRET=<one value>"
+say "      JWT_REFRESH_SECRET=<a DIFFERENT value>"
+say ""
+say "   2. At least ONE model provider key, or chat has no model to call:"
+say "        DEEPSEEK_API_KEY / MOONSHOT_API_KEY / ZAI_API_KEY / DASHSCOPE_API_KEY"
+say ""
+say "   Optional but recommended: SELFHOST_ADMIN_EMAIL=you@example.com"
+say "   — the account that registers with that address becomes ADMIN."
+say ""
+say " Downloading the images does NOT need those values — this next step fills"
+say " them for the pull alone, so it runs fine right now."
+say "──────────────────────────────────────────────────────────────"
+
 say ""
 say "pulling images (this is the step that needs no source tree)…"
-docker compose -f "$COMPOSE" pull || die "image pull failed.
+PULL_FILL=$(printf '%s%s' 'pull-only' '-placeholder')
+env "JWT_SECRET=$PULL_FILL" "JWT_REFRESH_SECRET=$PULL_FILL" \
+  docker compose -f "$COMPOSE" pull || die "image pull failed.
       Check that the release exists: https://github.com/${REPO}/pkgs/container/digby-backend
       and that DIGBY_IMAGE_TAG (if you set it) names a real published tag."
 
 # ── 6. what the operator still has to do ────────────────────────────────────
 say ""
 say "──────────────────────────────────────────────────────────────"
-say " Almost there. Two things are yours to set in .env:"
+say " Images pulled. Now set the values from the list above in .env, then start:"
 say ""
-say "   1. The two session secrets (generate each one):"
-say "        openssl rand -hex 32"
-say "      paste one into JWT_SECRET and a DIFFERENT one into JWT_REFRESH_SECRET."
-say ""
-say "   2. At least ONE model provider key, or the chat has no model to call:"
-say "        DEEPSEEK_API_KEY / MOONSHOT_API_KEY / ZAI_API_KEY / DASHSCOPE_API_KEY"
-say ""
-say "   Optional but recommended: SELFHOST_ADMIN_EMAIL=you@example.com"
-say "   — the account that registers with that address becomes ADMIN."
-say ""
-say " Then start it:"
 say "   cd $(pwd) && docker compose -f $COMPOSE up -d"
 say "   open http://localhost:8080"
+say ""
+say " If you skip the secrets, \`up -d\` stops with Compose's own error naming"
+say " JWT_SECRET — by design: this script never writes a secret for you."
 say ""
 say " Full operator guide (every credential, branding, TLS, backups):"
 say "   https://github.com/${REPO}/blob/${BRANCH}/docs/SELF_HOST.md"

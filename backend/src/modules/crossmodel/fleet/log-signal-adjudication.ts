@@ -98,6 +98,21 @@ export function logSignalAdjudicatedSuppressionDisabled(env: NodeJS.ProcessEnv =
   return String(env[LOG_SIGNAL_ADJUDICATED_SUPPRESSION_DISABLED_ENV] ?? '').trim() === '1';
 }
 
+/**
+ * Kill switch for the DESIGNED-ALARM filing stop (ticket 35cd91a7, 2026-11-06).
+ *
+ * Separate from the adjudication switch above on purpose: that one gates the
+ * EVIDENCE-based per-fingerprint suppression (a close verdict), which is a
+ * different mechanism from "the platform declares this class an instrument, so
+ * it never files". An operator must be able to restore filing for declared
+ * instruments without also re-arming every adjudicated class.
+ */
+export const LOG_SIGNAL_DESIGNED_ALARM_FILING_DISABLED_ENV = 'LOG_SIGNAL_DESIGNED_ALARM_FILING_DISABLED';
+
+export function logSignalDesignedAlarmFilingDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return String(env[LOG_SIGNAL_DESIGNED_ALARM_FILING_DISABLED_ENV] ?? '').trim() === '1';
+}
+
 /** The minimal closed-row shape the gate reads. */
 export interface AdjudicationRow {
   id: string;

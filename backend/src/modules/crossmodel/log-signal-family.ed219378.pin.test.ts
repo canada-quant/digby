@@ -77,7 +77,9 @@ jest.mock('../../config/database', () => ({ __esModule: true, default: mockPrism
 
 jest.mock('../../utils/logger', () => ({
   __esModule: true,
-  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  // `log` is required by logExternal (utils/log-level.ts), which now emits the
+  // BrightData direct-tier terminal failure (family lane 30dfad06, 2026-11-06).
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), log: jest.fn() },
 }));
 
 // verify.service reaches loop-metrics via DYNAMIC import (env-free-leaf
@@ -348,7 +350,7 @@ describe('f73871a7 — a direct-tier timeout is logged once and never retried (b
     expect(normalizeLogMessage(warns[0])).toBe(normalizeLogMessage(ROW_f73871a7));
   });
 
-  it('a 500 is retried at most BD_MAX_ATTEMPTS times and escalates to ONE terminal warn', async () => {
+  it('a 500 is retried at most BD_MAX_ATTEMPTS times and escalates to ONE terminal row', async () => {
     mockAxiosPost.mockRejectedValue(Object.assign(new Error('Request failed with status code 500'), {
       response: { status: 500, data: '' },
     }));
@@ -361,6 +363,18 @@ describe('f73871a7 — a direct-tier timeout is logged once and never retried (b
     // ONLY the terminal failure carries the fingerprint shape; the retry lines
     // are a different message ("transient … retrying"), so one degraded scrape
     // can never masquerade as many sweep rows.
-    expect(scrapeWarns()).toHaveLength(1);
+    //
+    // RE-ADJUDICATED (family lane 30dfad06, 2026-11-06): a 500 is a VENDOR
+    // degradation, so the terminal row is now emitted via logExternal
+    // (logger.log, logClass:'external'). It is still level 'warn' and still
+    // persisted for the audit's vendor_transient rung; only the sweep tier tag
+    // moved. The owner-actionable classes (40x) stay untagged warns.
+    const tagged = (logger.log as jest.Mock).mock.calls
+      .map((c: any[]) => c[0])
+      .filter((o: any) => String(o?.message || '').includes('scrape_as_markdown failed'));
+    expect(tagged).toHaveLength(1);
+    expect(tagged[0].level).toBe('warn');
+    expect(tagged[0].logClass).toBe('external');
+    expect(scrapeWarns()).toHaveLength(0);
   });
 });

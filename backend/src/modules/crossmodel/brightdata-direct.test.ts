@@ -6,7 +6,10 @@
 
 jest.mock('../../utils/logger', () => ({
   __esModule: true,
-  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  // `log` is required by logExternal (utils/log-level.ts) — the direct tier now
+  // tags VENDOR degradation (http_5xx / net_*) logClass:'external' so the
+  // log-signal sweep stops filing a weekly ticket for it (family 30dfad06).
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), log: jest.fn() },
 }));
 
 const mockPost = jest.fn();

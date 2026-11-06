@@ -380,6 +380,33 @@ const visitEventsGlobalRateLimit = rateLimit({
 });
 app.use('/api/crossmodel', visitEventsClientRateLimit, visitEventsGlobalRateLimit);
 
+// Client error ingest (ticket d4e643a5, 2026-11-06): POST /client-error is OPEN (a crashing tab may be signed
+// out). Same two-budget shape as /visit-events — per CLIENT (hashed hops-anchored ip + CA ip, the visit-events
+// rule; never the raw ip as a Redis key, and never express-rate-limit's req.ip, the ALB node) plus a GLOBAL
+// ceiling — so a client rotating its reported URL/build sha cannot fill app_error_logs. The controller ALSO
+// signature-throttles (one row per signature per 5 min), so this is the outer bound only.
+const clientErrorClientRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 60,                   // 60 client-error reports per 10 minutes per client
+  message: { error: 'Too many error reports.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisRateLimitStore('rl:clienterr:'),
+  keyGenerator: (req) => `c:${hashIp(clientIpForHash(req as any)) ?? 'noip'}`,
+  skip: (req) => req.path !== '/client-error',
+});
+const clientErrorGlobalRateLimit = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 5_000,                // all clients together (a fleet-wide breakage is still bounded)
+  message: { error: 'Too many error reports.' },
+  standardHeaders: false,
+  legacyHeaders: false,
+  store: new RedisRateLimitStore('rl:clienterrall:'),
+  keyGenerator: () => 'global',
+  skip: (req) => req.path !== '/client-error',
+});
+app.use('/api/crossmodel', clientErrorClientRateLimit, clientErrorGlobalRateLimit);
+
 // ── /api/crossmodel mount order — the ordering contract ──────────────────────
 // ONE app-level authenticate guard verifies each request exactly once. It
 // replaced the per-router `router.use(authenticate)` that re-verified the JWT
