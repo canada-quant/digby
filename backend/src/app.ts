@@ -46,6 +46,7 @@ import { visitorAdminRoutes } from './modules/crossmodel/visitors/visitor.routes
 import { clientIpForHash } from './modules/crossmodel/visitors/visitor.service';
 import { hashIp } from './modules/crossmodel/visitors/ip-hash';
 import { streamLimiterSkip, uploadLimiterSkip, guestStreamAttachLimiterSkip, guestStreamAttachLimiterKey } from './middleware/rate-limit-paths';
+import { API_PREFIXES, mountApi } from './api-prefixes';
 import { env } from './config/env';
 import prisma from './config/database';
 import redisClient from './config/redis';
@@ -163,7 +164,7 @@ const healthPayload = (health: Awaited<ReturnType<typeof buildHealthResponse>>) 
   redis: health.redis,
   uptime: health.uptime,
   inflightRuns: health.inflightRuns,
-  ...(isProdInstance() ? {} : { revision: health.revision }),
+  ...(isProdInstance() ? {} : { revision: health.revision, apiPrefixes: API_PREFIXES }),
 });
 
 // Health check (both paths — /health for direct backend access, /api/health for frontend proxy)
@@ -235,7 +236,7 @@ const streamRateLimit = rateLimit({
   // (middleware/rate-limit-paths.ts, 2026-10-20 — an exact match was a bypass).
   skip: streamLimiterSkip,
 });
-app.use('/api/crossmodel', streamRateLimit);
+mountApi(app, '', streamRateLimit);
 
 // Upload rate limiting (memory-DoS protection). /upload is optionalAuthenticate
 // (anonymous attachments are a supported UX) and buffers each file in memory,
@@ -250,7 +251,7 @@ const uploadRateLimit = rateLimit({
   skip: uploadLimiterSkip, // /upload, /upload/ and /UPLOAD (middleware/rate-limit-paths.ts)
   store: new RedisRateLimitStore('rl:upload:'),
 });
-app.use('/api/crossmodel', uploadRateLimit);
+mountApi(app, '', uploadRateLimit);
 
 // Guest stream reattach (stream drops, 2026-10-20): GET /session/:sessionId/stream
 // is OPEN (an anonymous EventSource) and holds a long-lived response, so cap
@@ -282,7 +283,7 @@ const guestStreamAttachGlobalRateLimit = rateLimit({
   skip: guestStreamAttachLimiterSkip,
   store: new RedisRateLimitStore('rl:gattachall:'),
 });
-app.use('/api/crossmodel', guestStreamAttachClientRateLimit, guestStreamAttachGlobalRateLimit);
+mountApi(app, '', guestStreamAttachClientRateLimit, guestStreamAttachGlobalRateLimit);
 
 // Auth endpoint rate limiting (brute-force protection)
 const authRateLimit = rateLimit({
@@ -324,7 +325,7 @@ const webhookFireRateLimit = rateLimit({
   keyGenerator: (req) => webhookFireLimiterKey(req.path, req.ip),
   skip: (req) => !WEBHOOK_FIRE_PATH_RE.test(req.path),
 });
-app.use('/api/crossmodel', webhookFireRateLimit);
+mountApi(app, '', webhookFireRateLimit);
 
 // Cloud→edge receive rate limiting (Digby Edge Phase 5): POST
 // /cloud-link/receive is tunnel-only (JWT + ADMIN + x-cloud-relay header)
@@ -342,7 +343,7 @@ const cloudLinkReceiveRateLimit = rateLimit({
   keyGenerator: (req) => cloudLinkReceiveLimiterKey(req.body?.chatId, req.ip),
   skip: (req) => req.method !== 'POST' || !CLOUD_LINK_RECEIVE_PATH_RE.test(req.path),
 });
-app.use('/api/crossmodel', cloudLinkReceiveRateLimit);
+mountApi(app, '', cloudLinkReceiveRateLimit);
 
 // Instance pairing (Digby Edge Phase 3): POST /instances/pair/complete is OPEN
 // (self-authenticating via the single-use code — the pairing edge holds no JWT)
@@ -359,7 +360,7 @@ const instancePairRateLimit = rateLimit({
   store: new RedisRateLimitStore('rl:instpair:'),
   skip: (req) => !INSTANCE_PAIR_PATH_RE.test(req.path),
 });
-app.use('/api/crossmodel', instancePairRateLimit);
+mountApi(app, '', instancePairRateLimit);
 
 // API Routes
 app.use('/api/auth', authRoutes);
@@ -392,7 +393,7 @@ const visitEventsGlobalRateLimit = rateLimit({
   keyGenerator: () => 'global',
   skip: (req) => req.path !== '/visit-events',
 });
-app.use('/api/crossmodel', visitEventsClientRateLimit, visitEventsGlobalRateLimit);
+mountApi(app, '', visitEventsClientRateLimit, visitEventsGlobalRateLimit);
 
 // Client error ingest (ticket d4e643a5, 2026-11-06): POST /client-error is OPEN (a crashing tab may be signed
 // out). Same two-budget shape as /visit-events — per CLIENT (hashed hops-anchored ip + CA ip, the visit-events
@@ -419,9 +420,16 @@ const clientErrorGlobalRateLimit = rateLimit({
   keyGenerator: () => 'global',
   skip: (req) => req.path !== '/client-error',
 });
-app.use('/api/crossmodel', clientErrorClientRateLimit, clientErrorGlobalRateLimit);
+mountApi(app, '', clientErrorClientRateLimit, clientErrorGlobalRateLimit);
 
 // ── /api/crossmodel mount order — the ordering contract ──────────────────────
+// Every mount below goes through `mountApi` (api-prefixes.ts), which mounts the
+// SAME stack at /api/crossmodel AND /api/digby — the additive dual-serve window
+// of the leg (b) rename (docs/LEG_B_CROSSMODEL_RENAME_PLAN.md §3). Never write
+// `app.use('/api/crossmodel', …)` here again: a router mounted on one prefix and
+// not the other is a silent 404 for the other URL shape, and the structural test
+// in api-prefixes.test.ts fails on exactly that.
+//
 // ONE app-level authenticate guard verifies each request exactly once. It
 // replaced the per-router `router.use(authenticate)` that re-verified the JWT
 // on every fall-through router (8x for /coding/*) — the stacked-middleware
@@ -438,34 +446,36 @@ app.use('/api/crossmodel', clientErrorClientRateLimit, clientErrorGlobalRateLimi
 //   2. The single guard.
 //   3. AUTHED routers after it. New authenticated routers mount here, with NO
 //      internal authenticate; rejectChild stays (it reads the guard's req.user).
-app.use('/api/crossmodel', publicShareRoutes); // public share links — no auth at all
-app.use('/api/crossmodel', codingPublicRoutes); // Digby Code SSE/preview (query-token) — optionalAuthenticate + handler self-check
-app.use('/api/crossmodel', generatedFilesPublicRoutes); // generated-file download (query-token — chat markdown links send no Authorization header)
-app.use('/api/crossmodel', crossmodelOpenRoutes); // stream/upload/feedback/OAuth/webhooks — open posture
-app.use('/api/crossmodel', instancesOpenRoutes); // Digby Edge Phase 3 — instance pair/complete + self-revoke (self-authenticating, uniform 401)
+// The two prefixes interleave in this list, which is harmless: a request carries
+// exactly one prefix, so each prefix sees its own mounts in the same order.
+mountApi(app, '', publicShareRoutes); // public share links — no auth at all
+mountApi(app, '', codingPublicRoutes); // Digby Code SSE/preview (query-token) — optionalAuthenticate + handler self-check
+mountApi(app, '', generatedFilesPublicRoutes); // generated-file download (query-token — chat markdown links send no Authorization header)
+mountApi(app, '', crossmodelOpenRoutes); // stream/upload/feedback/OAuth/webhooks — open posture
+mountApi(app, '', instancesOpenRoutes); // Digby Edge Phase 3 — instance pair/complete + self-revoke (self-authenticating, uniform 401)
 // P3 — external platform API + scoped agent tokens. Path-scoped mount in the
 // OPEN section: the router self-authenticates per-route (user JWT OR scoped
 // dgt_ agent token — see middleware/agent-auth.ts), so the single guard
 // (user-JWT-only) never sees — and never rejects — an agent token.
-app.use('/api/crossmodel/platform', platformRoutes);
-app.use('/api/crossmodel', authenticate); // ── THE single guard ──
-app.use('/api/crossmodel', crossmodelRoutes);
-app.use('/api/crossmodel', childrenRoutes); // Digby Kids — parent manages child sub-accounts
-app.use('/api/crossmodel', projectsRoutes);
-app.use('/api/crossmodel', sharingRoutes);
-app.use('/api/crossmodel', documentsRoutes);
-app.use('/api/crossmodel', generatedFilesRoutes); // agent-generated files (list/delete + Bearer download)
-app.use('/api/crossmodel', chatFilesRoutes); // persistent per-chat uploads (list/download/inline)
-app.use('/api/crossmodel', canvasRoutes);
-app.use('/api/crossmodel', codingRoutes); // Digby Code — agentic coding tab
-app.use('/api/crossmodel', fleetRoutes); // Fleet Management — supervisor settings/overview/thread/queue/log
-app.use('/api/crossmodel', modelEndpointsRoutes); // Digby Edge — admin custom model endpoint registry
-app.use('/api/crossmodel', instancesRoutes); // Digby Edge Phase 3 — cloud-side instance pairing management (ADMIN)
-app.use('/api/crossmodel', cloudLinkRoutes); // Digby Edge Phase 3 — edge-side cloud link (ADMIN)
-app.use('/api/crossmodel/push', pushRoutes); // mobile push-token registration (M1) — behind the guard; rejectChild (Digby Kids never push)
-app.use('/api/crossmodel/reports', reportsRoutes); // content reports (M2-prep 1.2/1.4) — behind the guard; rejectChild; GET+review are admin-gated
-app.use('/api/crossmodel', webhookAuthedRoutes); // per-chat webhook token lifecycle (owner-only); the OPEN fire router lives in crossmodel-open.routes.ts
-app.use('/api/crossmodel', visitorAdminRoutes); // first-party visitor analytics — Account → Admin → Users & traffic (admin-gated per handler); the OPEN POST /visit-events lives in crossmodel-open.routes.ts
+mountApi(app, '/platform', platformRoutes);
+mountApi(app, '', authenticate); // ── THE single guard ──
+mountApi(app, '', crossmodelRoutes);
+mountApi(app, '', childrenRoutes); // Digby Kids — parent manages child sub-accounts
+mountApi(app, '', projectsRoutes);
+mountApi(app, '', sharingRoutes);
+mountApi(app, '', documentsRoutes);
+mountApi(app, '', generatedFilesRoutes); // agent-generated files (list/delete + Bearer download)
+mountApi(app, '', chatFilesRoutes); // persistent per-chat uploads (list/download/inline)
+mountApi(app, '', canvasRoutes);
+mountApi(app, '', codingRoutes); // Digby Code — agentic coding tab
+mountApi(app, '', fleetRoutes); // Fleet Management — supervisor settings/overview/thread/queue/log
+mountApi(app, '', modelEndpointsRoutes); // Digby Edge — admin custom model endpoint registry
+mountApi(app, '', instancesRoutes); // Digby Edge Phase 3 — cloud-side instance pairing management (ADMIN)
+mountApi(app, '', cloudLinkRoutes); // Digby Edge Phase 3 — edge-side cloud link (ADMIN)
+mountApi(app, '/push', pushRoutes); // mobile push-token registration (M1) — behind the guard; rejectChild (Digby Kids never push)
+mountApi(app, '/reports', reportsRoutes); // content reports (M2-prep 1.2/1.4) — behind the guard; rejectChild; GET+review are admin-gated
+mountApi(app, '', webhookAuthedRoutes); // per-chat webhook token lifecycle (owner-only); the OPEN fire router lives in crossmodel-open.routes.ts
+mountApi(app, '', visitorAdminRoutes); // first-party visitor analytics — Account → Admin → Users & traffic (admin-gated per handler); the OPEN POST /visit-events lives in crossmodel-open.routes.ts
 
 // 404 handler
 app.use(notFound);

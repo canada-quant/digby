@@ -723,33 +723,39 @@ describe('app.ts ordering contract — static tripwire', () => {
   };
 
   it('mounts the single guard exactly once', () => {
-    const occurrences = appSource.split("app.use('/api/crossmodel', authenticate)").length - 1;
+    // Leg (b) phase 1: mounts go through mountApi, which places ONE stack at
+    // each API prefix. The guard must still be declared exactly once in source
+    // (it is then mounted once per prefix — correct, and still a single guard in
+    // the chain for any given request). A raw app.use form would bypass the
+    // prefix list, so it must not exist at all.
+    const occurrences = appSource.split("mountApi(app, '', authenticate)").length - 1;
     expect(occurrences).toBe(1);
+    expect(appSource).not.toContain("app.use('/api/crossmodel', authenticate)");
   });
 
   it('orders open routers before the guard and authed routers after it', () => {
-    const guard = mountIndex("app.use('/api/crossmodel', authenticate)");
+    const guard = mountIndex("mountApi(app, '', authenticate)");
     for (const open of [
-      "app.use('/api/crossmodel', publicShareRoutes)",
-      "app.use('/api/crossmodel', codingPublicRoutes)",
-      "app.use('/api/crossmodel', generatedFilesPublicRoutes)",
-      "app.use('/api/crossmodel', crossmodelOpenRoutes)",
-      "app.use('/api/crossmodel/platform', platformRoutes)",
+      "mountApi(app, '', publicShareRoutes)",
+      "mountApi(app, '', codingPublicRoutes)",
+      "mountApi(app, '', generatedFilesPublicRoutes)",
+      "mountApi(app, '', crossmodelOpenRoutes)",
+      "mountApi(app, '/platform', platformRoutes)",
     ]) {
       expect(mountIndex(open)).toBeLessThan(guard);
     }
     for (const authed of [
-      "app.use('/api/crossmodel', crossmodelRoutes)",
-      "app.use('/api/crossmodel', childrenRoutes)",
-      "app.use('/api/crossmodel', projectsRoutes)",
-      "app.use('/api/crossmodel', sharingRoutes)",
-      "app.use('/api/crossmodel', documentsRoutes)",
-      "app.use('/api/crossmodel', generatedFilesRoutes)",
-      "app.use('/api/crossmodel', canvasRoutes)",
-      "app.use('/api/crossmodel', codingRoutes)",
-      "app.use('/api/crossmodel', fleetRoutes)",
-      "app.use('/api/crossmodel', webhookAuthedRoutes)",
-      "app.use('/api/crossmodel', visitorAdminRoutes)",
+      "mountApi(app, '', crossmodelRoutes)",
+      "mountApi(app, '', childrenRoutes)",
+      "mountApi(app, '', projectsRoutes)",
+      "mountApi(app, '', sharingRoutes)",
+      "mountApi(app, '', documentsRoutes)",
+      "mountApi(app, '', generatedFilesRoutes)",
+      "mountApi(app, '', canvasRoutes)",
+      "mountApi(app, '', codingRoutes)",
+      "mountApi(app, '', fleetRoutes)",
+      "mountApi(app, '', webhookAuthedRoutes)",
+      "mountApi(app, '', visitorAdminRoutes)",
     ]) {
       expect(mountIndex(authed)).toBeGreaterThan(guard);
     }
@@ -855,7 +861,7 @@ describe('first-party visitor analytics — posture (owner 2026-10-07)', () => {
     expect(appSource).toContain("store: new RedisRateLimitStore('rl:visit:')");
     expect(appSource).toContain("store: new RedisRateLimitStore('rl:visitall:')");
     expect(appSource).toContain('keyGenerator: (req) => `c:${hashIp(clientIpForHash(req as any)) ?? \'noip\'}`');
-    expect(appSource).toContain("app.use('/api/crossmodel', visitEventsClientRateLimit, visitEventsGlobalRateLimit);");
+    expect(appSource).toContain('mountApi(app, \'\', visitEventsClientRateLimit, visitEventsGlobalRateLimit);');
   });
 });
 
@@ -909,6 +915,6 @@ describe('client error ingest — posture (ticket d4e643a5)', () => {
     const appSource: string = fs.readFileSync(path.resolve(__dirname, '../../app.ts'), 'utf8');
     expect(appSource).toContain("store: new RedisRateLimitStore('rl:clienterr:')");
     expect(appSource).toContain("store: new RedisRateLimitStore('rl:clienterrall:')");
-    expect(appSource).toContain("app.use('/api/crossmodel', clientErrorClientRateLimit, clientErrorGlobalRateLimit);");
+    expect(appSource).toContain('mountApi(app, \'\', clientErrorClientRateLimit, clientErrorGlobalRateLimit);');
   });
 });

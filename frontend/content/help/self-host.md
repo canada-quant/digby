@@ -918,6 +918,18 @@ OAuth app created at the provider's console:
    (e.g. `…/api/crossmodel/google/callback`). The backend derives exactly that
    URL from `SELFHOST_PUBLIC_URL`; set `*_OAUTH_REDIRECT_URI` only when the
    callback you registered lives on a different host.
+
+   **Both `/api/crossmodel/*` and `/api/digby/*` are served** (the additive
+   dual-route window of the `crossmodel` → `digby` rename, phase 1). A callback
+   registered as `<SELFHOST_PUBLIC_URL>/api/digby/<provider>/callback` works
+   identically — both prefixes reach the same handler. Use whichever you
+   register in the console: the backend emits the `…/api/crossmodel/…` form by
+   default (that literal is what the provider must already have registered), so
+   the **simplest** setup is to keep registering the `crossmodel` URL. The
+   `digby` form exists so you can move consoles at your own pace, or never.
+   `GET /api/health` on a non-production instance reports
+   `apiPrefixes: ["/api/crossmodel","/api/digby"]` — if you see both, the
+   overlap is live.
 2. Put the client id/secret in `.env`.
 3. Generate the token-encryption key (`openssl rand -hex 32`) and the shared
    backend↔MCP secret (`<PROVIDER>_MCP_API_KEY`). **Xero and Plaid** encrypt
