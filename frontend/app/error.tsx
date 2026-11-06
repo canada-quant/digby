@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { BrandLogo } from '@/components/ui/custom/BrandLogo';
 import { useBranding } from '@/app/branding/BrandingProvider';
 import { shouldReloadForChunkError } from '@/lib/chunk-reload';
+import { reportBoundaryError } from './ClientErrorReporter';
 
 // App-root error boundary (added with the Next.js 16.3.3 upgrade — 16.2 swapped
 // the default 500 page, so we own a branded one instead of relying on it).
@@ -24,7 +25,20 @@ export default function AppError({
     // sessionStorage stamp keeps a truly broken bundle from looping).
     let storage: Storage | null = null;
     try { storage = window.sessionStorage; } catch { storage = null; }
-    if (shouldReloadForChunkError(error, storage)) window.location.reload();
+    const reloaded = shouldReloadForChunkError(error, storage);
+    // A React render crash is the one class the global `error` listener cannot
+    // see — React catches it into this boundary before it reaches window.onerror.
+    // Report it through the same scrubbed path as everything else (ticket
+    // d4e643a5) so it reaches app_error_logs and the hourly sweep can file it.
+    //
+    // EXCEPT chunk-load errors (adversarial review MAJOR 4, 2026-11-06): that
+    // class is DESIGNED, self-healing deploy skew — it recurs on every
+    // blue-green deploy across several hours, so rule 1 would fire and the
+    // sweep would file a "ticket" for a non-defect every single deploy, eating
+    // the 5/day filing budget that real client faults need. `reportBoundaryError`
+    // drops it (isChunkLoadError); the reload above still heals the user.
+    reportBoundaryError(error, { suppressChunkLoad: true });
+    if (reloaded) window.location.reload();
   }, [error]);
 
   return (

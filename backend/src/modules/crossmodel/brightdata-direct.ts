@@ -15,6 +15,7 @@
 
 import axios from 'axios';
 import logger from '../../utils/logger';
+import { logExternal } from '../../utils/log-level';
 
 const BD_REQUEST_URL = 'https://api.brightdata.com/request';
 const TOKEN = process.env.BRIGHTDATA_API_TOKEN;
@@ -545,7 +546,21 @@ export async function tryDirectBrightData(
     const body = typeof err.response?.data === 'string'
       ? err.response.data.slice(0, 500).replace(/\s+/g, ' ').trim()
       : '';
-    logger.warn(`BrightData direct: ${toolName} failed: ${err.response?.status || ''} ${err.message}${body ? ` — body: ${body}` : ''}`, { source: 'brightdata-direct', tool: toolName });
+    // Taxonomy (log-signal family 30dfad06, 2026-11-06): the catch-all is NOT
+    // homogeneous. `classifyDirectMiss` already separates the dependency's
+    // degradation (`http_5xx`, `net_*`) from classes that are OURS or
+    // owner-actionable — a `http_401/402/403` revoked token or a disabled zone
+    // is an outage we must still escalate (the 2026-08-06 invisible-outage
+    // class), and `timeout` is our own budget firing. Tag ONLY the vendor's
+    // 5xx/network failures logExternal; everything else stays an untagged warn
+    // that files. Recall is preserved: the audit's vendor_transient rung reads
+    // app_error_logs with no logClass filter, and every fall-through still
+    // writes a web_fetch_path loop_metric row carrying directClass.
+    const missClass = classifyDirectMiss(err).class;
+    const vendorDegraded = /^http_5\d\d$/.test(missClass) || missClass.startsWith('net_');
+    const failedMessage = `BrightData direct: ${toolName} failed: ${err.response?.status || ''} ${err.message}${body ? ` — body: ${body}` : ''}`;
+    if (vendorDegraded) logExternal(failedMessage, { source: 'brightdata-direct', tool: toolName });
+    else logger.warn(failedMessage, { source: 'brightdata-direct', tool: toolName });
     noteMiss(classifyDirectMiss(err));
     return null;
   }

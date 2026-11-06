@@ -242,15 +242,52 @@ const RAW_VARIABLE_TOKEN_RE
 const INSTRUMENT_TOKEN_RE = /gateway-or-ours/i;
 /** The emit-site head with a model name and NO trailing prose — the ambiguous fragment. */
 const SHARED_HEAD_RE = /^tool-call stream \[[^\]]*$/i;
+/**
+ * The verdict line's CULPRIT reads `ours` (ticket 35cd91a7, 2026-11-06).
+ *
+ * RECALL GUARD. `finalizeVerdictSummary` renders `${culprit} recv=…` and
+ * `gatewayOrOurs` returns 'ours' for the classes that ARE a defect of ours:
+ * unread argument bytes, skipped raw lines, parse-fail tool calls, and the
+ * parse-fail+multiline pair. The emit TEMPLATE carries the `GATEWAY-OR-OURS`
+ * token for EVERY verdict, so the signature above matches an `ours` row too.
+ * Without this guard, declaring the class a designed instrument would retire
+ * the sweep's only detector for our own stream-handling bugs — the exact
+ * self-inflicted blind spot the `designedAlarmOfMetric` comment records from
+ * its first cut's review.
+ *
+ * `ours recv=` is unambiguous: the culprit word is immediately followed by the
+ * arithmetic, and "gateway" cannot contain it.
+ *
+ * WHY THE RAW ROW, NOT THE FINGERPRINT (adversarial review of 35cd91a7,
+ * 2026-11-06). The emit template puts the model name BEFORE the summary
+ * (`tool-call stream [${provider.model}]: GATEWAY-OR-OURS ${summary}`) and the
+ * fingerprint is hard-cut at FINGERPRINT_MAX_LEN = 120. A model id longer than
+ * ~73 normalized chars therefore cuts `ours recv=` away while the
+ * `gateway-or-ours` TOKEN survives — the guard misses, the token matches, and
+ * EVERY `ours` verdict on that seat becomes a permanently-silenced class. That
+ * is a miss, NOT the safe direction: the token keeps matching independently of
+ * the culprit. Measured before the fix: model length 74/78/82 → silenced.
+ * Callers therefore pass the RAW example message (uncut) and the guard reads
+ * that; the truncated fingerprint is only the fallback when no raw row exists.
+ */
+const OURS_CULPRIT_RE = /\bours recv=/i;
 
-const DESIGNED_ALARM_SIGNATURES: ReadonlyArray<{ id: string; test: (pattern: string, surface: 'fingerprint' | 'metric') => boolean; why: string }> = [
+const DESIGNED_ALARM_SIGNATURES: ReadonlyArray<{ id: string; test: (pattern: string, surface: 'fingerprint' | 'metric', raw: string) => boolean; why: string }> = [
   {
     // The finalize/GATEWAY-OR-OURS line is an INSTRUMENT, not a fault report: it
     // states its own drop arithmetic (recv/acc/drop/frag/buf) about a condition
     // the emitting file does not own. It fires whenever an upstream gateway ends
     // a turn short — correct behaviour of a correct measurement.
     id: 'gateway-or-ours',
-    test: (p, surface) => INSTRUMENT_TOKEN_RE.test(p) || (surface === 'metric' && SHARED_HEAD_RE.test(p.trim())),
+    test: (p, surface, raw) => {
+      // RECALL FIRST (35cd91a7): an `ours` culprit is a defect of OURS — never a
+      // designed instrument, whatever surface is asking. Tested against the RAW
+      // row where one was supplied, so the 120-char read cut cannot hide it.
+      if (OURS_CULPRIT_RE.test(raw)) return false;
+      return surface === 'metric'
+        ? INSTRUMENT_TOKEN_RE.test(p) || SHARED_HEAD_RE.test(p.trim())
+        : INSTRUMENT_TOKEN_RE.test(p);
+    },
     why: 'the GATEWAY-OR-OURS finalize line is an instrument that reports its own drop arithmetic; it fires whenever the upstream gateway ends a turn short, fix or no fix',
   },
 ];
@@ -261,14 +298,26 @@ export function designedAlarmOfMetric(metric: AcceptanceMetric, source: unknown)
   if (metric.probe !== 'app_error_log_count') return null;
   const pattern = String(metric.params.messagePattern ?? '');
   if (!pattern) return null;
-  return DESIGNED_ALARM_SIGNATURES.find((s) => s.test(pattern, 'metric')) ?? null;
+  // A metric's messagePattern IS the pattern (a short derived fragment); fall back
+  // to it as the raw so the culprit test still runs on whatever text we hold.
+  return DESIGNED_ALARM_SIGNATURES.find((s) => s.test(pattern, 'metric', pattern)) ?? null;
 }
 
-/** Is this fingerprint a designed alarm (so no volume default may be attached)? Pure. */
-export function designedAlarmOfFingerprint(fingerprint: unknown): { id: string; why: string } | null {
+/**
+ * Is this fingerprint a designed alarm (so no volume default may be attached)? Pure.
+ *
+ * `exampleMessage` is the NEWEST RAW row for the same fingerprint. Pass it
+ * whenever it is in hand: the fingerprint is cut at FINGERPRINT_MAX_LEN, and the
+ * `ours` recall guard must see the culprit the cut may have removed (see
+ * OURS_CULPRIT_RE). Without it the guard falls back to the fingerprint itself —
+ * correct for every model id short enough to keep the culprit inside the cut,
+ * which is the whole shipped population today.
+ */
+export function designedAlarmOfFingerprint(fingerprint: unknown, exampleMessage?: unknown): { id: string; why: string } | null {
   const fp = typeof fingerprint === 'string' ? fingerprint : '';
   if (!fp) return null;
-  return DESIGNED_ALARM_SIGNATURES.find((s) => s.test(fp, 'fingerprint')) ?? null;
+  const raw = typeof exampleMessage === 'string' && exampleMessage ? exampleMessage : fp;
+  return DESIGNED_ALARM_SIGNATURES.find((s) => s.test(fp, 'fingerprint', raw)) ?? null;
 }
 
 /**

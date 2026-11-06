@@ -269,9 +269,32 @@ knobs at `/branding/asset/<file>`:
 >
 > ```bash
 > git clone https://github.com/canada-quant/digby && cd digby/frontend
-> docker build --build-arg NEXT_PUBLIC_API_URL=/api \
+> docker build \
+>   --target production \
+>   --build-arg NEXT_PUBLIC_API_URL=/api \
+>   --build-arg DIGBY_INSTANCE=selfhost \
+>   --build-arg NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED=1 \
+>   --build-arg NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED=1 \
+>   --build-arg NEXT_PUBLIC_META_PIXEL_DISABLED=1 \
 >   --build-arg DIGBY_BRAND_NAME="Acme AI" \
+>   --build-arg DIGBY_BRAND_TAGLINE="Ask once." \
 >   -t acme/digby-frontend:1.0.0 .
+> ```
+>
+> **`--target production` is required, not optional.** `frontend/Dockerfile`
+> declares `build` first and `production` last; with no `--target` Docker builds
+> the LAST stage, but the args that shape the runtime image are the ones the
+> publish workflow passes explicitly — so pass them here too. The other
+> `NEXT_PUBLIC_*_DISABLED=1` flags are what the published image uses to compile
+> Digby's production ad/analytics tags out of a self-host build; omitting them
+> produces an image that reports page views to Digby's accounts.
+>
+> Then point the compose frontend service at your tag:
+>
+> ```bash
+> # in .env, next to the published compose file
+> DIGBY_IMAGE_REGISTRY=acme        # your namespace
+> DIGBY_IMAGE_TAG=1.0.0
 > ```
 >
 > Everything else in this section applies unchanged on both paths.

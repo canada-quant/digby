@@ -36,10 +36,12 @@ import telegramRouter from './telegram/telegram.routes';
 import { webhookOpenRoutes } from './webhook.routes';
 import { postVisitEvents } from './visitors/visitor.controller';
 import { visitEventsBodyParser } from './visitors/visitor.routes';
+import { clientErrorController, clientErrorBodyParser } from './client-errors/client-error.controller';
 import {
   streamQuerySchema,
   submitFeedbackSchema,
   uxBeaconSchema,
+  clientErrorSchema,
 } from './crossmodel.validation';
 
 const router = Router();
@@ -276,6 +278,25 @@ router.post('/ux/beacon', optionalAuthenticate, validate(uxBeaconSchema), contro
  * skip; VISITOR_ANALYTICS_DISABLED=1 ⇒ 204, nothing stored. Never an IP — an HMAC hash (visitors/ip-hash.ts).
  */
 router.post('/visit-events', visitEventsBodyParser, optionalAuthenticate, postVisitEvents);
+
+/**
+ * POST /api/crossmodel/client-error — client-side UI error ingest (ticket
+ * d4e643a5, 2026-11-06). The owner, on 81b229e1: "also you should;d be
+ * capturing all these ui errors somewhere and auto filing tickets without me
+ * telling you right?" Before this route `app_error_logs` had ONE producer (the
+ * backend winston transport), so the hourly log-signal-sweep could not
+ * structurally see a render crash / broken handler / rejected promise.
+ *
+ * OPEN + optionalAuthenticate because a crashing tab may be signed out (a
+ * crash inside the login flow has no token). The handler re-sanitizes the
+ * whole untrusted payload (user text masked, credential shapes cut, every
+ * field capped), throttles one row per signature per window with separate
+ * per-client and process budgets, then writes through the EXISTING winston
+ * logger stamped source='client-error' — the hourly sweep does the filing
+ * (NO second sweep). Rate-limited per client in app.ts beside /visit-events.
+ * CLIENT_ERROR_INGEST_DISABLED=1 ⇒ 204, nothing recorded.
+ */
+router.post('/client-error', clientErrorBodyParser, optionalAuthenticate, validate(clientErrorSchema), clientErrorController.report);
 
 // One-Digby: EventSource re-attach for a live agent run (mobile resume). MUST
 // stay in this OPEN router (before the app-level guard) — EventSource can only

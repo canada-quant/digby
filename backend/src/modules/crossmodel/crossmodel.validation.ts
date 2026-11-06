@@ -175,6 +175,41 @@ export const uxBeaconSchema = z.object({
 });
 export type UxBeaconInput = z.infer<typeof uxBeaconSchema>['body'];
 
+/**
+ * POST /api/crossmodel/client-error — client-side UI errors (ticket d4e643a5,
+ * 2026-11-06). A React render crash / broken handler / rejected promise used to
+ * reach nothing but the browser console; this intake persists it to
+ * app_error_logs with source 'client-error' so the EXISTING hourly
+ * log-signal-sweep auto-files it. Anonymous-capable (a crash on the login page
+ * has no token), so every field is length-capped here and re-sanitized in the
+ * controller (client-errors/client-error-sanitize.ts). `signature` is
+ * deliberately NOT accepted: the server derives the dedupe key from the
+ * sanitized message + first stack frame.
+ */
+export const clientErrorSchema = z.object({
+  body: z.object({
+    /** The thrown message / rejection reason (scrubbed + capped server-side). */
+    message: z.string().min(1).max(4_000),
+    /** Error.stack — the frame list (scrubbed + capped server-side). */
+    stack: z.string().max(20_000).optional(),
+    /** The page URL; reduced to origin+pathname server-side (query + fragment dropped). */
+    url: z.string().max(2_000).optional(),
+    userAgent: z.string().max(1_000).optional(),
+    /** The deploy sha the tab is running (lib/client-error-reporter.ts reads it from the build). */
+    buildSha: z.string().max(64).optional(),
+    /** The client route (pathname) — a hint only, sanitized server-side. */
+    route: z.string().max(500).optional(),
+    /** Which handler fired. */
+    source: z.enum(['onerror', 'unhandledrejection', 'error-boundary']).optional(),
+    /** How many identical throws this tab collapsed into this one report. */
+    occurrences: z.number().int().min(1).max(10_000).optional(),
+    /** window.onerror's line / column, when known. */
+    line: z.number().int().min(0).max(10_000_000).optional(),
+    column: z.number().int().min(0).max(10_000_000).optional(),
+  }),
+});
+export type ClientErrorInput = z.infer<typeof clientErrorSchema>['body'];
+
 // ── Chat schedules (workspace-panel Schedules tab; rm9) ───────────────────────
 
 /** DELETE /chats/:id/schedules/:scheduleId — cancel one schedule on this chat. */

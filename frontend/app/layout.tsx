@@ -8,6 +8,7 @@ import { PWAInstallPrompt } from '../src/components/PWAInstallPrompt';
 import { UpdateNotification } from '../src/components/UpdateNotification';
 import { GoogleAdsTag } from './GoogleAdsTag';
 import { VisitorAnalytics } from './VisitorAnalytics';
+import { ClientErrorReporter } from './ClientErrorReporter';
 import { MetaPixel } from './MetaPixel';
 import { brandingFromEnv } from '@/lib/branding';
 
@@ -165,6 +166,12 @@ export default function RootLayout({
         {/* First-party visitor analytics (owner 2026-10-07): visitor id + first / last-touch traffic source + page views
             → Account → Admin → Users & traffic. Same Digby Kids exclusion as the Google tag (lib/visitor-analytics.ts). */}
         <VisitorAnalytics />
+        {/* Client UI error capture (ticket d4e643a5, owner on 81b229e1: "you should;d be capturing all these ui errors
+            somewhere and auto filing tickets"): installs window.onerror + unhandledrejection → POST /client-error →
+            app_error_logs (source 'client-error') → the EXISTING hourly log-signal-sweep auto-files the ticket.
+            User text and credential shapes are scrubbed in the tab (lib/client-error-reporter.ts) and again on the
+            server. NEXT_PUBLIC_CLIENT_ERROR_REPORT_DISABLED=1 turns it off at build time. Renders nothing. */}
+        <ClientErrorReporter />
         {/* The site's ONE Meta Pixel (4660227547545860) — same never-for-Digby-Kids rule (app/MetaPixel.tsx). */}
         <MetaPixel />
         <script

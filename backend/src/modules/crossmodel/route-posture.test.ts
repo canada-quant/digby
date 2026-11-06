@@ -77,6 +77,23 @@ jest.mock('./crossmodel.controller', () => ({
   __esModule: true,
   default: new Proxy({}, { get: () => (_req: any, res: any) => res.status(200).json({ ok: true }) }),
 }));
+// Client-error ingest (ticket d4e643a5) is a NAMED controller export that
+// crossmodel-open.routes imports from its own module, so the Proxy above does
+// not reach it. Same stand-in shape, both export forms — this suite pins AUTH
+// POSTURE, and the real handler (logger/scan/throttle) is exercised end-to-end
+// by client-errors/client-error.endpoint.test.ts.
+jest.mock('./client-errors/client-error.controller', () => {
+  const handler = (_req: any, res: any) => res.status(200).json({ ok: true });
+  return {
+    __esModule: true,
+    default: { report: handler },
+    clientErrorController: { report: handler },
+    // express requires a callable middleware; a no-op keeps the route loadable
+    // (this suite pins auth posture, and the real 16 KB cap is exercised by
+    // client-errors/client-error.endpoint.test.ts).
+    clientErrorBodyParser: (_req: any, _res: any, next: any) => next(),
+  };
+});
 jest.mock('./sharing.controller', () => ({
   __esModule: true,
   default: new Proxy({}, { get: () => (_req: any, res: any) => res.status(200).json({ ok: true }) }),
@@ -839,5 +856,59 @@ describe('first-party visitor analytics — posture (owner 2026-10-07)', () => {
     expect(appSource).toContain("store: new RedisRateLimitStore('rl:visitall:')");
     expect(appSource).toContain('keyGenerator: (req) => `c:${hashIp(clientIpForHash(req as any)) ?? \'noip\'}`');
     expect(appSource).toContain("app.use('/api/crossmodel', visitEventsClientRateLimit, visitEventsGlobalRateLimit);");
+  });
+});
+
+/**
+ * Client UI error capture (ticket d4e643a5, 2026-11-06). The endpoint MUST stay
+ * reachable without a token: a crashing tab may be signed out, and a crash
+ * inside the LOGIN FLOW has no credential to send at all. Moving this route
+ * behind the app-level guard would silently make the feature a no-op for
+ * exactly the failures that matter most, so the posture is pinned here beside
+ * /visit-events rather than left to convention.
+ */
+describe('client error ingest — posture (ticket d4e643a5)', () => {
+  it('lets an ANONYMOUS tab reach POST /client-error (open router, no guard 401)', async () => {
+    const res = await fetch(`${base}/api/crossmodel/client-error`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'TypeError: anonymous crash', source: 'onerror' }),
+    });
+    expect(res.status).toBe(200); // reached the (mocked) handler, never the guard
+    expect(mockedVerify).not.toHaveBeenCalled();
+  });
+
+  it('a signed-in tab is identified on POST /client-error (optionalAuthenticate links the report)', async () => {
+    const res = await fetch(`${base}/api/crossmodel/client-error`, {
+      method: 'POST',
+      headers: { ...bearer, 'content-type': 'application/json' },
+      body: JSON.stringify({ message: 'TypeError: signed-in crash', source: 'onerror' }),
+    });
+    expect(res.status).toBe(200);
+    expect(mockedVerify).toHaveBeenCalledWith('good-token');
+  });
+
+  it('a body with no message is rejected by the schema BEFORE the handler (no empty rows in app_error_logs)', async () => {
+    const res = await fetch(`${base}/api/crossmodel/client-error`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ source: 'onerror' }),
+    });
+    // This harness mounts NO error handler (it pins auth posture), so a zod
+    // rejection surfaces as express's default 500 rather than the app's mapped
+    // 400 (middleware/error-handler.ts:122). What it CAN prove is the thing
+    // that matters here: the mocked handler never answered 200 — validation
+    // runs BEFORE the ingest seam, so an empty message can never be written.
+    // The real 400 is pinned end-to-end in client-errors/client-error.endpoint.test.ts.
+    expect(res.status).not.toBe(200);
+  });
+
+  it('app.ts rate-limits /client-error per client (hashed ip key) and globally', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const appSource: string = fs.readFileSync(path.resolve(__dirname, '../../app.ts'), 'utf8');
+    expect(appSource).toContain("store: new RedisRateLimitStore('rl:clienterr:')");
+    expect(appSource).toContain("store: new RedisRateLimitStore('rl:clienterrall:')");
+    expect(appSource).toContain("app.use('/api/crossmodel', clientErrorClientRateLimit, clientErrorGlobalRateLimit);");
   });
 });

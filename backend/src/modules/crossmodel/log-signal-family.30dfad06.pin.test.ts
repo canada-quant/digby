@@ -84,7 +84,10 @@ jest.mock('../../config/database', () => ({ __esModule: true, default: mockPrism
 
 jest.mock('../../utils/logger', () => ({
   __esModule: true,
-  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
+  // `log` is present because logExternal (utils/log-level.ts) emits the object
+  // form through logger.log — a warn-level taxonomy row that must NOT be passed
+  // as a splat argument.
+  default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), log: jest.fn() },
 }));
 
 const mockUtilityChat = jest.fn(async (): Promise<string> => '');
@@ -217,16 +220,47 @@ describe('30dfad06 — the BrightData direct 500 is a bounded failover record, n
 
     // The warn IS the ticket fingerprint (same text the sweep normalizes).
     // Retry lines ("transient 500 … retrying") come first; the TERMINAL failure
-    // is the last warn — one degraded scrape = one fingerprint row.
-    const calls = (freshLogger().warn as jest.Mock).mock.calls;
-    const terminal = calls.filter((c: any[]) => String(c[0]).includes('scrape_as_markdown failed'));
-    expect(terminal).toHaveLength(1);
-    const warnMsg = String(terminal[0][0]);
+    // is the last row — one degraded scrape = one fingerprint row.
+    //
+    // RE-ADJUDICATED (family lane 30dfad06, 2026-11-06): the terminal failure is
+    // now emitted via logExternal — still level 'warn' and still PERSISTED
+    // (tagging drops it from the log-signal SWEEP, not from app_error_logs),
+    // but it carries logClass:'external' so an adjudicated vendor class stops
+    // filing a weekly ticket. The row is read back here from logger.log, and
+    // the audit's vendor_transient rung (no logClass filter) still sees it.
+    const warnCalls = (freshLogger().warn as jest.Mock).mock.calls;
+    const logCalls = (freshLogger().log as jest.Mock).mock.calls;
+    expect(warnCalls.filter((c: any[]) => String(c[0]).includes('scrape_as_markdown failed'))).toHaveLength(0);
+    const taggedTerminal = logCalls.filter((c: any[]) => String(c[0]?.message || '').includes('scrape_as_markdown failed'));
+    expect(taggedTerminal).toHaveLength(1);
+    const warnMsg = String(taggedTerminal[0][0].message);
     expect(warnMsg).toContain('BrightData direct: scrape_as_markdown failed: 500');
     expect(warnMsg).toContain('Parse Error: Header overflow');
     expect(normalizeLogMessage(warnMsg)).toBe(normalizeLogMessage(ROW_30dfad06));
+    // Level is STILL warn (it is persisted and visible) — only the class tag moved.
+    expect(taggedTerminal[0][0].level).toBe('warn');
+    expect(taggedTerminal[0][0].logClass).toBe('external');
     // and it carries the routing context the sweep/alerting reads
-    expect(terminal[0][1]).toMatchObject({ source: 'brightdata-direct', tool: 'scrape_as_markdown' });
+    expect(taggedTerminal[0][0]).toMatchObject({ source: 'brightdata-direct', tool: 'scrape_as_markdown' });
+  });
+
+  it('an owner-actionable direct failure (revoked token / disabled zone) stays an UNTAGGED warn', async () => {
+    // The other half of the taxonomy: http_401/402/403/429 are OURS to fix, so
+    // they must keep filing. Tagging the whole catch-all would have hidden the
+    // 2026-08-06 invisible-outage class.
+    const err: any = Object.assign(new Error('Request failed with status code 403'), {
+      response: { status: 403, data: '{"error":"zone disabled"}' },
+    });
+    mockPost.mockRejectedValue(err);
+    const { tryDirectBrightData } = load();
+    await tryDirectBrightData('scrape_as_markdown', { url: 'https://example.com' });
+
+    const warnCalls = (freshLogger().warn as jest.Mock).mock.calls;
+    const terminal = warnCalls.filter((c: any[]) => String(c[0]).includes('scrape_as_markdown failed'));
+    expect(terminal).toHaveLength(1);
+    expect(String(terminal[0][0])).toContain('403');
+    // No external tag on this row — it must reach the sweep and file.
+    expect(terminal[0][1]?.logClass).toBeUndefined();
   });
 
   it('the retry is BOUNDED at 3 attempts (no unbounded storm) and each retry is an INFO line, not a warn', async () => {
@@ -236,9 +270,14 @@ describe('30dfad06 — the BrightData direct 500 is a bounded failover record, n
 
     expect(mockPost).toHaveBeenCalledTimes(3);
     // retries are logged at info ("transient … retrying") — only the terminal
-    // failure escalates to warn, so one degraded scrape is ONE sweep row.
+    // failure escalates, so one degraded scrape is ONE sweep row. Since the
+    // 2026-11-06 re-adjudication that terminal row is emitted via logExternal
+    // (logger.log, logClass:'external'), NOT logger.warn — the level is still
+    // 'warn', so it persists and stays visible; only the tier tag moved.
     const warnMsgs = (freshLogger().warn as jest.Mock).mock.calls.map((c: any[]) => String(c[0]));
-    expect(warnMsgs.filter(m => m.includes('scrape_as_markdown failed'))).toHaveLength(1);
+    const logMsgs = (freshLogger().log as jest.Mock).mock.calls.map((c: any[]) => String(c[0]?.message || ''));
+    expect(warnMsgs.filter(m => m.includes('scrape_as_markdown failed'))).toHaveLength(0);
+    expect(logMsgs.filter(m => m.includes('scrape_as_markdown failed'))).toHaveLength(1);
     // the retry lines are a DIFFERENT message shape, so they cannot masquerade
     // as the fingerprint row — and they carry their own tool tag.
     expect(warnMsgs.filter(m => m.includes('transient 500'))).toHaveLength(2); // attempts 1 and 2 only
@@ -455,5 +494,48 @@ describe('18d83feb — the PRE-DELIVERY strike is the fabrication guard’s desi
     expect(pin).toContain('82029969');
     expect(pin).toContain('guardMachineWakeFinalAnswer');
     expect(pin).toContain('the note was delivered as writ');
+  });
+});
+// ── PER-MEMBER REPLAY BINDING (family lane, 2026-11-06) ─────────────────────
+// Every member of this family gets ONE assertion naming its emit site and the
+// adjudication that was made, so a ticket close has a replay pin that cites the
+// row's own 8-char id (the adjudication gate's EVIDENCE requirement) and a
+// future reader can tell "designed, pinned" from "never looked at".
+describe('family member replay binding — each ticket id maps to one adjudicated site', () => {
+  const fs = require('fs');
+  const pathMod = require('path');
+  const code = (rel: string) => fs.readFileSync(pathMod.join(__dirname, rel), 'utf8');
+
+  it('c71183ab — the GONE row is split by RECOVERY, not tagged wholesale', () => {
+    const src = code('coding/container.service.ts');
+    expect(src).toContain('if (reProvisioned) logExternal(goneMessage');
+    expect(src).toContain('else logger.warn(goneMessage);');
+    // The unrecovered branch is the one that must keep filing: with no shell
+    // tools for the rest of the run the lane loses its firing.
+    expect(src).toContain('re-provisioned=${reProvisioned}');
+  });
+
+  it('488abfa3 — a REPLACED container is recovered, so it is tagged external', () => {
+    const src = code('coding/container.service.ts');
+    expect(src).toContain('logExternal(\n      `coding container: REPLACED for session');
+    // Nothing is lost: the durable metric row is written on the SAME branch.
+    expect(src).toContain('CONTAINER_REPLACED');
+  });
+
+  it('8775266b — the attribution summary is info; the metric rows are the record', () => {
+    const src = code('chat-agent/chat-agent.service.ts');
+    expect(src).toContain('artifact-attribution mismatch(es) (observe-only) — spec 13dfa16d`, { source: \'chat-agent\' });');
+    // Both sibling summary sites moved; their durable metric did not.
+    expect(src).toContain("kind: 'artifact_attribution_mismatch',");
+    expect(src).not.toContain('logger.warn(`chat-agent: supervisor ${chatId.slice(0, 8)} machine wake carried ${attribMismatches.length}');
+  });
+
+  it('fa9349ee — REFUTED for tagging: our own gateway liveness trace stays a warn', () => {
+    const src = code('mcp-search.ts');
+    expect(src).toContain('logger.warn(`Digby Web Search: ${toolName} SSE stream timed out (${timeoutMs / 1000}s)`');
+    // The timer is OUR safety timer waiting on OUR gateway child — there is no
+    // vendor/ours discriminator, so de-ticketing it would delete the only
+    // per-attempt evidence that the child stopped emitting.
+    expect(src).not.toContain('logExternal(`Digby Web Search:');
   });
 });

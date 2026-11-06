@@ -145,6 +145,7 @@ import {
   logSignalTicketSessionId,
   logSignalTicketDescription,
   LOG_SIGNAL_ADJUDICATED_SUPPRESSION_DISABLED_ENV,
+  LOG_SIGNAL_DESIGNED_ALARM_FILING_DISABLED_ENV,
   isoWeekKeyOf,
   fingerprintHash,
   LOG_SIGNAL_SWEEP_DISABLED_ENV,
@@ -1557,5 +1558,66 @@ describe('logSignalMetricContext (default acceptance metric)', () => {
     expect(ctx.acceptanceMetricSource).toBe('autofiler-default');
     expect(ctx.acceptanceMetric).toMatchObject({ probe: 'app_error_log_count', operator: '<=' });
     expect(ctx.acceptanceMetricMissing).toBeUndefined();
+  });
+});
+
+// ── TICKET 35cd91a7 (2026-11-06): A DECLARED INSTRUMENT NEVER FILES ──────────
+// The sweep already computed `designedAlarmOfFingerprint` — but only inside the
+// TICKET'S OWN PAYLOAD (`logSignalMetricContext`), i.e. after the filing
+// decision. So the platform declared a class a designed alarm and paid for a
+// ticket about it in the same expression: 35cd91a7's context carries
+// `acceptanceMetricDesignedAlarm:'gateway-or-ours'` on a row filed that hour.
+// A declared instrument's warn fires by design, so its ticket can never be
+// closed as a fix — it re-files every ISO week, forever.
+describe('35cd91a7 — a platform-declared DESIGNED ALARM is not filed as a ticket', () => {
+  // The live fingerprint shape (normalized: digits → <n>).
+  const INSTRUMENT_MSG = (i: number) =>
+    `tool-call stream [api-optimize-alibaba-deepseek-v4.1-flash]: GATEWAY-OR-OURS gateway recv=0 acc=0 drop=0 frag=0 buf=0 fr=null sc=0 verdict=no_complete_payload — receivedBytes=0 accumulatedBytes=0 droppedBytes=0 fragments=0 undrainedBufferBytes=0 finishReason=null slots=1 named=1 unnamed=0 broken=0:get_fleet_telemetry:len0:Unexpected end of JSON input discardedComplete=[] claims=none r${i}`;
+
+  it('files NOTHING for the GATEWAY-OR-OURS instrument, and counts what it withheld', async () => {
+    // 12 rows across many hours = the RULE-1 recurrence the live ticket came from.
+    for (let i = 0; i < 12; i++) errorLogRows.push(row(240 - i * 10, INSTRUMENT_MSG(i)));
+    const wakes: any[] = [];
+    const summary = await runLogSignalSweepOnce({ now: NOW, enqueueDirectWake: async (o: any) => { wakes.push(o); return { ok: true }; } });
+
+    // The recurrence WAS detected (the alarm still fires and is still counted) …
+    expect(summary).toContain('signals 1');
+    // … but no ticket was bought for an instrument.
+    expect(summary).toContain('tickets filed 0');
+    expect(summary).toContain('designed-alarm suppressed 1');
+    expect(featureRequests).toHaveLength(0);
+  });
+
+  it('a genuine fault fingerprint still files (the stop is not a blanket off-switch)', async () => {
+    for (let i = 0; i < 12; i++) errorLogRows.push(row(240 - i * 10, `session-history-sync: push refused permanently ${i} of 20`));
+    await runLogSignalSweepOnce({ now: NOW, enqueueDirectWake: async () => ({ ok: true }) });
+    expect(featureRequests).toHaveLength(1);
+    expect(featureRequests[0].title).toContain('session-history-sync');
+  });
+
+  it('an `ours` culprit KEEPS FILING — a defect of ours is never an instrument', async () => {
+    // RECALL: the emit template carries the GATEWAY-OR-OURS token for EVERY
+    // verdict, so without the culprit guard the stop would silently retire the
+    // sweep's only detector for our own stream-handling bugs (unread arg bytes,
+    // skipped raw lines, parse-fail frames).
+    const oursMsg = (i: number) =>
+      `tool-call stream [api-optimize-alibaba-deepseek-v4.1-flash]: GATEWAY-OR-OURS ours recv=812 acc=400 drop=0 frag=0 buf=0 fr=tool_calls sc=1 ur=412 verdict=no_complete_payload — receivedBytes=812 accumulatedBytes=400 droppedBytes=0 fragments=0 undrainedBufferBytes=0 finishReason=tool_calls slots=1 named=1 unnamed=0 broken=0 discardedComplete=[] claims=none o${i}`;
+    for (let i = 0; i < 12; i++) errorLogRows.push(row(240 - i * 10, oursMsg(i)));
+    const summary = await runLogSignalSweepOnce({ now: NOW, enqueueDirectWake: async () => ({ ok: true }) });
+
+    expect(summary).toContain('designed-alarm suppressed 0');
+    expect(featureRequests).toHaveLength(1);
+    expect(featureRequests[0].title).toContain('gateway-or-ours');
+  });
+
+  it('LOG_SIGNAL_DESIGNED_ALARM_FILING_DISABLED=1 restores filing for declared instruments', async () => {
+    // A separate kill switch from the adjudication one: an operator can restore
+    // filing for declared instruments without re-arming every adjudicated class.
+    process.env[LOG_SIGNAL_DESIGNED_ALARM_FILING_DISABLED_ENV] = '1';
+    for (let i = 0; i < 12; i++) errorLogRows.push(row(240 - i * 10, INSTRUMENT_MSG(i)));
+    const summary = await runLogSignalSweepOnce({ now: NOW, enqueueDirectWake: async () => ({ ok: true }) });
+
+    expect(summary).toContain('designed-alarm suppressed 0');
+    expect(featureRequests).toHaveLength(1);
   });
 });

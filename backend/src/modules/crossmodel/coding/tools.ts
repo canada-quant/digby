@@ -4640,13 +4640,42 @@ export async function executeCodingTool(ctx: ToolContext, name: string, args: an
     // Attribution stamp (firing-50): carry the session/run ids as logger meta so
     // the audit's errors_4h can attribute this row to a chat instead of landing
     // context=null (the firing-48 agentWarn class). Mirrors agentLoop's agentWarn.
-    logger.warn(`coding tool ${name} failed: ${err.message}`, {
-      sessionId: ctx?.sessionId,
-      runId: ctx?.runId ?? undefined,
-      userId: ctx?.userId,
-      source: 'coding-tool',
-      tool: name,
-    });
+    //
+    // Taxonomy (log-signal family 1e6ca603, 2026-11-06): an EXPECTED input
+    // REFUSAL is the product, not an internal fault — the same adjudication
+    // tools.ts:165 already makes for a workspace refusal, and the message the
+    // model receives (`Tool <n> failed: …`) is UNCHANGED, so the lane keeps the
+    // full actionable text (e.g. goal_premise_set's mode:'replace' hatch).
+    //
+    // The discriminator is deliberately NARROW: a platform tool refusing with
+    // AppError 400, i.e. the caller's own input failed validation. Everything
+    // else still files — 403/404/409/410 refusals can indicate a stale id or a
+    // real authority bug, every 5xx stays untagged, and a non-AppError throw
+    // (TypeError, Prisma, ENOENT, a git failure) carries no statusCode at all so
+    // it can never be swallowed here. Duck-typed on purpose: importing
+    // middleware/error-handler would pull config/env into this file's graph and
+    // process.exit(1) in env-less suites (tools.ts:33-38).
+    //
+    // NB: both arms carry the meta object INLINE — warn-attribution.firing50
+    // reads the warn span out of this file and requires these five fields.
+    const refusalStatus = typeof err?.statusCode === 'number' ? err.statusCode : null;
+    if (isPlatformTool(name) && refusalStatus === 400) {
+      logHandled(`coding tool ${name} refused: ${err.message}`, {
+        sessionId: ctx?.sessionId,
+        runId: ctx?.runId ?? undefined,
+        userId: ctx?.userId,
+        source: 'coding-tool',
+        tool: name,
+      });
+    } else {
+      logger.warn(`coding tool ${name} failed: ${err.message}`, {
+        sessionId: ctx?.sessionId,
+        runId: ctx?.runId ?? undefined,
+        userId: ctx?.userId,
+        source: 'coding-tool',
+        tool: name,
+      });
+    }
     return `Tool ${name} failed: ${err.message}`;
   }
 }

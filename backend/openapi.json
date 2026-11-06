@@ -3226,6 +3226,32 @@
         "description": "Anonymous-capable: a Bearer JWT, cm_access cookie, or ?token= is honored when present but not required (handlers may still self-check → 401)."
       }
     },
+    "/api/crossmodel/client-error": {
+      "post": {
+        "summary": "client-side UI error ingest (ticket d4e643a5, 2026-11-06). The owner, on 81b229e1: \"also you should;d be capturing all these ui errors somewhere and auto filing tickets without me telling you right?\" Before this route...",
+        "tags": [
+          "crossmodel"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          },
+          {}
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "OPEN + optionalAuthenticate because a crashing tab may be signed out (a\ncrash inside the login flow has no token). The handler re-sanitizes the\nwhole untrusted payload (user text masked, credential shapes cut, every\nfield capped), throttles one row per signature per window with separate\nper-client and process budgets, then writes through the EXISTING winston\nlogger stamped source='client-error' — the hourly sweep does the filing\n(NO second sweep). Rate-limited per client in app.ts beside /visit-events.\nCLIENT_ERROR_INGEST_DISABLED=1 ⇒ 204, nothing recorded.\nAnonymous-capable: a Bearer JWT, cm_access cookie, or ?token= is honored when present but not required (handlers may still self-check → 401)."
+      }
+    },
     "/api/crossmodel/agent/attach": {
       "get": {
         "summary": "Attach agent run",
@@ -5374,6 +5400,170 @@
           }
         },
         "description": "One-Digby: live-run check (authenticated — normal fetch, Bearer header works)."
+      }
+    },
+    "/api/crossmodel/chats/{id}/queue": {
+      "get": {
+        "summary": "List chat queue",
+        "tags": [
+          "crossmodel"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "── Busy-chat QUEUE CONTROLS (ticket ea04454c) ──────────────────────────────\nMessages typed while a run is active have always been persisted + drained\nFIFO (message-queue.service, 2026-08-07), but the person who typed one could\nonly WAIT or STOP everything — no position, no cancel, no \"run this next\".\nThese four routes are the control plane for the caller's OWN user rows. The\norder they manipulate IS the drain order (createdAt re-stamp, no migration).\nChild sub-accounts are rejected (Digby Kids).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/chats/{id}/queue/{pendingId}/cancel": {
+      "post": {
+        "summary": "Cancel chat queue item",
+        "tags": [
+          "crossmodel"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Child sub-accounts are rejected (Digby Kids).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pendingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/chats/{id}/queue/{pendingId}/promote": {
+      "post": {
+        "summary": "Promote chat queue item",
+        "tags": [
+          "crossmodel"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Child sub-accounts are rejected (Digby Kids).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pendingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/chats/{id}/queue/{pendingId}/move": {
+      "post": {
+        "summary": "Move chat queue item",
+        "tags": [
+          "crossmodel"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Child sub-accounts are rejected (Digby Kids).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "pendingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     },
     "/api/crossmodel/chats/{id}/run": {
@@ -11910,188 +12100,6 @@
           }
         },
         "description": "GET /api/crossmodel/admin/traffic/flow?userId= | ?visitorId= — one subject's timeline (admin).\nAdmin-only (role enforced in the controller)."
-      }
-    },
-    "/api/crossmodel/chats/{id}/queue": {
-      "get": {
-        "summary": "List my queued messages for this chat, in the order they will be delivered.",
-        "tags": [
-          "crossmodel"
-        ],
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {
-            "cookieAuth": []
-          }
-        ],
-        "description": "Busy-chat queue control (ticket ea04454c). Operates on the caller's OWN pending\nuser messages — never a machine relay row, never another sender's row.\nPositions are 1-based in the chat's real delivery order (the same order the\ndrain reads), so the number shown is the message's true place in the queue.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response"
-          },
-          "401": {
-            "description": "Authentication required"
-          }
-        }
-      }
-    },
-    "/api/crossmodel/chats/{id}/queue/{pendingId}/cancel": {
-      "post": {
-        "summary": "Cancel one of my queued messages before it fires.",
-        "tags": [
-          "crossmodel"
-        ],
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {
-            "cookieAuth": []
-          }
-        ],
-        "description": "Busy-chat queue control (ticket ea04454c). Operates on the caller's OWN pending\nuser messages — never a machine relay row, never another sender's row.\nThe row is deleted; staged attachments keep their TTL and lapse on their own (a\nmis-click never destroys a file the sender can re-send). A queued deep_research\nmessage refunds its daily council slot. 404 QUEUE_ITEM_GONE (fresh queue\nreturned), 403 QUEUE_NOT_OWNER / QUEUE_NOT_USER_ROW.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "pendingId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response with the fresh queue"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not your message / not a user row"
-          },
-          "404": {
-            "description": "Message no longer queued (fresh queue returned)"
-          }
-        }
-      }
-    },
-    "/api/crossmodel/chats/{id}/queue/{pendingId}/promote": {
-      "post": {
-        "summary": "Move one of my queued messages to the front of my own block.",
-        "tags": [
-          "crossmodel"
-        ],
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {
-            "cookieAuth": []
-          }
-        ],
-        "description": "Busy-chat queue control (ticket ea04454c). Operates on the caller's OWN pending\nuser messages — never a machine relay row, never another sender's row.\nIt becomes the next turn when the running answer finishes; it never jumps a row\nanother person is waiting on. 409 QUEUE_BLOCKED_BY_OTHER when their row is in\nthe way. 404 QUEUE_ITEM_GONE, 403 QUEUE_NOT_OWNER / QUEUE_NOT_USER_ROW.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "pendingId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response with the fresh queue"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not your message / not a user row"
-          },
-          "404": {
-            "description": "Message no longer queued (fresh queue returned)"
-          }
-        }
-      }
-    },
-    "/api/crossmodel/chats/{id}/queue/{pendingId}/move": {
-      "post": {
-        "summary": "Reorder one of my queued messages by one slot (direction: up | down).",
-        "tags": [
-          "crossmodel"
-        ],
-        "security": [
-          {
-            "bearerAuth": []
-          },
-          {
-            "cookieAuth": []
-          }
-        ],
-        "description": "Busy-chat queue control (ticket ea04454c). Operates on the caller's OWN pending\nuser messages — never a machine relay row, never another sender's row.\nRe-stamps the row's place in the drain order (no schema change). Refuses to hop\na row another sender is waiting on (409 QUEUE_BLOCKED_BY_OTHER). A move past\neither end is a successful no-op. 400 for a missing/invalid direction.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "pendingId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful response with the fresh queue"
-          },
-          "401": {
-            "description": "Authentication required"
-          },
-          "403": {
-            "description": "Not your message / not a user row"
-          },
-          "404": {
-            "description": "Message no longer queued (fresh queue returned)"
-          }
-        }
       }
     }
   },
