@@ -114,8 +114,18 @@ RUN --mount=type=cache,id=npm-frontend,target=/root/.npm npm ci
 # stale cached copy layer on one box served an OLD bundle whose chunk names
 # the other box didn't have, and the ALB mixed them (unstyled pages, ~50% of
 # asset requests 404). npm deps caching above is untouched (still fast).
+#
+# It is ALSO this bundle's source-revision provenance (ticket b37bf85f): the
+# same ARG feeds NEXT_PUBLIC_DEPLOY_SHA (client error reports) and the
+# org.opencontainers.image.revision label below, so "which commit built this
+# image?" is answerable with `docker image inspect` and from /api/health.
+# Self-host supplies it from docker-compose.selfhost.yml; the published images
+# supply `github.sha`; a plain `docker build` leaves it 'dev' (no fake sha).
 ARG DEPLOY_SHA=dev
 ENV NEXT_PUBLIC_DEPLOY_SHA=$DEPLOY_SHA
+LABEL org.opencontainers.image.revision=$DEPLOY_SHA \
+      org.opencontainers.image.source=https://github.com/canada-quant/digby \
+      org.opencontainers.image.title="digby-frontend"
 COPY . .
 # NO Next incremental-cache mount here (removed 2026-09-08): a per-box
 # persistent .next/cache made chunk output box-dependent — the OTHER half of
@@ -139,6 +149,33 @@ ENV NODE_ENV=production
 # `docker build` (docker-compose supplies it, which is why it looked fine).
 ARG DIGBY_BRANDING_DIR=
 ENV DIGBY_BRANDING_DIR=$DIGBY_BRANDING_DIR
+
+# Source revision (ticket b37bf85f) — RE-DECLARED for the same reason as
+# DIGBY_BRANDING_DIR above: an ARG does not cross a `FROM` boundary, and a LABEL
+# set only in the build stage is NOT on the image an operator pulls. The label
+# here is what `docker image inspect <frontend>` answers, so it must be in the
+# FINAL stage. (The value is also compiled into the bundle as
+# NEXT_PUBLIC_DEPLOY_SHA by the build stage.)
+#
+# NO DEFAULT, deliberately — two reasons:
+#   • ONE `ARG DEPLOY_SHA=dev` in this file, in the build stage where it busts
+#     the source layers. scripts/deploy/blue-green-speedups.test.sh pins exactly
+#     that (deploy invariant #6), and a second `=dev` here would be a second
+#     source of truth for the bust key.
+#   • A build that passes no `--build-arg` then reports an EMPTY revision label
+#     rather than asserting `dev`, which matches the backend's empty default:
+#     unknown is stated as unknown, never as a plausible-looking value.
+# compose/build-arg supplies it on every sanctioned path, so in practice this is
+# the same commit the backend image reports.
+ARG DEPLOY_SHA
+# ENV as well as LABEL: the ticket asks for the revision to be readable INSIDE
+# the running frontend container, not only off the image. `docker exec <frontend>
+# printenv DEPLOY_SHA` then answers without a registry round-trip or a bundle
+# grep, matching the backend/worker/relay containers (same mechanism).
+ENV DEPLOY_SHA=$DEPLOY_SHA
+LABEL org.opencontainers.image.revision=$DEPLOY_SHA \
+      org.opencontainers.image.source=https://github.com/canada-quant/digby \
+      org.opencontainers.image.title="digby-frontend"
 
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static

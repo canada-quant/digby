@@ -51,13 +51,40 @@ docker info >/dev/null 2>&1 || die "cannot talk to the Docker daemon.
         sudo usermod -aG docker \$USER   # then log out and back in"
 
 # Downloading a file needs one of curl/wget; prefer curl.
+#
+# A fetch must never leave a file behind on failure, because the caller guards
+# on `[ -f "$COMPOSE" ]` to stay idempotent — and that guard cannot tell a good
+# file from a poisoned one. Both transports can half-succeed, so BOTH need this:
+#   * an HTTP error — `curl -o` and `wget -qO` open the DESTINATION first, so a
+#     404 leaves a 0-byte file;
+#   * a TRUNCATED transfer — the server closes early, and what was already
+#     written stays on disk (reproduced: curl exits 18 leaving 65536 of a
+#     promised 1048576 bytes).
+# Either way the next run "keeps" the broken file and `docker compose -f
+# <broken>` dies opaquely. So: download to a temp path and rename into place
+# only on success.
+#
+# The temp file is created in the DESTINATION's own directory, so `mv` is an
+# atomic rename — a temp in /tmp would be copy+unlink across filesystems and a
+# reader could see a partial file. The explicit chmod restores the 0644 these
+# files had before (mktemp defaults to 0600); `.env` is separately chmod 600
+# below. `_ft`/`_dir` are deliberately globals: POSIX sh has no `local`.
 if have curl; then
-  fetch() { curl -fsSL "$1" -o "$2"; }
+  _get() { curl -fsSL "$1" -o "$2"; }
 elif have wget; then
-  fetch() { wget -qO "$2" "$1"; }
+  _get() { wget -qO "$2" "$1"; }
 else
   die "need either curl or wget to download the install files"
 fi
+fetch() {
+  _dir=$(dirname "$2")
+  _ft=$(mktemp "$_dir/.digby-fetch.XXXXXX") || return 1
+  if _get "$1" "$_ft"; then
+    chmod 644 "$_ft" && mv "$_ft" "$2" && return 0
+  fi
+  rm -f "$_ft"
+  return 1
+}
 
 # ── layout ───────────────────────────────────────────────────────────────────
 mkdir -p "$DIGBY_DIR"

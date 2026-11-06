@@ -87,3 +87,21 @@ private route in [`SECURITY.md`](./SECURITY.md) if the matter is sensitive.
 The commercial licence terms are set out in a separate signed agreement. If this
 summary and the AGPL text disagree about your AGPL rights, the AGPL text
 controls.*
+
+---
+
+## 6. Licence history — earlier MIT releases
+
+Commits published to `canada-quant/digby` before 2026-11-06 shipped an **MIT**
+`LICENSE` file (carrying a leftover `Admin Dashboard Template` copyright line).
+That was inconsistent with this document and with the project's intent, and it
+has been corrected: `LICENSE` now holds the verbatim AGPL-3.0 text.
+
+**This correction is not retroactive, and we do not claim it is.** A licence
+already granted cannot be revoked. Anyone who obtained Digby under those earlier
+commits may continue to use, modify and redistribute **that** code under the MIT
+terms that accompanied it. The AGPL-3.0-or-later applies to the repository from
+this release forward, and to every subsequent commit.
+
+If you are relying on the earlier MIT grant, pin your dependency to a commit
+before 2026-11-06 and keep the MIT notice that came with it.

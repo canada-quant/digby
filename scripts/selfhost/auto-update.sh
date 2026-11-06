@@ -16,6 +16,15 @@
 #   DIGBY_BRANCH           branch to track                (default: main)
 #   DIGBY_COMPOSE_PROFILES compose profiles, comma-sep    (default: none; e.g. "mcp,tools")
 #   DIGBY_UPDATE_FORCE=1   hard-reset a dirty checkout to origin instead of bailing
+#
+# SOURCE REVISION (ticket b37bf85f). This script is the sanctioned update path,
+# so it is the one place that KNOWS which commit the build is about to read: it
+# exports DEPLOY_SHA from the checkout AFTER the fast-forward and before
+# `docker compose up -d --build`. Compose forwards it as a build arg, the
+# Dockerfiles bake it into the images (OCI org.opencontainers.image.revision)
+# and the backend reports it as `revision` on GET /api/health. Without this the
+# containers carry no provenance at all and "is this Edge up to date?" can only
+# be guessed at from dist mtimes.
 set -euo pipefail
 
 REPO_DIR="${DIGBY_REPO_DIR:-/opt/digby}"
@@ -50,6 +59,15 @@ if [ "${DIGBY_UPDATE_FORCE:-0}" = "1" ]; then
 else
   git merge --ff-only "origin/$BRANCH"
 fi
+
+# The exact revision this build reads. Read from the checkout we JUST
+# fast-forwarded (not from origin, not from the earlier LOCAL variable, and not
+# from the up-to-date branch above — this is executed after the merge so HEAD is
+# the tree compose is about to build). Exported so compose's
+# `DEPLOY_SHA=${DEPLOY_SHA:-}` build args pick it up.
+DEPLOY_SHA="$(git rev-parse HEAD)"
+export DEPLOY_SHA
+log "building revision ${DEPLOY_SHA}"
 
 compose=(docker compose -f "$COMPOSE_FILE")
 if [ -n "$PROFILES" ]; then

@@ -190,6 +190,63 @@ const elapsedSince = (startedAt: number | null | undefined): number | undefined 
 // The news.service.ts module handles Redis caching + background pre-fetch scheduler.
 // We import lazily inside the handler to avoid circular-dependency issues at startup.
 
+// ── Busy-chat queue controls: shared auth/ownership + refusal→HTTP mapping ────
+// MODULE-LEVEL ON PURPOSE (ticket ffbf1315). These three handlers are wired as
+// bare route callbacks (`router.post(..., controller.promoteChatQueueItem)`), and
+// Express calls a handler with NO receiver — so `this` is undefined inside them.
+// The first cut kept this helper as a private method reached via
+// `this.applyQueueControl(...)`, which threw
+// "Cannot read properties of undefined (reading 'applyQueueControl')" on every
+// cancel/promote/move click: a 500 with no `code` field, which the UI could only
+// render as the generic "Could not update the queue — refreshing it now."
+// Keeping it free-standing makes the handlers callable unbound, like every other
+// method on the controller (none of which touch `this`).
+async function applyQueueControl(
+  req: Request,
+  res: Response,
+  run: (chatId: string, userId: string, pendingId: string) => Promise<import('./chat-agent/queue-controls').QueueControlResult>,
+) {
+  try {
+    const userId = req.user!.id;
+    const chatId = String(req.params.id || '');
+    const pendingId = String(req.params.pendingId || '');
+    if (!chatId || !pendingId) return res.status(400).json({ error: 'chatId and pendingId are required' });
+    const { access, exists } = await crossModelService.getChatAccess(chatId, userId);
+    if (!chatReadAccessGranted({ userId, access, exists })) {
+      return res.status(404).json({ error: 'Chat not found' }); // no existence leak
+    }
+    const result = await run(chatId, userId, pendingId);
+    if (result.ok) return res.json({ success: true, data: { queue: result.queue } });
+    // Honest, distinguishable refusals: the UI names what happened instead of
+    // silently dropping the click ("no longer queued" vs "not yours").
+    if (result.refusal === 'not_owned' || result.refusal === 'not_a_user_row') {
+      return res.status(403).json({
+        error: result.refusal === 'not_owned'
+          ? 'Only the sender can change that queued message.'
+          : 'That queued message came from a machine sender — it cannot be edited from here.',
+        code: result.refusal === 'not_owned' ? 'QUEUE_NOT_OWNER' : 'QUEUE_NOT_USER_ROW',
+        data: { queue: result.queue },
+      });
+    }
+    if (result.refusal === 'blocked') {
+      // Another person is waiting on the row in the way — their place is not
+      // ours to move (they cannot see or undo it).
+      return res.status(409).json({
+        error: 'Someone else is waiting on the message next to that one — its position is theirs to keep.',
+        code: 'QUEUE_BLOCKED_BY_OTHER',
+        data: { queue: result.queue },
+      });
+    }
+    return res.status(404).json({
+      error: 'That message is no longer queued — the list has been refreshed.',
+      code: 'QUEUE_ITEM_GONE',
+      data: { queue: result.queue },
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 export class CrossModelController {
 
   // ── User Preferences (model set) ──────────────────────────────────────────
@@ -671,7 +728,7 @@ export class CrossModelController {
    * message before it fires (ticket ea04454c: the owner had only wait-or-stop).
    */
   async cancelChatQueueItem(req: Request, res: Response) {
-    return this.applyQueueControl(req, res, (chatId, userId, pendingId) =>
+    return applyQueueControl(req, res, (chatId, userId, pendingId) =>
       import('./chat-agent/queue-controls').then((m) => m.cancelQueuedUserMessage(chatId, userId, pendingId)));
   }
 
@@ -682,7 +739,7 @@ export class CrossModelController {
    * of the server deciding for them.
    */
   async promoteChatQueueItem(req: Request, res: Response) {
-    return this.applyQueueControl(req, res, (chatId, userId, pendingId) =>
+    return applyQueueControl(req, res, (chatId, userId, pendingId) =>
       import('./chat-agent/queue-controls').then((m) => m.promoteQueuedUserMessage(chatId, userId, pendingId)));
   }
 
@@ -690,55 +747,8 @@ export class CrossModelController {
   async moveChatQueueItem(req: Request, res: Response) {
     const direction = req.body?.direction === 'down' ? 'down' : req.body?.direction === 'up' ? 'up' : null;
     if (!direction) return res.status(400).json({ error: "direction must be 'up' or 'down'" });
-    return this.applyQueueControl(req, res, (chatId, userId, pendingId) =>
+    return applyQueueControl(req, res, (chatId, userId, pendingId) =>
       import('./chat-agent/queue-controls').then((m) => m.moveQueuedUserMessage(chatId, userId, pendingId, direction)));
-  }
-
-  /** Shared auth/ownership + refusal→HTTP mapping for the three queue controls. */
-  private async applyQueueControl(
-    req: Request,
-    res: Response,
-    run: (chatId: string, userId: string, pendingId: string) => Promise<import('./chat-agent/queue-controls').QueueControlResult>,
-  ) {
-    try {
-      const userId = req.user!.id;
-      const chatId = String(req.params.id || '');
-      const pendingId = String(req.params.pendingId || '');
-      if (!chatId || !pendingId) return res.status(400).json({ error: 'chatId and pendingId are required' });
-      const { access, exists } = await crossModelService.getChatAccess(chatId, userId);
-      if (!chatReadAccessGranted({ userId, access, exists })) {
-        return res.status(404).json({ error: 'Chat not found' }); // no existence leak
-      }
-      const result = await run(chatId, userId, pendingId);
-      if (result.ok) return res.json({ success: true, data: { queue: result.queue } });
-      // Honest, distinguishable refusals: the UI names what happened instead of
-      // silently dropping the click ("no longer queued" vs "not yours").
-      if (result.refusal === 'not_owned' || result.refusal === 'not_a_user_row') {
-        return res.status(403).json({
-          error: result.refusal === 'not_owned'
-            ? 'Only the sender can change that queued message.'
-            : 'That queued message came from a machine sender — it cannot be edited from here.',
-          code: result.refusal === 'not_owned' ? 'QUEUE_NOT_OWNER' : 'QUEUE_NOT_USER_ROW',
-          data: { queue: result.queue },
-        });
-      }
-      if (result.refusal === 'blocked') {
-        // Another person is waiting on the row in the way — their place is not
-        // ours to move (they cannot see or undo it).
-        return res.status(409).json({
-          error: 'Someone else is waiting on the message next to that one — its position is theirs to keep.',
-          code: 'QUEUE_BLOCKED_BY_OTHER',
-          data: { queue: result.queue },
-        });
-      }
-      return res.status(404).json({
-        error: 'That message is no longer queued — the list has been refreshed.',
-        code: 'QUEUE_ITEM_GONE',
-        data: { queue: result.queue },
-      });
-    } catch (err: any) {
-      return res.status(500).json({ error: err.message });
-    }
   }
 
   async createChat(req: Request, res: Response, next: NextFunction) {

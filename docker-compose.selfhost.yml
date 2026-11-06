@@ -106,6 +106,11 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: build
+      args:
+        # Source revision stamp (ticket b37bf85f) — same two args every backend
+        # service gets, so `docker image inspect` answers "which commit?" for
+        # the image the migrate one-shot runs out of too.
+        - DEPLOY_SHA=${DEPLOY_SHA:-}
     container_name: digby-migrate
     command: ["npx", "prisma", "migrate", "deploy"]
     environment:
@@ -122,6 +127,25 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: production
+      args:
+        # ── Source revision provenance (ticket b37bf85f) ─────────────────────
+        # The commit this image is built from. buildRevision (backend
+        # platform/build-revision.ts) reports it as `revision` on GET
+        # /api/health, and org.opencontainers.image.revision names it on the
+        # image itself — the two answers "is this Edge up to date?" used to
+        # require host-side git + dist-mtime inference to approximate.
+        #
+        # WHERE THE VALUE COMES FROM: scripts/selfhost/auto-update.sh exports
+        # DEPLOY_SHA=$(git rev-parse HEAD) after its fast-forward, i.e. the
+        # EXACT checkout the build reads. A hand-run `docker compose up -d
+        # --build` inherits whatever DEPLOY_SHA is exported in that shell
+        # (docs/SELF_HOST.md § Updating shows the line); unset = an empty
+        # revision, reported honestly as unknown rather than guessed.
+        #
+        # It is a BUILD arg, deliberately not a runtime environment entry: the
+        # sha must describe the bytes in the image, so a runtime override could
+        # only ever make the container lie about its own provenance.
+        - DEPLOY_SHA=${DEPLOY_SHA:-}
     container_name: digby-backend
     # Published on localhost only, for debugging/probing. Normal traffic goes
     # through Caddy (http://localhost:8080/api → this service).
@@ -323,6 +347,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: production
+      args:
+        # Source revision stamp (ticket b37bf85f) — same rationale as `backend`.
+        - DEPLOY_SHA=${DEPLOY_SHA:-}
     container_name: digby-relay
     command: ["node", "dist/relay.js"]
     # Published on localhost only, for debugging/probing. Normal traffic goes
@@ -360,6 +387,9 @@ services:
       context: ./backend
       dockerfile: Dockerfile
       target: production
+      args:
+        # Source revision stamp (ticket b37bf85f) — same rationale as `backend`.
+        - DEPLOY_SHA=${DEPLOY_SHA:-}
     container_name: digby-worker
     command: ["node", "dist/worker.js"]
     environment:
@@ -523,6 +553,13 @@ services:
       dockerfile: Dockerfile
       target: production
       args:
+        # ── Source revision provenance (ticket b37bf85f) ─────────────────────
+        # Same value the backend image gets: the exact checked-out commit. It
+        # lands on the image as org.opencontainers.image.revision and in the
+        # bundle as NEXT_PUBLIC_DEPLOY_SHA (client error reports carry it).
+        # `dev` is the long-standing unstamped default — backend/build-revision
+        # and fleet/infra-watch both treat a non-sha as "unknown", never a sha.
+        - DEPLOY_SHA=${DEPLOY_SHA:-dev}
         # Baked into the JS bundle at build time — changing the public URL
         # means rebuilding the frontend image.
         - NEXT_PUBLIC_API_URL=${SELFHOST_PUBLIC_URL:-http://localhost:8080}/api

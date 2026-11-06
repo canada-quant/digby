@@ -111,7 +111,30 @@ const LEVELS = ['error', 'warn'];
  * sweep already handles (acceptanceMetricMissing), never a pattern that
  * cannot count its own rows. Pure.
  */
-export function stableLiteralFragment(fingerprint: unknown, exampleMessage?: unknown): string | null {
+/**
+ * PREFER A DISCRIMINATING RUN (ticket 30dfad06, 2026-11-06). The default bar is
+ * a case-insensitive LITERAL SUBSTRING count, so a fragment that also matches a
+ * SIBLING class still filing measures that sibling's rows too. When `avoid`
+ * rejects the longest run, fall back to the longest run it accepts — keeping a
+ * SOUND bar instead of dropping coverage. `chosen` is returned unchanged when
+ * nothing discriminates, so the caller can SEE the collision and decide (never a
+ * silent weakening). Pure.
+ */
+function preferDiscriminating(
+  chosen: string,
+  pool: ReadonlyArray<string>,
+  avoid: ((candidate: string) => boolean) | undefined,
+): string {
+  if (!avoid || !chosen || !avoid(chosen)) return chosen;
+  const alt = [...new Set(pool.map((x) => String(x)))]
+    .map((x) => x.slice(0, LOG_FRAGMENT_MAX).trim())
+    .filter((x) => x.length >= LOG_FRAGMENT_MIN)
+    .filter((x) => !avoid(x))
+    .sort((a, b) => b.length - a.length)[0];
+  return alt ?? chosen;
+}
+
+export function stableLiteralFragment(fingerprint: unknown, exampleMessage?: unknown, avoid?: (candidate: string) => boolean): string | null {
   const fp = typeof fingerprint === 'string' ? fingerprint : '';
   const trimEdges = (x: string) => x.replace(/^[\s:;,.\-—–'"`]+|[\s:;,\-—–'"`]+$/g, '');
   const pieces = fp
@@ -124,7 +147,16 @@ export function stableLiteralFragment(fingerprint: unknown, exampleMessage?: unk
   // No raw example (direct callers / older shapes): the fingerprint fragment,
   // as before — the filing-time baseline gate still measures every stored
   // metric against the real rows and drops a vacuous one.
-  if (!raw || raw.toLowerCase().includes(best.toLowerCase())) return best;
+  if (!raw) return best;
+  if (raw.toLowerCase().includes(best.toLowerCase())) {
+    // DISCRIMINATION ALSO HERE (30dfad06): the early-return path is the COMMON
+    // one (the fingerprint fragment is a substring of the raw example), and it
+    // is exactly the path a shared HEAD takes — returning `best` unconditionally
+    // here would leave the sibling-spanning bar in place. Offer the other
+    // fingerprint pieces as alternatives so a discriminating run can be chosen.
+    const earlyOut = preferDiscriminating(best, pieces, avoid).slice(0, LOG_FRAGMENT_MAX).trim();
+    return earlyOut.length >= LOG_FRAGMENT_MIN ? earlyOut : null;
+  }
   // The fingerprint fragment is NOT a substring of the raw example — the two
   // differ in whitespace (the fingerprint collapsed it). Re-derive from the
   // RAW text, anchored to the fingerprint: split on the same variable-token
@@ -166,9 +198,71 @@ export function stableLiteralFragment(fingerprint: unknown, exampleMessage?: unk
     .filter((x) => x.length >= LOG_FRAGMENT_MIN && !regexIntentOf(x))
     .filter(anchored)
     .sort((a, b) => b.length - a.length)[0];
+  // DISCRIMINATION (30dfad06): when the best run also matches a sibling class,
+  // prefer the longest run that does not — a SOUND bar, not a dropped one.
+  // The pool is every anchored candidate run (pre-whitespace-split rungs
+  // included, so "request failed with status code" is available even though the
+  // longest run happens to be the shared head).
+  const pool = [...candidates, ...(stable ? [stable] : [])];
   const chosen = stable ?? rawBest;
-  const out = chosen.slice(0, LOG_FRAGMENT_MAX).trim();
+  const out = preferDiscriminating(chosen, pool, avoid).slice(0, LOG_FRAGMENT_MAX).trim();
   return out.length >= LOG_FRAGMENT_MIN ? out : null;
+}
+
+/**
+ * FRAGMENT DISCRIMINATION (ticket 30dfad06, lane 3d5956e1, 2026-11-06) — does
+ * this fragment measure ONE class, or a head two classes share?
+ *
+ * The default bar is `app_error_log_count <= N` matching a case-insensitive
+ * LITERAL SUBSTRING of the row. So the bar is only attainable when the fragment
+ * matches the ticket's OWN rows and nothing else that keeps filing. `stableLiteralFragment`
+ * picks the LONGEST literal run, which for a message whose distinguishing text
+ * sits AFTER a long common head is the HEAD — and that head is a substring of
+ * every sibling subclass that shares the template.
+ *
+ * MEASURED, and the reason this exists (ticket 30dfad06 reopened at
+ * 2026-11-06T03:15:58Z on a fix that WORKS): `brightdata-direct.ts` emits one
+ * message template whose subclasses `classifyDirectMiss` splits into
+ * deliberately DIFFERENT dispositions — `http_5xx`/`net_*` going out via
+ * logExternal (adjudicated vendor class, correctly retired from the sweep) while
+ * `timeout` (our own ECONNABORTED budget) stays an untagged warn that MUST keep
+ * filing, because tagging it would swallow the 2026-08-06 invisible-outage
+ * class. The derived fragment was the shared head
+ * "brightdata direct: scrape_as_markdown failed" (44 chars), a substring of
+ * BOTH. The verifier's window held exactly four matching rows and it measured
+ * THREE: one `500 Header overflow` (excluded, external — the fix working) plus
+ * three `timeout` rows (kept by design). `3 > 2` ⇒ REOPENED. The bar counted a
+ * class the fix is not allowed to silence, so no correct fix could ever clear it.
+ *
+ * THE CALLER'S EVIDENCE IS THE PASS'S OTHER SIGNALS — the only set known to be
+ * still emitting (the sweep already dropped every non-fault row, so a sibling in
+ * that set contributes rows to this count). A collision means the fragment does
+ * not identify one class, and the honest answer is NO volume bar plus a visible
+ * flag, never a bar that measures someone else's rows. This is the same
+ * do-not-invent-an-unattainable-criterion posture as the designed-alarm path
+ * (1425001e), and the caller flags `acceptanceMetricMissing` so the absence stays
+ * on the done-bar board instead of passing silently.
+ *
+ * BOUNDED, stated honestly: the guarantee is against siblings VISIBLE in the
+ * same pass. A class that first appears after filing is not predicted here — no
+ * filing-time derivation can see it, and the flag makes that visible rather than
+ * silent. Pure; never throws.
+ */
+export function ambiguousFragmentSibling(
+  fragment: string | null,
+  siblings: ReadonlyArray<{ fingerprint?: unknown; exampleMessage?: unknown }>,
+): string | null {
+  const f = typeof fragment === 'string' ? fragment.trim().toLowerCase() : '';
+  if (!f) return null;
+  for (const s of siblings) {
+    const fp = String(s?.fingerprint ?? '');
+    if (!fp) continue;
+    if (fp.toLowerCase().includes(f)) return fp;
+    // The RAW example carries the un-collapsed text the probe actually matches.
+    const ex = String(s?.exampleMessage ?? '');
+    if (ex && ex.toLowerCase().includes(f)) return fp;
+  }
+  return null;
 }
 
 /** Whitespace-collapsed, case-folded comparison key — the shape the
@@ -329,8 +423,8 @@ export function designedAlarmOfFingerprint(fingerprint: unknown, exampleMessage?
  * sweep's alert line), default 0. Narrowed to the signal's level / source
  * when it has exactly one. null when no stable fragment exists. Pure.
  */
-export function logSignalDefaultMetric(signal: { fingerprint: string; levels?: readonly string[]; sources?: readonly string[]; quietTarget?: number; exampleMessage?: string | null }): AcceptanceMetric | null {
-  const fragment = stableLiteralFragment(signal.fingerprint, signal.exampleMessage ?? undefined);
+export function logSignalDefaultMetric(signal: { fingerprint: string; levels?: readonly string[]; sources?: readonly string[]; quietTarget?: number; exampleMessage?: string | null; avoidFragment?: (candidate: string) => boolean }): AcceptanceMetric | null {
+  const fragment = stableLiteralFragment(signal.fingerprint, signal.exampleMessage ?? undefined, signal.avoidFragment);
   if (!fragment) return null;
   const levels = [...new Set((signal.levels ?? []).filter((l) => LEVELS.includes(l)))];
   const sources = [...new Set((signal.sources ?? []).filter((x) => typeof x === 'string' && x.trim() && x.trim().length <= PARAM_MAX).map((x) => x.trim()))];

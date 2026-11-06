@@ -34,6 +34,14 @@ jest.mock('../../../config/database', () => ({
   default: {
     crossModelMessage: {
       findUnique: async ({ where }: any) => mockDb.messages.find((m) => m.id === where.id) ?? null,
+      // Ticket 5fcbdd61: the no_user_turn refusal names recent owner row ids.
+      // Newest-first by insertion order (later push = newer); the filter is the
+      // role the real query asks for — owner-typing is applied by the caller.
+      findMany: async ({ where, take }: any) => mockDb.messages
+        .filter((m) => m.role === where.role)
+        .slice()
+        .reverse()
+        .slice(0, take ?? 20),
     },
     codingCredential: {
       findUnique: async ({ where }: any) => {
@@ -200,6 +208,60 @@ describe('store_secret — refusals that keep machine runs honest', () => {
   it('an anchored run the executor classified machine-triggered is refused too (without fromMessageId)', async () => {
     const out = parse(await executeSecretHandoffTool(human(`password: ${FAKE_PW}`, { machineTriggered: true }), 'store_secret', { envKey: 'HUE_PASSWORD' }));
     expect(out).toMatchObject({ ok: false, reason: 'no_user_turn' });
+  });
+
+  // Ticket 5fcbdd61 — the DEAD END, and its removal. Production telemetry for the
+  // specimen (chat 41bd202a, 05:30:32Z) shows this exact refusal: reason
+  // 'no_user_turn'. The old message told the caller to re-call "with fromMessageId
+  // (get_chat_messages / search_chats give ids)" — an extra scavenger round trip
+  // that the turn budget ran out of, so a long-lived credential sat unread in the
+  // chat while the owner was asked to re-paste it. The refusal now NAMES the
+  // citable owner-typed rows: ids + timestamps only, never content, and the guard
+  // is NOT widened (the caller must still pass fromMessageId, and that row is
+  // still owner-validated on the way in).
+  describe('ticket 5fcbdd61 — a no_user_turn refusal names the citable owner rows', () => {
+    it('lists owner-typed row ids (not machine rows) and still stores NOTHING', async () => {
+      mockDb.messages.push(
+        { id: 'm-owner-1', role: 'user', content: 'hello there', metadata: null, chat: { userId: 'u1' } },
+        { id: 'm-machine', role: 'user', content: 'wake', metadata: { origin: 'hook' }, chat: { userId: 'u1' } },
+        { id: 'm-assistant', role: 'assistant', content: 'sure', metadata: null, chat: { userId: 'u1' } },
+        { id: 'm-owner-2', role: 'user', content: `BREV_LOGIN_TOKEN=${FAKE_KEY}`, metadata: null, chat: { userId: 'u1' } },
+      );
+      const out = parse(await executeSecretHandoffTool({ sessionId: 'chat-ps', userId: 'u1' }, 'store_secret', { envKey: 'BREV_LOGIN_TOKEN' }));
+      expect(out).toMatchObject({ ok: false, reason: 'no_user_turn' });
+      // (a) the owner's rows are named so the caller can cite one immediately.
+      expect(out.message).toContain('m-owner-1');
+      expect(out.message).toContain('m-owner-2');
+      expect(out.candidateFromMessageIds).toEqual(['m-owner-1', 'm-owner-2']);
+      // (b) machine-authored and assistant rows are NOT offered as citable.
+      expect(out.message).not.toContain('m-machine');
+      expect(out.message).not.toContain('m-assistant');
+      expect(out.candidateFromMessageIds).not.toContain('m-machine');
+      // (c) NO content leaks: not the value, not even the surrounding text.
+      expect(JSON.stringify(out)).not.toContain(FAKE_KEY);
+      expect(out.message).not.toContain('BREV_LOGIN_TOKEN=');
+      // (d) the guard is unchanged — nothing was stored by this refusal.
+      expect(mockDb.creds).toHaveLength(0);
+    });
+
+    it('with no owner-typed row it keeps the honest old shape (no empty id list, no false promise)', async () => {
+      mockDb.messages.push({ id: 'm-machine-2', role: 'user', content: 'wake', metadata: { origin: 'schedule' }, chat: { userId: 'u1' } });
+      const out = parse(await executeSecretHandoffTool({ sessionId: 'chat-ps', userId: 'u1' }, 'store_secret', { envKey: 'HUE_PASSWORD' }));
+      expect(out).toMatchObject({ ok: false, reason: 'no_user_turn' });
+      expect(out.candidateFromMessageIds).toBeUndefined();
+      expect(out.message).toContain('No owner-typed row was found');
+      expect(out.message).toMatch(/Do not ask for the value again/);
+    });
+
+    it('the named id, once cited, is the row that actually stores (the round trip this saves)', async () => {
+      mockDb.messages.push({ id: 'm-owner-paste', role: 'user', content: `BREV_LOGIN_TOKEN=${FAKE_KEY}`, metadata: null, chat: { userId: 'u1' } });
+      const refused = parse(await executeSecretHandoffTool({ sessionId: 'chat-ps', userId: 'u1' }, 'store_secret', { envKey: 'BREV_LOGIN_TOKEN' }));
+      expect(refused.candidateFromMessageIds).toEqual(['m-owner-paste']);
+      const raw = await executeSecretHandoffTool({ sessionId: 'chat-ps', userId: 'u1' }, 'store_secret', { envKey: 'BREV_LOGIN_TOKEN', fromMessageId: refused.candidateFromMessageIds[0] });
+      expect(raw).not.toContain(FAKE_KEY);
+      expect(parse(raw)).toMatchObject({ ok: true, envKey: 'BREV_LOGIN_TOKEN' });
+      expect(mockDb.creds).toHaveLength(1);
+    });
   });
 
   // Ticket 37a875ee: the machine-run path. An owner paste that already sits in

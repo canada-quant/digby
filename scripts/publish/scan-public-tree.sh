@@ -37,11 +37,13 @@ DIR=
 QUIET=0
 NO_JEST=0
 REQUIRE_JEST=0
+ALLOW_NESTED=0
 for a in "$@"; do
   case "$a" in
     --quiet) QUIET=1 ;;
     --no-jest) NO_JEST=1 ;;
     --require-jest) REQUIRE_JEST=1 ;;
+    --allow-nested) ALLOW_NESTED=1 ;;
     -h|--help) sed -n '1,60p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "scan-public-tree.sh: unknown flag $a" >&2; exit 2 ;;
     *)  DIR=$a ;;
@@ -60,6 +62,68 @@ done
 # with an absolute config path returned gitleaks rc=0 / report `[]` on the same
 # bytes, which is what identified it. One normalisation kills the whole class.
 case "$DIR" in /*) ;; *) DIR=$(cd "$DIR" && pwd) || exit 2 ;; esac
+
+# ---- REFUSE AN EXPORT THAT SITS INSIDE AN ANCESTOR HOLDING DROPPED PATHS ----
+# MEASURED DEFECT (2026-11-06, cost a published-tree false GREEN):
+#   Legs F/H run the export's OWN suite. Some suites do not spell the path they
+#   need — they WALK UP from __dirname until they find it:
+#
+#       function repoRoot(start) { for (let i=0;i<8;i++) {
+#         if (fs.existsSync(path.join(d,'scripts/framework-audit/audit-live-state.js'))) return d;
+#         d = path.dirname(d); } }
+#
+#   A scan copy placed at <private-worktree>/tmp/exp-scan therefore ESCAPED the
+#   export, found the PRIVATE scripts/framework-audit/audit-live-state.js eight
+#   levels up, and passed 20 suites that CANNOT pass in a real public checkout.
+#   The gate printed PASS; public CI on the same bytes printed
+#   "Test Suites: 20 failed, 1629 passed" and was right. A verification harness
+#   that borrows the very files the export removes is not verifying the export.
+#
+#   So: if ANY ancestor of $DIR carries a directory this export is defined to
+#   remove, the suite legs are measuring the WRONG TREE. Refuse by default.
+#   Copy the export somewhere with no such ancestor (`cp -a <export> /tmp/x`)
+#   and scan that. --allow-nested downgrades the refusal to a loud warning for
+#   shape-only runs (--no-jest), where no upward walk can matter.
+NESTED_MARKERS='scripts/framework-audit scripts/deploy scripts/ec2-ops scripts/canada-migration'
+nested_hit=
+anc="$DIR"
+while [ "$anc" != "/" ] && [ -n "$anc" ]; do
+  anc=$(dirname "$anc")
+  for m in $NESTED_MARKERS; do
+    if [ -e "$anc/$m" ]; then nested_hit="$anc/$m"; break 2; fi
+  done
+done
+if [ -n "$nested_hit" ]; then
+  if [ "$NO_JEST" = 1 ]; then
+    echo "scan-public-tree.sh: WARNING — the export is nested under an ancestor" >&2
+    echo "  that holds a dropped path ($nested_hit). Legs F/H are skipped (--no-jest)," >&2
+    echo "  so no upward walk can borrow it. Shape legs are still meaningful." >&2
+  elif [ "$ALLOW_NESTED" = 1 ]; then
+    echo "scan-public-tree.sh: WARNING (--allow-nested) — the export is nested under an" >&2
+    echo "  ancestor holding a dropped path: $nested_hit" >&2
+    echo "  Legs F/H may pass by reading THAT path instead of the export's contents." >&2
+    echo "  Such a PASS is not evidence about the published tree." >&2
+  else
+    {
+      echo "scan-public-tree.sh: REFUSING to scan a nested export."
+      echo ""
+      echo "  export : $DIR"
+      echo "  ancestor holds: $nested_hit"
+      echo ""
+      echo "Ancestor directories leak into legs F/H: some of the export's own"
+      echo "suites walk UP from __dirname to find their subject, so they will read"
+      echo "that ancestor's copy and PASS on a tree that cannot pass publicly."
+      echo "(Measured 2026-11-06: 20 suites green locally, 20 failed in public CI.)"
+      echo ""
+      echo "Fix: copy the export to a directory with no such ancestor, then scan it:"
+      echo "    cp -a '$DIR' /tmp/export-scan && $0 /tmp/export-scan --require-jest"
+      echo ""
+      echo "Or, for a shape-only run where the suite legs do not run:"
+      echo "    $0 '$DIR' --no-jest"
+    } >&2
+    exit 2
+  fi
+fi
 
 FAILS=0
 pass() { [ "$QUIET" = 1 ] || echo "  PASS  $1"; }

@@ -146,6 +146,21 @@ SHARED_N=$(wc -l < "$WORK/shared.txt" | tr -d ' ')
 : > "$WORK/unauthorized.txt"
 : > "$WORK/authorized_hit.txt"
 : > "$WORK/kept_hit.txt"
+# The authorization/keep sets are materialised to FILES once, then matched with a
+# plain `grep -qxF -- "$p" <file>`.
+#
+# NEVER `printf '%s\n' "${ARR[@]}" | grep -qxF -- "$p"`. This script runs under
+# `set -o pipefail`, and `grep -q` exits at the FIRST match, so `printf` is killed
+# by SIGPIPE and the whole pipeline returns 141. A return value of 141 is
+# non-zero, so a path that IS in the array gets scored UNAUTHORIZED — the run
+# refuses a deletion it was explicitly told to make. Measured on this repo before
+# the fix: 20 spurious refusals in 40 trials on an exact match (bash 5.2.15), and
+# a real 276-path publish refused with 2 phantom leftovers (`40-launch-staging.sh`,
+# `lane-retire-preview.js`). A safety gate that fires at random is worse than no
+# gate: it trains the operator to widen the drop rules to silence it, which is the
+# one thing this file's own message forbids.
+if [ ${#KEPT[@]} -gt 0 ]; then printf '%s\n' "${KEPT[@]}" > "$WORK/kept.set"; else : > "$WORK/kept.set"; fi
+if [ ${#AUTHORIZED[@]} -gt 0 ]; then printf '%s\n' "${AUTHORIZED[@]}" > "$WORK/auth.set"; else : > "$WORK/auth.set"; fi
 if [ "$PUB_ONLY_N" -gt 0 ]; then
   while IFS= read -r p; do
     [ -n "$p" ] || continue
@@ -156,9 +171,9 @@ if [ "$PUB_ONLY_N" -gt 0 ]; then
     # "authorized deletion" on purpose: those are opposites, and a verdict that
     # printed both as "safe to delete" would be the kind of comfortable lie this
     # gate exists to prevent.
-    if [ ${#KEPT[@]} -gt 0 ] && printf '%s\n' "${KEPT[@]}" | grep -qxF -- "$p"; then
+    if [ "${#KEPT[@]}" -gt 0 ] && grep -qxF -- "$p" "$WORK/kept.set"; then
       printf '%s\n' "$p" >> "$WORK/kept_hit.txt"
-    elif [ ${#AUTHORIZED[@]} -gt 0 ] && printf '%s\n' "${AUTHORIZED[@]}" | grep -qxF -- "$p"; then
+    elif [ "${#AUTHORIZED[@]}" -gt 0 ] && grep -qxF -- "$p" "$WORK/auth.set"; then
       printf '%s\n' "$p" >> "$WORK/authorized_hit.txt"
     else
       printf '%s\n' "$p" >> "$WORK/unauthorized.txt"

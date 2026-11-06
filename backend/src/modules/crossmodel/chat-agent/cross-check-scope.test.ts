@@ -153,7 +153,22 @@ describe('lane wiring — the exemption reaches both affected cross_checker lane
     // wake (machineGateSpawnsChecker — source 'gate_act' only, post machine
     // rails; it runs BEHIND the answer, never waited on). A preset / shadow
     // plan on a machine turn still never spawns.
-    expect(SERVICE_SOURCE).toContain('shouldSpawnChecker({ plan, machineTurnSkipsChecker: machineTurnSkipsChecker && !gateSpawnedOnMachine, checkerSeatProblem: null, isCouncil: isCouncilMode, ghost: ghostSingleModel })');
+    // 2026-11-06: this used to pin the ENTIRE call as one literal, so adding an
+    // argument (checkerSameModel — the same-model guard) broke the pin while
+    // every argument it exists to protect was unchanged. It now asserts the
+    // CALL BOUNDED to a single shouldSpawnChecker({…}) occurrence and then each
+    // argument it actually cares about, so an unrelated future argument cannot
+    // satisfy it from elsewhere in the file and cannot break it either.
+    const spawnCalls = SERVICE_SOURCE.match(/shouldSpawnChecker\(\{[^}]*\}\)/g) ?? [];
+    expect(spawnCalls).toHaveLength(1);
+    for (const arg of [
+      'plan',
+      'machineTurnSkipsChecker: machineTurnSkipsChecker && !gateSpawnedOnMachine',
+      'checkerSeatProblem: null',
+      'isCouncil: isCouncilMode',
+      'ghost: ghostSingleModel',
+      'checkerSameModel',
+    ]) expect(spawnCalls[0]).toContain(arg);
     expect(SERVICE_SOURCE).toContain('const gateSpawnedOnMachine = machineGateSpawnsChecker(plan, usesMachineRails);');
     expect(SERVICE_SOURCE).toContain('const usesMachineRails = runIsMachineTriggered && machineTurnSkipsChecker;');
     expect(SERVICE_SOURCE).toContain('const spawnChecker = wantsChecker && !checkerSeatProblem;');
@@ -161,5 +176,23 @@ describe('lane wiring — the exemption reaches both affected cross_checker lane
     expect(SERVICE_SOURCE).toContain("(args.machineWake === true || (args.messageOrigin != null && args.messageOrigin !== 'user'))");
     expect(shouldSpawnChecker({ plan: presetPlan('thinking'), machineTurnSkipsChecker: true, checkerSeatProblem: null, isCouncil: false })).toBe(false);
     expect(shouldSpawnChecker({ plan: presetPlan('thinking'), machineTurnSkipsChecker: false, checkerSeatProblem: null, isCouncil: false })).toBe(true);
+  });
+
+  it('the same-model guard also gates the checker FALLBACK, and the skip is visible (2026-11-06 review)', () => {
+    // A picked/lane checker that errors falls back to `checkerFallbackModel`
+    // (doubleCheckerFallback || seatDoubleChecker). On a single-model self-host
+    // that seat IS the lead's own model, so without a guard on the FALLBACK the
+    // defect returns behind the same "independent check" promise.
+    const fallbackGuard = SERVICE_SOURCE.match(/const fallbackSameAsLead = !checkerSameModelGuardDisabled\(\) && checkerSameModelAsLead\([^)]*\)/);
+    expect(fallbackGuard).not.toBeNull();
+    // ...and it must actually be part of the fallback condition (not computed
+    // and then ignored, which would read as fixed while changing nothing).
+    expect(SERVICE_SOURCE).toMatch(/if \(seatFailed && checkerFallbackModel && !fallbackSameAsLead &&/);
+    // The skip must be user-visible: a chat that showed "Checked ✓" last turn
+    // has to be able to tell "not needed" from "dropped".
+    expect(SERVICE_SOURCE).toContain('if (plan.spawnChecker && !spawnChecker && checkerSameModel) checkState = { state: \'skipped\' };');
+    // Telemetry must name the model that actually SERVED, not the planned seat —
+    // otherwise a fallback turn still reads as an independent check.
+    expect(SERVICE_SOURCE).toContain("checkerModel: spawnChecker ? (String(models[SEAT_CARD_KEYS.double]?.modelUsed || '') || crossCheckers[0]) : null");
   });
 });
