@@ -25,6 +25,11 @@
 #      tokens, Slack tokens, PEM private-key openers) outside the test files
 #      that deliberately carry FAKE fixtures — and .gitleaks.toml is the
 #      authority on which those are, so we do not keep a second list here.
+#   H. the tree's own frontend vitest suite is green.
+#   I. NO shipped workflow references a script this tree does not contain — a
+#      workflow whose script is absent fails as a RED SCHEDULED RUN, never at
+#      export time. (F/G are also emitted between E and H; this index lists the
+#      assertions, not the ordinal spacing.)
 #
 #                                                          [--no-jest] [--require-jest]
 #
@@ -523,6 +528,53 @@ if [ "$run_jest" = 1 ]; then
       printf '%s\n' "$vclean" | grep -E 'FAIL |AssertionError' | head -10 | sed 's/^/        /' >&2
     fi
     rm -f "$vlog"
+  fi
+fi
+
+# ------------------------------------------- I. no workflow calls an absent script
+# HISTORY SCAN CLASS 5 (docs/PUBLIC_TREE_HISTORY_SCAN_2026-11-06.md): the export
+# drops scripts/deploy/ wholesale, but three workflows that INVOKE those scripts
+# still shipped. A shipped workflow whose script is absent does not fail at
+# export time — it fails on its next SCHEDULED run, in the PUBLIC repo, as a red
+# X on a release that works exactly as designed. That is how the watchdog went
+# red for six consecutive firings before anyone connected it to a re-cut.
+#
+# The check is deliberately about REFERENCES, not inventory: any shipped workflow
+# that names a repo-relative script which the tree does not contain fails here.
+# Intra-workflow `${VAR}` interpolation is skipped (it is not a path literal).
+#
+# SCOPE, stated precisely so nobody reads it as a stronger guarantee than it is
+# (independent review 2026-11-06, defect 9): this leg fires on a `scripts/...`
+# path that is INVOKED BY AN INTERPRETER OR EXECUTOR — bash, sh, node, npx,
+# python(3), perl, ruby, bundle, deno, bun, exec — including short flags between
+# the two (`python3 -u scripts/x.py`). The first draft matched only
+# bash|sh|node|npx, so a `python3 -u scripts/...` call was INVISIBLE to it: the
+# guard claimed a class it did not cover. It still does NOT catch:
+#   - a path appearing only in a comment or a `uses:`/`with:` value;
+#   - a framework runner (`jest scripts/x.test.ts`, `pytest scripts/`);
+#   - a script reached through another script.
+# Those are out of scope BY DESIGN — the leg is a cheap net for the failure that
+# actually happened (exit 127 on a scheduled run), not a proof of reachability.
+if [ -d "$DIR/.github/workflows" ]; then
+  orphan=""
+  for wf in "$DIR/.github/workflows"/*.yml; do
+    [ -e "$wf" ] || continue
+    wbase=$(basename "$wf")
+    # interpreter [, short/long flags] , scripts/... in a run: block.
+    refs=$(grep -oE '(bash|sh|node|npx|python3?|perl|ruby|bundle|deno|bun|exec)[[:space:]]+(-{1,2}[A-Za-z0-9_-]+[[:space:]]+)*\.?/?scripts/[A-Za-z0-9_./-]+' "$wf" 2>/dev/null \
+           | grep -oE '\.?/?scripts/[A-Za-z0-9_./-]+' | sed 's|^\./||' | sort -u)
+    for r in $refs; do
+      case "$r" in *'$'*|*'*'*) continue ;; esac
+      [ -f "$DIR/$r" ] || orphan="$orphan $wbase->$r"
+    done
+  done
+  if [ -z "$orphan" ]; then
+    pass "I. every shipped workflow's referenced script exists in the tree"
+  else
+    fail "I. shipped workflow(s) reference a script this tree does not contain:"
+    printf '        %s\n' $orphan >&2
+    say "        a public workflow that cannot run is a permanent red X, not a no-op;"
+    say "        drop the workflow in .digby/publish/scrub-rules.txt or ship its script"
   fi
 fi
 
