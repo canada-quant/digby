@@ -16,6 +16,7 @@ import controller from './crossmodel.controller';
 import { getViewMode, putViewMode } from './view/view-mode.controller';
 import { getInstanceSetup } from './platform/instance-setup.controller';
 import confirmationsController from './confirmations.controller';
+import credentialVaultController from './credential-vault.controller';
 import { rejectChild } from '../../middleware/auth';
 import { validate } from '../../middleware/validate';
 import {
@@ -358,6 +359,12 @@ router.post('/chats/:chatId/questions/:questionId', confirmationsController.post
 // Clickable references in answers (2026-10-08, ./entity-refs.ts): "session fbb5c9ca" / "goal …" / "todo …" /
 // "receipt …" → where the chip opens. Owner-scoped; an ambiguous or foreign prefix is a 404.
 router.get('/refs/:kind/:id', rejectChild, (req, res) => resolveEntityRefHandler(req as any, res));
+// One-tap "vault this" (feedback ticket f95e1e30, part 2): the OWNER's own
+// credential paste → the encrypted coding-credentials vault, one click, no agent
+// in the loop. The client sends no value — the route lifts it server-side from
+// the persisted row and proves the caller owns that row's chat (404 otherwise,
+// same as the confirm door below). See ./credential-vault.controller.ts.
+router.post('/chats/:chatId/messages/:messageId/vault', rejectChild, credentialVaultController.postVaultMessage);
 // Sidebar indicator poll: every chat of the user's currently blocked on a human.
 router.get('/confirmations/pending', confirmationsController.getPendingConfirmations);
 // Sidebar pending-action card: the owner confirms (executes the stored args

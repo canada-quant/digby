@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { Globe, Loader2, Save, Trash2 } from 'lucide-react';
+import { Globe, Loader2, Save, Trash2, AlertTriangle } from 'lucide-react';
 import { adminApi, type WebSearchConfigStatus } from '@/lib/api/crossmodel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,6 +32,37 @@ const SOURCE_COPY: Record<string, string> = {
   env: 'Env (BRIGHTDATA_API_TOKEN) — the admin store key is ignored while env is set (precedence)',
   store: 'Admin store — the key saved here arms the search backend within ~30 s (no restart)',
 };
+
+/**
+ * The one-line truth about the zone (ticket 02f8c83f).
+ *
+ * The trap this replaces: a null stored zone rendered as
+ * "(default: web_unlocker1)" with nothing else, so a default that does NOT
+ * exist on the account looked exactly as healthy as a verified one while every
+ * search and page read answered HTTP 200 with an empty body. This never says
+ * "fine" about a zone that is unverified or known-dead.
+ */
+export function describeZoneState(s: Pick<WebSearchConfigStatus, 'resolvedZone' | 'zoneVerified' | 'zoneProbeError' | 'zoneError' | 'zone'>): string {
+  if (!s.resolvedZone) return 'No zone resolved — search is not configured.';
+  const fromDefault = s.zone === null;
+  const which = fromDefault
+    ? `Zone "${s.resolvedZone}" (the built-in default — no zone is saved)`
+    : `Zone "${s.resolvedZone}"`;
+  if (s.zoneVerified === false) {
+    return `${which} does NOT exist on this Bright Data account. Every search and page read answers HTTP 200 with an empty body, `
+      + 'so search is silently dead. Save one of the account\'s real zone names below — the API key itself is fine.';
+  }
+  if (s.zoneError && !s.zoneVerified) {
+    return `${which} was REFUSED by Bright Data (${s.zoneError.code} at ${new Date(s.zoneError.at).toLocaleString()}) — `
+      + 'the account does not have it. Search is silently dead until a real zone is saved.';
+  }
+  if (s.zoneVerified === null) {
+    return `${which} could not be verified${s.zoneProbeError ? ` (${s.zoneProbeError})` : ''}. `
+      + 'That is NOT the same as healthy: a zone that does not exist makes every search answer HTTP 200 with an empty body. '
+      + 'Check the account\'s real zone names (GET https://api.brightdata.com/zone/get_active_zones) before relying on it.';
+  }
+  return `${which} exists on this Bright Data account.`;
+}
 
 export function WebSearchSection() {
   const [status, setStatus] = useState<WebSearchConfigStatus | null>(null);
@@ -116,15 +147,66 @@ export function WebSearchSection() {
         </div>
       )}
 
+      {/* Zone health (ticket 02f8c83f) — a zone that does not exist is the
+          silent-death trap: the key saves fine and EVERY search answers HTTP
+          200 with an empty body. Never render that as healthy. */}
+      {status && status.source !== null && (
+        status.zoneVerified === false ? (
+          <div
+            data-testid="web-search-zone-problem"
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
+          >
+            <div className="mb-1 flex items-center gap-2 font-semibold">
+              <AlertTriangle className="h-4 w-4" /> Zone does not exist — search is silently dead
+            </div>
+            <p>{describeZoneState(status)}</p>
+            {status.activeZones.length > 0 && (
+              <p className="mt-1">
+                Active zones on this account:{' '}
+                <span className="font-mono">{status.activeZones.join(', ')}</span>
+              </p>
+            )}
+          </div>
+        ) : status.zoneVerified === null ? (
+          <div
+            data-testid="web-search-zone-unverified"
+            className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs"
+          >
+            <p>{describeZoneState(status)}</p>
+          </div>
+        ) : null
+      )}
+
+      {/* Zone in use + verdict (ticket 02f8c83f) — renders for EVERY source,
+          including env-only instances where there is no store row at all
+          (reviewer F4: docs promise the panel always shows the zone in use). */}
+      {status && status.source !== null && status.resolvedZone && (
+        <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Zone in use</span>
+            <span className="font-mono" data-testid="web-search-zone-in-use">
+              {status.resolvedZone}
+              {status.zone === null ? ' (default)' : ''}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Zone exists on the account</span>
+            {status.zoneVerified === true && <Badge variant="secondary">verified</Badge>}
+            {status.zoneVerified === false && (
+              <Badge variant="destructive">does not exist — search is dead</Badge>
+            )}
+            {status.zoneVerified === null && (
+              <Badge variant="outline">unverified{status.zoneProbeError ? ` — ${status.zoneProbeError}` : ''}</Badge>
+            )}
+          </div>
+        </div>
+      )}
+
       {status?.storeConfigured && (
         <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1">
           <div className="flex items-center justify-between gap-2">
             <span className="text-muted-foreground">Stored key</span>
             <span className="font-mono">{status.storePreview ?? '(unreadable — re-enter it)'}</span>
-          </div>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-muted-foreground">Zone</span>
-            <span className="font-mono">{status.zone ?? '(default: web_unlocker1)'}</span>
           </div>
           <div className="flex items-center justify-between gap-2">
             <span className="text-muted-foreground">Use the stored key</span>

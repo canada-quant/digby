@@ -35,8 +35,9 @@
  */
 
 import logger from '../../../utils/logger';
-import { recordSearchConfigState } from './search-config-state';
+import { lastZoneFailure, clearZoneFailure, recordSearchConfigState } from './search-config-state';
 import { noteWebSearchStoreArmed } from './instance-setup';
+import { probeAccountZones, unblockerZones, zoneSaveErrorMessage, type ZoneProbe } from './brightdata-zone';
 
 // BOTH heavy imports are LAZY (dynamic, cached): this service is reached from
 // the search tier via dynamic import (brightdata-direct's credential
@@ -104,6 +105,31 @@ export interface WebSearchConfigStatus {
   envPrecedence: boolean;
   updatedAt: string | null;
   updatedBy: string | null;
+  /**
+   * The zone the search backend ACTUALLY uses right now (ticket 02f8c83f) —
+   * row zone, else env zone, else DEFAULT_UNLOCKER_ZONE. Null when nothing is
+   * configured. This is what the UI must show: `zone` alone is the STORED
+   * value and reads as '(default: web_unlocker1)' exactly when the default is
+   * the thing that is broken.
+   */
+  resolvedZone: string | null;
+  /**
+   * Whether `resolvedZone` was confirmed against the account's own zone list
+   * (GET /zone/get_active_zones). true = exists · false = DOES NOT EXIST, every
+   * search will answer HTTP 200 + empty body · null = could not be checked
+   * (no credential, provider unreachable) — render as unverified, never green.
+   */
+  zoneVerified: boolean | null;
+  /** Why the probe could not answer (only when zoneVerified is null). */
+  zoneProbeError: string | null;
+  /** Zones that exist on the account (empty when the probe could not answer). */
+  activeZones: string[];
+  /**
+   * A zone rejection the search tier OBSERVED in this process (200 + empty
+   * body + x-brd-err-code client_10002). Proof the configured zone is dead,
+   * independent of what the zone list says.
+   */
+  zoneError: { zone: string; code: string; at: string } | null;
 }
 
 // ── Store resolution (cached) ────────────────────────────────────────────────
@@ -191,12 +217,42 @@ export async function resolveSearchCredentials(): Promise<ResolvedSearchCreds | 
   }
   const store = await resolveStoreBrightDataCredentials();
   if (store) {
-    return { token: store.token, zone: envUnlockerZone() || store.zone || DEFAULT_UNLOCKER_ZONE, source: 'store' };
+    return { token: store.token, zone: resolveWireZone(store.zone), source: 'store' };
   }
   return null;
 }
 
-/** The env zone name, or '' when unset (env ZONE precedence over the store zone is preserved). */
+/**
+ * THE one zone resolution — the single source of truth for "which zone name
+ * goes on the wire" (ticket 02f8c83f, reviewer findings F1/F2).
+ *
+ * Before this existed there were TWO answers: `resolveSearchCredentials()`
+ * computed `envZone || store.zone || DEFAULT` while `brightdata-direct`'s store
+ * leg computed `store.zone || DEFAULT`. Every compose file ships
+ * `BRIGHTDATA_WEB_UNLOCKER_ZONE=${BRIGHTDATA_WEB_UNLOCKER_ZONE:-web_unlocker1}`,
+ * so the env zone is ALWAYS set — which made the two answers differ on a plain
+ * compose install and produced both failure modes:
+ *   - false GREEN: env zone real + stored zone dead → the panel reported the
+ *     (unused) env zone as verified while the dead STORED zone went on the
+ *     wire. The original silent-death defect, still green.
+ *   - false RED: env zone dead + stored zone real → the panel screamed "search
+ *     is silently dead" about a config that worked.
+ *
+ * ORDER, and why: a STORED zone is the operator's explicit choice for that
+ * stored key, so it wins. The env zone is the fallback (it is what an operator
+ * who sets BRIGHTDATA_WEB_UNLOCKER_ZONE means when the store names nothing),
+ * then the built-in default last. Putting env first would let a compose default
+ * of `web_unlocker1` permanently shadow the admin fix saved in the store —
+ * i.e. it would undo the exact operational repair this ticket is about.
+ *
+ * Every consumer MUST call this: `resolveSearchCredentials`, the status read,
+ * the save-path validation and `resolveDirectBrightDataCreds` (the wire).
+ */
+export function resolveWireZone(storeZone: string | null | undefined): string {
+  return String(storeZone ?? '').trim() || envUnlockerZone() || DEFAULT_UNLOCKER_ZONE;
+}
+
+/** The env zone name, or '' when unset (the fallback for a store credential that names no zone). */
 function envUnlockerZone(): string {
   return (process.env.BRIGHTDATA_WEB_UNLOCKER_ZONE || '').trim();
 }
@@ -206,7 +262,7 @@ function envUnlockerZone(): string {
 const mask = (v: string) => `••••${v.length > 4 ? v.slice(-4) : ''}`;
 
 /** The Admin → Settings → Web search status. Never returns the key. */
-export async function getWebSearchConfigStatus(): Promise<WebSearchConfigStatus> {
+export async function getWebSearchConfigStatus(opts: { skipZoneProbeCache?: boolean } = {}): Promise<WebSearchConfigStatus> {
   const resolved = await resolveSearchCredentials();
   const row = await (async () => {
     try {
@@ -218,6 +274,41 @@ export async function getWebSearchConfigStatus(): Promise<WebSearchConfigStatus>
   const storePreview = row ? await (async () => {
     try { return mask((await credentials()).decryptValue(row.apiKeyEnc)); } catch { return null; }
   })() : null;
+
+  // Ticket 02f8c83f: the zone the backend ACTUALLY puts on the wire and whether
+  // it exists on the account. `resolved.zone` IS the wire zone for BOTH legs now
+  // that the store leg goes through resolveWireZone (F1) — computing anything
+  // else here is what made the panel disagree with the tier. The env leg can
+  // yield '' when BRIGHTDATA_WEB_UNLOCKER_ZONE is unset while brightdata-direct
+  // falls back to the default, so normalize that one case.
+  const resolvedZone = resolved ? (resolved.zone || DEFAULT_UNLOCKER_ZONE) : null;
+  let zoneVerified: boolean | null = null;
+  let zoneProbeError: string | null = null;
+  let activeZones: string[] = [];
+  if (resolved && resolvedZone) {
+    const probe: ZoneProbe = await probeAccountZones(resolved.token, { skipCache: opts.skipZoneProbeCache });
+    if (probe.ok) {
+      activeZones = unblockerZones(probe.zones);
+      const all = probe.zones.map(z => z.name);
+      // Verify against EVERY zone the account has (any type): naming a
+      // residential/serp zone by mistake must not read as "does not exist".
+      zoneVerified = all.includes(resolvedZone);
+      // A zone confirmed to exist is GOOD again — drop any rejection recorded
+      // before the fix, so a repaired config stops rendering the old failure
+      // (reviewer F3).
+      if (zoneVerified) clearZoneFailure();
+    } else {
+      zoneProbeError = probe.reason ?? 'zone list unavailable';
+    }
+  }
+  // Only a rejection of the zone THAT IS IN USE now counts as current evidence.
+  // A stale record about a zone the operator has since replaced would otherwise
+  // contradict a verified verdict and blame the new zone for the old failure.
+  const seen = lastZoneFailure();
+  const zoneError = seen && seen.zone === resolvedZone && zoneVerified !== true
+    ? { zone: seen.zone, code: seen.code, at: new Date(seen.at).toISOString() }
+    : null;
+
   return {
     provider: SEARCH_PROVIDER_BRIGHTDATA,
     storeConfigured: !!row,
@@ -230,6 +321,11 @@ export async function getWebSearchConfigStatus(): Promise<WebSearchConfigStatus>
     envPrecedence: !!(process.env.BRIGHTDATA_API_TOKEN || '').trim(),
     updatedAt: row ? row.updatedAt.toISOString() : null,
     updatedBy: row?.updatedBy ?? null,
+    resolvedZone,
+    zoneVerified,
+    zoneProbeError,
+    activeZones,
+    zoneError,
   };
 }
 
@@ -244,6 +340,59 @@ export interface SaveWebSearchConfigInput {
   enabled?: boolean;
   /** Delete the stored configuration entirely. */
   clear?: boolean;
+}
+
+/**
+ * Reject a save whose zone does not exist on the account (ticket 02f8c83f).
+ *
+ * Throws the operator-actionable Error the route maps to a 400. Stays silent
+ * (returns) when the zone cannot be verified — the probe is best-effort and an
+ * unverifiable provider must never block the operator from fixing a zone.
+ *
+ * Verified: an explicit zone that is absent from the account's zone list is
+ * rejected, AND so is an omitted/blank one whose DEFAULT fallback is absent (the
+ * exact live trap: zone=null → 'web_unlocker1' → every search answered 200 with
+ * an empty body). A zone that merely LOOKS wrong but exists is written as-is.
+ */
+async function validateZoneOnSave(args: {
+  /** The plaintext key from THIS save, when one was supplied. */
+  apiKey?: string;
+  /** The zone being written: undefined = untouched, null = cleared, string = set. */
+  zone: string | null | undefined;
+  existing: any;
+}): Promise<void> {
+  const { apiKey, zone, existing } = args;
+  // Nothing about the zone changed and no new key arrived → nothing to verify.
+  if (zone === undefined && apiKey === undefined) return;
+  // A new key can belong to a DIFFERENT account, so both the explicit-zone and
+  // the default-fallback legs are worth checking whenever either changes.
+
+  const token = (apiKey !== undefined ? String(apiKey).trim() : '') || await storedToken(existing);
+  if (!token) return; // nothing to probe with — save unverified
+
+  // F2 (reviewer): validate the zone that will ACTUALLY go on the wire, via the
+  // one shared resolver — not a locally re-derived target. The reviewer
+  // measured the bug this replaces: env zone real + row zone null was SAVED
+  // while the wire used the (absent) default, i.e. the live incident's exact
+  // input slipped through a check that looked at the env zone instead.
+  const nextStoreZone = typeof zone === 'string' ? zone : (zone === null ? null : (existing?.zone ?? null));
+  const target = resolveWireZone(nextStoreZone);
+  if (!target) return;
+
+  const probe = await probeAccountZones(token);
+  if (!probe.ok) return; // provider unreachable → save unverified, never block
+  const names = probe.zones.map(z => z.name);
+  if (names.includes(target)) return;
+
+  // The copy names the DEFAULT only when that is genuinely what resolved.
+  const fromDefault = !nextStoreZone && !envUnlockerZone();
+  throw new Error(zoneSaveErrorMessage(target, probe.zones, { fromDefault }));
+}
+
+/** The stored key in plaintext, or '' when there is none / it no longer decrypts. */
+async function storedToken(existing: any): Promise<string> {
+  if (!existing?.apiKeyEnc) return '';
+  try { return String((await credentials()).decryptValue(existing.apiKeyEnc) || '').trim(); } catch { return ''; }
 }
 
 /**
@@ -266,11 +415,15 @@ export async function saveWebSearchConfig(
   }
 
   let apiKeyEnc: string | undefined;
+  /** The plaintext key from THIS save — held only to authenticate the zone
+   *  probe, never stored or logged (ticket 02f8c83f). */
+  let plaintextKey: string | undefined;
   if (input.apiKey !== undefined) {
     const key = String(input.apiKey).trim();
     if (!key) throw new Error('apiKey must not be empty (use clear to remove the configuration).');
     if (key.length > MAX_API_KEY_LEN) throw new Error(`apiKey too long (max ${MAX_API_KEY_LEN} chars).`);
     if (/[\n\r\0]/.test(key)) throw new Error('apiKey must be a single line.');
+    plaintextKey = key;
     apiKeyEnc = (await credentials()).encryptValue(key);
   }
 
@@ -288,6 +441,19 @@ export async function saveWebSearchConfig(
   if (!existing && apiKeyEnc === undefined) {
     throw new Error('No stored key to update — provide apiKey (the key is required the first time).');
   }
+
+  // ── Zone validation (ticket 02f8c83f) ─────────────────────────────────────
+  // The defect class: a saved key + a zone that does not exist on the account
+  // = HTTP 200 + zero-byte body on EVERY search, while this page looked
+  // healthy. Reject it HERE, at save time, with the provider's own err-code
+  // and the zones that DO exist, so the operator fixes it in one paste.
+  //
+  // Best-effort by contract: the probe needs the token that will actually be
+  // used (the incoming key, else the stored one). If the probe cannot answer
+  // (no token yet, provider unreachable), the save proceeds UNVERIFIED — an
+  // unverifiable provider must never block an operator from fixing a zone.
+  await validateZoneOnSave({ apiKey: plaintextKey, zone, existing });
+
   if (existing) {
     await prisma.searchProviderConfig.update({
       where: { provider: SEARCH_PROVIDER_BRIGHTDATA },
@@ -313,6 +479,10 @@ export async function saveWebSearchConfig(
   // Keep the not-configured state leaf honest in THIS process: a fresh save
   // means the backend IS armed now (workers converge via the resolver cache).
   recordSearchConfigState({ at: Date.now(), anyBackendArmed: true });
+  // A save can be the operator FIXING a dead zone, so the old rejection must not
+  // outlive it — otherwise the panel renders a stale red banner blaming the
+  // zone the operator just corrected (reviewer F3).
+  clearZoneFailure();
   logger.info(`web-search config: Bright Data ${apiKeyEnc !== undefined ? 'key saved' : 'configuration updated'} (by ${by})`, { source: 'search-provider-config' });
   return getWebSearchConfigStatus();
 }

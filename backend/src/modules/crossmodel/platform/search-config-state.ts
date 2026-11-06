@@ -30,6 +30,51 @@ export interface SearchConfigState {
 
 let _last: SearchConfigState | null = null;
 
+/**
+ * A live ZONE rejection seen by the search tier (ticket 02f8c83f).
+ *
+ * THE DEFECT CLASS this closes: a saved Bright Data key with a zone that does
+ * not exist on the account. Bright Data answers **HTTP 200 with a zero-byte
+ * body** and puts the truth only in headers (`x-brd-err-code: client_10002`,
+ * `x-brd-status-code: 407`, `x-brd-error: Zone not found`), so the settings
+ * page showed "saved key ••••7b31 / zone (default: web_unlocker1)" while every
+ * SERP and scrape returned nothing. The tier now records the rejection HERE
+ * (this module is an import-free leaf both sides already load), so the admin
+ * status read can say "that zone does not exist" instead of staying green.
+ */
+export interface ZoneFailureState {
+  /** Timestamp (Date.now()) of the observation. */
+  at: number;
+  /** The zone name the failed call used. */
+  zone: string;
+  /** The provider's own err-code — normally 'client_10002'. */
+  code: string;
+}
+
+let _lastZoneFailure: ZoneFailureState | null = null;
+
+/** Record a provider ZONE rejection (pure setter — never throws). */
+export function recordZoneFailure(f: ZoneFailureState): void {
+  _lastZoneFailure = { at: f.at, zone: String(f.zone || ''), code: String(f.code || '') };
+}
+
+/** The last zone rejection observed by this process, or null. */
+export function lastZoneFailure(): ZoneFailureState | null {
+  return _lastZoneFailure;
+}
+
+/** Forget a recorded zone rejection — called when the zone is confirmed GOOD
+ *  again (a successful save, or a probe that verifies the zone exists), so a
+ *  repaired config never keeps rendering the old failure (reviewer F3). */
+export function clearZoneFailure(): void {
+  _lastZoneFailure = null;
+}
+
+/** Test-only: forget the recorded zone rejection. */
+export function __clearZoneFailureForTest(): void {
+  _lastZoneFailure = null;
+}
+
 /** The operator-facing failure text for an instance with NO search credentials
  *  configured (ticket 6f4d42f2's ask #3): names the missing configuration and
  *  where to fix it, never the generic unreachable/rate-limited wording. */

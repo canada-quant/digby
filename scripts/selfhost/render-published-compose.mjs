@@ -94,7 +94,7 @@ const HEADER = `# Digby — self-hosted, single-host, full isolated stack (PRE-B
 #   docker compose -f docker-compose.selfhost.published.yml up -d
 #
 # Pinning a release (recommended for anything you care about):
-#   DIGBY_IMAGE_TAG=1.0.0 docker compose -f docker-compose.selfhost.published.yml up -d
+#   DIGBY_IMAGE_TAG=1.0.1 docker compose -f docker-compose.selfhost.published.yml up -d
 #
 # NOTE ON THE FRONTEND: the image is built with a RELATIVE API base (/api), so
 # it is correct on http://localhost:8080, on a LAN IP and on a real domain with

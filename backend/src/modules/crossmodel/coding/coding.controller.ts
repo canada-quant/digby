@@ -36,6 +36,7 @@ import { storeGet } from '../memory/context-store';
 import { stopSessionContainer, removeSandboxHome } from './container.service';
 import { resolveViewModeForRequest } from '../view/view-mode';
 import { minimalMessages } from '../view/minimal-view';
+import { annotateCredentialPaste } from '../platform/credential-paste';
 
 const PERMISSION_MODES = new Set(['auto', 'plan', 'ask']);
 
@@ -321,6 +322,14 @@ class CodingController {
     // guardOriginal attachment (≤20k chars per struck row) is dropped from the
     // response — no client reads it.
     const legacyMessages = messages.map(m => ({ ...m, sessionId: m.chatId, metadata: omitGuardOriginal((m as any).metadata) }));
+    // Ticket f95e1e30 (part 2): the one-tap "vault this" flag on the OWNER's own
+    // pastes, derived per read (platform/credential-paste.ts). Computed AFTER the
+    // guardOriginal strip so a struck attachment can never contribute a span, and
+    // owner-only — this view also serves project members at read access, and a
+    // member must not see a button the vault route would 404 on.
+    if (session.userId === userId) {
+      for (const m of legacyMessages as any[]) m.metadata = annotateCredentialPaste(m, { ownerViewer: true });
+    }
     // Inline base64 images → lazy same-origin URLs (payload can be tens of MB
     // of screenshots otherwise; getMessageImage serves the bytes on demand).
     stripInlineImageData(id, legacyMessages);

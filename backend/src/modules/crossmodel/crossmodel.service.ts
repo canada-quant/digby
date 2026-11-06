@@ -5,6 +5,16 @@ import { Message, PatienceMode, normalizePatienceMode } from './types';
 import { getArchiveHiddenProjectIds, chatArchiveExclusion } from './archive-scope';
 import { CHAT_LIST_ANCESTOR_HOPS, missingParentIds, spliceAncestors } from './chat-list-lineage';
 import { displayParentNestingDisabled } from './platform/display-parent';
+import { annotateCredentialPaste } from './platform/credential-paste';
+
+/** The ticket-f95e1e30 map step: attach the one-tap vault flag to a transcript
+ *  DTO row. Value-free and additive — a row with nothing to say is returned
+ *  untouched (same object, no copy). Generic so it preserves the caller's DTO
+ *  type (Message & { id }, CodingTranscriptRow, …). Exported for the unit test. */
+export function annotateMessageCredentialPaste<T extends { role?: string | null; content?: string | null; metadata?: unknown }>(m: T): T {
+  const metadata = annotateCredentialPaste(m, { ownerViewer: true });
+  return (metadata === m.metadata ? m : { ...m, metadata }) as T;
+}
 
 /**
  * Best-effort audit trail (Activity, resource 'platform') — mirrors
@@ -743,7 +753,16 @@ export class CrossModelService {
       // Additive (c6e8edda): attachment chips gain fileId + mimeType from the
       // durable ChatFile rows so image chips render inline (one batched
       // lookup; legacy transcripts without stamps cost nothing).
-      const messages = await this.injectAttachmentFileIds(chatId, legacyMessages);
+      let messages = await this.injectAttachmentFileIds(chatId, legacyMessages);
+
+      // Ticket f95e1e30 (part 2): the one-tap "vault this" flag. Derived HERE,
+      // per read, from the OWNER's own user rows — never stamped at persist time,
+      // so a paste that already sits in the transcript gets its button without
+      // waiting for history to age in, and a scanner improvement reaches old rows
+      // for free. Value-free (count + pattern names only); owner-only (a project
+      // member never sees a button the vault route would refuse). See
+      // platform/credential-paste.ts for the full rationale + measured cost.
+      if (access === 'owner') messages = messages.map(annotateMessageCredentialPaste);
 
       // Additive (f89d1213): authorId → display-name map for stamped user rows
       // so the frontend can label teammate messages without an N+1.
@@ -814,7 +833,11 @@ export class CrossModelService {
 
     // Additive (c6e8edda): same batched chip → ChatFile fileId injection as
     // the legacy branch, scoped to THIS page's rows.
-    const messages = await this.injectAttachmentFileIds(chatId, pagedMessages);
+    let messages = await this.injectAttachmentFileIds(chatId, pagedMessages);
+
+    // Ticket f95e1e30 (part 2): same one-tap vault flag as the legacy branch —
+    // scoped to this page, derived per read, owner-only, value-free.
+    if (access === 'owner') messages = messages.map(annotateMessageCredentialPaste);
 
     // Additive (f89d1213): same author map as the legacy branch, scoped to
     // THIS page's stamped rows (older pages resolve on their own fetch).

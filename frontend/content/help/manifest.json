@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-11-06T10:06:58.613Z",
+  "generatedAt": "2026-11-06T13:07:05.432Z",
   "docs": [
     {
       "slug": "self-host",
@@ -23,6 +23,11 @@
           "depth": 2,
           "text": "Install from published images (no source clone)",
           "id": "install-from-published-images-no-source-clone"
+        },
+        {
+          "depth": 3,
+          "text": "This path is smoke-tested on every release, anonymously",
+          "id": "this-path-is-smoke-tested-on-every-release-anonymously"
         },
         {
           "depth": 3,
