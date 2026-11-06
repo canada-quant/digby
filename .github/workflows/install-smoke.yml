@@ -62,6 +62,17 @@ name: Install smoke (anonymous, published images)
 # a lie).
 
 on:
+  # Fires when a release is published, so the doc claim "smoke-tested on every
+  # release" is TRUE rather than aspirational. (Independent review 2026-11-06:
+  # the section said "on every release" while the only triggers were
+  # workflow_dispatch + schedule, and v1.0.1's first smoke was an operator
+  # dispatch six hours after the release -- the claim was false.)
+  #
+  # `release: published` runs against `main`, so it tests the release with the
+  # CURRENT default pair. Keep the pair below one release behind `to_tag`'s
+  # target when cutting a new release.
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
       from_tag:
@@ -116,7 +127,7 @@ env:
 
 jobs:
   anonymous-install-and-upgrade:
-    name: anonymous install ${{ inputs.from_tag || 'latest' }} → upgrade to ${{ inputs.to_tag || '1.0.1' }}
+    name: anonymous install ${{ inputs.from_tag || '1.0.0' }} → upgrade to ${{ inputs.to_tag || '1.0.1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -195,6 +206,14 @@ jobs:
             grep -qx "${k}=${v}" .env || { echo "::error::could not set ${k} in .env"; exit 1; }
           done
           # Same secrets from this point on, whatever the current image is.
+          # Mask BEFORE exporting. On a PUBLIC repo a step whose env carries the
+          # value prints it in the run log; GitHub only redacts values it has
+          # been told about, so --add-mask-- must come first. (Independent review
+          # 2026-11-06 found JWT_SECRET/JWT_REFRESH_SECRET/SMOKE_PASSWORD in
+          # plaintext in run 42226012280's log: harmless on a disposable runner,
+          # but it normalises leaking value-carrying env vars.)
+          echo "::add-mask::$s1"
+          echo "::add-mask::$s2"
           echo "JWT_SECRET=$s1" >> "$GITHUB_ENV"
           echo "JWT_REFRESH_SECRET=$s2" >> "$GITHUB_ENV"
 
@@ -258,6 +277,7 @@ jobs:
           [ "$role" = "ADMIN" ] \
             || { echo "::error::first user role is '$role', expected ADMIN from SELFHOST_ADMIN_EMAIL"; exit 1; }
           echo "  D PASS — register 201, first user promoted to ADMIN via SELFHOST_ADMIN_EMAIL"
+          echo "::add-mask::$pw"
           echo "SMOKE_PASSWORD=$pw" >> "$GITHUB_ENV"
 
       - name: E — upgrade to ${{ inputs.to_tag || '1.0.1' }}

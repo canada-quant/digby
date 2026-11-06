@@ -80,7 +80,7 @@ The two commands above are the promise; `Install smoke (anonymous, published
 images)` in `canada-quant/digby` is the check that keeps it honest. It runs on a
 **credential-free** GitHub runner — no model key, no cloud account, nothing
 provisioned — and follows this section end to end: it fetches `install.sh` from
-`main`, installs the current release, waits for `/api/health` to report
+`main`, installs the **previous** release, waits for `/api/health` to report
 `healthy` through Caddy on port 8080, registers the `SELFHOST_ADMIN_EMAIL`
 account and asserts it really is `ADMIN`, then **upgrades that same instance to
 the release under test** using the documented `pull` + `up -d`, and finally
