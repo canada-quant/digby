@@ -390,19 +390,50 @@ jobs:
 
           # The stream is what the product IS. Read it with a bounded timeout so
           # a hung run fails the job instead of burning the 75-minute budget.
+          #
+          # CALL THE SEND ENDPOINT, NOT THE ATTACH ONE. Sending a chat message is
+          # GET /stream?message=&chatId=  (streamQuery, crossmodel-open.routes.ts:86
+          # — the same URL the web client's buildPlainStreamUrl produces).
+          # GET /chats/:id/stream is the run-ATTACH endpoint (streamChatRun, :334)
+          # and deliberately answers 400 when the chat has no run to attach to:
+          #   "This endpoint attaches to runs — send chat messages via
+          #    POST /api/crossmodel/stream"
+          # Calling attach here reported a perfectly working chat as a broken one,
+          # and the advice in that 400 names a method the send path does not use.
           curl -sS -N --max-time 300 \
             -H "Authorization: Bearer $SMOKE_TOKEN" \
             -H 'Accept: text/event-stream' \
-            "$base/chats/$chat_id/stream?message=hello%20clean%20room" > stream.txt || true
+            "$base/stream?chatId=$chat_id&message=hello%20clean%20room&mode=single_thinking" > stream.txt || true
           echo "  stream bytes: $(wc -c < stream.txt)"
           head -40 stream.txt || true
 
           # The stub's fixed answer is the proof that model config -> seat ->
           # run path -> streamed reply all worked end to end.
-          if grep -q 'CLEANROOM_STUB_OK' stream.txt; then
-            echo "  M3 PASS — the stub's answer arrived through the chat stream"
+          #
+          # CONCATENATE THE DELTAS BEFORE ASSERTING. The stub deliberately sends
+          # the marker in TWO deltas — 'CLEANROOM' then '_STUB_OK' (slice(0,9) +
+          # slice(9), see M1) — precisely to prove the answer really STREAMS, and
+          # the controller writes ONE SSE frame per delta
+          # (crossmodel.controller.ts sendEvent('chunk', { content: delta })).
+          # So the marker NEVER appears contiguously in stream.txt: grepping the
+          # raw stream reports a perfectly working chat as broken. Rebuild the
+          # answer from the frames first. (Fourth instance of one defect class in
+          # this file: assert the shape the API actually produces.)
+          #
+          # Every SSE line is `data: {json}`-prefixed, so the prefix MUST be
+          # stripped before the line will parse — feeding the raw lines to a JSON
+          # parser matches nothing and yields an empty answer (that was the first
+          # draft of this very line). Verified against a captured fixture: this
+          # pipeline returns CLEANROOM_STUB_OK.
+          sed -n 's/^data: //p' stream.txt \
+            | grep -o '"content":"[^"]*"' \
+            | sed 's/^"content":"//; s/"$//' \
+            | tr -d '\n' > answer.txt || true
+          echo "  rebuilt answer: [$(cat answer.txt 2>/dev/null)]"
+          if grep -q 'CLEANROOM_STUB_OK' answer.txt; then
+            echo "  M3 PASS — the stub's answer arrived, delta by delta, through the chat stream"
           else
-            echo "::error::the chat stream did not carry the model's answer (expected CLEANROOM_STUB_OK)"
+            echo "::error::the chat stream did not carry the model's answer (expected CLEANROOM_STUB_OK in the concatenated chunk deltas)"
             docker compose -f "$COMPOSE" logs --no-color --tail=120 backend || true
             exit 1
           fi
