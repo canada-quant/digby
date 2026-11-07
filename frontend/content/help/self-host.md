@@ -94,8 +94,8 @@ reported by `/api/health` equals the running image's
 instance runs*).
 
 Start it yourself from **Actions → Install smoke → Run workflow**, choosing
-`from_tag` (the upgrade baseline — an older release, default `1.0.1`) and
-`to_tag` (the release under test, default `1.0.2`). The two must be **different
+`from_tag` (the upgrade baseline — an older release, default `1.0.2`) and
+`to_tag` (the release under test, default `1.0.3`). The two must be **different
 releases**: the run asserts the revision actually changed, so a pair that
 resolves to the same build is rejected as not-an-upgrade. It also fires weekly
 against that pair. A green run is the evidence that a release is installable —

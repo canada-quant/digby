@@ -105,6 +105,43 @@ function documentedCurrentRelease(guideText: string): string | undefined {
   return m?.[1];
 }
 
+/**
+ * The dispatch defaults the GUIDE tells a stranger to expect:
+ *
+ *   `from_tag` (the upgrade baseline — an older release, default `1.0.1`) and
+ *   `to_tag` (the release under test, default `1.0.2`).
+ *
+ * Why this is pinned separately: the release-event path uses the workflow
+ * `env:` fallbacks, so the `workflow_dispatch` `default:` values are the ones a
+ * HUMAN reads and hand-types when they start a run from the Actions UI. They
+ * drifted independently of the fallbacks — after the pair moved to 1.0.2→1.0.3
+ * the guide still advertised 1.0.1/1.0.2, i.e. a stranger following the page
+ * would dispatch the PREVIOUS pair and prove nothing about the current release.
+ * That is the same defect class as the two stale-release smoke runs.
+ */
+function documentedDispatchDefaults(
+  guideText: string,
+): { from: string; to: string } | undefined {
+  const from = /`from_tag`[^\n]*?default\s+`(\d+\.\d+\.\d+)`/.exec(guideText);
+  const to = /`to_tag`[^\n]*?default\s+`(\d+\.\d+\.\d+)`/.exec(guideText);
+  if (!from || !to) return undefined;
+  return { from: from[1], to: to[1] };
+}
+
+/** The `workflow_dispatch` `default:` pair — what a manual dispatch starts from. */
+function workflowInputDefaults(
+  workflowText: string,
+): { from: string; to: string } | undefined {
+  const inputBlock = workflowText.slice(
+    workflowText.indexOf('workflow_dispatch:'),
+    workflowText.indexOf('schedule:'),
+  );
+  const from = /from_tag:[\s\S]*?default:\s*"([^"]+)"/.exec(inputBlock);
+  const to = /to_tag:[\s\S]*?default:\s*"([^"]+)"/.exec(inputBlock);
+  if (!from || !to) return undefined;
+  return { from: from[1], to: to[1] };
+}
+
 describe('install-smoke release pair tracks the documented release', () => {
   const workflow = read(WORKFLOW);
   const guide = read(SELF_HOST_GUIDE);
@@ -157,6 +194,22 @@ describe('install-smoke release pair tracks the documented release', () => {
     // Equal endpoints make the "revision changed" assertion reject the run as
     // not-an-upgrade; a NEWER baseline would test a downgrade, not an upgrade.
     expect(from).toBeLessThan(to);
+  });
+
+  it('parses the dispatch defaults out of both the guide and the workflow', () => {
+    // A prose rewrite that drops either parenthetical would make the pin below
+    // vacuous; fail loudly instead of silently weakening it.
+    expect(documentedDispatchDefaults(guide)).toBeDefined();
+    expect(workflowInputDefaults(workflow)).toBeDefined();
+  });
+
+  it('the guide advertises the SAME dispatch defaults the workflow actually has', () => {
+    // The reader-facing half of the pair. The `env:` fallbacks (what a release
+    // event runs) were pinned first; these `default:` values are what a human
+    // copies when they start a run by hand. They forked once already: the pair
+    // moved to 1.0.2→1.0.3 while this paragraph still said 1.0.1→1.0.2, so the
+    // documented manual dispatch would have re-proven the PREVIOUS release.
+    expect(documentedDispatchDefaults(guide)).toEqual(workflowInputDefaults(workflow));
   });
 
   it('the guide still names the current release in the form this suite parses', () => {
