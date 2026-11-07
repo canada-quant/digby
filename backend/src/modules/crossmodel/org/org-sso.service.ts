@@ -366,9 +366,17 @@ export async function resolveOrProvisionUser(input: {
     // whose membership was removed loses SSO access even though the link exists.
     const membership = await prisma.membership.findUnique({
       where: { userId_organizationId: { userId: link.userId, organizationId: provider.organizationId } },
-      select: { role: true },
+      select: { role: true, deactivatedAt: true },
     });
-    if (!membership) {
+    // A DEPROVISIONED member is refused at the federated door too (SCIM 2.0,
+    // todo 76113a98). This is a SECOND, independent enforcement point on purpose:
+    // resolveMembership already treats the membership as absent for every
+    // capability check, but SSO resolves the membership itself here (it needs the
+    // role to report, not a capability). Without this filter an IdP that still
+    // authenticates the user would hand back a session for a deprovisioned
+    // identity — the deprovision would hold everywhere EXCEPT the one door the
+    // identity provider controls, which is precisely the door it arrives through.
+    if (!membership || membership.deactivatedAt) {
       throw new AppError(403, 'You are not a member of this workspace');
     }
     await prisma.federatedIdentity.updateMany({

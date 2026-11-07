@@ -298,6 +298,28 @@ orgMembersRoutes.post('/orgs/:orgId/members', validate(inviteSchema), async (req
     const existing = await resolveMembership(invitee.id, orgId);
     if (existing) throw new AppError(409, 'That person is already a member of this workspace');
 
+    // A DEPROVISIONED membership resolves as absent (see resolveMembership), but
+    // the ROW still exists and `@@unique([userId, organizationId])` still holds
+    // it. A plain create here would therefore throw a unique-constraint 500 the
+    // first time an admin re-invites someone a SCIM deprovision removed. So look
+    // for the deprovisioned row explicitly and REACTIVATE it: the same act the IdP
+    // performs with `active:true`, and the outcome a human inviting them back
+    // means. Re-adding is deliberately still gated on member:invite (already
+    // checked above) and still lands on the least-power role.
+    const deprovisioned = await prisma.membership.findUnique({
+      where: { userId_organizationId: { userId: invitee.id, organizationId: orgId } },
+      select: { id: true, deactivatedAt: true },
+    });
+    if (deprovisioned?.deactivatedAt) {
+      const member = await prisma.membership.update({
+        where: { id: deprovisioned.id },
+        data: { deactivatedAt: null, role: DEFAULT_MEMBER_ORG_ROLE },
+        select: MEMBER_FIELDS,
+      });
+      logger.info(`org-rbac: ${userId} reactivated deprovisioned user ${invitee.id} in org ${orgId}`);
+      return res.status(201).json({ success: true, data: { member, reactivated: true } });
+    }
+
     const member = await prisma.membership.create({
       // Least power by default: the shared constant, not a literal here, so the
       // "invites grant MEMBER" rule lives with the rest of the role semantics.

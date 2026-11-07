@@ -348,13 +348,30 @@ jobs:
           # Assert the chat_orchestrator ROW, not any occurrence anywhere in the
           # document: a grep over the whole payload would pass on the model id
           # appearing in some other seat and hide a failed assignment.
-          seat=$(jq -r '.. | objects | select(.key? == "chat_orchestrator") | (.model // .value // .spec // "")' roles2.json 2>/dev/null | head -1)
-          echo "  lead seat now: $seat"
+          #
+          # READ THE FIELDS THE API ACTUALLY RETURNS. A role row is
+          # {key, defaultModel, override, effective, resolves, servable, ...}
+          # (model-roles.service.ts ListModelRole ~:553). `defaultModel` is the
+          # BUILT-IN (kimi-k3) and never moves — asserting on it would fail on a
+          # perfectly good assignment. The admin's assignment lands in `override`,
+          # and `effective` is what the runtime will actually use. Asserting on
+          # `.model // .value // .spec` (fields that do not exist) read '' and
+          # reported a persisted write as lost.
+          seat=$(jq -r '.data.roles[] | select(.key == "chat_orchestrator") | .effective' roles2.json 2>/dev/null | head -1)
+          seat_override=$(jq -r '.data.roles[] | select(.key == "chat_orchestrator") | .override' roles2.json 2>/dev/null | head -1)
+          seat_resolves=$(jq -r '.data.roles[] | select(.key == "chat_orchestrator") | .resolves' roles2.json 2>/dev/null | head -1)
+          echo "  lead seat now: effective='$seat' override='$seat_override' resolves='$seat_resolves'"
           case "$seat" in
             *"$STUB_MODEL"*) echo "  chat_orchestrator names $STUB_MODEL" ;;
-            *) echo "::error::chat_orchestrator reads '$seat' — the assignment did not persist"; head -c 1200 roles2.json; echo; exit 1 ;;
+            *) echo "::error::chat_orchestrator effective reads '$seat' — the assignment did not persist"; head -c 1200 roles2.json; echo; exit 1 ;;
           esac
-          echo "  M2 PASS — endpoint registered, lead seat assigned and read back"
+          # A seat that names the model but does not RESOLVE is the silent-dead-seat
+          # failure this whole leg exists to catch.
+          case "$seat_resolves" in
+            true) echo "  chat_orchestrator resolves" ;;
+            *) echo "::error::chat_orchestrator does not resolve (resolves='$seat_resolves')"; head -c 1200 roles2.json; echo; exit 1 ;;
+          esac
+          echo "  M2 PASS — endpoint registered, lead seat assigned, reads back and resolves"
 
       - name: M3 — a successful first chat
         run: |

@@ -108,7 +108,20 @@ export type OrgCapability =
    * branch in the route) keeps the routes literal-free, which the structural
    * test in org-members.routes.test.ts enforces.
    */
-  | 'sso:manage';
+  | 'sso:manage'
+  /**
+   * Mint, rotate and revoke the tenant's SCIM 2.0 provisioning tokens
+   * (Phase 3 Enterprise SCIM, todo 76113a98).
+   *
+   * OWNER ALONE, for the same reason as `sso:manage` — and one step sharper. A
+   * SCIM token can CREATE ACCOUNTS in this tenant, so whoever holds one can add
+   * people at will. If an ADMIN could mint one, an ADMIN would have found the
+   * path around `member:grant-senior`: they cannot mint a peer OWNER through the
+   * member routes, but they could issue themselves a provisioning credential and
+   * provision accounts with it. Withholding minting from ADMIN keeps the
+   * escalation chain broken at the same link the member routes break it.
+   */
+  | 'scim:manage';
 
 /**
  * The capability table — THE authority for this whole module family.
@@ -140,6 +153,8 @@ const CAPABILITIES: Record<OrgRoleName, ReadonlySet<OrgCapability>> = {
     'member:grant-senior',
     // OWNER alone may repoint the tenant's identity provider — see `sso:manage`.
     'sso:manage',
+    // OWNER alone may issue provisioning credentials — see `scim:manage`.
+    'scim:manage',
   ]),
   ADMIN: new Set<OrgCapability>([
     'org:read',
@@ -170,6 +185,7 @@ export const ORG_CAPABILITIES: readonly OrgCapability[] = [
   'billing:update',
   'member:grant-senior',
   'sso:manage',
+  'scim:manage',
 ];
 
 /** The capabilities of one role. Returns an empty set for an unknown value — deny by default. */
@@ -304,9 +320,23 @@ export async function resolveMembership(userId: string, orgId: string): Promise<
   if (!userId || !orgId) return null;
   const row = await prisma.membership.findUnique({
     where: { userId_organizationId: { userId, organizationId: orgId } },
-    select: { organizationId: true, userId: true, role: true },
+    select: { organizationId: true, userId: true, role: true, deactivatedAt: true },
   });
   if (!row) return null;
+  // A DEPROVISIONED membership is ABSENT, not merely powerless (SCIM 2.0,
+  // todo 76113a98). This single filter is what makes `active:false` real: without
+  // it the deprovision flag would be a column nothing consults — the exact
+  // "role nobody reads" defect this module exists to prevent.
+  //
+  // It answers 404 through requireOrgCapability, which is the STRONGER of the two
+  // arms: a deprovisioned insider is indistinguishable from a stranger, so
+  // deprovisioning cannot be used to confirm tenancy, and the user keeps no
+  // capability anywhere in the org (every org-scoped route funnels through here).
+  //
+  // Deliberately NOT a role downgrade: deprovisioning is not "become a MEMBER".
+  // A MEMBER still holds org:read and can still see the tenant; a deprovisioned
+  // identity must hold NOTHING.
+  if (row.deactivatedAt) return null;
   return {
     organizationId: row.organizationId,
     userId: row.userId,

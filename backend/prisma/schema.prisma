@@ -211,6 +211,10 @@ model Organization {
   /// Phase 3 Enterprise SSO (todo 3ad2b010): at most ONE IdP per tenant.
   identityProvider  OrgIdentityProvider?
   federatedIdentities FederatedIdentity[]
+  /// Phase 3 Enterprise SCIM 2.0 (todo 76113a98): provisioning bearer tokens.
+  scimTokens ScimToken[]
+  /// Phase 3 Enterprise SCIM 2.0 (todo 76113a98): provisioning groups.
+  scimGroups ScimGroup[]
 
   @@index([ownerId])
   @@map("organizations")
@@ -230,6 +234,31 @@ model Membership {
   /// unique index — personal orgs are created inside the same transaction as
   /// the user, so the invariant holds at the only creation point.
   isDefault      Boolean  @default(false)
+  /// Phase 3 Enterprise SCIM 2.0 (todo 76113a98). NULL = active.
+  ///
+  /// A non-NULL value means the membership is DEPROVISIONED: `resolveMembership`
+  /// treats it as ABSENT, so every capability check answers exactly what it
+  /// answers for a stranger (404, never 403) and the deprovisioned user keeps no
+  /// access anywhere in the tenant.
+  ///
+  /// WHY A COLUMN AND NOT A ROW DELETE. RFC 7643 `active:false` is a state, not
+  /// a deletion: a GET must still return the resource with active=false, and a
+  /// subsequent `active:true` must REACTIVATE it. Deleting the row would lose
+  /// the createdAt/role history and make reactivation indistinguishable from a
+  /// brand-new invite; it would also make an IdP's routine deactivate/reactivate
+  /// cycle churn memberships. The user row is never touched either way — SCIM
+  /// deprovisions ACCESS, it does not delete people.
+  ///
+  /// This is the ONLY reason the column exists: without it, `active:false` would
+  /// be a flag nothing consults, which is the "role nobody reads" defect that
+  /// org-access.ts exists to prevent.
+  deactivatedAt  DateTime?
+  /// The IdP's own stable id for this membership (RFC 7643 `externalId`).
+  /// Echoed back verbatim on every SCIM read so a provisioning client can
+  /// correlate its objects with ours — most IdPs match on this rather than on
+  /// the email, which a human can change. Null for memberships never touched by
+  /// SCIM.
+  scimExternalId String?
   createdAt      DateTime @default(now())
 
   @@unique([userId, organizationId])
@@ -405,6 +434,93 @@ model SsoLoginState {
   @@index([organizationId])
   @@index([expiresAt])
   @@map("sso_login_states")
+}
+
+/// Phase 3 Enterprise SCIM 2.0 provisioning token (todo 76113a98).
+///
+/// A per-org bearer credential an identity provider's provisioning client
+/// presents to /scim/v2/*. Deliberately NOT a user session: it is not tied to a
+/// person, carries no refresh path, and is scoped to provisioning only — an IdP
+/// that leaks it cannot read chats, run code or change billing.
+///
+/// WHY A SEPARATE TABLE RATHER THAN `agent_tokens`. `AgentToken` is per-USER and
+/// its scopes name user-facing surfaces (chats, folders, code). A SCIM token is
+/// per-ORG: several admins may come and go while the IdP integration must keep
+/// working, so binding it to a user would break provisioning whenever that
+/// person's account was suspended or removed. Org-scoping is also what makes the
+/// 404-not-403 isolation rule expressible at all — the token names its tenant
+/// up front instead of deriving one from a caller's memberships.
+///
+/// Only sha256(token) is stored, exactly like AgentToken/EmailVerificationToken:
+/// a database read cannot mint a working credential. `tokenPrefix` exists so the
+/// UI can identify a token ("scim_ab12cd34…") without being able to use it.
+model ScimToken {
+  id             String   @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// Human label ("Okta production").
+  name           String
+  /// sha256 hex of the presented bearer token. Never the token itself.
+  tokenHash      String   @unique
+  /// First ~13 chars, for identification in the UI only.
+  tokenPrefix    String
+  /// Provisioning scopes: users:read | users:write | groups:read | groups:write.
+  /// An IdP that only needs to deprovision gets users:write alone.
+  scopes         String[]
+  expiresAt      DateTime?
+  lastUsedAt     DateTime?
+  /// Set when the token is revoked outright. A revoked token is refused 401 —
+  /// indistinguishable from an unknown one, so a probe cannot tell "revoked"
+  /// from "never existed".
+  revokedAt      DateTime?
+  /// Set when the secret was ROTATED. Rotation rewrites tokenHash in place, so
+  /// the previous secret stops verifying immediately (one row, one write, no
+  /// window where two secrets work). Kept as a timestamp so an operator can see
+  /// when it last happened.
+  rotatedAt      DateTime?
+  /// Who minted it, for the audit trail. Soft reference (no FK): the token must
+  /// outlive the admin who created it, exactly as the IdP integration does.
+  createdByUserId String?
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId])
+  @@map("scim_tokens")
+}
+
+/// Phase 3 Enterprise SCIM 2.0 group (todo 76113a98).
+///
+/// A provisioning-side GROUP, not a permission object. Digby's authorization is
+/// the org role table (org-access.ts); a SCIM group is how an IdP expresses
+/// "these people belong together" — typically to map onto a role later. Storing
+/// it faithfully means an IdP's group lifecycle (create/rename/replace members/
+/// delete) round-trips without us inventing a role-mapping feature we do not have.
+///
+/// WHY ITS OWN TABLE AND NOT A JOIN ON memberships: a SCIM group's membership is
+/// independent of org membership (an IdP may PUT a group containing someone who
+/// is not yet provisioned), and a group must survive a member's deprovision —
+/// the IdP still believes the group exists and will PATCH it. Modelling it as
+/// membership rows would delete the group's shape whenever someone left.
+///
+/// `members` holds userIds, NOT emails: a PATCH that adds an unknown address must
+/// fail loudly (404, per RFC 7644) rather than silently create a phantom row.
+model ScimGroup {
+  id             String   @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// The human name the IdP shows ("Engineering"). Unique per tenant so a
+  /// duplicate create is a 409 rather than two indistinguishable groups.
+  displayName    String
+  /// The IdP's own stable id for this group, echoed back verbatim on every read
+  /// so a client can correlate its objects with ours.
+  externalId     String?
+  /// Member user ids. Empty array = a group with no members, which is legal.
+  members        String[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, displayName])
+  @@index([organizationId])
+  @@map("scim_groups")
 }
 
 /// Email-verification token for self-serve signup. The RAW token is never

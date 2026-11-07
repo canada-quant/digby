@@ -47,6 +47,8 @@ import { orgAdminRoutes } from './modules/crossmodel/org/org-admin.routes';
 import { orgMembersRoutes } from './modules/crossmodel/org/org-members.routes';
 import { orgSsoRoutes } from './modules/crossmodel/org/org-sso.routes';
 import { orgSsoOpenRoutes } from './modules/crossmodel/org/org-sso-open.routes';
+import { scimRoutes } from './modules/crossmodel/org/scim.routes';
+import { scimTokenRoutes } from './modules/crossmodel/org/scim-tokens.routes';
 import { brandingPackPublicRoutes, brandingPackAdminRoutes } from './modules/crossmodel/branding/branding-pack.routes';
 import { clientIpForHash } from './modules/crossmodel/visitors/visitor.service';
 import { hashIp } from './modules/crossmodel/visitors/ip-hash';
@@ -461,6 +463,26 @@ mountApi(app, '', crossmodelOpenRoutes); // stream/upload/feedback/OAuth/webhook
 // is by definition not signed in yet, so these MUST precede the guard; every
 // callback still has to present a single-use `state` this server issued.
 mountApi(app, '', orgSsoOpenRoutes);
+// Phase 3 Enterprise SCIM 2.0 (todo 76113a98) — the token-authenticated half.
+// An IdP's provisioning client presents a per-ORG bearer token instead of a user
+// session, so these MUST precede the guard (which would reject it as no-user).
+// Tenancy comes from the token, never from the URL: no route here accepts an org
+// parameter, so a token for org A has no syntactic way to name org B — the
+// strongest form of the 404-not-403 rule (see scim.routes.ts).
+//
+// The limiter bounds total SCIM request rate per source. It is defence in depth,
+// not the anti-guessing control: a token is 24 random bytes (192 bits), so online
+// guessing is infeasible regardless of rate. The cap is set generously enough that
+// a full directory sync (hundreds of users) is unaffected.
+const scimRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600,
+  message: { detail: 'Too many provisioning requests', status: '429' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  store: new RedisRateLimitStore('rl:scim:'),
+});
+mountApi(app, '/scim/v2', scimRateLimit, scimRoutes);
 // Phase 2 Cloud brandings packs (todo 61dc8aaf) — PUBLIC half: every visitor,
 // logged out included, must see an active seasonal skin, so the active-pack read
 // and its asset bytes sit BEFORE the guard. Both routes are read-only and can
@@ -498,6 +520,11 @@ mountApi(app, '', orgMembersRoutes);
 // Phase 3 Enterprise SSO/SAML (todo 3ad2b010) — the ADMIN half: per-org IdP CRUD,
 // OWNER-only via the `sso:manage` capability (never `org:update`, which ADMIN holds).
 mountApi(app, '', orgSsoRoutes);
+// Phase 3 Enterprise SCIM 2.0 (todo 76113a98) — the HUMAN half: an OWNER mints,
+// rotates and revokes the provisioning credentials above. Behind the guard and
+// gated per handler on the `scim:manage` capability (OWNER alone: a SCIM token can
+// create accounts, so mint rights must not sit with ADMIN — see org-access.ts).
+mountApi(app, '', scimTokenRoutes);
 // Phase 2 Cloud branding packs (todo 61dc8aaf) — ADMIN half: upload → validate →
 // preview → activate → rollback. Behind the guard AND gated per handler on
 // isAdminViewer (the owner-email fallback never applies on a self-host instance).

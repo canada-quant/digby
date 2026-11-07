@@ -89,6 +89,11 @@ describe('capability table — pinned exhaustively', () => {
       // Phase 3 SSO (3ad2b010): repointing the tenant's IdP is an ownership
       // act — it decides who may authenticate into the tenant at all.
       'sso:manage',
+      // Phase 3 SCIM (76113a98): issuing provisioning credentials is the same
+      // ownership act one step sharper — a SCIM token can CREATE accounts, so
+      // an ADMIN holding mint rights would be the escalator around
+      // member:grant-senior.
+      'scim:manage',
     ],
     ADMIN: ['org:read', 'org:update', 'member:read', 'member:invite', 'member:role', 'member:remove', 'billing:read'],
     BILLING: ['org:read', 'billing:read', 'billing:update'],
@@ -109,6 +114,7 @@ describe('capability table — pinned exhaustively', () => {
         'org:read',
         'org:update',
         'sso:manage',
+        'scim:manage',
       ].sort(),
     );
   });
@@ -251,14 +257,16 @@ describe('role predicates used by the routes (so no route names a role literal)'
 // ─────────────────────────────────────────────────────────────────────────────
 describe('resolveMembership', () => {
   it('reads ONE row on the unique (userId, organizationId) pair and returns only what authz needs', async () => {
-    db.membership.findUnique.mockResolvedValue({ organizationId: 'org-a', userId: 'u-1', role: 'ADMIN' });
+    db.membership.findUnique.mockResolvedValue({ organizationId: 'org-a', userId: 'u-1', role: 'ADMIN', deactivatedAt: null });
     const m = await resolveMembership('u-1', 'org-a');
     expect(m).toEqual({ organizationId: 'org-a', userId: 'u-1', role: 'ADMIN' });
     const arg = db.membership.findUnique.mock.calls[0][0];
     // The compound-unique selector, not a findFirst with a role predicate: one
     // row, one index, and no way to "find the admin membership" by accident.
     expect(arg.where).toEqual({ userId_organizationId: { userId: 'u-1', organizationId: 'org-a' } });
-    expect(arg.select).toEqual({ organizationId: true, userId: true, role: true });
+    // `deactivatedAt` is selected because a DEPROVISIONED membership must resolve
+    // as ABSENT (SCIM 2.0, 76113a98) — the filter lives here, in the one read.
+    expect(arg.select).toEqual({ organizationId: true, userId: true, role: true, deactivatedAt: true });
   });
 
   it('returns null (not a throw) for a genuine non-member', async () => {
