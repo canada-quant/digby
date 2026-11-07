@@ -44,6 +44,7 @@ import { CLOUD_LINK_RECEIVE_PATH_RE, cloudLinkReceiveLimiterKey } from './module
 import { INSTANCE_PAIR_PATH_RE } from './modules/crossmodel/instances/instances.service';
 import { visitorAdminRoutes } from './modules/crossmodel/visitors/visitor.routes';
 import { orgAdminRoutes } from './modules/crossmodel/org/org-admin.routes';
+import { orgMembersRoutes } from './modules/crossmodel/org/org-members.routes';
 import { brandingPackPublicRoutes, brandingPackAdminRoutes } from './modules/crossmodel/branding/branding-pack.routes';
 import { clientIpForHash } from './modules/crossmodel/visitors/visitor.service';
 import { hashIp } from './modules/crossmodel/visitors/ip-hash';
@@ -484,6 +485,10 @@ mountApi(app, '/reports', reportsRoutes); // content reports (M2-prep 1.2/1.4) �
 mountApi(app, '', webhookAuthedRoutes); // per-chat webhook token lifecycle (owner-only); the OPEN fire router lives in crossmodel-open.routes.ts
 mountApi(app, '', visitorAdminRoutes); // first-party visitor analytics — Account → Admin → Users & traffic (admin-gated per handler); the OPEN POST /visit-events lives in crossmodel-open.routes.ts
 mountApi(app, '', orgAdminRoutes); // Phase 2 Cloud — tenant abuse kill switch + free-tier daily limit (admin-gated per handler)
+// Phase 3 Enterprise RBAC (todo c45f065e) — ORG-SCOPED, not instance-admin: every
+// handler is gated on the caller's `memberships.role` for the `:orgId` in its own
+// path (org-access.ts), so these reach one workspace each, never the whole deployment.
+mountApi(app, '', orgMembersRoutes);
 // Phase 2 Cloud branding packs (todo 61dc8aaf) — ADMIN half: upload → validate →
 // preview → activate → rollback. Behind the guard AND gated per handler on
 // isAdminViewer (the owner-email fallback never applies on a self-host instance).

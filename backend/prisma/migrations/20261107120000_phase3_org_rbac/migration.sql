@@ -1,0 +1,42 @@
+-- Phase 3 Enterprise RBAC — the BILLING org role (todo c45f065e).
+--
+-- ADDITIVE ONLY: this file adds ONE value to the existing "OrgRole" enum. No
+-- table is created, dropped, rewritten or locked for writes, no column changes,
+-- and no row is read or modified. The default of the only column that uses this
+-- type ("memberships"."role", @default(MEMBER)) is untouched, so existing rows
+-- keep their exact current meaning and no org gains or loses a member.
+--
+-- WHY AN ENUM VALUE AND NOT A SECOND ROLE COLUMN: `memberships.role` has carried
+-- OWNER | ADMIN | MEMBER since the Phase 2 Cloud migration, and its own schema
+-- doc says "Phase 3 RBAC extends `role`". A parallel column would mean two
+-- sources of truth for one question ("what may this member do?"), and the first
+-- place they disagree is an authorization bug. Extending the existing type keeps
+-- every reader pointed at one column, and the type system then forces any
+-- exhaustive switch over roles to be updated rather than silently defaulting.
+--
+-- WHY BILLING EXISTS AT ALL: an accountant needs to read and update billing
+-- settings without being able to add or remove staff. Expressing that as "ADMIN
+-- minus member management" needs a distinct rank, otherwise the only way to give
+-- someone billing access is to make them an admin, who can then invite and
+-- remove people.
+--
+-- POSTGRES ERROR 55P04 — WHY NOT `ALTER TYPE ... ADD VALUE` IN A TRANSACTION:
+-- before Postgres 12 an added label could not be USED in the same transaction,
+-- so a migration that both added the label and rewrote rows would fail. We are
+-- on 16.13 (labels are usable immediately, since 12) and this file only adds the
+-- label — it uses it nowhere — so Prisma's transactional wrapper is safe here.
+--
+-- ROLLBACK CAVEAT (deliberate, and harmless): Postgres has no `DROP VALUE` for
+-- an enum. A rollback therefore CANNOT remove the label — it stays defined and
+-- unused. That is safe in the downgrade direction: no row can hold 'BILLING'
+-- at the moment of rollback unless the reverted code wrote it, and reverted code
+-- by definition does not. Re-applying this migration later is a no-op thanks to
+-- IF NOT EXISTS, so the forward/back/forward cycle is idempotent.
+--
+-- WHAT MUST STAY TRUE FOR THIS TO BE REVERSIBLE: nothing outside
+-- org-access.ts may interpret the role literals. That is enforced by the
+-- structural test in src/modules/crossmodel/org/org-members.routes.test.ts,
+-- which fails if an ad-hoc `role === 'OWNER'` check appears outside the one
+-- shared predicate.
+
+ALTER TYPE "OrgRole" ADD VALUE IF NOT EXISTS 'BILLING';

@@ -136,13 +136,13 @@ DIGBY_IMAGE_TAG=1.0.2 \
 
 **Releases.** `canada-quant/digby` publishes a git tag and a GitHub release per
 version, and `publish-images.yml` builds every image from that exact tagged
-commit. **`v1.0.2`** is the current release; its images are published as
-`1.0.2`, `latest` and `sha-<commit>`, so you can pin by version or by source
+commit. **`v1.0.3`** is the current release; its images are published as
+`1.0.3`, `latest` and `sha-<commit>`, so you can pin by version or by source
 commit and get byte-identical images.
 
-`v1.0.1` was cut at public commit `743c9c7eb4f3`. Its images (`1.0.1` and
-`sha-743c9c7eb4f3…`) remain published and pullable, but that release predates
-the documentation cleanup — prefer `1.0.2` for new installs.
+`v1.0.2` was cut at public commit `ee9b91a21a67`. Its images (`1.0.2` and
+`sha-ee9b91a2…`) remain published and pullable, but that release predates the
+install-smoke fix — prefer `1.0.3` for new installs.
 
 `v1.0.0` was **withdrawn**. Its source archive predates a public-tree fix and
 carried material that should not have shipped — no credentials, but not part of

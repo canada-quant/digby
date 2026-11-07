@@ -120,6 +120,69 @@ owner e-mail on production only — on a self-hosted instance the ADMIN role is 
 
 Both writes are idempotent and reversible with the same call, and neither touches usage history.
 
+#### Org roles and capabilities (Phase 3 Enterprise RBAC)
+
+`memberships.role` has carried `OWNER | ADMIN | BILLING | MEMBER` since the Phase 2 Cloud
+migration, but until Phase 3 no authorization decision read it. It is now the authority for the
+**org-scoped** routes below, interpreted in exactly one place — the capability table in
+`backend/src/modules/crossmodel/org/org-access.ts`. No handler compares a role to a literal; a
+source-scan test fails the suite if one is added (`org-members.routes.test.ts`).
+
+| Capability | OWNER | ADMIN | BILLING | MEMBER |
+| --- | :-: | :-: | :-: | :-: |
+| `org:read` | ✓ | ✓ | ✓ | ✓ |
+| `org:update` | ✓ | ✓ | — | — |
+| `member:read` | ✓ | ✓ | — | — |
+| `member:invite` | ✓ | ✓ | — | — |
+| `member:role` | ✓ | ✓ | — | — |
+| `member:remove` | ✓ | ✓ | — | — |
+| `member:grant-senior` | ✓ | — | — | — |
+| `billing:read` | ✓ | ✓ | ✓ | — |
+| `billing:update` | ✓ | — | ✓ | — |
+
+- `ADMIN` runs the tenant but may only **read** billing (`billing:update` withheld) and may not
+  grant or revoke OWNER/ADMIN (`member:grant-senior` is OWNER-only) — an admin must not be able to
+  mint a peer of the owner.
+- `BILLING` is the mirror image: money, no people.
+- `MEMBER` holds `org:read` only. Belonging to a workspace is not permission to enumerate its
+  people, so a member gets `403` on the roster.
+- Rank (`OWNER` 3 > `ADMIN` 2 > `BILLING` = `MEMBER` 1) additionally forbids acting on a member of
+  equal or higher rank — so an ADMIN cannot remove another ADMIN. Two OWNERs may act on each other;
+  the last-OWNER guard, not the rank rule, is what protects a workspace at the top.
+- An unrecognized role value holds **zero** capabilities and ranks below everyone (deny by default,
+  never coerced to MEMBER).
+
+**Non-membership is `404`, never `403`.** A `403` would confirm that the org id exists, turning
+these routes into a cross-tenant existence oracle (org ids leak through links, screenshots and
+support threads). A member who merely lacks a capability gets `403`, because by then membership is
+already proven. The same no-oracle rule applies to a `:userId` that is not a member of the org.
+
+**Grouping (workspace routes, not instance-admin routes).** These are tenant-scoped — every handler
+resolves the caller's `memberships.role` for the `:orgId` in its own path on every request (no org
+claim in the JWT, so a revoked member loses access on their next request rather than at token
+expiry). They are deliberately NOT reachable by an instance admin bypass: operators already have
+`/admin/orgs` above.
+
+- `GET /api/crossmodel/orgs` — the workspaces **I** belong to (the tenant switcher). Scoped by the
+  caller's own user id; no parameter widens it. Returns each org with the caller's `role`.
+- `GET /api/crossmodel/orgs/:orgId` — `org:read`.
+- `GET /api/crossmodel/orgs/:orgId/members` — `member:read`.
+- `POST /api/crossmodel/orgs/:orgId/members` — `member:invite`, body `{ email }`. The invitee must
+  already have an account (`404` otherwise — this is not an invitation-email flow); an existing
+  member is `409`; the new member always starts as `MEMBER`. A **personal** workspace refuses with
+  `400`: it is single-member by construction and must never become shared.
+- `PATCH /api/crossmodel/orgs/:orgId/members/:userId` — `member:role`, body `{ role }`. Changing
+  **your own** role is `400` for everyone (it is the self-promotion and owner-demotion hole in one
+  rule); a change involving OWNER/ADMIN additionally requires `member:grant-senior`.
+- `DELETE /api/crossmodel/orgs/:orgId/members/:userId` — `member:remove`. Removal deletes the
+  membership row only — the person's account and every chat/document/file they own are untouched.
+  The **last OWNER** can never be removed (`400`), so a workspace cannot be orphaned; personal
+  workspaces refuse (`400`).
+
+Scoping note: only `memberships`, `org_usage_daily` and `org_model_usage_daily` carry an
+`organizationId`. Chats, memories, documents and files remain **user**-owned; org membership does
+not widen what data a member can read. Only the operations above are org-scoped today.
+
 ---
 
 ## CrossModel Chat

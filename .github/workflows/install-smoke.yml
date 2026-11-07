@@ -78,11 +78,11 @@ on:
       from_tag:
         description: "Starting image tag to install (an older release; the upgrade baseline)"
         required: false
-        default: "1.0.1"
+        default: "1.0.2"
       to_tag:
         description: "Image tag to upgrade to (the release under test)"
         required: false
-        default: "1.0.2"
+        default: "1.0.3"
   schedule:
     # Weekly, against the release pair below.
     #
@@ -125,8 +125,8 @@ env:
   # so the v1.0.2 release smoke (run 42363887067) upgraded 1.0.0 -> 1.0.1 and
   # NEVER exercised 1.0.2 — a green run that proved nothing about the release it
   # fired for. Keep these in lockstep with the dispatch defaults.
-  FROM_TAG: ${{ inputs.from_tag || '1.0.1' }}
-  TO_TAG: ${{ inputs.to_tag || '1.0.2' }}
+  FROM_TAG: ${{ inputs.from_tag || '1.0.2' }}
+  TO_TAG: ${{ inputs.to_tag || '1.0.3' }}
   COMPOSE: docker-compose.selfhost.published.yml
   DIGBY_DIR: digby
   # The address that must become ADMIN on first registration. Not a credential
@@ -135,7 +135,7 @@ env:
 
 jobs:
   anonymous-install-and-upgrade:
-    name: anonymous install ${{ inputs.from_tag || '1.0.1' }} → upgrade to ${{ inputs.to_tag || '1.0.2' }}
+    name: anonymous install ${{ inputs.from_tag || '1.0.2' }} → upgrade to ${{ inputs.to_tag || '1.0.3' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -288,7 +288,7 @@ jobs:
           echo "::add-mask::$pw"
           echo "SMOKE_PASSWORD=$pw" >> "$GITHUB_ENV"
 
-      - name: E — upgrade to ${{ inputs.to_tag || '1.0.2' }}
+      - name: E — upgrade to ${{ inputs.to_tag || '1.0.3' }}
         id: upgrade
         run: |
           set -eu

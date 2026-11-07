@@ -154,9 +154,25 @@ enum OrgPlan {
   ENTERPRISE
 }
 
+/// What a member may DO inside one organization (Phase 3 Enterprise RBAC,
+/// todo c45f065e). Interpreted in exactly ONE place — the capability table in
+/// `src/modules/crossmodel/org/org-access.ts` — never by ad-hoc role literals
+/// elsewhere; a structural test fails if that rule is broken.
 enum OrgRole {
+  /// Full control of the tenant. The only role that may grant or revoke
+  /// OWNER/ADMIN, and the only one that can never be demoted by its peers.
+  /// At least one OWNER must exist at all times (removal of the last is 400).
   OWNER
+  /// Day-to-day operator: org settings, the member roster, and READ-ONLY
+  /// billing. Deliberately cannot change billing details (not billing:update) —
+  /// a member manager must not be able to redirect payments.
   ADMIN
+  /// Finance seat: reads the org and manages billing details, but has no
+  /// member-management capability at all (cannot invite, promote or remove).
+  BILLING
+  /// An ordinary member of the tenant. Can see the org itself (org:read) and
+  /// NOT its roster — knowing the org exists is not the same as enumerating its
+  /// people, so a plain member gets 403 on member routes.
   MEMBER
 }
 
