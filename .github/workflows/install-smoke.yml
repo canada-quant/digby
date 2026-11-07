@@ -119,8 +119,14 @@ permissions:
   contents: read
 
 env:
-  FROM_TAG: ${{ inputs.from_tag || '1.0.0' }}
-  TO_TAG: ${{ inputs.to_tag || '1.0.1' }}
+  # THESE fallbacks are what a `release: published` run uses — a release event
+  # carries no inputs, so the dispatch defaults above never apply to it. They
+  # were left at 1.0.0 -> 1.0.1 when the release pair moved to 1.0.1 -> 1.0.2,
+  # so the v1.0.2 release smoke (run 42363887067) upgraded 1.0.0 -> 1.0.1 and
+  # NEVER exercised 1.0.2 — a green run that proved nothing about the release it
+  # fired for. Keep these in lockstep with the dispatch defaults.
+  FROM_TAG: ${{ inputs.from_tag || '1.0.1' }}
+  TO_TAG: ${{ inputs.to_tag || '1.0.2' }}
   COMPOSE: docker-compose.selfhost.published.yml
   DIGBY_DIR: digby
   # The address that must become ADMIN on first registration. Not a credential
@@ -129,7 +135,7 @@ env:
 
 jobs:
   anonymous-install-and-upgrade:
-    name: anonymous install ${{ inputs.from_tag || '1.0.0' }} → upgrade to ${{ inputs.to_tag || '1.0.1' }}
+    name: anonymous install ${{ inputs.from_tag || '1.0.1' }} → upgrade to ${{ inputs.to_tag || '1.0.2' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -282,7 +288,7 @@ jobs:
           echo "::add-mask::$pw"
           echo "SMOKE_PASSWORD=$pw" >> "$GITHUB_ENV"
 
-      - name: E — upgrade to ${{ inputs.to_tag || '1.0.1' }}
+      - name: E — upgrade to ${{ inputs.to_tag || '1.0.2' }}
         id: upgrade
         run: |
           set -eu

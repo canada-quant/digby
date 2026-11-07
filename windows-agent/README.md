@@ -1,7 +1,7 @@
 # Digby Windows Agent (W3 — Rust helper + UIA perception)
 
-Digby's Windows client agent — the roadmap W3 milestone of
-[docs/CLIENT_PLATFORMS_ROADMAP_2026-09.md](../docs/CLIENT_PLATFORMS_ROADMAP_2026-09.md) §2.
+Digby's Windows client agent — the roadmap W3 milestone (the client-platform
+roadmap is an internal planning document and is not part of this tree).
 It gives Digby **browser use + computer use on the user's own Windows PC**, over
 the SAME outbound long-poll channel as the macOS agent (`imessage-agent/`).
 The backend's loops (glm-loop, computer-loop) are device-agnostic — this agent
@@ -30,8 +30,8 @@ install could pair but never run computer_*; 0.9.0 = W3 UIA perception;
 scaffold). The desktop
 shell + installer live next door in
 [`../windows-shell/`](../windows-shell/) — W3 bundles this agent INTO that
-installer. Full protocol + shipping detail:
-[docs/WINDOWS_W3_SHIPPING.md](../docs/WINDOWS_W3_SHIPPING.md).
+installer. Full protocol + shipping detail is in the internal W3 shipping brief
+(not part of this tree).
 
 ## W2 — what shipped
 
@@ -158,7 +158,7 @@ never sticky), `close` (leaves a popped-out window open for the user).
   GPU copy, handles the cases BitBlt can't) with the **W1 GDI BitBlt
   chain as fallback** when WGC init fails, SendInput, UI Automation, and
   the environment probes (elevation / secure desktop / foreground exe).
-  See [docs/WINDOWS_W3_SHIPPING.md](../docs/WINDOWS_W3_SHIPPING.md) for
+  See the internal W3 shipping brief (not part of this tree) for
   the frozen method table + refusal codes.
 - **The retired W1 FFI adapter is GONE** — `src/win32.ts` was deleted and
   the native-FFI dependency removed from package.json (the W1 laziness
@@ -434,8 +434,8 @@ installer puts it) > inside `dist/` (legacy manual workaround).
   (`rust-helper/`) — Windows Graphics Capture (GDI fallback), UIA tree dumps +
   invoke fallback, elevation/secure-desktop/DRM detection, anti-cheat
   refusal list — plus agent bundling in the installer and the frozen
-  `UIA_*` refusal codes. See
-  [docs/WINDOWS_W3_SHIPPING.md](../docs/WINDOWS_W3_SHIPPING.md).
+  `UIA_*` refusal codes. See the internal W3 shipping brief (not part of this
+  tree).
   refusal list.
 - **W4 (hardening):** multi-monitor/DPI matrix, locked-workstation behavior,
   AV-quarantine runbook, Store/MSIX evaluation.

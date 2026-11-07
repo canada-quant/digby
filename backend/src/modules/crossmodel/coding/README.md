@@ -4,8 +4,7 @@ Agentic coding for Digby AI (rendered inline in the main chat page via CodeSessi
 multi-agent that builds/fixes code in an isolated per-session git worktree +
 Docker container and streams its work over SSE.
 
-**Full docs:** [`docs/DIGBY_CODE.md`](../../../../../docs/DIGBY_CODE.md) ·
-harness/scaffolding: [`docs/DIGBY_CODE_HARNESS.md`](../../../../../docs/DIGBY_CODE_HARNESS.md)
+**Full docs:** [`docs/DIGBY_CODE.md`](../../../../../docs/DIGBY_CODE.md)
 
 ## Where to start
 

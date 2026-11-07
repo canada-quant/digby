@@ -5,11 +5,11 @@ Expo app for iOS + Android — Workstream B of
 
 > **Where the plan lives now (2026-09-30):** roadmap §3.4 carries the
 > milestone ladder with ship ticks; the current milestone is
-> [`docs/MOBILE_M1_5_ANDROID_ROLLOUT.md`](../../docs/MOBILE_M1_5_ANDROID_ROLLOUT.md)
-> (M1.5 — Android-first internal rollout: EAS builds + Play internal track),
+> M1.5 (Android-first internal rollout: EAS builds + Play internal track),
 > followed by
-> [`docs/MOBILE_M2_5_STORE_AND_MONETIZATION.md`](../../docs/MOBILE_M2_5_STORE_AND_MONETIZATION.md)
-> (M2.5 — Play production + Android-only monetization).
+> M2.5 (Play production + Android-only monetization).
+> (The per-milestone briefs are internal planning documents and are not part of
+> this tree — roadmap §3.4 is the shipped summary.)
 > **The Apple park is LIFTED (2026-09-30):** owner answer to `oq_e70a3c0b`
 > — *"start building the ios and android apps as they will take a longer
 > time to get polished"* — so iOS build work is back in scope (Apple

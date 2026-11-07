@@ -169,6 +169,56 @@ describe('publish workflow and render script agree', () => {
     }
   });
 
+  it('EVERY family the published compose references gets a `latest` on a tag push (b05753aa)', () => {
+    // The b05753aa fix added `latest` to the tag-push path job by job. A job is
+    // a hand-written block, so adding a family to the matrix without adding its
+    // `latest` line would silently regress the original defect for THAT family
+    // only — the default install would pull a stale image and nothing would say
+    // so. The previous test pins the three SHAPES (backend, frontend, matrix);
+    // this one pins the SET, derived from the published compose the stranger
+    // actually runs rather than from a list kept here.
+    const wf = read(WORKFLOW);
+    const text = read(TARGET);
+
+    const families = new Set<string>();
+    for (const m of text.matchAll(/-([a-z0-9][a-z0-9-]*):\$\{DIGBY_IMAGE_TAG/g)) {
+      families.add(m[1]);
+    }
+    expect(families.size).toBeGreaterThan(0);
+
+    const missing: string[] = [];
+    for (const family of families) {
+      // A matrix family emits `format('{0}/{1}-{2}:latest', …, matrix.name)` and
+      // names its matrix entry in `include:`; a standalone job spells the family
+      // literally. Accept either, but require it be gated on a TAG push — an
+      // ungated `latest` would let a dispatch move it, which is the semantics
+      // this whole contract rejects.
+      const literal = new RegExp(`github\\.ref_type == 'tag'[^\\n]*-${family}:latest`).test(wf);
+      const viaMatrix =
+        new RegExp(`name:\\s*${family}\\b`).test(wf) &&
+        /github\.ref_type == 'tag'[\s\S]{0,120}format\('[^']*-[^']*:latest'[\s\S]{0,80}matrix\.name/.test(wf);
+      if (!literal && !viaMatrix) missing.push(family);
+    }
+    expect({ missingLatestOnTagPush: missing }).toEqual({ missingLatestOnTagPush: [] });
+  });
+
+  it('only the backend publishes a -build stage — and only the backend needs one', () => {
+    // Correcting a false claim in the v1.0.2 release notes: `latest-build` moves
+    // on a tag push, but `-build` exists so the `migrate` service can run the
+    // Prisma CLI, and `migrate` is the ONLY service that pulls a `-build` image.
+    // Prose promising `-build` for every family would send an operator to a 404.
+    const text = read(TARGET);
+    const wf = read(WORKFLOW);
+
+    const buildRefs = [...text.matchAll(/-([a-z0-9][a-z0-9-]*):\$\{DIGBY_IMAGE_TAG[^}]*\}-build/g)].map(
+      (m) => m[1],
+    );
+    expect([...new Set(buildRefs)]).toEqual(['backend']);
+
+    const buildTags = [...wf.matchAll(/-([a-z0-9][a-z0-9-]*):latest-build/g)].map((m) => m[1]);
+    expect([...new Set(buildTags)]).toEqual(['backend']);
+  });
+
   it('publishes with GITHUB_TOKEN ONLY — the public repo holds zero provisioned secrets', () => {
     const wf = read(WORKFLOW);
     const refs = [...wf.matchAll(/(secrets|vars)\.([A-Z_][A-Z0-9_]*)/g)].map((m) => `${m[1]}.${m[2]}`);
