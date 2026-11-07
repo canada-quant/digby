@@ -292,12 +292,25 @@ describe('verifyTicketRow (6665fff6)', () => {
 
 describe('runTicketPostdeployVerifierOnce (cron entry)', () => {
   it('returns a ≤200-char summary and never throws', async () => {
-    findManyMock.mockResolvedValueOnce([]);
+    // TICKET 31199f81: a tick makes TWO bounded reads — the reopen-withdrawal
+    // pass first, then the awaiting_verification sweep. Both empty here.
+    findManyMock.mockResolvedValue([]);
     const summary = await runTicketPostdeployVerifierOnce();
     expect(summary).toBe('no tickets awaiting verification');
-    findManyMock.mockRejectedValueOnce(new Error('db down'));
+    expect(summary.length).toBeLessThanOrEqual(200);
+    // A failing DB still yields a summary, never a throw.
+    findManyMock.mockReset();
+    findManyMock.mockRejectedValue(new Error('db down'));
     const failed = await runTicketPostdeployVerifierOnce();
     expect(failed).toContain('sweep failed');
+  });
+
+  it('a failing withdrawal pass is non-fatal — the sweep still runs (ticket 31199f81)', async () => {
+    // First read (reopened rows) throws; the second (the sweep) must still run.
+    findManyMock.mockRejectedValueOnce(new Error('db down')).mockResolvedValueOnce([]);
+    const summary = await runTicketPostdeployVerifierOnce();
+    expect(summary).toBe('no tickets awaiting verification');
+    expect(findManyMock).toHaveBeenCalledTimes(2);
   });
 
   it('honors the kill switch', async () => {

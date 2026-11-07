@@ -117,8 +117,31 @@ the public URL: the ALB routes to the live blue-green color. NEVER pin
 `admin-backend-blue`/`admin-backend-green` — the losing color's containers
 are stopped after each flip):
 
+**BOUND TO LOOPBACK, DELIBERATELY (todo 924725a4, 2026-11-06).** The other
+`*-mcp` services reject a wrong key at the socket (`401`) and are therefore
+published on all interfaces, because prod boxes dial box A's connectors
+cross-box. This server has **no key to check** — it takes any non-empty
+`Bearer` and lets the backend decide — so publishing it on all interfaces put
+a listener that cannot authenticate on the public path. It is now
+`127.0.0.1:8206:8000` on both prod and self-host. Nothing in the repo dials
+8206 from off-box; to expose it you must opt in explicitly with a compose
+override, which makes the exposure a decision rather than a default.
+`scripts/mcp/probe-public-mcp-surface.sh` is the out-of-band check that the
+public gateway still denies anonymous callers.
+
+In a **self-host** install it is no longer part of `--profile mcp` either: it
+lives in its own `--profile mcp-platform` profile, because the self-host MCP
+product surface is one gateway with connector options
+(`docs/MCP_GATEWAY.md`), and this service re-exports the
+hosted one-vendor platform API.
+
 ```bash
+# prod (base stack)
 docker compose -f docker-compose.base.yml up -d --build digby-mcp
+
+# self-host — note the profile is mcp-platform, not mcp
+docker compose -f docker-compose.selfhost.yml --profile mcp-platform up -d --build digby-mcp
+
 curl -X POST http://localhost:8206/mcp \
   -H "authorization: Bearer $DIGBY_TOKEN" \
   -H 'content-type: application/json' \

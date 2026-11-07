@@ -43,6 +43,7 @@ import { WEBHOOK_FIRE_PATH_RE, webhookFireLimiterKey } from './modules/crossmode
 import { CLOUD_LINK_RECEIVE_PATH_RE, cloudLinkReceiveLimiterKey } from './modules/crossmodel/cloud-link/cloud-link.service';
 import { INSTANCE_PAIR_PATH_RE } from './modules/crossmodel/instances/instances.service';
 import { visitorAdminRoutes } from './modules/crossmodel/visitors/visitor.routes';
+import { orgAdminRoutes } from './modules/crossmodel/org/org-admin.routes';
 import { clientIpForHash } from './modules/crossmodel/visitors/visitor.service';
 import { hashIp } from './modules/crossmodel/visitors/ip-hash';
 import { streamLimiterSkip, uploadLimiterSkip, guestStreamAttachLimiterSkip, guestStreamAttachLimiterKey } from './middleware/rate-limit-paths';
@@ -476,6 +477,7 @@ mountApi(app, '/push', pushRoutes); // mobile push-token registration (M1) — b
 mountApi(app, '/reports', reportsRoutes); // content reports (M2-prep 1.2/1.4) — behind the guard; rejectChild; GET+review are admin-gated
 mountApi(app, '', webhookAuthedRoutes); // per-chat webhook token lifecycle (owner-only); the OPEN fire router lives in crossmodel-open.routes.ts
 mountApi(app, '', visitorAdminRoutes); // first-party visitor analytics — Account → Admin → Users & traffic (admin-gated per handler); the OPEN POST /visit-events lives in crossmodel-open.routes.ts
+mountApi(app, '', orgAdminRoutes); // Phase 2 Cloud — tenant abuse kill switch + free-tier daily limit (admin-gated per handler)
 
 // 404 handler
 app.use(notFound);

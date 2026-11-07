@@ -189,14 +189,20 @@ describe('mac_calendar_list_events registration + dispatch (structural pins)', (
     const i = integrationsSrc.indexOf("case 'mac_calendar_list_events'");
     expect(i).toBeGreaterThanOrEqual(0);
     const body = integrationsSrc.slice(i, i + 5600);
-    // Serve-time gate BEFORE the dispatch: platform + capability.
-    expect(body).toMatch(/agentPlatform\(selection\.agent\) !== 'macos'/);
-    expect(body).toMatch(/hasCapability\(selection\.agent, 'calendar'\)/);
-    expect(body).toMatch(/agentBroker\.dispatch\(\s*selection\.agent\.id,\s*'calendar_list_events'/);
-    // days passthrough + 30s timeout posture.
-    expect(body).toMatch(/args\.daysAhead != null \? Number\(args\.daysAhead\) : undefined/);
-    expect(body).toMatch(/30_000/);
-    // Structured unavailable is stringified to the model, never thrown.
-    expect(body).toMatch(/typeof result === 'string' \? result : JSON\.stringify\(result \?\? null\)/);
+    // Serve-time gate BEFORE the dispatch: platform + capability. 2026-11-06 —
+    // the gate moved INTO the shared device policy (calendar/apple-calendar.ts
+    // chooseAppleCalendarDevice), so it is now asserted where it lives; the
+    // tool must not dispatch without consulting that policy.
+    expect(body).toMatch(/readAppleCalendar\(userId/);
+    const policySrc = readFileSync(join(here, '..', 'calendar', 'apple-calendar.ts'), 'utf8');
+    expect(policySrc).toMatch(/agentPlatform\(a\) === 'macos'/);
+    expect(policySrc).toMatch(/hasCapability\(a, 'calendar'\)/);
+    expect(policySrc).toMatch(/agentBroker\.dispatch\(agent\.id, 'calendar_list_events', \{ days \}, timeoutMs\)/);
+    // days passthrough + 30s timeout posture (the policy defaults to
+    // IMESSAGE_READ_DISPATCH_TIMEOUT_MS, which IS the 30 000 ms budget).
+    expect(body).toMatch(/args\.daysAhead != null \? Number\(args\.daysAhead\) : 7/);
+    expect(readFileSync(join(here, '..', 'imessage', 'agent-link.ts'), 'utf8')).toMatch(/IMESSAGE_READ_DISPATCH_TIMEOUT_MS = [^;]*30_000/);
+    // Structured unavailable is surfaced to the model, never thrown.
+    expect(body).toMatch(/return tag \? `\$\{tag\} \$\{body\}` : body/);
   });
 });

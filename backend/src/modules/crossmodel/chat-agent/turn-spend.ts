@@ -49,6 +49,38 @@ export function createTurnUsageLedger(opts: TurnUsageLedgerOptions): UsageAccumu
     if (!snap.agents.length) return;
     const stamp = opts.stamp() ?? { profile: 'chat' };
     recordRunSpend(acc.runId, opts.sessionId, snap, stamp);
+    // Phase 2 Cloud (todo ea95fa0b leg 1 item 3): the per-org, per-model token
+    // meters. Fire-and-forget on purpose — the model has already been paid for
+    // by the time this settles, so a metering failure must never surface in a
+    // delivered answer (it under-counts, the conservative direction for a
+    // spend guard). Resolves the org from the turn's chat owner.
+    void recordTurnOrgTokens(opts.sessionId, snap).catch(() => undefined);
     logger.debug(`chat-agent: turn spend settled — ${snap.agents.map(a => `${a.role ?? 'lead'}:${a.model}`).join(', ')} $${snap.totalCostUsd.toFixed(4)} (${snap.turns} model turns)`, { source: 'chat-agent' });
   });
+}
+
+/**
+ * Write this turn's per-model tokens onto the chat OWNER's org meters.
+ *
+ * The org is resolved from the turn's sessionId (a chat id) rather than being
+ * threaded down through the run: the ledger settles exactly once per turn and
+ * this keeps every caller's signature unchanged. A guest/chatless run
+ * ('anon-…' / 'chatless-…' sentinel) has no owner and is skipped — guests are
+ * bounded by the per-IP stream limiter, not by an org pool.
+ */
+async function recordTurnOrgTokens(sessionId: string, snap: ReturnType<UsageAccumulator['snapshot']>): Promise<void> {
+  if (!sessionId || sessionId.startsWith('anon-') || sessionId.startsWith('chatless-')) return;
+  const prisma = (await import('../../../config/database')).default;
+  const chat = await prisma.crossModelChat.findUnique({ where: { id: sessionId }, select: { userId: true } });
+  const userId = chat?.userId;
+  if (!userId) return;
+  // `orgForUser` is the exported wrapper over ensurePersonalOrgForUser — importing
+  // the underlying helper by name here was a bug (it is org.service's export, not
+  // org-quota's, and an `as any` hid the runtime undefined).
+  const { orgForUser, recordOrgTokens } = await import('../org/org-quota.service');
+  const org = await orgForUser(userId);
+  for (const agent of snap.agents) {
+    if (!agent.model) continue;
+    await recordOrgTokens(org.id, agent.model, agent.inTokens, agent.outTokens);
+  }
 }

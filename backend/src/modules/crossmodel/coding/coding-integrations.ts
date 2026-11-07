@@ -28,6 +28,7 @@ import * as plaid from '../plaid/plaid-mcp';
 import { selectAgent, agentDisplayName } from '../imessage/imessage.service';
 import { agentBroker, IMESSAGE_READ_DISPATCH_TIMEOUT_MS } from '../imessage/agent-link';
 import { agentPlatform, hasCapability } from '../imessage/agent-capabilities';
+import { readAppleCalendar, appleCalendarStateLine, appleCalendarDeviceTag } from '../calendar/apple-calendar';
 import logger from '../../../utils/logger';
 
 const S = (o: any) => (typeof o === 'string' ? o : String(o ?? ''));
@@ -371,63 +372,26 @@ export async function executeIntegrationTool(userId: string, name: string, args:
           // distinct from the Google 'calendar_list_events' connector, but the
           // AGENT dispatch command is 'calendar_list_events' — the macos-app
           // 0.7.0 command name (schema and executor names are independent).
-          // Multi-Mac: args.device targets a specific Mac by label/name/id;
-          // without a target the default Mac serves.
-          const selection = await selectAgent(userId, args.device ? String(args.device) : undefined);
-          if (!selection.agent) {
-            return `macOS Calendar isn't available — ${selection.error || 'no paired Mac is online.'}`;
+          //
+          // 2026-11-06: the whole read now goes through readAppleCalendar
+          // (calendar/apple-calendar.ts) — ONE device policy + ONE classifier
+          // shared with the new-chat context prefetch and the home card. The
+          // copy comes from appleCalendarStateLine, which states only what was
+          // OBSERVED; the old inline branch told the user "a one-time consent
+          // dialog was just triggered" for a tier-0 read, a claim nothing
+          // verified (the agent's request is asynchronous and its outcome was
+          // discarded) and which sent the owner hunting for dialogs that never
+          // appeared.
+          const read = await readAppleCalendar(userId, {
+            device: args.device ? String(args.device) : null,
+            days: args.daysAhead != null ? Number(args.daysAhead) : 7,
+          });
+          const tag = appleCalendarDeviceTag(read);
+          if (read.state !== 'ok') {
+            return `macOS Calendar isn't available — ${tag ? `${tag} ` : ''}${read.error || appleCalendarStateLine(read.state, read.device || 'your Mac', read.consent)}`;
           }
-          const device = agentDisplayName(selection.agent);
-          // Serve-time gate (the belt-and-braces agent-capabilities.ts
-          // promises): a Windows row never advertises 'calendar' and a legacy
-          // Mac row below LEGACY_MAC_CALENDAR_MIN [0,7,0] fails the version
-          // fallback — both get this actionable message instead of a 30s
-          // dispatch timeout into an agent that can't serve the command.
-          if (agentPlatform(selection.agent) !== 'macos' || !hasCapability(selection.agent, 'calendar')) {
-            const why =
-              agentPlatform(selection.agent) === 'windows'
-                ? `${device} is a Windows PC — macOS Calendar reads need a paired Mac.`
-                : `${device}'s agent doesn't advertise Calendar reads (Digby macOS app 0.7.0+ required` +
-                  `${selection.agent.agentVersion ? `; this Mac runs v${selection.agent.agentVersion}` : ''}).`;
-            return `macOS Calendar isn't available — ${why}`;
-          }
-          // The agent returns { events: [...] } on success or a structured
-          // { events: null, unavailable: { reason, pane } } when Calendar TCC
-          // access was denied — never a thrown error (a throw 504s and loses
-          // the reason). Structured unavailability flows to the model so the
-          // fix card can be rendered.
-          const result = await agentBroker.dispatch(
-            selection.agent.id,
-            'calendar_list_events',
-            { days: args.daysAhead != null ? Number(args.daysAhead) : undefined },
-            30_000,
-          );
-          // v0.7.3 (owner directive 2026-10-07): a zero-calendars Mac is NOT
-          // signed in to an Apple account — surface sign-in copy instead of
-          // the raw shape so the model never reads it as "no upcoming events".
-          const res = (typeof result === 'object' && result !== null ? result : null) as
-            | { events?: unknown[] | null; unavailable?: { reason?: string; client?: string } }
-            | null;
-          if (res && res.events === null && res.unavailable?.reason === 'no-calendar-account') {
-            return `[device: ${device}] macOS Calendar isn't available — ${device} has no calendars (not signed in to the Apple account). Sign in to the Apple account on that Mac (System Settings → Apple Account), or call mac_calendar_list_events on a signed-in Mac (e.g. via its device label).`;
-          }
-          // daf8706a tier 0 (agent 0.9.11+): this client NEVER asked, so no
-          // Calendar TCC row exists for it — the user's grant to the "Digby"
-          // app (or any other row) cannot reach the agent binary. The agent
-          // fires a one-time consent request itself; copy explains both
-          // paths and names the exact binary to grant.
-          if (res && res.events === null && res.unavailable?.reason === 'calendar-never-requested') {
-            const client = typeof res.unavailable.client === 'string' ? res.unavailable.client : '';
-            return `[device: ${device}] macOS Calendar access was never requested on ${device} — no Calendars entry exists for the agent yet, so no existing grant can reach it. A one-time consent dialog was just triggered on the Mac (approve it there; then relaunch the agent). If no dialog appears, open System Settings → Privacy & Security → Calendars on ${device} and enable the agent binary directly${client ? `: ${client}` : ''} — the "Digby" app row is a DIFFERENT client than the agent binary and granting it alone does not help.`;
-          }
-          // daf8706a: name the TCC client in the denial copy too — the pane
-          // row that must be ON is the agent binary, not the "Digby" app.
-          if (res && res.events === null && res.unavailable?.reason === 'calendar-denied') {
-            const client = typeof res.unavailable.client === 'string' ? res.unavailable.client : null;
-            return `[device: ${device}] macOS Calendar access is denied on ${device}. The EventKit request runs in the agent binary${client ? ` (${client})` : ''} — THAT binary must hold the grant: open System Settings → Privacy & Security → Calendars on ${device} and enable it (if a "Digby" app row is already ON, the agent is a separate client — look for or trigger a row for the agent binary), then relaunch the agent.`;
-          }
-          const body = typeof result === 'string' ? result : JSON.stringify(result ?? null);
-          return `[device: ${device}] ${body}`;
+          const body = JSON.stringify({ events: read.events });
+          return tag ? `${tag} ${body}` : body;
         } catch (e: any) {
           return `macOS Calendar request failed: ${e.message}`;
         }

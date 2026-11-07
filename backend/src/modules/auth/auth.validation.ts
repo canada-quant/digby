@@ -9,6 +9,15 @@ export const registerSchema = z.object({
   password: z.string().min(PASSWORD_MIN_LENGTH, PASSWORD_MIN_MESSAGE).transform(p => p.trim()),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
+  /**
+   * Phase 2 Cloud leg 1 item 5 — the client's "I accept the Terms of Service and
+   * Acceptable Use" checkbox. OPTIONAL at the schema level on purpose: whether a
+   * missing acceptance REFUSES the signup is a live policy decision
+   * (terms.service.ts `require_terms_acceptance`, default OFF), not a shape
+   * constraint. A required field here would reject every legacy client the
+   * moment this deploys, before the owner has decided to enforce.
+   */
+  acceptedTerms: z.boolean().optional(),
 });
 
 export const loginSchema = z.object({

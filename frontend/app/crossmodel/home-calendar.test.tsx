@@ -31,7 +31,10 @@ describe('home Today card never vanishes while the calendar is connected', () =>
     expect(PAGE).toContain("router.push('/account?tab=integrations')");
     const ctrl = src('../../../backend/src/modules/crossmodel/crossmodel.controller.ts');
     expect(ctrl).toContain('googleMcp.resolveGoogleAccount(userId)');
-    expect(ctrl).toContain("data: { connected: true, events: [], error: 'reconnect' }");
+    // 2026-11-06: the Google half moved into buildGoogleHomeCalendar so the
+    // Apple half could be merged into ONE response — the reconnect verdict is
+    // still produced there, unchanged.
+    expect(ctrl).toContain("return { connected: true, events: [], error: 'reconnect' };");
   });
   it('the connect row still renders when not connected', () => {
     expect(PAGE).toContain('{!calendarConnected && !calendarLoading && (');
@@ -39,8 +42,11 @@ describe('home Today card never vanishes while the calendar is connected', () =>
   });
   it('the backend reports a failed read as error:unavailable on a connected calendar', () => {
     const ctrl = src('../../../backend/src/modules/crossmodel/crossmodel.controller.ts');
-    expect(ctrl).toContain("data: { connected: true, events: [], error: 'unavailable' }");
-    expect(ctrl).toContain("data: { connected, events: [], ...(connected ? { error: 'unavailable' } : {}) }");
+    expect(ctrl).toContain("return { connected: true, events: [], error: 'unavailable' };");
+    expect(ctrl).toContain("return { connected, events: [], ...(connected ? { error: 'unavailable' } : {}) };");
+    // The merged endpoint must still carry the Google error through to the
+    // client (`data.error`) instead of swallowing it while merging sources.
+    expect(ctrl).toContain('if (google?.error) data.error = google.error;');
     expect(src('../../lib/api/crossmodel.ts')).toContain("error?: 'unavailable' | 'reconnect';");
   });
 });

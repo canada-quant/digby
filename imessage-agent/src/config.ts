@@ -348,7 +348,7 @@ export interface AgentConfig {
 // than republished in place because the advert gate is strictly-newer, so a
 // same-version republish would reach no device. publish-agent-tarball.sh now
 // verifies BOTH files' versions before it will publish.
-export const AGENT_VERSION = '0.9.23';
+export const AGENT_VERSION = '0.9.24';
 
 const CONFIG_DIR = join(configHomeDir(), '.config', 'digby-agent');
 const CONFIG_PATH = join(CONFIG_DIR, 'config.json');

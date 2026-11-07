@@ -265,19 +265,27 @@ export async function verifyTicketRow(row: VerifierRow, now: Date = new Date()):
     // lastVerdict) so a row cannot churn a write per tick.
     //
     // GUARDRAILS — this must never be a lane's escape hatch from a real test:
-    // designedAlarmOfMetric refuses a hand-authored metric outright (only
-    // 'autofiler-default' is eligible) and matches the METRIC'S OWN
-    // messagePattern, never a close-out note's prose. A real defect that a
-    // designed-alarm probe CAN falsify (measured <= target) still passes and
-    // still closes deployed_verified, so detection is not weakened.
+    // designedAlarmOfMetric refuses an EXPLICITLY hand-authored metric (a
+    // present marker other than the auto-filer's is the lane's judgement) and
+    // matches the METRIC'S OWN messagePattern, never a close-out note's prose.
+    // A real defect that a designed-alarm probe CAN falsify (measured <=
+    // target) still passes and still closes deployed_verified, so detection is
+    // not weakened.
     // TICKET dc4f7ff5 (2026-11-06) extends the same guard one class over:
     // DESIGNED OBSERVABILITY (a designed failover serving the call, a drop
     // guard discarding a misattributed claim). Rows stamped before that change
     // still carry the unattainable `<= N` bar, and the verifier is what
-    // re-measures the STORED metric — so without this the two live tickets
+    // re-measures the STORED metric — so without this the live tickets
     // (3769b1b3, e35f9985) would keep reopening on correct fixes even after the
-    // autofiler stops minting such bars. The guard stays auto-filer-only, so a
-    // hand-authored metric is never redirected by it.
+    // autofiler stops minting such bars.
+    // TICKET 31199f81 (2026-11-06) closes the remaining hole: the guard used
+    // to require source === 'autofiler-default', which made a MISSING marker
+    // mean "hand-authored" — so a bar stamped before the marker existed (or by
+    // a filer that never wrote one, exactly 3769b1b3's case) failed CLOSED and
+    // was measured anyway, reopening a correct deployed fix at 13:32:39Z on
+    // measured 1. Absence now says nothing: the metric's content decides, and
+    // only an EXPLICIT marker opts a bar out. A lane's own metric is still
+    // never redirected by this guard.
     const unsound = designedAlarmOfMetric(metric, stCtx.acceptanceMetricSource);
     if (unsound) {
       if (ver.lastVerdict !== 'review_required') {
@@ -366,27 +374,95 @@ async function closeVacuous(row: VerifierRow, ver: VerificationCtx, metric: Acce
   return 'done_vacuous';
 }
 
-/** Bounded write: status/priority/verification-context/adminNote-append. Fail-soft (non-fatal, next tick retries). */
+/**
+ * Bounded write: status/priority/verification-context/adminNote-append. Fail-soft (non-fatal, next tick retries).
+ *
+ * TICKET 31199f81: `statusGuard` makes the write CONDITIONAL on the row still
+ * being in that status. The sweep reads a snapshot and then writes row by row,
+ * so without a guard the drain can legitimately reclaim a row in between
+ * (ticket-dispatch claims `open`/`reopened` and sets `in_progress`) and this
+ * write would clobber a LIVE dispatch — un-dispatching a running lane. Returns
+ * whether the write landed.
+ */
 async function writeTicket(
   row: VerifierRow,
   changes: { status?: string; priority?: number; verification: VerificationCtx },
   noteAppend?: string,
-): Promise<void> {
+  statusGuard?: string,
+): Promise<boolean> {
   const ctx = { ...((row.context as Record<string, unknown> | null) ?? {}), verification: changes.verification } as Record<string, unknown>;
   const adminNote = noteAppend
     ? `${row.adminNote ? `${row.adminNote}\n` : ''}${noteAppend}`
     : row.adminNote ?? undefined;
-  await prisma.userFeatureRequest.update({
-    where: { id: row.id },
-    data: {
-      ...(changes.status ? { status: changes.status } : {}),
-      ...(changes.priority !== undefined ? { priority: changes.priority } : {}),
-      context: ctx as any,
-      ...(adminNote !== undefined ? { adminNote } : {}),
-    },
-  }).catch((err: any) => {
+  const data = {
+    ...(changes.status ? { status: changes.status } : {}),
+    ...(changes.priority !== undefined ? { priority: changes.priority } : {}),
+    context: ctx as any,
+    ...(adminNote !== undefined ? { adminNote } : {}),
+  };
+  try {
+    if (statusGuard) {
+      // Guarded write: only lands while the row is STILL where the snapshot saw it.
+      const res = await prisma.userFeatureRequest.updateMany({ where: { id: row.id, status: statusGuard }, data });
+      if (!res || res.count === 0) return false;
+      return true;
+    }
+    await prisma.userFeatureRequest.update({ where: { id: row.id }, data });
+    return true;
+  } catch (err: any) {
     logger.warn(`${SOURCE}: write failed for ticket ${row.id} (non-fatal, retried next tick): ${err?.message ?? err}`, { source: SOURCE });
-  });
+    return false;
+  }
+}
+
+/**
+ * TICKET 31199f81 (2026-11-06) — RE-RULE A ROW THIS JOB ITSELF WRONGLY REOPENED.
+ *
+ * Why a second pass exists at all: the sweep below reads ONLY
+ * `awaiting_verification`, so a row the verifier already moved to `reopened`
+ * is out of reach — and `reopened` IS an open status (ticket-status.ts
+ * OPEN_TICKET_STATUSES), so the drain will dispatch a fresh lane onto it. That
+ * is the measured harm: 3769b1b3 was reopened at 13:32:39Z on measured 1 (one
+ * residual row from its own deployed fix's 15 s leg cap working), the guard
+ * that should have redirected it failed closed on a missing provenance marker,
+ * and nothing in this job could ever revisit the verdict.
+ *
+ * Scope is deliberately the narrowest shape that closes the loop:
+ *   - ONLY rows the VERIFIER reopened (`verification.reopenedAt` +
+ *     lastVerdict 'reopened') — a human/lane reopen is theirs, never ours;
+ *   - ONLY when the stored metric's OWN CONTENT classifies as unsound
+ *     (designedAlarmOfMetric — no measurement, no DB count, no metadata);
+ *   - the landing state is exactly what the correct predicate would have
+ *     produced at reopen time: back to `awaiting_verification` parked on
+ *     `review_required` (never a false 'done' — nothing was verified), which
+ *     also takes the row OUT of the dispatch queue so no fresh lane is
+ *     invited onto a non-defect.
+ * The priority bump the reopen applied is left in place: the row still owes a
+ * human a metric decision, and silently lowering it would hide that.
+ *
+ * Idempotent: the row leaves `reopened`, so the pass cannot see it again.
+ * Never throws. Exported for the tests.
+ */
+export async function redirectWronglyReopenedRow(row: VerifierRow, now: Date = new Date()): Promise<'redirected' | 'kept' | 'skipped'> {
+  const ver = verCtxOf(row);
+  if (!ver.reopenedAt || ver.lastVerdict !== 'reopened') return 'skipped';
+  const stored = readAcceptanceMetric(row.context);
+  if (!stored) return 'skipped';
+  const stCtx = (row.context && typeof row.context === 'object' ? row.context : {}) as Record<string, unknown>;
+  const unsound = designedAlarmOfMetric(stored, stCtx.acceptanceMetricSource);
+  if (!unsound) return 'kept'; // a real metric failure stays reopened — detection is not weakened
+  const remedy = unsound.class === 'designed-observability'
+    ? 'A human/supervisor should replace it with a behavioural criterion for this class — for a failover or a DISCARD guard the honest bar is a replay pin (the guard still fires), never a row count.'
+    : 'A human/supervisor should replace it with a behavioural criterion — the loop_metric_count probe over kind tool_call_unrecovered_severance is the loss signal for this class.';
+  const landed = await writeTicket(row, {
+    status: 'awaiting_verification',
+    verification: { ...ver, lastVerdict: 'review_required', lastVerdictAt: now.toISOString(), lastDetail: `metric unsound for this fix class — ${unsound.id} (reopen withdrawn)` },
+  }, `[post-deploy verifier (6665fff6 + tickets 1425001e/dc4f7ff5/31199f81)]: REOPEN WITHDRAWN — this ticket had been reopened on its acceptance metric (${stored.probe} ${stored.operator} ${stored.target} over ${stored.windowHours}h), but that metric measures a class that emits BY DESIGN, not the fix: ${unsound.why}. A <= bar over such a class's volume cannot distinguish a fixed system from a broken one, so the reopen is withdrawn and the row is parked for metric review instead — no fresh lane is dispatched onto a non-defect. ${remedy}`,
+  // The drain may have reclaimed this row between the snapshot and here.
+  'reopened');
+  if (!landed) return 'skipped'; // a live dispatch now owns it — never clobber it
+  await recordVerifierMetric({ ticketId: row.id.slice(0, 8), verdict: 'review_required', probe: stored.probe, designedAlarm: unsound.id, unsoundClass: unsound.class, reason: 'reopen withdrawn (31199f81)' });
+  return 'redirected';
 }
 
 /**
@@ -397,21 +473,40 @@ export async function runTicketPostdeployVerifierOnce(): Promise<string> {
   if (process.env.TICKET_POSTDEPLOY_VERIFIER_DISABLED === '1') return 'disabled (kill switch)';
   const now = new Date();
   try {
+    // TICKET 31199f81: withdraw a reopen THIS job recorded against a metric it
+    // now knows could never speak to the fix (see redirectWronglyReopenedRow).
+    // Bounded and fail-soft — a repair pass must never break the sweep below.
+    let withdrawn = 0;
+    try {
+      const reopened = (await prisma.userFeatureRequest.findMany({
+        where: { status: 'reopened' },
+        orderBy: [{ priority: 'desc' }, { updatedAt: 'asc' }],
+        take: 20, // bounded per tick; leftovers ride the next tick
+        select: { id: true, type: true, status: true, priority: true, adminNote: true, userId: true, context: true, createdAt: true },
+      }) ?? []) as unknown as VerifierRow[];
+      for (const r of reopened) {
+        if ((await redirectWronglyReopenedRow(r, now)) === 'redirected') withdrawn++;
+      }
+    } catch (err: any) {
+      logger.warn(`${SOURCE}: reopen-withdrawal pass failed (non-fatal): ${err?.message ?? err}`, { source: SOURCE });
+    }
     const rows = (await prisma.userFeatureRequest.findMany({
       where: { status: 'awaiting_verification' },
       orderBy: [{ priority: 'desc' }, { updatedAt: 'asc' }],
       take: 50, // bounded per tick; leftover rows ride the next tick
       select: { id: true, type: true, status: true, priority: true, adminNote: true, userId: true, context: true, createdAt: true },
-    })) as unknown as VerifierRow[];
-    if (!rows.length) return 'no tickets awaiting verification';
+    }) ?? []) as unknown as VerifierRow[];
+    if (!rows.length) {
+      return `${withdrawn ? `${withdrawn} reopen(s) withdrawn: ` : ''}no tickets awaiting verification`.slice(0, 200);
+    }
     const counts: Record<string, number> = {};
     for (const row of rows) {
       const verdict = await verifyTicketRow(row, now);
       counts[verdict] = (counts[verdict] ?? 0) + 1;
     }
     const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(', ');
-    logger.info(`${SOURCE}: ${rows.length} ticket(s): ${summary}`, { source: SOURCE });
-    return `${rows.length} verified: ${summary}`.slice(0, 200);
+    logger.info(`${SOURCE}: ${rows.length} ticket(s): ${summary}${withdrawn ? `; ${withdrawn} reopen(s) withdrawn` : ''}`, { source: SOURCE });
+    return `${rows.length} verified: ${summary}${withdrawn ? `; ${withdrawn} reopen(s) withdrawn` : ''}`.slice(0, 200);
   } catch (err: any) {
     logger.warn(`${SOURCE}: sweep failed (non-fatal): ${err?.message ?? err}`, { source: SOURCE });
     return `sweep failed (non-fatal): ${String(err?.message ?? err).slice(0, 140)}`;

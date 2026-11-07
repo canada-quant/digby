@@ -98,10 +98,14 @@ describe('google-ads', () => {
     expect(login.indexOf('router.push(redirectTo);', conv)).toBeGreaterThan(conv);
   });
 
-  it('the Ad Manager library (in-app ad slot) never loads for a child session either', () => {
+  it('no Google Ad Manager library or in-app ad slot remains anywhere (todo 9a3e82af)', () => {
+    // The Ad Manager "thinking" slot and its gpt.js loader were REMOVED — Digby
+    // is ad-free in-product. This replaces the old assertion that the GPT script
+    // was correctly kid-gated: there is now nothing to gate.
     const landing = src('../app/crossmodel/page.tsx');
-    expect(landing).toContain('setAdLibAllowed(googleAdsAllowedForToken(token));');
-    expect(landing).toMatch(/\{adLibAllowed && !isKid && \(\s*<Script\s+id="gpt-js"/);
+    expect(landing).not.toContain('securepubads');
+    expect(landing).not.toContain('gpt.js');
+    expect(landing).not.toContain('adLibAllowed');
   });
 });
 

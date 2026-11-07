@@ -171,5 +171,5 @@ test('pin: onboarding runs once per helper BINARY, before the poll loop, never a
 
 test('pin: config carries the stamp and the version is the current release', () => {
   assert.match(configSrc, /permissionsOnboarded\?: \{ version: string; dev: number; ino: number; at: string \};/);
-  assert.match(configSrc, /AGENT_VERSION = '0\.9\.23'/);
+  assert.match(configSrc, /AGENT_VERSION = '0\.9\.24'/);
 });

@@ -503,6 +503,78 @@ describe('Sources harvest — listing-shaped results are not citations (ticket 6
   });
 });
 
+describe('Sources harvest — stored material is not a citation (ticket 23e80d1e)', () => {
+  // The occurrence (chat 85d32cf9, 2026-11-06): the owner asked a question,
+  // the run called search_memory, and the answer's Sources row carried a
+  // YouTube video for "some random game". The video was never fetched by that
+  // run — it was the provenance URL inside a STORED `youtube_pipe` finding a
+  // PRIOR run had ingested, surfaced verbatim by search_memory.
+  const RECALL = [
+    '[1] (web_pipe · youtube:How to beat level 3)',
+    '[YouTube transcript: Speedrun tricks for a random game (https://www.youtube.com/watch?v=dQw4w9WgXcQ)]',
+    'the video walks through the level 3 skip …',
+    '',
+    '[2] (learning · learnings.md)',
+    'Some durable convention the run needed — see https://github.com/canada-quant/tt-metal/blob/abc/notes.md',
+  ].join('\n');
+
+  it('a search_memory recall never promotes a STORED video URL to a Sources chip (ticket 23e80d1e occurrence replay)', () => {
+    const { adapter } = collect();
+    adapter.handle('tool_call', { name: 'search_memory', args: { query: 'what do I know about this' } });
+    adapter.handle('tool_result', { name: 'search_memory', result: RECALL });
+    expect(adapter.collectedSources).toEqual([]);
+  });
+
+  it('the recalled video URL is not harvested even when it is the ONLY URL — the recall body is what gates it', () => {
+    const { adapter } = collect();
+    adapter.handle('tool_result', { name: 'search_memory', result: 'hit: (web_pipe) https://www.youtube.com/watch?v=dQw4w9WgXcQ' });
+    expect(adapter.collectedSources).toEqual([]);
+  });
+
+  // The class, not one door (adversarial review F1 of ticket 23e80d1e): the
+  // SAME harvest fired through every stored-object read, all of them on the
+  // chat profile (CHAT_ORCH_TOOLS unions PLATFORM_TOOL_NAMES) — a URL inside
+  // prior chat text / a canvas / a knowledge doc is provenance of the stored
+  // object, not a page this answer read.
+  it.each([
+    'list_memory', 'search_chats', 'get_chat_messages', 'get_supervisor_state',
+    'get_feedback', 'get_canvas', 'list_canvases', 'read_document',
+    'list_knowledge_documents', 'read_session_file', 'list_session_files',
+  ])('%s returns stored content — its URLs never become citations', (tool) => {
+    const { adapter } = collect();
+    adapter.handle('tool_result', { name: tool, result: RECALL });
+    expect(adapter.collectedSources).toEqual([]);
+  });
+
+  it('a WEB tool in the same run still harvests its URLs — the gate is provenance, not the answer', () => {
+    const { adapter } = collect();
+    adapter.handle('tool_result', { name: 'search_memory', result: RECALL });
+    adapter.handle('tool_result', { name: 'web_pipe', result: 'digest\n\nSOURCES:\n- story (https://real-news.example.com/story)' });
+    expect(adapter.collectedSources).toEqual(['https://real-news.example.com/story']);
+  });
+
+  it('a web FETCH of a document still harvests — github_get_file_contents FETCHES for this run, so it is a real citation', () => {
+    const { adapter } = collect();
+    adapter.handle('tool_result', { name: 'github_get_file_contents', result: '[GitHub File: a/b.md]\nsee https://example.com/fetched-doc' });
+    expect(adapter.collectedSources).toContain('https://example.com/fetched-doc');
+  });
+
+  it('search_code_semantic and other non-stored tools keep harvesting (no blanket gate)', () => {
+    const { adapter } = collect();
+    adapter.handle('tool_result', { name: 'search_code_semantic', result: 'chunk at backend/src/a.ts\nsee https://example.com/design-doc' });
+    expect(adapter.collectedSources).toContain('https://example.com/design-doc');
+  });
+
+  it('STORED_MATERIAL_SOURCES_DISABLED=1 restores the pre-fix harvest (kill switch)', () => {
+    process.env.STORED_MATERIAL_SOURCES_DISABLED = '1';
+    try {
+      const { adapter } = collect();
+      adapter.handle('tool_result', { name: 'search_memory', result: RECALL });
+      expect(adapter.collectedSources).toContain('https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+    } finally { delete process.env.STORED_MATERIAL_SOURCES_DISABLED; }
+  });
+});
+
 describe('browser_observation forwarding (UI Phase 6a — the browser program)', () => {
   it('forwards browser_observation verbatim as the legacy browser-observation event', () => {
     const { events, adapter } = collect();

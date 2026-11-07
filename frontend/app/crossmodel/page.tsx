@@ -76,8 +76,6 @@ import { CHAT_LIST_LIVE_ACTIVE_MS, CHAT_LIST_LIVE_IDLE_MS, CHAT_LIST_LIVE_LIMIT,
 import { createRetainedCache, CHAT_LIST_CACHE_MAX, CHAT_LIST_CACHE_TTL_MS } from '@/lib/chat-view-cache';
 import { useChatListEvents } from '@/lib/chat-events';
 import { chatFlavorFromRow, chatFlavorFetchFallback } from '@/lib/chat-flavor';
-import Script from 'next/script';
-import { googleAdsAllowedForToken } from '@/lib/google-ads';
 import { trackVisitEvent } from '@/lib/visitor-analytics';
 import {
   Dialog,
@@ -104,7 +102,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Textarea } from '@/components/ui/textarea';
-import { crossModelApi, memoryApi, projectsApi, sharingApi, canvasApi, deepResearchApi, newsApi, calendarApi, imessageApi, suggestionsApi, weatherApi, confirmationsApi, CrossModelChat, Project, SharedProject, DeepResearchQuota, NewsHeadline, CalendarEvent, HomeWeather, PendingConfirmation, instanceSetupApi, InstanceSetup } from '@/lib/api/crossmodel';
+import { crossModelApi, memoryApi, projectsApi, sharingApi, canvasApi, deepResearchApi, newsApi, calendarApi, imessageApi, suggestionsApi, weatherApi, confirmationsApi, CrossModelChat, Project, SharedProject, DeepResearchQuota, NewsHeadline, CalendarEvent, CalendarAppleHalf, HomeWeather, PendingConfirmation, instanceSetupApi, InstanceSetup } from '@/lib/api/crossmodel';
 // Self-host setup hardening (2026-10-20): what THIS instance has configured (web search → news card, transparency pill).
 import { webSearchUnavailable } from '@/lib/instance-setup';
 import { summarizeFolderSessions, FOLDER_SESSION_SUMMARY_TTL_MS, type FolderSessionSummary } from '@/lib/folder-session-summary';
@@ -143,7 +141,7 @@ import type { ChatComposerHandle } from './components/ChatComposerTextarea';
 import { readPrefill, withoutPrefill } from '@/lib/chat-prefill';
 import ChatComposer, { COMPOSER_ATTACH_BTN, COMPOSER_TOOL_BTN } from './components/ChatComposer';
 import { weatherIconFor } from '@/lib/weather-icon';
-import { AttachmentChips, uploadChatFiles, type AttachmentInfo } from './components/attachments';
+import { AttachmentChips, AttachmentNotice, uploadChatFiles, type AttachmentInfo, type AttachmentRejection } from './components/attachments';
 import { usePreferences, TEXT_SIZE_MAP, loadPrefs, normalizePatienceMode, type PatienceMode } from '@/lib/preferences';
 import {
   DndContext,
@@ -444,6 +442,46 @@ const GUEST_STARTERS = [
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+/**
+ * One honest sentence for the macOS Calendar half of the Today card
+ * (2026-11-06). The owner's report — "calendar sync isn't working or showing in
+ * my digby calendar on new chats or context" — was made worse by a card that
+ * showed a Mac read failure as an ordinary free day. So this function exists to
+ * be blunt: it names the Mac, says what state it is in, and never turns a
+ * never-granted Mac into "Nothing on your calendar today".
+ *
+ * The consent clause repeats ONLY what the agent observed; it can never claim a
+ * dialog appeared, because the agent's request is asynchronous and its outcome
+ * is not observable from here.
+ */
+function appleCalendarNotice(apple: CalendarAppleHalf): string {
+  const device = apple.device || 'your Mac';
+  const at = apple.consent ? new Date(apple.consent.at) : null;
+  const when = at && !Number.isNaN(at.getTime())
+    ? at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    : '';
+  switch (apple.state) {
+    case 'calendar-never-requested':
+      return apple.consent?.state === 'dialog-open'
+        ? `Waiting for Calendar permission on ${device} — a macOS prompt may be on that Mac's screen.`
+        : apple.consent?.state === 'bridge-failed'
+          ? `macOS wouldn't show the Calendar prompt on ${device}. Grant it by hand: System Settings → Privacy & Security → Calendars.`
+          : `macOS Calendar access hasn't been granted on ${device} yet. Open System Settings → Privacy & Security → Calendars on that Mac and enable the Digby agent.`;
+    case 'calendar-denied':
+      return `Calendar access is off for the Digby agent on ${device} — enable it in System Settings → Privacy & Security → Calendars.`;
+    case 'no-calendar-account':
+      return `${device} isn't signed in to an Apple account, so it has no Apple calendar to show.`;
+    case 'calendar-unreachable':
+      return `Couldn't reach the calendar on ${device}.`;
+    case 'unsupported':
+      return `${device} needs a newer Digby agent to read Calendar.`;
+    case 'no-agent':
+      return 'No paired Mac can read Apple Calendar right now.';
+    default:
+      return when ? `Mac calendar last checked ${when}.` : '';
+  }
+}
+
 export default function CrossModelPage() {
   // Shared branding core (todo d2d32b57): one snapshot resolved on the server
   // by app/layout.tsx; defaults to Digby when an operator configured nothing.
@@ -455,16 +493,10 @@ export default function CrossModelPage() {
   // for the ?token= query param. Read once on mount (the auth effect below
   // populates it); null = signed out → the subscription stays closed.
   const [accessToken, setAccessToken] = useState<string | null>(null);
-  // Ad Manager library gate (2026-10-04): the Google Ad Manager library loaded for EVERY session — a Digby Kids
-  // session included (only the ThinkingAd slot was kid-gated), so a child's page made doubleclick requests. It now
-  // loads only for a visitor or an adult token (lib/google-ads.ts googleAdsAllowedForToken — the same fail-closed
-  // read of the token's isChild claim the Google tag uses) and never once the user is known to be a child.
-  const [adLibAllowed, setAdLibAllowed] = useState(false);
-  useEffect(() => {
-    let token: string | null = null;
-    try { token = localStorage.getItem('accessToken'); } catch { /* storage blocked → visitor */ }
-    setAdLibAllowed(googleAdsAllowedForToken(token));
-  }, []);
+  // Ad Manager library gate REMOVED (todo 9a3e82af): the Google Ad Manager
+  // library and the streaming "thinking" ad slot it powered are gone —
+  // Digby is ad-free in-product, so there is no ad library to gate and no
+  // doubleclick request left to make on any session, child or adult.
   // Digby Kids: a child login is forced server-side onto the locked-down kid
   // pipeline (Qwen 3.6 + web search + strict prompt). In the UI we hide the
   // patience/model controls since they're inert for a child — keeps it simple.
@@ -700,6 +732,10 @@ export default function CrossModelPage() {
   // Connected but today's read failed (2026-10-21): the Today card shows the
   // failure + Retry instead of disappearing.
   const [calendarError, setCalendarError] = useState<null | 'unavailable' | 'reconnect'>(null);
+  // The macOS/Apple half of the Today card (2026-11-06). null = no Mac half
+  // reported (older backend, or no Mac paired). `state !== 'ok'` is a READ
+  // FAILURE with a reason — never an empty day.
+  const [calendarApple, setCalendarApple] = useState<CalendarAppleHalf | null>(null);
   // Tick counter — increments every 60s to re-evaluate which events are past/upcoming
   const [, setCalendarTick] = useState(0);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -838,6 +874,11 @@ export default function CrossModelPage() {
   // ── Upload / attachment state ─────────────────────────────────────────────
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [uploading, setUploading] = useState(false);
+  // Ticket 33a742c1: files that FAILED to stage, kept visible inline next to
+  // the chips. Before this a rejected file produced only a transient toast and
+  // no chip — so an attachment the composer had just shown as picked appeared
+  // to vanish after the upload, with the message still sending.
+  const [attachmentRejections, setAttachmentRejections] = useState<AttachmentRejection[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -1529,13 +1570,14 @@ export default function CrossModelPage() {
   // Fetch calendar events for the home screen (runs alongside news). Also the
   // Today card's Retry (2026-10-21).
   const loadCalendar = useCallback(() => {
-    if (!user || isKid) { setCalendarEvents([]); setCalendarConnected(false); setCalendarError(null); return; }
+    if (!user || isKid) { setCalendarEvents([]); setCalendarConnected(false); setCalendarError(null); setCalendarApple(null); return; }
     setCalendarLoading(true);
     calendarApi.getTodayEvents()
       .then((data) => {
         setCalendarConnected(data.connected);
         setCalendarEvents(data.events || []);
         setCalendarError(data.error ?? null);
+        setCalendarApple(data.apple ?? null);
       })
       .catch(() => { setCalendarError('unavailable'); }) // non-critical — but say so on the card, never vanish
       .finally(() => setCalendarLoading(false));
@@ -2197,8 +2239,8 @@ export default function CrossModelPage() {
     }
     // Plain chats open in the same converged view (plain mode). C3 blocker 3:
     // KIDS flip too — the D5 rails are honored in the unified view
-    // (no depth control renders for anyone since roster 2026-10-06 B-3; ThinkingAd is !isKid-gated in
-    // the view; Report-issue is adult-only in PlainMessageActions; Schedules is
+    // (no depth control renders for anyone since roster 2026-10-06 B-3; the
+    // sponsored ThinkingAd slot is GONE — todo 9a3e82af; Report-issue is adult-only in PlainMessageActions; Schedules is
     // withheld by the section registry; kid status lines forward via the
     // plain-session normalizer; the kid web-search cue renders from the same
     // metadata). The view owns load/stream, exactly like the satellite branch
@@ -2874,6 +2916,9 @@ export default function CrossModelPage() {
       newItems = await uploadChatFiles(fileList, {
         projectId: currentProjectIdRef.current,
         onBytesReady: () => setUploading(true),
+        // Ticket 33a742c1: keep every failed file visible inline instead of
+        // letting it disappear behind a transient toast.
+        onRejected: (rejections) => setAttachmentRejections(prev => [...prev, ...rejections]),
       });
     } finally {
       setUploading(false);
@@ -3818,17 +3863,10 @@ export default function CrossModelPage() {
           </Button>
         </div>
       )}
-      {/* Google Ad Manager (GPT) library — loaded once; powers the streaming "thinking"
-          ad slot (see ThinkingAd). googletag.cmd is queued in ThinkingAd, so pushes made
-          before this finishes loading run as soon as it does. */}
-      {adLibAllowed && !isKid && (
-        <Script
-          id="gpt-js"
-          src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"
-          strategy="afterInteractive"
-          crossOrigin="anonymous"
-        />
-      )}
+      {/* Google Ad Manager (GPT) REMOVED (todo 9a3e82af): the streaming
+          "thinking" ad slot and its loader are gone — Digby is ad-free
+          in-product. Do not reintroduce an ad library here; the gate at
+          frontend/lib/ad-free.test.ts fails the build if one returns. */}
       {/* ── Body: sidebar + main ── */}
       <div className="flex flex-1 overflow-hidden">
 
@@ -4640,8 +4678,13 @@ export default function CrossModelPage() {
                 if (s.length) setAttachments([]);
                 return s.map(a => ({ uploadId: a.uploadId, filename: a.filename, type: a.type, localPreview: a.localPreview }));
               },
-              attachmentsBar: attachments.length > 0 ? (
-                <AttachmentChips attachments={attachments} onRemove={(i) => setAttachments(prev => prev.filter((_, j) => j !== i))} />
+              attachmentsBar: attachments.length > 0 || attachmentRejections.length > 0 ? (
+                <>
+                  <AttachmentChips attachments={attachments} onRemove={(i) => setAttachments(prev => prev.filter((_, j) => j !== i))} />
+                  {/* Ticket 33a742c1: a file that failed to stage stays visible
+                      here until dismissed or sent — never a silent disappearance. */}
+                  <AttachmentNotice rejections={attachmentRejections} onDismiss={() => setAttachmentRejections([])} />
+                </>
               ) : undefined,
               onAttachFiles: (files: File[]) => { void processFiles(files); },
               // bg-ES handoff: the view opened its own SSE for this chat —
@@ -4751,6 +4794,8 @@ export default function CrossModelPage() {
               {attachments.length > 0 && (
                 <AttachmentChips attachments={attachments} onRemove={(i) => setAttachments(prev => prev.filter((_, j) => j !== i))} />
               )}
+              {/* Ticket 33a742c1: staging failures stay visible inline. */}
+              <AttachmentNotice rejections={attachmentRejections} onDismiss={() => setAttachmentRejections([])} />
               <ChatComposer
                 variant="chat"
                 size="home"
@@ -5139,6 +5184,16 @@ export default function CrossModelPage() {
                     </span>
                     <ArrowRight className="size-4 flex-shrink-0 text-ink-3 transition-transform group-hover:translate-x-0.5" />
                   </button>
+                  {/* macOS half (2026-11-06): when a paired Mac is the reason
+                      there is nothing to show, say WHY — this is the state the
+                      owner was stuck in ("calendar sync isn't working"). A Mac
+                      that was never granted Calendar access must never render
+                      as an empty/free day. */}
+                  {calendarApple && calendarApple.state !== 'ok' && (
+                    <div className="px-2.5 pb-2.5 text-[12.5px] leading-snug text-ink-3" data-testid={`calendar-apple-${calendarApple.state}`}>
+                      {appleCalendarNotice(calendarApple)}
+                    </div>
+                  )}
                 </>
               )}
 
@@ -5163,6 +5218,10 @@ export default function CrossModelPage() {
                         <span className="flex-1">Couldn&apos;t load your calendar right now.</span>
                         <button type="button" onClick={loadCalendar} className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover hover:border-line-2 transition-colors">Retry</button>
                       </>
+                    ) : calendarApple && calendarApple.state !== 'ok' ? (
+                      // A free day on Google is NOT a free day overall when the
+                      // Mac half could not be read — say so (2026-11-06).
+                      <span data-testid={`calendar-apple-${calendarApple.state}`}>{appleCalendarNotice(calendarApple)}</span>
                     ) : (
                       <span>Nothing on your calendar today.</span>
                     )}
@@ -5240,11 +5299,17 @@ export default function CrossModelPage() {
                                 <div className={cn('text-[14px] leading-[1.45] text-ink', past && 'line-through decoration-line-2')}>
                                   {event.title}
                                 </div>
-                                {(event.location || event.account) && (
+                                {(event.location || event.account || event.source === 'apple') && (
                                   <div className="mt-0.5 flex items-center gap-1.5 truncate text-[12.5px] text-ink-3">
                                     {event.location && <span className="truncate">{event.location}</span>}
-                                    {event.location && event.account && <span aria-hidden>·</span>}
+                                    {event.location && (event.account || event.source === 'apple') && <span aria-hidden>·</span>}
                                     {event.account && <span className="truncate">{event.account}</span>}
+                                    {/* Source label (2026-11-06): the card now
+                                        merges Apple + Google, so a row says which
+                                        calendar it came from. */}
+                                    {event.source === 'apple' && (
+                                      <span className="flex-shrink-0 rounded-full border border-line px-1.5 py-px text-[10.5px] uppercase tracking-wide text-ink-3" title={`From your Mac${calendarApple?.device ? ` (${calendarApple.device})` : ''}`}>Mac</span>
+                                    )}
                                   </div>
                                 )}
                                 {/* Prep prompts — pills; a tap prefills the composer. */}

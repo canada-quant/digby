@@ -97,8 +97,8 @@ test('a9a74086: the served bootstrap installer (frontend/public) carries the sam
 });
 
 test('a9a74086: the bump is stamped — tree current (installer-duality release line)', () => {
-  assert.equal(pkg.version, '0.9.23');
-  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.23'/);
+  assert.equal(pkg.version, '0.9.24');
+  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.24'/);
   assert.match(read('src/config.ts'), /a9a74086/);
   assert.match(read('src/config.ts'), /8bcd1c4a/);
 });

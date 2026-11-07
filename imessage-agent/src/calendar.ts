@@ -76,6 +76,20 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 import { requestCalendarAccessOnce } from './calendar-request';
+import { readConsentEpisode } from './calendar-consent';
+
+/** The consent observation as it rides the read payload (2026-11-06).
+ *  Structurally a CalendarConsentEpisode — re-declared here so the wire
+ *  contract of the READ is the thing documented next to the read. Older
+ *  backends ignore the whole field. */
+export interface CalendarConsentSummary {
+  state: 'dialog-open' | 'dispatched' | 'granted' | 'denied' | 'bridge-failed' | 'request-failed';
+  at: string;
+  observedTier: number | null;
+  idiom: string;
+  requestExit: 'ok' | 'timeout' | 'error' | 'staging-failed';
+  version: string;
+}
 
 /** Clamp the requested window — the backend clamps too, but the agent is the
  *  final guard on its own osascript budget. */
@@ -125,6 +139,12 @@ export interface CalendarReadResult {
    *  grant ("digbyHelper granted, /…/DigbyAgent asking"). ADDITIVE: older
    *  backends ignore the extra field. */
   unavailable?: { reason: CalendarUnavailableReason; pane: 'calendar'; client: string };
+  /** 2026-11-06: what the LAST consent episode actually OBSERVED (absent
+   *  until one has run — the first tier-0 read fires the request
+   *  asynchronously, so it carries no episode yet). ADDITIVE: older backends
+   *  ignore it. Derived from the EventKit status API, never from the
+   *  request's own silence — see calendar-consent.ts. */
+  consent?: CalendarConsentSummary;
 }
 
 /** The TCC client identity this agent's EventKit requests ride under: the
@@ -145,6 +165,23 @@ const TCC_CLIENT_PATH: string = (() => {
  *  backend surfaces these verbatim. */
 function unavailable(reason: CalendarUnavailableReason): CalendarReadResult {
   return { events: null, unavailable: { reason, pane: 'calendar', client: TCC_CLIENT_PATH } };
+}
+
+/**
+ * Attach the last OBSERVED consent episode to an unavailable read (2026-11-06).
+ *
+ * Why the payload and not a separate channel: the backend already receives
+ * exactly one object per read, and the consent observation is the thing its
+ * copy needs in order to stop claiming a dialog nobody verified. Reading the
+ * stored episode is NON-REQUESTING (it is a file read), so this stays safe on
+ * the read contract and never triggers anything.
+ *
+ * Deliberately NOT attached to a successful read: events that came back are
+ * their own proof of a grant, and a stale episode must never contradict them.
+ */
+function withConsent(result: CalendarReadResult): CalendarReadResult {
+  const episode = readConsentEpisode();
+  return episode ? { ...result, consent: episode } : result;
 }
 
 /**
@@ -402,7 +439,7 @@ export function listEvents(days: number = 7): Promise<CalendarReadResult> {
       } catch {
         // ignored — never a throw out of the handler
       }
-      return resolve(unavailable('calendar-unreachable'));
+      return resolve(withConsent(unavailable('calendar-unreachable')));
     }
     execFile(
       'osascript',
@@ -411,17 +448,17 @@ export function listEvents(days: number = 7): Promise<CalendarReadResult> {
       (err, stdout, stderr) => {
         rmSync(dirname(scriptPath), { recursive: true, force: true });
         if (err) {
-          if (isNoAccount(String(stderr))) return resolve(unavailable('no-calendar-account'));
+          if (isNoAccount(String(stderr))) return resolve(withConsent(unavailable('no-calendar-account')));
           if (isNeverRequested(String(stderr))) {
             // daf8706a: the client that asks has no TCC row yet. Fire the
             // consent request once (fire-and-forget), then surface the
             // dedicated reason — the backend copy tells the user the
             // dialog is on its way / which binary to grant.
             requestCalendarAccessOnce();
-            return resolve(unavailable('calendar-never-requested'));
+            return resolve(withConsent(unavailable('calendar-never-requested')));
           }
-          if (isDenied(String(stderr))) return resolve(unavailable('calendar-denied'));
-          return resolve(unavailable('calendar-unreachable'));
+          if (isDenied(String(stderr))) return resolve(withConsent(unavailable('calendar-denied')));
+          return resolve(withConsent(unavailable('calendar-unreachable')));
         }
         try {
           const parsed = JSON.parse(String(stdout || '').trim() || '[]');
@@ -432,7 +469,7 @@ export function listEvents(days: number = 7): Promise<CalendarReadResult> {
             .slice(0, MAX_EVENTS);
           return resolve({ events });
         } catch {
-          return resolve(unavailable('calendar-unreachable'));
+          return resolve(withConsent(unavailable('calendar-unreachable')));
         }
       },
     );

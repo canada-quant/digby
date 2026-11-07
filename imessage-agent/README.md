@@ -115,11 +115,39 @@ asks — the launchd `DigbyAgent` (or the app-bundled `DigbyHelper`), never the
 agent's own unavailable payload now names the exact client binary; enabling
 the "Digby" app row in System Settings → Privacy & Security → Calendars does
 NOT grant the agent. Since agent v0.9.11, a first-ever read on a Mac with no
-Calendars row for the agent fires a one-time consent request from the agent
-binary itself (the native prompt appears on the Mac); if it was dismissed or
-the idiom is unsupported on that macOS build, enable the agent binary's row
-directly (System Settings → Privacy & Security → Calendars) and quit +
-relaunch the agent.
+Calendars row for the agent attempts a one-time consent request from the agent
+binary itself. If that request reached macOS, either the native prompt appeared
+or it can be granted by enabling the agent binary's row directly (System
+Settings → Privacy & Security → Calendars), then quit + relaunch the agent.
+If instead the recorded episode is `bridge-failed`, the request never reached
+macOS on that build — macOS only mints the row for a client that asks, so no
+row can exist to toggle and **no manual grant can fix it**; that Mac needs a
+fixed agent build.
+
+**0.9.24 — the consent request now REPORTS truthfully (it still does not issue
+on every macOS build)** (2026-11-06). 0.9.11–0.9.23 asked for Calendar access
+with a fire-and-forget idiom whose outcome was deliberately discarded, and the
+request's `on run` returned immediately — so osascript exited before macOS could
+present the ASYNCHRONOUS consent prompt. No dialog appeared, no Calendars TCC
+row was minted, and the backend nevertheless told the owner "a one-time consent
+dialog was just triggered". Three online Macs sat at tier 0 indefinitely. What
+changed:
+
+- The script **holds a bounded run loop** (60 s) until the completion handler
+  fires, so the prompt can actually be presented.
+- It tries `requestFullAccessToEventsWithCompletion:` (macOS 14+) first and
+  the legacy `requestAccessToEntityType:completion:` second, and prints one
+  machine-readable observation line (`idiom | completed | waited | tier`).
+- The outcome is classified **from the authorization-status API**, never from
+  the request's own silence, and persisted to
+  `~/.config/digby-agent/calendar-consent.json` (mode 0600, no secrets) as
+  one of `granted | denied | dialog-open | dispatched | bridge-failed |
+  request-failed`. `dispatched` means "asked, no decision observed" — never
+  "a dialog appeared". `bridge-failed` means the request could **not be issued
+  at all** — see the correction note below before recommending a manual grant.
+- The episode rides the calendar read payload, so Digby's copy reports what
+  was OBSERVED. It is also readable, without ever requesting anything, via
+  the agent command `calendar_consent_status` (the poll-safe path).
 
 ---
 

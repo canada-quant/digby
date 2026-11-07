@@ -136,12 +136,12 @@ describe('agentUpdateAdvert updater floor (ticket 0e4c9601)', () => {
     // keep better-sqlite3 12.11.1 UNCHANGED,
     // so 0.8.2+ Macs may take it by self-update; the floor only excludes
     // ≤ 0.8.1 updaters.
-    expect(AGENT_RELEASE.version).toBe('0.9.23');
+    expect(AGENT_RELEASE.version).toBe('0.9.24');
     expect(AGENT_RELEASE.minUpdaterVersion).toBe('0.8.2');
     expect(agentUpdateAdvert('0.8.1')).toBeNull();
     expect(agentUpdateAdvert('0.8.0')).toBeNull();
-    expect(agentUpdateAdvert('0.8.2')!.version).toBe('0.9.23'); // above-floor poller takes it
-    expect(agentUpdateAdvert('0.8.3')!.version).toBe('0.9.23'); // the 51d8dbe0 ticket's own Mac (0.8.3) takes the fix
+    expect(agentUpdateAdvert('0.8.2')!.version).toBe('0.9.24'); // above-floor poller takes it
+    expect(agentUpdateAdvert('0.8.3')!.version).toBe('0.9.24'); // the 51d8dbe0 ticket's own Mac (0.8.3) takes the fix
     expect(agentUpdateAdvert('0.9.0')).toBeTruthy(); // mbp-1's 0.9.0 agent takes the current release (the 933e6ca4 fix line)
     expect(agentUpdateAdvert('0.9.1')).toBeTruthy(); // a 0.9.1 Mac takes the current release (the 405927c9 convergence fix)
     expect(agentUpdateAdvert('0.9.2')).toBeTruthy(); // a 0.9.2 Mac takes 0.9.6 (the c6e91d19 stamp + verification fix)
@@ -150,47 +150,47 @@ describe('agentUpdateAdvert updater floor (ticket 0e4c9601)', () => {
     expect(agentUpdateAdvert('0.9.5')).toBeTruthy(); // a 0.9.5 Mac takes 0.9.8 — the 21c68e74 runtime release shipped as 0.9.5; 0.9.6 supersedes it (collision resolution 2026-10-24), 0.9.8 carries e2915963 + 30787bc4
     expect(agentUpdateAdvert('0.9.6')).toBeTruthy(); // a 0.9.6 Mac takes 0.9.8 (the release this incident ran on takes the fix)
     expect(agentUpdateAdvert('0.9.7')).toBeTruthy(); // a 0.9.7 Mac takes 0.9.8 (the 30787bc4 dialog-loop fix — the e2915963 incident Mac self-updated to 0.9.7 at 15:5xZ)
-    expect(agentUpdateAdvert('0.9.10')!.version).toBe('0.9.23'); // a 0.9.10 Mac takes the current release
-    expect(agentUpdateAdvert('0.9.11')!.version).toBe('0.9.23'); // a 0.9.11 Mac MUST take 0.9.12+ — 0.9.11 shipped WITHOUT the remote-access command (see the manifest note), so "at the release → nothing" would strand every device on a build that cannot enable the channel
+    expect(agentUpdateAdvert('0.9.10')!.version).toBe('0.9.24'); // a 0.9.10 Mac takes the current release
+    expect(agentUpdateAdvert('0.9.11')!.version).toBe('0.9.24'); // a 0.9.11 Mac MUST take 0.9.12+ — 0.9.11 shipped WITHOUT the remote-access command (see the manifest note), so "at the release → nothing" would strand every device on a build that cannot enable the channel
     // 30d3c366: a 0.9.12 Mac (the mbp-2 incident build) TAKES the current
     // release — 0.9.13 is the release that names Input Monitoring + Automation
     // and re-requests them, so an at-0.9.12 device must never be stranded.
-    expect(agentUpdateAdvert('0.9.12')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.12')!.version).toBe('0.9.24');
     // 0.9.13 (the 30d3c366 TCC-grant release) takes the current one — a device
     // must never be stranded at a release that cannot report `off`.
-    expect(agentUpdateAdvert('0.9.13')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.13')!.version).toBe('0.9.24');
     // 0.9.14 (the honest three-state remote-channel release) MUST take the
     // current release (ticket 11b6974f): 0.9.14's daemon never re-read its
     // config, so an owner who enabled the unattended preset there never
     // reached the fleet — and its probe could never report `off`. Leaving
     // at-release devices alone would strand every paired Mac on exactly the
     // build this ticket is about.
-    expect(agentUpdateAdvert('0.9.14')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.14')!.version).toBe('0.9.24');
     // 746c4d4f DELIVERY PIN: 0.9.15 is the build the reported incident ran on
     // (paired Mac cql-stanne-mbp1: left-clicks arriving as right-click context
     // menus, Cmd-shortcuts eaten by Finder). It is now strictly older than the
     // release, so it MUST be offered 0.9.17 — "at the release → nothing" would
     // strand every paired Mac on the build this ticket exists to fix.
-    expect(agentUpdateAdvert('0.9.15')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.15')!.version).toBe('0.9.24');
     // c468f922 RELAY PIN: 0.9.16 is now strictly older than the release. A
     // 0.9.16 Mac has the command channel but NO relay pump, so it can never
     // carry a brokered session. Offering it the release is what turns a paired
     // device into an actual peer; leaving it alone would leave every existing
     // Mac permanently unable to reach the data plane this ticket ships.
-    expect(agentUpdateAdvert('0.9.16')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.16')!.version).toBe('0.9.24');
     // c468f922 RFB CODEC PIN: 0.9.17 is now strictly older than the release.
     // It has the relay pump (so it can CARRY bytes) but NO RFB codec, so every
     // frame it receives is dropped at the handler seam and the operator sees no
     // screen at all. Offering it 0.9.18 is what turns "the pipe moves bytes"
     // into "the operator sees a screen"; leaving at-release 0.9.17 devices
     // alone would strand the fleet one build short of rendering.
-    expect(agentUpdateAdvert('0.9.17')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.17')!.version).toBe('0.9.24');
     // c468f922 FIX SLICE PIN: 0.9.18 shipped the codec but encoded screens at
     // NATIVE size (a Retina Mac needs 317-901 relay frames against a 256 cap, so
     // video died) and never primed click geometry (every relayed click was
     // refused). 0.9.19 is the first build that actually renders AND accepts
     // input on a real display, so an at-0.9.18 device must be offered it.
-    expect(agentUpdateAdvert('0.9.18')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.18')!.version).toBe('0.9.24');
     // 36d1c99f DELIVERY PIN: 0.9.19 is the build whose runtime output still
     // handed the user a bare `digby-agent` remedy that answered "command not
     // found" on a stock install (the shim lives at
@@ -198,7 +198,7 @@ describe('agentUpdateAdvert updater floor (ticket 0e4c9601)', () => {
     // 0.9.20 prints the absolute path. An at-0.9.19 device MUST be offered it —
     // "at the release → nothing" would strand every paired Mac on exactly the
     // build this ticket exists to fix.
-    expect(agentUpdateAdvert('0.9.19')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.19')!.version).toBe('0.9.24');
     // bcdf5d2f DELIVERY PIN: 0.9.20 fixed the PATH but left the ADMIN gate as a
     // bare `sudo -n true` (`-n` never prompts), so enabling the unattended
     // preset still failed on a stock Mac unless the operator already knew to run
@@ -206,12 +206,16 @@ describe('agentUpdateAdvert updater floor (ticket 0e4c9601)', () => {
     // sudo" report. 0.9.21 asks for the rights itself. An at-0.9.20 device MUST
     // be offered it, or every Mac already carrying the remedy is stranded on the
     // build whose enable still cannot run.
-    expect(agentUpdateAdvert('0.9.20')!.version).toBe('0.9.23');
+    expect(agentUpdateAdvert('0.9.20')!.version).toBe('0.9.24');
     // e530220e DELIVERY PIN: 0.9.21 is the build the ticket's own Mac runs —
     // the one that reads `no-admin` off an expired sudo cache and stays silent
     // about a never-enabled Screen Sharing. An at-0.9.21 device MUST be offered
     // 0.9.23, or the very Mac this ticket was filed for never receives the fix.
-    expect(agentUpdateAdvert('0.9.21')!.version).toBe('0.9.23');
-    expect(agentUpdateAdvert('0.9.23')).toBeNull(); // at the release → nothing
+    expect(agentUpdateAdvert('0.9.21')!.version).toBe('0.9.24');
+    // 2026-11-06: 0.9.23 is now a PRIOR release — the calendar-consent repair
+    // must reach exactly the 0.9.23 Macs whose consent request silently did
+    // nothing (three online Macs reported tier 0 forever).
+    expect(agentUpdateAdvert('0.9.23')!.version).toBe('0.9.24');
+    expect(agentUpdateAdvert('0.9.24')).toBeNull(); // at the release → nothing
   });
 });

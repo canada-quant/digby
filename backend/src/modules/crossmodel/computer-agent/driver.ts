@@ -407,6 +407,23 @@ export async function selectComputerDriver(
       };
     }
 
+    // Ticket 2d461d80 (2026-11-06): a device pin that is PRESENT but blank
+    // ("", "   ") must REFUSE, never fall through to the default pick below.
+    // The old guard `if (target && String(target).trim())` treated a
+    // whitespace-only pin as "no pin at all", so the run drove the DEFAULT
+    // device while the caller believed it had pinned one — and because no
+    // target was resolved, neither deviceAutoBound nor the task-text MISMATCH
+    // flag fired: a silent substitution with no disclosure anywhere in the
+    // header. A caller that pinned a device and got another machine's frames
+    // reads that as "the pin was ignored"; it must be a loud refusal instead.
+    if (target !== undefined && target !== null && String(target).trim() === '') {
+      return {
+        driver: null, agentId: null,
+        status: `the device parameter was set but empty — pass a device name (the paired devices are: ${all.map((a) => `'${nameOf(a)}'`).join(', ')}) or omit it to use the default.`,
+        device: null, platform: null, agentVersion: null,
+      };
+    }
+
     if (target && String(target).trim()) {
       // cu-diag fix #6: fuzzy (normalized substring) matching + the
       // single-device carve-out; exact matches behave exactly as before.

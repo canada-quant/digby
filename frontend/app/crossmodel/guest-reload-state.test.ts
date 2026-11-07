@@ -109,7 +109,7 @@ describe('2. reopened guest session — deterministic restore, no streaming chro
 });
 
 describe('3. restored signed-in chat — the check pill from metadata, a live reattach only when the run is live', () => {
-  const load = region(VIEW, 'const full = await crossModelApi.getChat(chatId, { messageLimit: 50 });', 'const attach = !!plainRef.current?.attachOnLoad;');
+  const load = region(VIEW, 'const full = await crossModelApi.getChat(chatId, { messageLimit: 50 });', 'const attach = !!plainRef.current?.attachOnLoad || full.running === true;');
 
   it('the initial load settles stale pending rows and polls a young LAST row from this tab', () => {
     expect(load).toContain('const restored = settleRestoredRows(mapPlainMessages(full));');
@@ -153,7 +153,7 @@ describe('3. restored signed-in chat — the check pill from metadata, a live re
     // 2026-10-27 (stale-delete UI fix): the catch below the attach block now
     // carries a 404 check (deleted chat → terminal 'deleted' state, owner
     // report) — the region terminator follows the new shape.
-    const r = region(VIEW, 'const attach = !!plainRef.current?.attachOnLoad;', '} catch (e: any) {');
+    const r = region(VIEW, 'const attach = !!plainRef.current?.attachOnLoad || full.running === true;', '} catch (e: any) {');
     expect(r).toContain('setLive({ parts: [], pendingApproval: null, running: attach });');
     expect(r).toContain('const active = await fetchPlainRunActive(chatId);');
     expect(r).toContain('if (active !== true || activeIdRef.current !== chatId || esRef.current) return;');
@@ -167,7 +167,7 @@ describe('4. server-listed queued rows (ticket c0b2b0c8) — pendingMessages sur
   });
 
   it('the initial load appends the pending rows and unions their ids into pendingSteerIds — server-listed queued rows render in the queued partition, indistinguishable from a locally-sent bubble', () => {
-    const load = region(VIEW, 'const full = await crossModelApi.getChat(chatId, { messageLimit: 50 });', 'const attach = !!plainRef.current?.attachOnLoad;');
+    const load = region(VIEW, 'const full = await crossModelApi.getChat(chatId, { messageLimit: 50 });', 'const attach = !!plainRef.current?.attachOnLoad || full.running === true;');
     expect(load).toContain('const restoredPending = mapPlainPendingMessages(full);');
     expect(load).toContain('setMessages(restoredPending.length ? [...restored, ...restoredPending] : restored);');
     expect(load).toContain('setPendingSteerIds(prev => { const next = new Set(prev); for (const m of restoredPending) next.add(m.id); return next; });');

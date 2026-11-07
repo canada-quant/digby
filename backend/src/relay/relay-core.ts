@@ -50,13 +50,59 @@ import { verifyAccessToken, TokenPayload } from '../utils/jwt';
 import {
   resolveInstanceByToken, mintInstanceFromPairClaim, PRESENCE_KEY_PREFIX,
 } from '../modules/crossmodel/instances/instances.service';
+// The ONE prefix source shared with the Express backend (see RELAY PREFIX
+// ALIASING below). Type-only import there, so no runtime coupling.
+import { API_PREFIXES, CANONICAL_API_PREFIX } from '../api-prefixes';
 
-export const TUNNEL_PATH = '/api/crossmodel/instances/tunnel';
-export const PROXY_PATH_RE = /^\/api\/crossmodel\/instances\/([^/]+)\/proxy(\/[^?]*)?$/;
+/**
+ * RELAY PREFIX ALIASING — leg (b) phase 1, relay leg (docs/LEG_B_CROSSMODEL_RENAME_PLAN.md §3).
+ *
+ * The Express backend serves every router under BOTH `/api/crossmodel` and
+ * `/api/digby` via `API_PREFIXES`/`mountApi` (api-prefixes.ts). The relay is a
+ * SEPARATE process (same image, `node dist/relay.js`) that owns three path
+ * families, so it never saw that alias: it matched the literal old prefix and
+ * the `/api/digby/instances/` families (tunnel, per-instance proxy, and
+ * cloud→edge chat messages) fell through to the backend, which does not serve
+ * them. That gap is what these constants close.
+ *
+ * WHY DERIVED AND NOT A SECOND LITERAL LIST: a hand-maintained copy of the
+ * prefixes here would be free to drift from api-prefixes.ts — the exact
+ * silent-divergence failure the backend module was written to prevent. Both
+ * processes now read the ONE source, so adding or retiring a prefix is a
+ * one-line change. api-prefixes.ts imports only a TYPE from express (erased at
+ * compile), so importing it adds no runtime dependency to the relay process.
+ *
+ * The old prefix stays CANONICAL: `TUNNEL_PATH` still points at it, the edge
+ * tunnel client (cloud-link/tunnel-client.ts) keeps dialling it, and every
+ * emitted URL is unchanged. This is an additive serve, exactly like the backend
+ * leg — nothing is renamed or removed.
+ */
+const escapeForRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** `(?:/api/crossmodel|/api/digby)` — alternation built from the single source. */
+const PREFIX_ALT = API_PREFIXES.map(escapeForRegex).join('|');
+
+/** The canonical tunnel URL — what an edge dials out to, and the phase-1 default. */
+export const TUNNEL_PATH = `${CANONICAL_API_PREFIX}/instances/tunnel`;
+/** Every prefix's tunnel path. Membership test for the WS upgrade, not equality. */
+export const TUNNEL_PATHS: readonly string[] =
+  API_PREFIXES.map((prefix) => `${prefix}/instances/tunnel`);
+const TUNNEL_PATH_SET = new Set<string>(TUNNEL_PATHS);
+/** True when `pathname` is the tunnel endpoint under ANY served prefix. */
+export const isTunnelPath = (pathname: string): boolean => TUNNEL_PATH_SET.has(pathname);
+
+/**
+ * HTTP proxy path family, under every served prefix. Group 1 = instanceId,
+ * group 2 = the edge-side path (with its leading slash, possibly absent).
+ */
+export const PROXY_PATH_RE = new RegExp(
+  `^(?:${PREFIX_ALT})/instances/([^/]+)/proxy(/[^?]*)?$`,
+);
 // Digby Edge (Phase 5): cloud→edge messaging sugar — POST a message into one
 // chat on the edge without constructing a proxy path. Group 1 = instanceId,
-// group 2 = chatId.
-export const MESSAGES_PATH_RE = /^\/api\/crossmodel\/instances\/([^/]+)\/chats\/([^/]+)\/messages$/;
+// group 2 = chatId. Under every served prefix, same as the proxy family.
+export const MESSAGES_PATH_RE = new RegExp(
+  `^(?:${PREFIX_ALT})/instances/([^/]+)/chats/([^/]+)/messages$`,
+);
 export const MAX_STREAMS_PER_INSTANCE = 64;
 export const MAX_BODY_BYTES = 1024 * 1024; // 1 MB — proxied request bodies are read fully
 const PRESENCE_TTL_SECONDS = 90;           // refreshed on every client ping (30s cadence)

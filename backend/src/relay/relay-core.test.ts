@@ -23,7 +23,11 @@ jest.mock('../modules/crossmodel/instances/instances.service', () => ({
   PRESENCE_KEY_PREFIX: 'inst:presence:',
 }));
 
-import { RelayCore, InstanceConnection, MAX_STREAMS_PER_INSTANCE, FORWARD_HEADER } from './relay-core';
+import {
+  RelayCore, InstanceConnection, MAX_STREAMS_PER_INSTANCE, FORWARD_HEADER,
+  TUNNEL_PATH, TUNNEL_PATHS, isTunnelPath, PROXY_PATH_RE, MESSAGES_PATH_RE,
+} from './relay-core';
+import { API_PREFIXES, CANONICAL_API_PREFIX, ALIAS_API_PREFIX } from '../api-prefixes';
 
 const INSTANCE = { id: 'inst-1', ownerUserId: 'admin-1', name: 'home-lab', status: 'pending', protocolVersion: 1 };
 
@@ -649,5 +653,105 @@ describe('peer forwarding (multi-box prod: relay per box, socket in one)', () =>
     expect(Buffer.from(calls[0].body).toString()).toBe(payload.toString());
     expect(calls[0].opts.headers['content-length']).toBe(String(payload.length));
     expect(res.statusCode).toBe(200);
+  });
+});
+
+/**
+ * RELAY PREFIX ALIASING — leg (b) phase 1, relay leg
+ * (docs/LEG_B_CROSSMODEL_RENAME_PLAN.md §3, "Known phase-1 gap").
+ *
+ * The backend serves every router under both prefixes; the relay is a separate
+ * process and originally matched the literal old one, so
+ * /api/digby/instances/{tunnel,proxy,messages} fell through to the backend and
+ * 404'd. Same silent-failure shape as api-prefixes.test.ts: not a compile
+ * error, just one URL shape dead while the other works.
+ */
+describe('relay prefix aliasing (both API prefixes served)', () => {
+  it('serves the tunnel endpoint under EVERY prefix, canonical first', () => {
+    expect(TUNNEL_PATHS).toEqual(API_PREFIXES.map((p) => `${p}/instances/tunnel`));
+    for (const prefix of API_PREFIXES) {
+      expect(isTunnelPath(`${prefix}/instances/tunnel`)).toBe(true);
+    }
+    // The canonical path is unchanged — emitted URLs and the edge client still
+    // dial /api/crossmodel, which is what makes this additive.
+    expect(TUNNEL_PATH).toBe(`${CANONICAL_API_PREFIX}/instances/tunnel`);
+    expect(TUNNEL_PATH).toBe('/api/crossmodel/instances/tunnel');
+    expect(ALIAS_API_PREFIX).toBe('/api/digby');
+  });
+
+  it('rejects near-miss tunnel paths (no prefix-smuggling, no suffix)', () => {
+    for (const bad of [
+      '/instances/tunnel',                       // no prefix at all
+      '/api/other/instances/tunnel',             // unknown prefix
+      '/api/digby/instances/tunnel/extra',       // trailing segment
+      '/api/digbyx/instances/tunnel',            // prefix is not a plain prefix
+      '/api/crossmodel/instances/tunnelX',
+    ]) {
+      expect(isTunnelPath(bad)).toBe(false);
+    }
+  });
+
+  it('PROXY_PATH_RE matches both prefixes and captures the same groups', () => {
+    for (const prefix of API_PREFIXES) {
+      const m = PROXY_PATH_RE.exec(`${prefix}/instances/inst-1/proxy/crossmodel/chats`);
+      expect(m).not.toBeNull();
+      expect(m![1]).toBe('inst-1');
+      expect(m![2]).toBe('/crossmodel/chats');
+    }
+    // A bare /proxy with no edge path is still valid (group 2 absent).
+    const bare = PROXY_PATH_RE.exec('/api/digby/instances/inst-1/proxy');
+    expect(bare).not.toBeNull();
+    expect(bare![2]).toBeUndefined();
+    // Not the proxy family under an unknown prefix.
+    expect(PROXY_PATH_RE.test('/api/other/instances/inst-1/proxy/x')).toBe(false);
+  });
+
+  it('MESSAGES_PATH_RE matches both prefixes with instanceId + chatId intact', () => {
+    for (const prefix of API_PREFIXES) {
+      const m = MESSAGES_PATH_RE.exec(`${prefix}/instances/inst-1/chats/chat-9/messages`);
+      expect(m).not.toBeNull();
+      expect(m![1]).toBe('inst-1');
+      expect(m![2]).toBe('chat-9');
+    }
+    expect(MESSAGES_PATH_RE.test('/api/other/instances/inst-1/chats/chat-9/messages')).toBe(false);
+    expect(MESSAGES_PATH_RE.test('/api/digby/instances/inst-1/chats/chat-9/messages/extra')).toBe(false);
+  });
+
+  it('handleProxyRequest runs the SAME auth/ownership path on the alias prefix', async () => {
+    const proxy = async (url: string, token?: string) => {
+      const req = new FakeReq(url);
+      if (token) req.headers.authorization = `Bearer ${token}`;
+      const res = new FakeRes();
+      const p = core.handleProxyRequest(req as any, res as any);
+      await flush();
+      req.emit('end');
+      await p;
+      return res;
+    };
+    // Behavioural parity: the alias prefix reaches the handler (NOT a 404 for
+    // "Not found"), and it enforces the same 401/403/404 ladder as the old one.
+    expect((await proxy('/api/digby/instances/inst-1/proxy/x')).statusCode).toBe(401);
+    expect((await proxy('/api/digby/instances/inst-1/proxy/x', 'garbage')).statusCode).toBe(401);
+    expect((await proxy('/api/digby/instances/inst-1/proxy/x', 'good-user')).statusCode).toBe(403);
+    expect((await proxy('/api/digby/instances/nope/proxy/x', 'good-admin')).statusCode).toBe(404);
+  });
+
+  it('handleMessagesRequest runs the SAME path on the alias prefix', async () => {
+    const post = async (url: string, token?: string, method = 'POST') => {
+      const req = new FakeReq(url);
+      req.method = method;
+      if (token) req.headers.authorization = `Bearer ${token}`;
+      const res = new FakeRes();
+      const p = core.handleMessagesRequest(req as any, res as any);
+      await flush();
+      req.emit('data', Buffer.from(JSON.stringify({ message: 'hi' })));
+      req.emit('end');
+      await p;
+      return res;
+    };
+    expect((await post('/api/digby/instances/inst-1/chats/chat-9/messages')).statusCode).toBe(401);
+    expect((await post('/api/digby/instances/inst-1/chats/chat-9/messages', 'good-user')).statusCode).toBe(403);
+    expect((await post('/api/digby/instances/nope/chats/chat-9/messages', 'good-admin')).statusCode).toBe(404);
+    expect((await post('/api/digby/instances/inst-1/chats/chat-9/messages', 'good-admin', 'GET')).statusCode).toBe(405);
   });
 });

@@ -630,6 +630,35 @@ export async function startDetachedChatRun(args: Omit<ChatAgentRunArgs, 'send' |
       return null;
     }
   }
+  // ── Phase 2 Cloud: per-org quota on MACHINE runs (todo ea95fa0b leg 1 item 3) ──
+  // The two human seams (streamQuery, platform sendChatMessage) reserve a slot
+  // before they get here — so a human send is already metered and must NOT be
+  // metered twice. But schedule firings, hook wakes, webhook fires and the
+  // orphan-recovery re-fire call startDetachedChatRun DIRECTLY, with no seam in
+  // front of them: without this, a free-tier tenant could schedule a hundred
+  // messages and never touch its own quota. Gating only machineTriggered runs
+  // closes that hole without double-charging a queued human message (a queue
+  // row was reserved when it was enqueued and carries its own origin).
+  //
+  // Refusal posture differs from the human seams on purpose: a human send gets a
+  // thrown 429 the client can render, but a machine wake must not throw into a
+  // scheduler tick — it returns null, which every caller already treats as "did
+  // not start" (the same shape the supervisor-OFF backstop above uses). The
+  // firing is not lost: hook rows and schedule firings are terminal-marked
+  // upstream, and a quota refusal is a legitimate reason for a wake to no-op.
+  if (machineTriggered && args.userId) {
+    try {
+      const { guardOrgSend } = await import('../org/org-quota.service');
+      await guardOrgSend(args.userId);
+    } catch (quotaErr: any) {
+      if (quotaErr?.name === 'OrgQuotaExceededError') {
+        logger.info(`chat-agent: org quota exhausted — not starting machine run for ${chatId ?? 'anonymous'} (origin ${String(args.messageOrigin ?? (args.machineWake ? 'machineWake' : 'unknown'))}): ${quotaErr.message}`, { source: 'chat-agent' });
+        return null;
+      }
+      // NOT a quota verdict — an infra error must not silently swallow a wake.
+      logger.warn(`chat-agent: machine-run quota check failed, proceeding: ${quotaErr?.message ?? quotaErr}`, { source: 'chat-agent' });
+    }
+  }
   if (!tryStartLiveRun(key)) return null;
   // Every write / Stop read of this run goes through a handle on THIS run, never the key (integration review
   // 2026-10-20): a council straggler that outlives the lead must not write into — or be stopped by — the next run

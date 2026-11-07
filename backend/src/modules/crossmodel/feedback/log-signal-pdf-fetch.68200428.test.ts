@@ -261,12 +261,18 @@ describe('68200428 — a STORED unattainable bar is redirected, never reopened',
     }
   });
 
-  // GUARDRAIL (inherited from 1425001e): never a lane's escape hatch. Only an
-  // auto-filer-minted metric is eligible — a hand-authored one is its lane's
-  // judgement.
-  it('REFUSES a hand-authored metric — the escape-hatch guard still holds', () => {
-    for (const source of [undefined, null, 'manual', 'lane-authored']) {
+  // GUARDRAIL (inherited from 1425001e): never a lane's escape hatch. The hatch
+  // is keyed on an EXPLICIT hand-authored marker (ticket 31199f81) — absence of
+  // a marker is NOT a claim, so a markerless bar is classified on its content.
+  it('REFUSES an EXPLICITLY hand-authored metric — the escape-hatch guard still holds', () => {
+    for (const source of ['manual', 'lane-authored', 'filer']) {
       expect(designedAlarmOfMetric(autofilerMetric(STORED), source)).toBeNull();
+    }
+  });
+
+  it('a MARKERLESS stored bar is classified on its content (ticket 31199f81)', () => {
+    for (const source of [undefined, null, '']) {
+      expect(designedAlarmOfMetric(autofilerMetric(STORED), source)?.id).toBe('websearch-pdf-fetch-target');
     }
   });
 

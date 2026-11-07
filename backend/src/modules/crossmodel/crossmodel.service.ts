@@ -772,7 +772,18 @@ export class CrossModelService {
       // the backend drain still answers. Omitted when empty (payload stays
       // byte-identical to pre-fix for idle chats).
       const pendingMessages = await this.pendingUserMessages(chatId);
-      return { ...chat!, messages, access, ...(messageAuthors ? { messageAuthors } : {}), ...(pendingMessages.length ? { pendingMessages } : {}) };
+      // Ticket 5060c3d2 (owner: "when i leave a chat and come back mid
+      // response i dont see the current progress"): the chat GET must carry
+      // the SAME cross-process busy truth `listChats` already ships, because
+      // the view decides "attach to the live run" off this one round trip.
+      // Without it the open path had only LOCAL marks (lost on unmount) plus
+      // one one-shot probe whose tri-state `null` means "unknown" — so a
+      // fresh tab during a run rendered a settled chat with no spinner and
+      // no answer, i.e. looked dead. Best-effort like every liveness read:
+      // a Redis/DB hiccup degrades to false, never a 500.
+      const { isChatBusy } = await import('./chat-agent/chat-busy');
+      const running = await isChatBusy(chatId).catch(() => false);
+      return { ...chat!, messages, access, running, ...(messageAuthors ? { messageAuthors } : {}), ...(pendingMessages.length ? { pendingMessages } : {}) };
     }
 
     // ── Paged path: newest `messageLimit` messages (optionally older than the
@@ -847,10 +858,16 @@ export class CrossModelService {
     // re-attached tab paginating older history still re-seeds its queued
     // partition. Omitted when empty.
     const pendingMessages = await this.pendingUserMessages(chatId);
+    // Ticket 5060c3d2: same busy truth as the legacy branch above — this is
+    // the shape the unified view actually uses (messageLimit is always set),
+    // so omitting it here would leave the mid-run revert exactly as broken.
+    const { isChatBusy: isChatBusyPaged } = await import('./chat-agent/chat-busy');
+    const running = await isChatBusyPaged(chatId).catch(() => false);
     return {
       ...chat!,
       messages,
       access,
+      running,
       hasMoreMessages,
       ...(hasMoreMessages && page.length ? { nextMessagesBefore: page[0].id } : {}),
       ...(messageAuthors ? { messageAuthors } : {}),

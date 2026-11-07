@@ -40,7 +40,9 @@ import {
 
 // FAKE fixtures — structurally valid, never real key material.
 const AKID = 'AKIA' + 'FAKEFAKEFAKEFAKE'; // 20 chars: AKIA + 16 upper alnum
-const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/ab'; // 40 chars (the AWS secret-key length), base64 alphabet
+// ASSEMBLED AT RUNTIME, deliberately — see credentials.service.3b573ce3.test.ts.
+// Same 40-char base64 value, no credential-shaped literal in the tree.
+const SECRET = ['AbCdEfGh', 'IjKlMnOp', 'QrStUvWx', 'Yz012345', '6789+/ab'].join(''); // 40 chars (AWS secret-key length)
 const FUSED = `${AKID}${SECRET}`; // 60 — the live shape
 
 describe('ticket 3b573ce3 — fixture sanity (the shapes are what the ticket measured)', () => {

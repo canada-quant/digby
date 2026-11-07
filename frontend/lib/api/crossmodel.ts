@@ -239,6 +239,16 @@ export interface ProjectDetail extends Project {
  *  only — message objects keep their legacy shape, no id). */
 export interface CrossModelChatDetail extends CrossModelChat {
   access?: 'none' | 'read' | 'write' | 'owner';
+  /**
+   * A run is answering in this chat RIGHT NOW — the cross-process busy truth
+   * (in-process registry ∪ Redis `cm:liverun:*` ∪ durable agent_runs), the
+   * same value `listChats` ships as `CrossModelChat.running`. Ticket
+   * 5060c3d2: the unified view uses it to attach to an in-flight run on open,
+   * so returning to a chat mid-response restores live progress instead of
+   * implying the run died. Absent (`undefined`) on an older backend — callers
+   * must treat that as "no evidence", never as `false`-means-ended.
+   */
+  running?: boolean;
   /** Paged fetch only: older messages exist beyond this page. */
   hasMoreMessages?: boolean;
   /** Paged fetch only: cursor for the next OLDER page (messagesBefore param). */
@@ -2672,6 +2682,13 @@ export interface CalendarEvent {
   aiPrompts: string[];  // 2-3 unique contextual follow-up suggestions
   /** @deprecated kept for backward compat — use aiPrompts instead */
   aiPrompt?: string;
+  /** Which calendar the row came from (2026-11-06 unification). ABSENT on
+   *  responses from an older backend ⇒ treat as 'google' (the only source
+   *  that existed). Apple rows also carry their EventKit id + calendar name
+   *  in `account`. */
+  source?: 'google' | 'apple';
+  eventId?: string;
+  allDay?: boolean;
 }
 
 export interface CalendarEventsResponse {
@@ -2682,6 +2699,40 @@ export interface CalendarEventsResponse {
    *  token can no longer be refreshed (e.g. the OAuth client was rotated):
    *  the user must reconnect Google in Account → Integrations. */
   error?: 'unavailable' | 'reconnect';
+  /** The APPLE half of the card (2026-11-06). Absent when no Mac is paired or
+   *  an older backend answered. `state !== 'ok'` means the Apple calendar
+   *  could NOT be read — the card says so and NEVER renders it as an empty
+   *  day (the bug that made a never-granted Mac look like a free schedule). */
+  apple?: CalendarAppleHalf;
+}
+
+/** The macOS Calendar half's own verdict, mirroring the backend's classified
+ *  states. `granted`/`denied`… arrive inside `consent` and describe the LAST
+ *  consent attempt — never an inference about a dialog the agent did or did
+ *  not show. */
+export interface CalendarAppleHalf {
+  state:
+    | 'ok'
+    | 'no-calendar-account'
+    | 'calendar-denied'
+    | 'calendar-never-requested'
+    | 'calendar-unreachable'
+    | 'unsupported'
+    | 'no-agent';
+  /** The Mac that answered (or would have answered). */
+  device: string | null;
+  via?: 'targeted' | 'default' | 'fallback' | 'none';
+  error?: string;
+  consent?: {
+    state: 'dialog-open' | 'dispatched' | 'granted' | 'denied' | 'bridge-failed' | 'request-failed';
+    at: string;
+    observedTier: number | null;
+    idiom: string;
+    requestExit: 'ok' | 'timeout' | 'error' | 'staging-failed';
+    version: string;
+  };
+  /** Macs skipped because they last reported no Apple account. */
+  skippedSignedOut?: string[];
 }
 
 export const calendarApi = {

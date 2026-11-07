@@ -7,6 +7,8 @@ import contextService from '../crossmodel/context.service';
 import logger from '../../utils/logger';
 import { chooseFbc, eventSourceUrlFrom, resolveMetaEventId, sendMetaCompleteRegistration } from './meta-capi';
 import { cookieTouch, FIRST_TOUCH_COOKIE, LAST_TOUCH_COOKIE, recordAuthVisit } from '../crossmodel/visitors/visitor.service';
+// Phase 2 Cloud: email verification surfaces (todo ea95fa0b leg 1 item 1).
+import { consumeEmailVerification, resendEmailVerification } from '../crossmodel/org/email-verification.service';
 
 /** Cookie name for anonymous CrossModel session */
 const CM_SESSION_COOKIE = 'cm_session';
@@ -243,6 +245,52 @@ export class AuthController {
         success: true,
         data: result,
         message: 'Account deleted',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/auth/verify-email — consume a verification token (public).
+   *
+   * Unauthenticated on purpose: the link is often opened in a different browser
+   * or on a phone than the one that signed up, so requiring a session would
+   * strand exactly the users verification exists to serve. The token itself is
+   * the credential (32 random bytes, sha256-stored, single-use, 24 h).
+   */
+  async verifyEmail(req: Request, res: Response, next: NextFunction) {
+    try {
+      const rawToken = typeof req.body?.token === 'string' ? req.body.token : '';
+      const result = await consumeEmailVerification(rawToken);
+      res.json({
+        success: true,
+        data: { alreadyVerified: result.alreadyVerified },
+        message: result.alreadyVerified ? 'This email address is already verified.' : 'Email verified',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/auth/resend-verification — re-send the link to a signed-in,
+   * still-unverified user. Inline `authenticate` (this router mounts before the
+   * app-level guard, like /me and DELETE /account).
+   */
+  async resendVerification(req: AuthRequest, res: Response, next: NextFunction) {
+    try {
+      if (!req.user) {
+        res.status(401).json({ error: 'Unauthorized' });
+        return;
+      }
+      const result = await resendEmailVerification(req.user.userId);
+      res.json({
+        success: true,
+        data: { mailed: result.mailed, ...(result.error ? { error: result.error } : {}) },
+        message: result.mailed
+          ? 'Verification email sent'
+          : 'We could not send the verification email right now.',
       });
     } catch (error) {
       next(error);

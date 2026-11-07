@@ -108,8 +108,168 @@ model User {
   visitorLinks         VisitorLink[]
   visitEvents          VisitEvent[]
 
+  // ── Phase 2 Cloud: email verification + org/tenant membership (2026-11-06) ──
+  // NULL = unverified. Self-host/private instances never gate on this (see
+  // org/email-verification policy); the column is additive so every existing
+  // account keeps working untouched.
+  emailVerifiedAt DateTime?
+  /// Phase 2 Cloud leg 1 item 5 (terms surfaces): WHEN this account accepted the
+  /// Terms of Service + Acceptable Use, and WHICH version it accepted. NULL =
+  /// never recorded — every pre-existing account, which is why enforcement is
+  /// policy-gated (require_terms_acceptance, default OFF) rather than assumed:
+  /// refusing registration on a NULL here would lock out the whole back catalogue.
+  termsAcceptedAt DateTime?
+  /// The terms version accepted (a date string matching the /terms page's
+  /// "Last updated" line). Stored rather than derived so a future terms revision
+  /// can tell who accepted what without guessing from account createdAt.
+  termsVersion    String?
+  memberships     Membership[]
+  ownedOrgs       Organization[] @relation("OrgOwner")
+  emailVerificationTokens EmailVerificationToken[]
+
   @@index([parentId])
   @@map("users")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Phase 2 Cloud — org/tenant model (todo ea95fa0b, leg 1 items 1-3)
+//
+// WHY an org and not just a userId on the quota row: the free tier must be
+// enforced per TENANT, and the same model has to serve two shapes with one code
+// path — a solo user (personal org, auto-created) and a team (several users
+// sharing one org's quota). Putting the counters on Organization means a
+// member joining a team org inherits its pool instead of dragging a second
+// quota along, and Phase 3 Enterprise RBAC hangs off Membership.role.
+//
+// LIMIT SEMANTICS (deliberate, and load-bearing): a NULL limit means UNLIMITED.
+// Every account that existed before this migration is backfilled onto a
+// personal org with NULL limits, so enforcement is a no-op for them — this
+// ships to prod without throttling a single existing user. Only an org with a
+// numeric limit is metered.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum OrgPlan {
+  FREE
+  TEAM
+  ENTERPRISE
+}
+
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+/// A tenant. Every user is guaranteed exactly one PERSONAL org (personal=true,
+/// one membership) at creation time, so "org-optional signup" and "team org"
+/// share one enforcement path. is-suspended is the per-tenant kill switch
+/// (leg 1 item 4): a suspended org cannot send, without a deploy.
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  /// URL-safe handle; personal orgs derive it from the email local-part and
+  /// get a discriminator appended until unique (org.service.ts slugify).
+  slug      String   @unique
+  plan      OrgPlan  @default(FREE)
+  /// The user who created it. SetNull so the org (and its usage history)
+  /// survives its creator's account deletion — a team org must not vanish
+  /// because one member left.
+  ownerId   String?
+  owner     User?    @relation("OrgOwner", fields: [ownerId], references: [id], onDelete: SetNull)
+  /// True for the auto-created single-member org. A user's personal org is
+  /// their default context; it is never shared and never deleted separately.
+  personal  Boolean  @default(true)
+  /// Per-tenant kill switch. True ⇒ every send from this org is refused.
+  suspended Boolean  @default(false)
+  suspendedReason String?
+  /// NULL = unlimited (the pre-existing-account + self-host posture).
+  dailyMessageLimit Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships Membership[]
+  usageDays   OrgUsageDaily[]
+  modelUsageDays OrgModelUsageDaily[]
+
+  @@index([ownerId])
+  @@map("organizations")
+}
+
+/// User ↔ Organization. One row per (user, org); a user belongs to exactly one
+/// PERSONAL org plus any number of team orgs (Phase 3 RBAC extends `role`).
+model Membership {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  role           OrgRole  @default(MEMBER)
+  /// The org a user's sends bill against by default. Exactly one per user is
+  /// enforced in code (org.service.ts ensurePersonalOrg), not by a partial
+  /// unique index — personal orgs are created inside the same transaction as
+  /// the user, so the invariant holds at the only creation point.
+  isDefault      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+  @@index([userId, isDefault])
+  @@map("memberships")
+}
+
+/// Per-org, per-UTC-day message counter. One row per (org, day); the guard
+/// increments it atomically BEFORE any model call and refunds on a failed
+/// start, so a crashed send never silently eats a slot.
+model OrgUsageDaily {
+  id             String   @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  /// UTC calendar day, stored as midnight UTC (the bucket key).
+  day            DateTime @db.Date
+  messages       Int      @default(0)
+  /// Tokens summed across every model for the day (denormalized convenience;
+  /// per-model detail lives in OrgModelUsageDaily).
+  tokensIn       Int      @default(0)
+  tokensOut      Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, day])
+  @@map("org_usage_daily")
+}
+
+/// Per-org, per-UTC-day, PER-MODEL token usage (leg 1 item 3: "per-model token
+/// quota"). Keyed by model id string, not a FK — model ids arrive from the
+/// provider registry and legacy aliases must not require a schema change.
+model OrgModelUsageDaily {
+  id             String   @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  day            DateTime @db.Date
+  model          String
+  tokensIn       Int      @default(0)
+  tokensOut      Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([organizationId, day, model])
+  @@index([organizationId, day])
+  @@map("org_model_usage_daily")
+}
+
+/// Email-verification token for self-serve signup. The RAW token is never
+/// stored — `tokenHash` is sha256(raw), so a database read cannot mint a
+/// verification link. Single-use (`consumedAt`), short-lived (`expiresAt`),
+/// and superseded rather than reused on resend.
+model EmailVerificationToken {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String   @unique
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@map("email_verification_tokens")
 }
 
 /// Content reports (M2-prep — App Store 1.2/1.4, Play UGC policy): a

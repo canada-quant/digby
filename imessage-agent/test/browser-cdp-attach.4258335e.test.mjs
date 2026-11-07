@@ -201,6 +201,6 @@ test('4258335e: agent version is 0.5.0 (backend gates attach dispatches on it)',
   // 2f646c10 (2026-09-25): the version floor moved to 0.6.0 — the backend's
   // CDP-attach gate compares agentVersion ≥ 0.5.0, and every 0.6.0 agent
   // satisfies it, so the lockstep pin tracks the CURRENT version.
-  assert.match(configSrc, /AGENT_VERSION = '0\.9\.23'/, 'config.ts AGENT_VERSION must be 0.9.23');
-  assert.equal(pkg.version, '0.9.23', 'package.json version must match AGENT_VERSION');
+  assert.match(configSrc, /AGENT_VERSION = '0\.9\.24'/, 'config.ts AGENT_VERSION must be 0.9.24');
+  assert.equal(pkg.version, '0.9.24', 'package.json version must match AGENT_VERSION');
 });

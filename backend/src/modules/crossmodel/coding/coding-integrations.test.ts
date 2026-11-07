@@ -82,8 +82,9 @@ jest.mock('../plaid/plaid-mcp', () => ({
 }));
 jest.mock('../imessage/imessage.service', () => ({
   selectAgent: jest.fn(),
+  listAgents: jest.fn(async () => []),
   agentDisplayName: (a: any) => (a?.label || a?.deviceName || 'Mac'),
-  isOnline: jest.fn(),
+  isOnline: (lastSeenAt: any) => !!lastSeenAt && Date.now() - new Date(lastSeenAt).getTime() < 45_000,
 }));
 jest.mock('../imessage/agent-link', () => ({
   agentBroker: { dispatch: jest.fn() },
@@ -102,7 +103,7 @@ import * as slack from '../slack/slack-mcp';
 import * as x from '../x/x-mcp';
 import * as xero from '../xero/xero-mcp';
 import * as plaid from '../plaid/plaid-mcp';
-import { selectAgent } from '../imessage/imessage.service';
+import { selectAgent, listAgents } from '../imessage/imessage.service';
 import { agentBroker } from '../imessage/agent-link';
 
 const U = 'u1';
@@ -553,14 +554,14 @@ describe('mac_calendar_list_events v0.7.3 sign-in guard', () => {
       agentVersion: '0.7.3', capabilities: ['imessage', 'calendar'], platform: 'macos',
       isDefault: false, lastSeenAt: new Date(), pairedAt: new Date(),
     };
-    asMock(selectAgent).mockResolvedValue({ agent: signedOutMac, note: 'mac-b', error: null });
+    asMock(listAgents).mockResolvedValue([signedOutMac]);
     asMock(agentBroker.dispatch).mockResolvedValue({
       events: null,
       unavailable: { reason: 'no-calendar-account', pane: 'calendar' },
     });
     const out = await executeIntegrationTool(U, 'mac_calendar_list_events', { device: 'mac-b' });
     expect(agentBroker.dispatch).toHaveBeenCalledWith('agent-9', 'calendar_list_events', expect.anything(), 30000);
-    expect(out).toMatch(/not signed in to the Apple account/);
+    expect(out).toMatch(/not signed in to an Apple account/);
     expect(out).toMatch(/mac-b/);
     // Never the raw unavailable JSON masquerading as an empty success.
     expect(out).not.toMatch(/"events":null/);
@@ -582,7 +583,7 @@ describe('mac_calendar_list_events daf8706a tier-0 + client surfacing', () => {
     isDefault: false, lastSeenAt: new Date(), pairedAt: new Date(),
   };
   it('surfaces never-requested copy (client named, dialog announced) for a tier-0 agent', async () => {
-    asMock(selectAgent).mockResolvedValue({ agent: tier0Mac, note: 'mac-b', error: null });
+    asMock(listAgents).mockResolvedValue([tier0Mac]);
     asMock(agentBroker.dispatch).mockResolvedValue({
       events: null,
       unavailable: {
@@ -592,33 +593,40 @@ describe('mac_calendar_list_events daf8706a tier-0 + client surfacing', () => {
       },
     });
     const out = await executeIntegrationTool(U, 'mac_calendar_list_events', { device: 'mac-b' });
-    expect(out).toMatch(/never requested/);
-    expect(out).toMatch(/one-time consent dialog was just triggered/);
+    expect(out).toMatch(/never been granted Calendar access/);
+    // 2026-11-06 repair: the copy must NEVER claim a dialog was triggered —
+    // the request is asynchronous and its outcome was previously discarded,
+    // so nothing verified that sentence (owner chased dialogs that never
+    // appeared on three Macs).
+    expect(out).not.toMatch(/dialog was just triggered/);
+    expect(out).toMatch(/No consent attempt has been recorded on that Mac yet/);
     // The client binary must be visible in ONE line (ask 1).
     expect(out).toMatch(/\/Library\/Application Support\/Digby\/DigbyAgent/);
     expect(out).toMatch(/DIFFERENT client/);
     expect(out).not.toMatch(/"events":null/);
   });
   it('names the agent binary in the denial copy when the client is present', async () => {
-    asMock(selectAgent).mockResolvedValue({ agent: tier0Mac, note: 'mac-b', error: null });
+    asMock(listAgents).mockResolvedValue([tier0Mac]);
     asMock(agentBroker.dispatch).mockResolvedValue({
       events: null,
       unavailable: { reason: 'calendar-denied', pane: 'calendar', client: '/usr/local/bin/digby-agent' },
     });
     const out = await executeIntegrationTool(U, 'mac_calendar_list_events', { device: 'mac-b' });
-    expect(out).toMatch(/access is denied/);
+    expect(out).toMatch(/switched OFF for the Digby agent/);
+    // The client binary is the TCC client the user must enable; a bare
+    // "Digby" app row is a different client.
     expect(out).toMatch(/\/usr\/local\/bin\/digby-agent/);
     expect(out).not.toMatch(/"events":null/);
   });
   it('omits the client gracefully when an older agent (≤0.9.10) sends the legacy shape', async () => {
-    asMock(selectAgent).mockResolvedValue({ agent: tier0Mac, note: 'mac-b', error: null });
+    asMock(listAgents).mockResolvedValue([tier0Mac]);
     asMock(agentBroker.dispatch).mockResolvedValue({
       events: null,
       unavailable: { reason: 'calendar-denied', pane: 'calendar' },
     });
     const out = await executeIntegrationTool(U, 'mac_calendar_list_events', { device: 'mac-b' });
-    expect(out).toMatch(/access is denied/);
-    expect(out).not.toMatch(/\(\)/); // no empty parens where the path would ride
+    expect(out).toMatch(/switched OFF for the Digby agent/);
+    expect(out).not.toMatch(/undefined/);
     expect(out).not.toMatch(/"events":null/);
   });
 });

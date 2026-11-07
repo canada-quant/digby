@@ -1316,6 +1316,16 @@ export async function sendChatMessage(opts: {
     };
   }
 
+  // Phase 2 Cloud: per-org send quota on the REST/agent seam (todo ea95fa0b
+  // leg 1 item 3). A HUMAN send is metered here; a machine wake rides the
+  // user's own turn budget rather than an unbounded one. Guarding before the
+  // run start keeps a refusal a clean thrown status rather than a queued
+  // message, and — as on the stream seam — no compute depth is reachable
+  // before this point. Null-limit orgs pass untouched.
+  if (humanSend) {
+    const { guardOrgSend } = await import('../org/org-quota.service');
+    await guardOrgSend(userId);
+  }
   const started = await startDetachedChatRun({
     userId, chatId, message: content, mode, ...(routing ? { routing } : {}),
     ...(routingSource ? { routingSource } : {}),

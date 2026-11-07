@@ -714,8 +714,20 @@ export function observationGeometry(obs: Pick<ComputerObservation,
   };
 }
 
-/** The panel's screen frame for an observation carrying a screenshot. */
+/** The panel's screen frame for an observation carrying a screenshot.
+ *
+ *  Ticket a7f604ab: the frame carries its PROVENANCE, and `live` is never
+ *  asserted for a frame that is not the newest capture. A caller reading a
+ *  `live: true` event must be able to trust that the pixels are the current
+ *  screen; a replayed frame is emitted WITHOUT `live` and WITH `replay:true`
+ *  so a panel (or a lane) can render it as historical instead of acting on
+ *  stale pixels. */
 function screenshotFrame(obs: ComputerObservation, live: boolean) {
+  const prov = obs.frame;
+  // A provenance that says replay is authoritative: the call sites pass
+  // `live` for the CURRENT screen, but a rewound frame must never be
+  // advertised as live on the strength of the caller's intent alone.
+  const isReplay = prov?.replay === true;
   return {
     action: "screenshot",
     ok: true,
@@ -724,7 +736,9 @@ function screenshotFrame(obs: ComputerObservation, live: boolean) {
     app: obs.frontmostApp,
     screenshotBase64: obs.screenshotBase64,
     ...observationGeometry(obs),
-    ...(live ? { live: true } : {}),
+    ...(prov ? { frame: prov } : {}),
+    ...(live && !isReplay ? { live: true } : {}),
+    ...(isReplay ? { replay: true } : {}),
   };
 }
 
@@ -1070,6 +1084,13 @@ export async function runComputerAgentSession(
   // unavailable, vision-missing, busy) so the tool-result header can always
   // speak the truth about which device ran — byte-identical when absent.
   const selectionDeviceFlags = () => ({
+    // Ticket 2d461d80 (2026-11-06): the selected device's PLATFORM rides every
+    // result shape that selected a device — the same contract as the flags
+    // below. `localStatus` says "connected (Windows agent v0.9.x)" in prose,
+    // but prose is not branchable: the tool-result header shipped a literal
+    // `mac:` prefix on Windows-pinned attempts precisely because nothing
+    // typed existed to render.
+    ...(selection.platform ? { platform: selection.platform } : {}),
     ...(selection.deviceAutoBound
       ? { deviceAutoBound: true, taskTextNamedDevices: selection.taskTextNamedDevices }
       : {}),
@@ -1294,6 +1315,7 @@ export async function runComputerAgentSession(
       probesConclusive: 0,
       inputProven: false,
       frontmostChanges: 0,
+      probeFrameReplays: 0,
     };
     const noteGeometry = (o: ComputerObservation) => {
       if (o.imageWidth && o.imageHeight) counters.frameGeometry = `${o.imageWidth}×${o.imageHeight}`;
@@ -1302,10 +1324,69 @@ export async function runComputerAgentSession(
       lastGeometry = g;
     };
 
+    // ── Ticket a7f604ab: PER-FRAME PROVENANCE ────────────────────────────
+    // Every observation that carries pixels is stamped here, at the ONE place
+    // the harness receives a frame from the driver — so the sequence number
+    // and the capture clock describe the CAPTURE, not a later re-presentation
+    // of it. That is what makes a rewind provable: a frame served with a seq
+    // that a caller has already seen a higher value for is, by construction,
+    // historical.
+    //
+    // `frameSeq` only ever increments (never resets between probes, legs,
+    // restores or actions) — the property the whole contract rests on.
+    let frameSeq = 0;
+    let newestFrameSeq = 0;
+    let lastFrameCapturedAt: string | null = null;
+    /** Stamp a fresh capture from the driver. Mutates and returns the obs so
+     *  call sites read `stampFrame(await driver.execute(...))`. */
+    const stampFrame = (o: ComputerObservation): ComputerObservation => {
+      if (!o || !o.screenshotBase64) return o;
+      frameSeq += 1;
+      newestFrameSeq = frameSeq;
+      lastFrameCapturedAt = new Date().toISOString();
+      o.frame = {
+        seq: frameSeq,
+        // The HARNESS clock, deliberately: a device with a wrong wall clock (or
+        // one replaying a cached frame) must not be able to falsify freshness.
+        capturedAt: lastFrameCapturedAt,
+        deviceId: drivenDeviceId ?? null,
+        device: selection.device ?? null,
+        platform: selection.platform ?? null,
+      };
+      return o;
+    };
+    /** Re-serve an ALREADY-captured observation as a REPLAY — used when the
+     *  only frame available is older than the newest one captured (the rewind
+     *  this ticket exists for). Keeps the original seq (so "how stale" stays
+     *  readable) and records its wall-clock age plus why. NEVER bumps the
+     *  sequence: a replay is not a capture.
+     *
+     *  Returns a COPY rather than mutating the observation in place: the
+     *  argument can be a shared probe-leg observation, and a label written onto
+     *  it would stick to that object wherever else it is later read. A replay
+     *  label must attach to the SERVING of the frame, not to the frame. */
+    const markReplay = (o: ComputerObservation, reason: string): ComputerObservation => {
+      const base = o.frame;
+      const capturedAt = base?.capturedAt ?? new Date().toISOString();
+      return {
+        ...o,
+        frame: {
+          seq: base?.seq ?? 0,
+          capturedAt,
+          deviceId: base?.deviceId ?? drivenDeviceId ?? null,
+          device: base?.device ?? selection.device ?? null,
+          platform: base?.platform ?? selection.platform ?? null,
+          replay: true,
+          replayAgeMs: Math.max(0, Date.now() - Date.parse(capturedAt)),
+          replayReason: reason,
+        },
+      };
+    };
+
     // ── Initial screenshot grounds the session ──
     let first: ComputerObservation;
     try {
-      first = await driver.execute({ name: "screenshot" });
+      first = stampFrame(await driver.execute({ name: "screenshot" }));
     } catch (e: any) {
       // W1 (2026-09-25): platform-branch the screen noun; macOS/null keeps the
       // exact historical notice.
@@ -1316,6 +1397,12 @@ export async function runComputerAgentSession(
         elapsed: Date.now() - started,
         steps: 0,
         localStatus: selection.status,
+        // Ticket 2d461d80 (adversarial review A1): a device WAS selected on
+        // this path, so the platform must ride it — without this the header
+        // renders `mac:` over a Windows availability line, which is the
+        // incident's exact bytes on a genuinely reachable Windows path
+        // (missing Screen Recording permission / UIPI on the first shot).
+        ...selectionDeviceFlags(),
         capabilityNotice: notice,
       };
     }
@@ -1339,6 +1426,9 @@ export async function runComputerAgentSession(
         elapsed: Date.now() - started,
         steps: 0,
         localStatus: selection.status,
+        // Ticket 2d461d80 (adversarial review A1): see the sibling path above —
+        // the selected device's platform must ride this shape too.
+        ...selectionDeviceFlags(),
         capabilityNotice: notice,
       };
     }
@@ -1647,7 +1737,7 @@ export async function runComputerAgentSession(
             continue;
           }
 
-          const obs = await driver.execute(action);
+          const obs = stampFrame(await driver.execute(action));
 
           // cu-diag fix #1: focus split — the frontmost window is on a display
           // this frame does not show (agent ≥ 0.6.1 reports both ids).
@@ -1868,6 +1958,11 @@ export async function runComputerAgentSession(
           let probeNote = "";
           let probeFailed = false;
           let probeFrame: ComputerObservation | null = null;
+          // Ticket a7f604ab: whether `probeFrame` is a re-served OLDER frame
+          // (a rewind) rather than a fresh capture. Declared beside the slot it
+          // describes so the emission site below can read it; reset false at
+          // the top of every action so a replay never leaks into the next step.
+          let probeFrameIsReplay = false;
           if (
             strikeScored &&
             noChangeStreak >= PROBE_AT_STRIKES &&
@@ -1907,7 +2002,7 @@ export async function runComputerAgentSession(
                 let dispatched = false;
                 let landed = false;
                 try {
-                  r = await driver.execute({ name: "key", key: leg.key, modifiers: [...leg.modifiers], reasoning: "harness positive-control probe" });
+                  r = stampFrame(await driver.execute({ name: "key", key: leg.key, modifiers: [...leg.modifiers], reasoning: "harness positive-control probe" }));
                   dispatched = true;
                   landed = !!r && r.ok !== false;
                 } catch (e: any) {
@@ -1958,14 +2053,56 @@ export async function runComputerAgentSession(
               // changed, so its frontmost field IS the live truth.
               if (passed?.label === PROBE_LEGS[1].label && tabLeg?.frontmost && preApp && tabLeg.frontmost !== preApp) {
                 try {
-                  const back = await driver.execute({ name: "key", key: PROBE_LEGS[1].key, modifiers: [...PROBE_LEGS[1].modifiers], reasoning: "harness probe restore" });
+                  const back = stampFrame(await driver.execute({ name: "key", key: PROBE_LEGS[1].key, modifiers: [...PROBE_LEGS[1].modifiers], reasoning: "harness probe restore" }));
                   if (back?.screenshotBase64) lastLegObs = back;
                 } catch (e: any) {
                   logger.warn(`computer loop: harness probe focus-restore failed to dispatch: ${e?.message || e}`);
                 }
               }
-              const p2 = await driver.execute({ name: "key", key: "escape", reasoning: "harness probe cleanup" });
-              probeFrame = (p2.ok && p2.screenshotBase64) ? p2 : lastLegObs?.screenshotBase64 ? lastLegObs : null;
+              const p2 = stampFrame(await driver.execute({ name: "key", key: "escape", reasoning: "harness probe cleanup" }));
+              // ── Ticket a7f604ab: NEVER rewind silently ──────────────────
+              // The pre-fix line was
+              //   probeFrame = (p2.ok && p2.screenshotBase64) ? p2
+              //              : lastLegObs?.screenshotBase64 ? lastLegObs : null;
+              // and its fallback is the defect this ticket exists for: when the
+              // Escape cleanup produced no frame, the probe re-served
+              // `lastLegObs` — a frame captured SEVERAL dispatches earlier, from
+              // an earlier leg or a focus-restore — and everything downstream
+              // treated it as the current screen: it was emitted
+              // `screenshotFrame(probeFrame, live: true)`, handed to the model
+              // captioned "Screenshot after … and the harness probe" (so the
+              // model's NEXT click used stale coordinates), and ADOPTED as the
+              // write-path watchdog's baseline (`lastShotB64`), which corrupts
+              // every byte-identity strike scored afterwards.
+              //
+              // The fallback itself is legitimate — it is better than showing
+              // nothing — but only as an honestly LABELLED replay. A frame is
+              // live here ONLY when it is the freshest capture the session has
+              // (seq === newestFrameSeq); anything older is marked replay and
+              // carries how far behind live it is. `markReplay` keeps the
+              // original seq, so a caller can prove the staleness from the
+              // envelope alone (a seq below one it already saw = rewind).
+              const p2Live = !!(p2.ok && p2.screenshotBase64 && p2.frame && p2.frame.seq === newestFrameSeq);
+              probeFrame = p2Live
+                ? p2
+                : lastLegObs?.screenshotBase64
+                  ? markReplay(
+                      lastLegObs,
+                      `the probe's own post-Escape capture produced no frame (${p2.ok === false ? p2.error || 'dispatch refused' : 'no screenshot returned'}), so the newest AVAILABLE frame is this earlier one — it is NOT the current screen`,
+                    )
+                  : null;
+              // A replay is a HISTORICAL frame: it must never seed the
+              // dead-input watchdog baseline (a stale baseline makes every
+              // later comparison meaningless) and must never be presented to
+              // the model as the screen to click in. (Declared beside the slot
+              // above; the focus restore below can replace it with a fresh one.)
+              probeFrameIsReplay = probeFrame?.frame?.replay === true;
+              if (probeFrameIsReplay) {
+                counters.probeFrameReplays = (counters.probeFrameReplays ?? 0) + 1;
+                logger.warn(
+                  `computer loop: probe could not serve a live frame — replaying seq ${probeFrame!.frame!.seq} captured ${probeFrame!.frame!.replayAgeMs}ms earlier; ticket a7f604ab`,
+                );
+              }
               // ticket 09c984d8 (MEDIUM-2): a switcher leg that did NOT pass can
               // still have moved the user's focus. Cmd+Tab commits the switch
               // whether or not the probe could READ the result — the switcher's
@@ -1991,10 +2128,15 @@ export async function runComputerAgentSession(
                   })
                 ) {
                   try {
-                    const back = await driver.execute({ name: "key", key: PROBE_LEGS[1].key, modifiers: [...PROBE_LEGS[1].modifiers], reasoning: "harness probe restore" });
+                    const back = stampFrame(await driver.execute({ name: "key", key: PROBE_LEGS[1].key, modifiers: [...PROBE_LEGS[1].modifiers], reasoning: "harness probe restore" }));
                     if (back?.screenshotBase64) {
                       lastLegObs = back;
+                      // Ticket a7f604ab: this IS a fresh capture (stampFrame just
+                      // gave it the newest seq), so it legitimately replaces the
+                      // probe frame — and it must clear a replay label the
+                      // earlier fallback put on the slot.
                       probeFrame = back;
+                      probeFrameIsReplay = back.frame?.replay === true;
                     }
                   } catch (e: any) {
                     logger.warn(`computer loop: harness probe focus-restore failed to dispatch: ${e?.message || e}`);
@@ -2039,7 +2181,12 @@ export async function runComputerAgentSession(
                 // no-op key).
                 sendEvent("computer-observation", { action: "probe", ok: false, driver: "computer", preview: `harness probe inconclusive: ${inconclusiveLegs.map((l) => l.label).join(", ")} produced no frame` });
               }
-              if (probeFrame?.screenshotBase64) {
+              if (probeFrame?.screenshotBase64 && !probeFrameIsReplay) {
+                // Ticket a7f604ab: only a LIVE probe frame may become the
+                // watchdog baseline. A replayed (older) frame here would make
+                // the next byte-identity comparison compare against stale
+                // pixels — scoring a real change as "identical" or a stale
+                // frame as "changed", and corrupting every strike after it.
                 lastShotB64 = probeFrame.screenshotBase64;
                 lastFrameGrade = gradeFrame(probeFrame);
                 lastShotBpp = lastFrameGrade.bpp;
@@ -2080,6 +2227,10 @@ export async function runComputerAgentSession(
             ...(presenceGateWarning ? { ownerPresenceGated: true } : {}),
             // cu-diag fix #5: the harness-measured diff rides the event too.
             ...(harnessDiff ? { harness: harnessDiff } : {}),
+            // Ticket a7f604ab: the per-action EVENT carries the frame's
+            // provenance too, so an event-log reader (not just the panel) can
+            // attribute the pixels to a sequence, a capture clock and a device.
+            ...(obs.frame ? { frame: obs.frame } : {}),
           });
           if (obs.screenshotBase64) {
             // live:true — the panel refreshes its screen view without logging a
@@ -2087,7 +2238,12 @@ export async function runComputerAgentSession(
             sendEvent("computer-observation", screenshotFrame(obs, true));
           }
           if (probeFrame?.screenshotBase64) {
-            sendEvent("computer-observation", screenshotFrame(probeFrame, true));
+            // Ticket a7f604ab: `live` is claimed ONLY for a fresh probe
+            // capture. A replayed probe frame was previously emitted
+            // `live: true` and the panel drew an OLDER screen as the current
+            // one — screenshotFrame() now refuses to assert live on a replay
+            // and stamps `replay: true` instead.
+            sendEvent("computer-observation", screenshotFrame(probeFrame, !probeFrameIsReplay));
           }
 
           // Feed back: echo the call, then the textual outcome, then (when we have
@@ -2169,16 +2325,29 @@ export async function runComputerAgentSession(
           // The frame the model sees next: the post-probe frame when a harness
           // probe ran (the screen after Escape is the current state), else
           // the action's own auto-screenshot.
+          //
+          // Ticket a7f604ab: a REPLAYED probe frame is never labelled as the
+          // current state. The pre-fix caption — "Screenshot after \"…\" and the
+          // harness probe … click in THIS pixel space" — told the model to act on
+          // pixels that could be several dispatches stale, with no marker. It is
+          // still SHOWN (better than a blank turn) but labelled historical, and
+          // the coordinate instruction is withdrawn.
           const frameForModel = probeFrame?.screenshotBase64 && probeFrame.imageWidth && probeFrame.imageHeight ? probeFrame : obs;
+          const frameIsProbe = frameForModel === probeFrame;
+          const frameIsReplay = frameForModel.frame?.replay === true;
           if (frameForModel.screenshotBase64 && frameForModel.imageWidth && frameForModel.imageHeight) {
             stripOlderImages(inputItems);
             inputItems.push(
               userImageMessage(
-                `Screenshot after "${action.name}"${frameForModel === probeFrame ? " and the harness probe" : ""} (${frameForModel.imageWidth}×${frameForModel.imageHeight} px — click in THIS pixel space).` +
-                  (typeof frameForModel.displayId === "number" ? ` Captured display ${frameForModel.displayId}${typeof frameForModel.displayCount === "number" ? ` of ${frameForModel.displayCount}` : ""}.` : "") +
-                  (harnessDiff ? ` Harness measured after "${action.name}": ${harnessDiff}.` : "") +
-                  (splitWarning ? `\n\n${splitWarning}` : "") +
-                  (presenceGateWarning ? `\n\n${presenceGateWarning}` : ""),
+                frameIsReplay
+                  ? `STALE FRAME — REPLAY, NOT THE CURRENT SCREEN. The harness could not obtain a fresh capture after "${action.name}" and the harness probe (${frameForModel.frame?.replayReason || "the post-probe capture returned no frame"}; ${frameForModel.frame?.replayAgeMs ?? 0}ms old, captured ${frameForModel.frame?.capturedAt || "unknown"}). ` +
+                    `Do NOT click in this image's pixel space — its coordinates may no longer match the screen. Take ONE screenshot to re-ground, or call done and report what you last verified.`
+                  : `Screenshot after "${action.name}"${frameIsProbe ? " and the harness probe" : ""} (${frameForModel.imageWidth}×${frameForModel.imageHeight} px — click in THIS pixel space).` +
+                    (typeof frameForModel.displayId === "number" ? ` Captured display ${frameForModel.displayId}${typeof frameForModel.displayCount === "number" ? ` of ${frameForModel.displayCount}` : ""}.` : "") +
+                    (harnessDiff ? ` Harness measured after "${action.name}": ${harnessDiff}.` : "") +
+                    (frameForModel.frame ? ` Frame seq ${frameForModel.frame.seq}${frameForModel.frame.device ? ` from ${frameForModel.frame.device}` : ""}.` : "") +
+                    (splitWarning ? `\n\n${splitWarning}` : "") +
+                    (presenceGateWarning ? `\n\n${presenceGateWarning}` : ""),
                 frameForModel.screenshotBase64,
               ),
             );
@@ -2304,6 +2473,22 @@ export async function runComputerAgentSession(
       ...(ownerPresenceResult.active || ownerPresenceResult.gated ? { ownerPresence: ownerPresenceResult } : {}),
       // cu-diag fix #3: harness-measured counters for the tool-result header.
       harness: counters,
+      // Ticket a7f604ab: the session's frame provenance summary, so a caller
+      // that never saw an intermediate event can still machine-prove what the
+      // frames were. Frames lost to a probe rewind are counted (never silently
+      // dropped) and the producing device is stated once, at the envelope.
+      frameProvenance: {
+        /** Frames the harness captured this session (monotonic seq ceiling). */
+        frames: newestFrameSeq,
+        /** How many probe re-served an older frame instead of a fresh one. */
+        replays: counters.probeFrameReplays ?? 0,
+        /** The device that produced this session's frames (null = unknown). */
+        deviceId: drivenDeviceId ?? null,
+        device: selection.device ?? null,
+        platform: selection.platform ?? null,
+        /** ISO timestamp of the newest capture this session (null when none). */
+        lastCapturedAt: lastFrameCapturedAt,
+      },
     };
   } finally {
     // Always drop the per-device lock — the compare-and-delete release makes a

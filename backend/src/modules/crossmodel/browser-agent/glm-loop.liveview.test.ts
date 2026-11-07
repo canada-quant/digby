@@ -152,6 +152,33 @@ describe("computer handoff (router kind 'computer')", () => {
     expect(events.some((e) => e.t === 'progress' && e.d.message === 'Needs your real Chrome session.')).toBe(true);
   });
 
+  /**
+   * Ticket a544f308: the handoff must FORWARD the platform the computer run
+   * actually drove. Dropping it here is what made a Windows capture caption
+   * "Final screen · Your Mac" in the caller (tool-executor's browser_task
+   * attach) — so this seam is pinned AT THE SEAM, not only downstream where
+   * the result is hand-built. Deleting the spread in glm-loop.ts fails this.
+   */
+  it('forwards the driven platform so the caller captions the right machine (a544f308)', async () => {
+    (selectBrowserDriver as jest.Mock).mockResolvedValue({
+      driver: null, kind: 'computer', reason: 'Needs your real desktop.', localStatus: 'connected (Windows agent v0.9.10)', computerStatus: 'connected (Windows agent v0.9.10)',
+    });
+    mockRunComputer.mockResolvedValue({ finalResponse: 'Reached #announcements.', elapsed: 9000, steps: 3, localStatus: 'connected (Windows agent v0.9.10)', device: 'cql-stanne-msi-win', platform: 'windows' });
+
+    const r = await run();
+    expect(r.driverUsed).toBe('computer');
+    expect(r.computerPlatform).toBe('windows');
+  });
+
+  it('omits computerPlatform when the computer run selected no device (legacy/absent shape)', async () => {
+    (selectBrowserDriver as jest.Mock).mockResolvedValue({ driver: null, kind: 'computer', reason: 'mac', computerStatus: 'x' });
+    mockRunComputer.mockResolvedValue({ finalResponse: 'Done.', elapsed: 1, steps: 1 });
+    const r = await run();
+    expect(r.computerPlatform).toBeUndefined();
+    // Additive only: the rest of the shape is untouched.
+    expect(r.driverUsed).toBe('computer');
+  });
+
   it("the computer agent's capabilityNotice is carried through (hard, cause-naming)", async () => {
     (selectBrowserDriver as jest.Mock).mockResolvedValue({ driver: null, kind: 'computer', reason: 'mac', computerStatus: 'x' });
     mockRunComputer.mockResolvedValue({ finalResponse: 'COMPUTER USE UNAVAILABLE — offline', elapsed: 1, steps: 0, capabilityNotice: 'COMPUTER USE UNAVAILABLE — offline' });

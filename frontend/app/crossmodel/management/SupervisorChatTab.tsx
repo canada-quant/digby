@@ -18,7 +18,7 @@ import { AssistantParts } from '../components/code-transcript';
 import ChatComposer, { COMPOSER_TOOL_BTN } from '../components/ChatComposer';
 import type { ChatComposerHandle } from '../components/ChatComposerTextarea';
 import { useVoiceComposer } from '../components/use-voice-composer';
-import { AttachmentChips, uploadChatFiles, type AttachmentInfo } from '../components/attachments';
+import { AttachmentChips, AttachmentNotice, uploadChatFiles, type AttachmentInfo, type AttachmentRejection } from '../components/attachments';
 import { CodeTranscriptMarkdown } from '../components/code-transcript';
 import type { PlainMessageMeta } from '@/lib/api/coding';
 import { TranscriptAttachmentChips } from '@/components/ui/custom/prompt/transcript-attachment-chips';
@@ -123,6 +123,10 @@ export function SupervisorChatTab({ onGoLogs, focusMessageId }: { onGoLogs: () =
   // to the main chat: paperclip / drop / paste → POST /crossmodel/upload →
   // chips bar; uploadIds ride the fleet send (backend resolves + attaches).
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
+  // Ticket 33a742c1: files that FAILED to stage (this is the surface where the
+  // owner watched .log attachments attach then vanish). Told inline, next to
+  // the chips, so a rejection can never read as a silent disappearance.
+  const [attachmentRejections, setAttachmentRejections] = useState<AttachmentRejection[]>([]);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -670,7 +674,13 @@ export function SupervisorChatTab({ onGoLogs, focusMessageId }: { onGoLogs: () =
     if (!files.length) return;
     let staged: AttachmentInfo[] = [];
     try {
-      staged = await uploadChatFiles(files, { onBytesReady: () => setUploading(true) });
+      staged = await uploadChatFiles(files, {
+        onBytesReady: () => setUploading(true),
+        // Ticket 33a742c1: a rejected file leaves a PERSISTENT inline notice —
+        // the owner's report was that a .log "just disappears after uploading"
+        // with no error, because a transient toast was the only trace.
+        onRejected: (rejections) => setAttachmentRejections((prev) => [...prev, ...rejections]),
+      });
     } catch {
       staged = []; // uploadChatFiles toasts per-file; this is belt-and-braces
     } finally {
@@ -1186,8 +1196,14 @@ export function SupervisorChatTab({ onGoLogs, focusMessageId }: { onGoLogs: () =
               if (e.dataTransfer.files.length) void attachFiles(Array.from(e.dataTransfer.files));
             },
           }}
-          topContent={attachments.length > 0 ? (
-            <AttachmentChips attachments={attachments} onRemove={(i) => setAttachments((prev) => prev.filter((_, j) => j !== i))} />
+          topContent={attachments.length > 0 || attachmentRejections.length > 0 ? (
+            <>
+              <AttachmentChips attachments={attachments} onRemove={(i) => setAttachments((prev) => prev.filter((_, j) => j !== i))} />
+              {/* Ticket 33a742c1: an inline, dismissible notice for any file that
+                  failed to stage — the composer must never look like it silently
+                  swallowed an attachment it had just shown. */}
+              <AttachmentNotice rejections={attachmentRejections} onDismiss={() => setAttachmentRejections([])} />
+            </>
           ) : undefined}
           footerNote={charCount >= NEAR_LIMIT_CHARS ? (
             /* Live counter once the draft nears the 8,000-char server cap

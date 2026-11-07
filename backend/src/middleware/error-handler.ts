@@ -14,16 +14,16 @@ import { EncryptionKeyError } from '../modules/crossmodel/google/crypto';
 // existing imports of peelClientIp keep resolving.
 export { peelClientIp };
 
-export class AppError extends Error {
-  constructor(
-    public statusCode: number,
-    public message: string,
-    public isOperational = true
-  ) {
-    super(message);
-    Object.setPrototypeOf(this, AppError.prototype);
-  }
-}
+// AppError lives in its own import-free leaf (2026-11-06, ea95fa0b leg 1) so a
+// module that only needs the ERROR TYPE does not pull config/env into its import
+// graph — env.ts runs its zod parse at module load and calls process.exit(1)
+// when the vars are absent, which is the normal state in a hermetic jest run.
+// That coupling killed 10 controller suites with "Jest worker encountered 4
+// child process exceptions" the moment a new module imported the type from
+// here. Re-exported so every existing import site is unchanged and the class
+// IDENTITY (hence every `instanceof AppError`) is preserved.
+import { AppError } from './app-error';
+export { AppError };
 
 /**
  * A query credential never belongs in a log row: the SSE stream takes

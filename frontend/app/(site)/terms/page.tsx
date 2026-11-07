@@ -48,7 +48,7 @@ export default function TermsOfServicePage() {
             <li>You must be at least 13 years old to use the Service.</li>
           </ul>
 
-          <h2 className="text-lg font-semibold mt-6 mb-3">4. Acceptable Use</h2>
+          <h2 id="acceptable-use" className="text-lg font-semibold mt-6 mb-3 scroll-mt-20">4. Acceptable Use</h2>
           <p className="text-sm leading-relaxed mb-2">You agree not to use the Service to:</p>
           <ul className="list-disc ml-5 space-y-1.5 text-sm mb-4">
             <li>Generate content that is illegal, harmful, threatening, abusive, or otherwise objectionable.</li>

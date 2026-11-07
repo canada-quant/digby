@@ -151,7 +151,37 @@ async function ocrWithProvider(provider: ProviderConfig, buffer: Buffer, filenam
     return r.text.trim();
   }
   if (!pages?.length) return '';
+  return ocrPagesWithProvider(provider, pages, filename);
+}
+
+/**
+ * The rendered-pages leg of one provider's attempt, split out of
+ * `ocrWithProvider` so its WARN CARDINALITY is testable without a real PDF
+ * render (ticket d634e874).
+ *
+ * ONE warn per (document, provider), never one per page. The per-page emit
+ * this replaces wrote an IDENTICAL `pdf_ocr seat: <model> (<label>) failed —
+ * timeout of 90000ms exceeded` row for every page that failed, so a single
+ * 10-page document against one slow provider could write 10 rows carrying no
+ * page identity — indistinguishable, in `app_error_logs` and in the hourly
+ * log-signal sweep, from 10 separate documents failing once each. The
+ * document-level count was ALREADY written by the summary row below, so the
+ * duplicates added volume and removed information.
+ *
+ * What is deliberately UNCHANGED: the message shape (the sweep's fingerprint
+ * and the seat-call pin both key on it), its `warn` level, and the fact that a
+ * failing provider still produces a row on EVERY document it fails — the
+ * per-seat flapping evidence is preserved, only its per-page multiplication is
+ * gone.
+ */
+export async function ocrPagesWithProvider(provider: ProviderConfig, pages: Array<{ pageNumber: number; png: Buffer }>, filename: string): Promise<string> {
+  // Review N2: `0 === 0` would otherwise read as a total failure and log
+  // "all 0 page(s) … failed" to a future direct caller. The in-repo caller
+  // guards this already; the guard belongs where the claim is made.
+  if (!pages?.length) return '';
   let failed = 0;
+  let firstError: any = null;
+  let firstFailedPage: number | null = null;
   const transcripts = await mapLimit(pages, OCR_PAGE_CONCURRENCY, async (page) => {
     try {
       const r = await seatCompletion(provider, [{
@@ -162,12 +192,24 @@ async function ocrWithProvider(provider: ProviderConfig, buffer: Buffer, filenam
       return r.text;
     } catch (err: any) {
       failed++;
-      warnSeatFailure(PDF_OCR_ROLE, provider, err);
+      if (!firstError) { firstError = err; firstFailedPage = page.pageNumber; }
       return '';
     }
   });
-  if (failed === pages.length) return '';
-  if (failed) logger.warn(`PDF OCR: ${failed}/${pages.length} page(s) of ${filename} failed on ${provider.model} — the rest of the document is kept`);
+  if (firstError) {
+    // One row for the whole document+provider. `firstFailedPage` rides the
+    // adjacent summary line (below) rather than this message, so the emit
+    // stays byte-identical to the shape the sweep fingerprints.
+    warnSeatFailure(PDF_OCR_ROLE, provider, firstError);
+  }
+  if (failed === pages.length) {
+    // Every page failed: the partial-failure summary below would not run, so
+    // record the document-level count ONCE (info — the warn above already
+    // carries the defect signal; this carries its extent).
+    logger.info(`PDF OCR: all ${pages.length} page(s) of ${filename} failed on ${provider.model}${firstFailedPage !== null ? ` (first: page ${firstFailedPage})` : ''}`);
+    return '';
+  }
+  if (failed) logger.warn(`PDF OCR: ${failed}/${pages.length} page(s) of ${filename} failed on ${provider.model} — the rest of the document is kept${firstFailedPage !== null ? ` (first: page ${firstFailedPage})` : ''}`);
   return transcripts.map(t => t.trim()).join('\n\n---\n\n').trim();
 }
 

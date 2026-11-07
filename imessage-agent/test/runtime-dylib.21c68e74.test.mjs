@@ -304,8 +304,8 @@ test('21c68e74: the self-update tree is the authority the heal reuses (naming + 
 
 test('21c68e74: the bump is stamped — 0.9.5 tree (self-contained runtime release)', () => {
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(pkg.version, '0.9.23');
-  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.23'/);
+  assert.equal(pkg.version, '0.9.24');
+  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.24'/);
   assert.match(read('src/config.ts'), /21c68e74/);
   assert.match(read('src/runtime-dylib.ts') || '', /21c68e74/);
 });

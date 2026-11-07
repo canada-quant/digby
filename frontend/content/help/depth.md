@@ -47,10 +47,10 @@ Under every answer there is exactly one control: **Dig deeper**. It runs the
 next rung that has not yet been spent on that answer:
 
 - **After a quick answer** → a full second-opinion verification of that
-  answer (what used to be "Level 2 — Ensemble"). Takes a couple of minutes.
+  answer: a different model works the same question independently and Digby
+  reconciles the two. Takes a couple of minutes.
 - **After a verified answer** → a research council: two colleague models
-  research the question independently and Digby synthesises their findings
-  (what used to be "Level 3 — Deep Research").
+  research the question independently and Digby synthesises their findings.
 
 A council takes a while, and it has no time limit: it runs for as long as the
 research needs and stops only if a model stops responding. Digby says so before it

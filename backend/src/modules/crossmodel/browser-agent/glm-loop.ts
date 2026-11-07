@@ -494,6 +494,12 @@ export async function runBrowserAgentSession(input: BrowserAgentInput): Promise<
       steps: r.steps,
       ...(r.device ? { device: r.device } : {}),
       ...(r.observeOnly ? { computerObserveOnly: true } : {}),
+      // Ticket a544f308: the handoff forwards the computer run's typed platform
+      // so the CALLER's screenshot caption names the machine that was actually
+      // driven. Dropping it here is what made a Windows capture render
+      // "Final screen · Your Mac" — the parent defect (2d461d80) fixed one path
+      // over and this handoff silently reintroduced it.
+      ...(r.platform ? { computerPlatform: r.platform } : {}),
     };
   }
 

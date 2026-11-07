@@ -58,10 +58,10 @@ export interface AgentReleaseManifest {
  * artifact, which the sha256 pin then turns into a silent never-update.
  */
 export const AGENT_RELEASE: AgentReleaseManifest = {
-  version: '0.9.23',
+  version: '0.9.24',
   url: 'https://digby.ai/digby-imessage-agent.tar.gz',
-  sha256: 'c72b92925d58ad4f1db76633a02df10e5c6be71de3f1c42a216412fedef4afcb',
-  notes: "ticket e530220e (0.9.23): re-publish \u2014 the 0.9.22 tarball carried a package-lock.json still stamping 0.9.21, so the artifact misstated its own version; the ship now verifies both files. Carries the 0.9.22 fixes: an administrator Mac no longer reads 'no-admin' because sudo was not primed (group membership decides), and a Mac that never enabled Screen Sharing advertises an honest 'off' instead of staying silent so the card called the agent too old",
+  sha256: '140383742b2dd5cf1a8165383ce43e5c95720b968f7997fedb5ab29fa395e711',
+  notes: "ticket calendar-context (0.9.24): the macOS Calendar consent request is now TRUTHFUL and actually works. 0.9.23 returned from on-run immediately after issuing the asynchronous EventKit request, so osascript exited before macOS could present the consent prompt \u2014 no dialog appeared and no Calendars TCC row was ever minted, while the backend told the owner a dialog had been triggered. The script now holds a bounded run loop until the completion handler fires, tries requestFullAccessToEventsWithCompletion first with the legacy entity-type call as a fallback, and prints a machine-readable observation (idiom, completed, waited, authorization tier). The outcome is classified from the STATUS API and persisted (granted/denied/dialog-open/dispatched/bridge-failed/request-failed) and rides the calendar read payload, so Digby stops guessing and never again announces a dialog it did not see.",
   minUpdaterVersion: '0.8.2',
 };
 /** Kill switch (agent-side twin: DIGBY_SELF_UPDATE=0) — stops advertising to everyone. */

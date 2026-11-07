@@ -1,11 +1,14 @@
 # Leg (b) — `crossmodel` → `digby` rename: plan and migration window
 
-**Status: PHASE 1 SHIPPED (2026-11-06); phases 2–4 planned, not executed.**
+**Status: PHASE 1 SHIPPED (2026-11-06). Relay leg aliased 2026-11-07 (see §3);
+phases 2–4 planned, not executed.**
 Todo `7d41a5e1` leg (b). Surface measured 2026-11-06T14:2xZ against `origin/main`
 (`7522056166c9`) and live public `canada-quant/digby`.
 
-Phase 1 (the additive dual-serve) is implemented and tested — see §3. **Phases 2,
-3 and 4 remain unapplied**, and phase 4 is the only destructive one.
+Phase 1 (the additive dual-serve) is implemented and tested — see §3 — and it now
+covers **both** serving surfaces: the Express backend AND the separate `relay`
+process, so `/api/digby/instances/*` works too. **Phases 2, 3 and 4 remain
+unapplied**, and phase 4 is the only destructive one.
 
 The one thing this document must prevent is the obvious failure: renaming the URL
 prefix without a dual-serve window, which silently breaks **every already-registered
@@ -113,24 +116,35 @@ Note the ordering consequence: because nothing outbound changed, the alias is
 invisible to users — it exists so operators *can* migrate, not because anything
 points at it.
 
-**Known phase-1 gap — the relay container is NOT aliased.** Three path families
-are served by the `relay` service (Digby Edge), not by the Express backend, and
-both its config and the self-host proxy match on the literal old prefix:
+**Relay container — ALIASED (closed 2026-11-07).** Three path families are
+served by the `relay` service (Digby Edge), not by the Express backend, so the
+backend's dual-serve never covered them. Both surfaces now serve **both**
+prefixes:
 
-- `deploy/selfhost/Caddyfile` routes `@relayTunnel path /api/crossmodel/instances/tunnel`,
-  `@relayProxy path_regexp ^/api/crossmodel/instances/[^/]+/proxy(/.*)?$` and
-  `@relayMessages … chats/[^/]+/messages$` to `relay:4100` **before** the `/api/*`
-  catch-all.
-- `backend/src/relay/relay-core.ts` pins `TUNNEL_PATH = '/api/crossmodel/instances/tunnel'`.
+- `backend/src/relay/relay-core.ts` derives `PROXY_PATH_RE` / `MESSAGES_PATH_RE`
+  from `API_PREFIXES` (`^/api/(?:crossmodel|digby)/…`) and exposes
+  `TUNNEL_PATHS` + `isTunnelPath()`; `TUNNEL_PATH` stays the canonical
+  `/api/crossmodel/instances/tunnel`. The relay reads the **same** constants as
+  the backend rather than a second hand-maintained list, so the two prefixes
+  cannot drift (importing `api-prefixes.ts` adds no runtime dependency — its
+  express import is type-only).
+- `backend/src/relay.ts`'s WS `upgrade` listener uses a **membership** test
+  (`isTunnelPath`) instead of equality against the one canonical path; that was
+  the actual behaviour gate for the tunnel.
+- `deploy/selfhost/Caddyfile` routes all three relay families for both prefixes
+  (`@relayTunnel` takes both literals; the `proxy` / `messages` `path_regexp`
+  matchers take `(?:crossmodel|digby)`) before the `/api/*` catch-all.
 
-So `/api/digby/instances/{tunnel,*/proxy/*,*/chats/*/messages}` does NOT work in
-phase 1 — those requests fall to the backend and are not the relay. Every other
-`/api/crossmodel/*` route, including the Edge pairing/management REST routes the
-backend owns, IS aliased. Extending the alias across the relay is a small,
-self-contained follow-up (a second Caddy matcher + a constant list in
-relay-core.ts) but it cannot be proven equivalent without a live edge WS tunnel,
-so it is deliberately left out rather than claimed. Operators migrating a console
-should leave the Edge relay URLs on `crossmodel`.
+Covered by `relay-core.test.ts` (prefix derivation, near-miss rejection, group
+capture parity, and handler auth parity on the alias prefix) and
+`relay.integration.test.ts` (a real WS upgrade on `/api/digby/instances/tunnel`,
+the canonical path still working, and a 404 under an unknown prefix).
+
+*Residual, deliberately unchanged:* nothing **emits** the new prefix — the edge
+tunnel client (`cloud-link/tunnel-client.ts`) still dials `TUNNEL_PATH`, so
+phase 1 remains invisible to users and no operator action is required. Prod
+relay wiring is still a later owner-gated step; only the self-host Caddyfile
+routes the relay in-repo.
 
 **Phase 2 — operators migrate on their own schedule.** The Setup checklist shows
 the new callback URL next to the old one and says both work. Because phase 1

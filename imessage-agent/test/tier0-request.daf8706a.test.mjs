@@ -162,16 +162,27 @@ test('daf8706a: the requester is ONCE per process and FIRE-AND-FORGET', () => {
 // ── 4. Backend copy surfaces the new reason + the client ────────────────────
 
 test('daf8706a: the backend branches on calendar-never-requested and names the client binary', () => {
-  assert.match(
-    backendSrc,
-    /res\.unavailable\?\.reason === 'calendar-never-requested'/,
-    'the dispatch case branches on the tier-0 reason',
+  // 2026-11-06: the copy moved into calendar/apple-calendar.ts so ONE place
+  // writes it (tool + new-chat context + home card). The tier-0 branch and the
+  // client surfacing survive; the UNVERIFIABLE claim does not: the old copy
+  // asserted "A one-time consent dialog was just triggered" for a read that
+  // only proves nobody had asked yet. Three Macs never showed that dialog.
+  const policySrc = readFileSync(
+    join(src, '..', '..', 'backend', 'src', 'modules', 'crossmodel', 'calendar', 'apple-calendar.ts'),
+    'utf8',
   );
-  assert.match(backendSrc, /res\.unavailable\.client/, 'the copy surfaces the TCC client path');
-  assert.match(backendSrc, /A one-time consent dialog was just triggered/, 'the copy tells the user the dialog is coming');
+  const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/^\s*\/\/.*$/gm, ' ');
+  assert.match(policySrc, /case 'calendar-never-requested':/, 'the tier-0 state has its own copy arm');
+  assert.match(policySrc, /has never been granted Calendar access/, 'the tier-0 copy is surfaced');
+  // The verifiable-claim rule applies to the CODE (a comment may of course
+  // quote the old sentence to explain why it is gone).
+  assert.doesNotMatch(stripComments(policySrc), /dialog was just triggered/i, 'never claim a dialog that nothing observed');
+  // The observed consent episode (agent >= 0.9.24) is what the copy reports.
+  assert.match(policySrc, /consentCopy\(consent\)/, 'the last observed episode is described');
+  assert.match(policySrc, /interpreted\.client/, 'the TCC client is still surfaced to the caller');
   // The denied copy names the agent binary too (ask 1: WHICH client was
   // denied must be visible in one line for BOTH tier-0 and tier-2).
-  assert.match(backendSrc, /The EventKit request runs in the agent binary/, 'the denial copy names the agent binary');
+  assert.match(policySrc, /DIFFERENT client/, 'the denial copy names the binary-vs-app trap');
 });
 
 test('daf8706a: the dispatch latch treats never-requested as a permission negative — but NOT a TCC regression', () => {
@@ -194,9 +205,13 @@ test('daf8706a: the dispatch latch treats never-requested as a permission negati
 
 // ── 5. Version pin ──────────────────────────────────────────────────────────
 
-test('daf8706a version pin: the tier-0 fix ships stamped 0.9.23', () => {
-  assert.ok(pkg.version === '0.9.23', `agent version must be 0.9.23 (found ${pkg.version})`);
-  assert.match(read('config.ts'), /export const AGENT_VERSION = '0\.9\.23';/, 'AGENT_VERSION stamped');
+test('daf8706a version pin: the tier-0 fix ships stamped (0.9.23, carried forward)', () => {
+  // The 0.9.23 pin guarded the fix's RELEASE. It is now a floor: the 2026-11-06
+  // consent-outcome repair ships as 0.9.24 on top of it, and pinning the exact
+  // string would make every later release edit an unrelated test.
+  const [maj, min, patch] = pkg.version.split('.').map(Number);
+  assert.ok(maj > 0 || min > 9 || (min === 9 && patch >= 23), `the tier-0 fix ships in agent >= 0.9.23 (found ${pkg.version})`);
+  assert.match(read('config.ts'), new RegExp(`export const AGENT_VERSION = '${pkg.version.replace(/\./g, '\\.')}';`), 'AGENT_VERSION matches package.json');
 });
 
 // ── 6. REAL behavioral test: fake osascript proves the whole flow ──────────

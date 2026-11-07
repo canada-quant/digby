@@ -219,12 +219,20 @@ describe('dc4f7ff5 — a STORED unattainable bar is redirected, never reopened',
   });
 
   // GUARDRAIL (inherited from 1425001e): this must never become a lane's escape
-  // hatch from a real test. Only an auto-filer-minted metric is eligible — a
-  // hand-authored metric is its lane's judgement.
-  it('REFUSES a hand-authored metric — the escape-hatch guard still holds', () => {
-    for (const source of [undefined, null, 'manual', 'lane-authored']) {
+  // hatch from a real test. The hatch is keyed on an EXPLICIT hand-authored
+  // marker (ticket 31199f81) — a lane that says "this is my metric" keeps it.
+  // ABSENCE is not a claim: a markerless stored bar is classified on its own
+  // content, which is what makes pre-marker stamps (3769b1b3) covered.
+  it('REFUSES an EXPLICITLY hand-authored metric — the escape-hatch guard still holds', () => {
+    for (const source of ['manual', 'lane-authored', 'filer']) {
       expect(designedAlarmOfMetric(autofilerMetric('utilitychat: utility role override unreachable (timeout of'), source)).toBeNull();
       expect(designedAlarmOfMetric(autofilerMetric('action-verifier: dropped <n> llm-extracted note claim(s) narrating third-party'), source)).toBeNull();
+    }
+  });
+
+  it('a MARKERLESS stored bar is classified on its content (ticket 31199f81)', () => {
+    for (const source of [undefined, null, '']) {
+      expect(designedAlarmOfMetric(autofilerMetric('utilitychat: utility role override unreachable (timeout of'), source)?.id).toBe('utility-override-failover');
     }
   });
 

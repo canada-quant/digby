@@ -121,6 +121,7 @@ export const STATUS = {
     xUnavailable: 'X isn’t responding right now — carrying on without it.',
     plaid: 'Checking your bank accounts…',
     imessage: 'Reading your iMessages…',
+    appleCalendar: 'Checking your Mac calendar…',
   },
 } as const;
 

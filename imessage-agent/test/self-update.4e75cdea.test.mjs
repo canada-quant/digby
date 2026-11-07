@@ -135,8 +135,8 @@ test('kill switch: DIGBY_SELF_UPDATE=0 disables', () => {
 // ── 2. Version pins ──────────────────────────────────────────────────────────
 
 test('4e75cdea pin: this tree IS 0.9.1 (the self-updating agent line)', () => {
-  assert.match(configSrc, /AGENT_VERSION = '0\.9\.23'/, 'config.ts AGENT_VERSION must be 0.9.23');
-  assert.equal(pkg.version, '0.9.23', 'package.json version must match');
+  assert.match(configSrc, /AGENT_VERSION = '0\.9\.24'/, 'config.ts AGENT_VERSION must be 0.9.24');
+  assert.equal(pkg.version, '0.9.24', 'package.json version must match');
 });
 
 test('4e75cdea pin: the poll response carries the additive update block next to command', () => {

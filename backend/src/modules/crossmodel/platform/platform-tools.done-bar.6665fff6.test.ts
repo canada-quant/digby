@@ -16,6 +16,7 @@
  * machine-triggered ToolContext).
  */
 
+import { designedAlarmOfMetric } from '../feedback/acceptance-metric-defaults';
 import { createPendingConfirmationTable } from './pending-confirmations.testkit';
 import { createOwnerQuestionTable } from './owner-questions.testkit';
 
@@ -263,6 +264,25 @@ describe('file_feedback acceptanceMetric (validation + flag)', () => {
     });
     const call = fb.fileFeedbackTicket.mock.calls[0][0];
     expect(call.context.acceptanceMetric).toEqual(METRIC);
+  });
+
+  // TICKET 31199f81 (2026-11-06): a lane-attached metric MUST carry an EXPLICIT
+  // provenance marker. The verifier's designed-alarm/observability redirect now
+  // decides from the metric's CONTENT when the marker is ABSENT, so a lane
+  // filing with no marker would have its own genuine bar redirected away and
+  // never enforced — the escape hatch has to be stamped here, the one place
+  // every hand-authored metric is attached.
+  it('a LANE-attached metric is stamped hand-authored (never redirectable)', async () => {
+    fb.fileFeedbackTicket.mockResolvedValue({ ok: true, ticket: { id: 'new-1b' } });
+    await executePlatformTool(makeCtx(), 'file_feedback', {
+      type: 'bug_report', title: 'x', description: 'y', about: 'digby_platform',
+      digbyEvidence: 'this session is the platform repo',
+      acceptanceMetric: METRIC,
+    });
+    const call = fb.fileFeedbackTicket.mock.calls[0][0];
+    expect(call.context.acceptanceMetricSource).toBe('filer');
+    // …and that marker is exactly what the redirect refuses to override.
+    expect(designedAlarmOfMetric(METRIC as any, call.context.acceptanceMetricSource)).toBeNull();
   });
 
   it('a fix-class filing WITHOUT a metric is FLAGGED, not rejected', async () => {

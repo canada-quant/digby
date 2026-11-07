@@ -495,6 +495,181 @@ function drillSaa12(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// (b.2) SAA-1.2 — ≥2-DISTINCT-OWNER recorded-thread replay
+//
+// WHY THIS IS SEPARATE FROM drillSaa12 ABOVE. That drill carries ONE source lane
+// and ONE owning lane, so it cannot express the property leg (b) actually turns
+// on when more than one owner is live: that a wake for owner A's thread reaches
+// A's lane and NEVER B's, and that each owner's prior context arrives exactly
+// once. A single-owner fixture satisfies "owning lane == lineage parent" by
+// construction — it is true even if the planner ignored the lineage entirely.
+//
+// So this drill replays TWO owners x TWO multi-turn threads, and it checks the
+// NEGATIVE just as hard as the positive: an emission from owner B's thread that
+// lands in owner A's lane FAILS the drill. A mutation at the end proves that
+// assertion can actually fire.
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface MultiOwnerThread {
+  /** The lane that emits the turns. */
+  source: string;
+  /** The lane the thread belongs to (lineage parent). */
+  owning: string;
+  /** The ACCOUNT the thread belongs to. */
+  owner: string;
+  turns: number;
+}
+
+function drillSaa12MultiOwner(): void {
+  const SUPERVISOR = 'lane_super_multi';
+  const HOOK = { sourceChatId: null, targetChatId: SUPERVISOR }; // wildcard
+
+  // Two DISTINCT owners, two threads each, four distinct owning lanes.
+  const THREADS: MultiOwnerThread[] = [
+    { source: 'lane_src_a1', owning: 'lane_own_a1', owner: 'user_alice', turns: 4 },
+    { source: 'lane_src_a2', owning: 'lane_own_a2', owner: 'user_alice', turns: 3 },
+    { source: 'lane_src_b1', owning: 'lane_own_b1', owner: 'user_bob', turns: 5 },
+    { source: 'lane_src_b2', owning: 'lane_own_b2', owner: 'user_bob', turns: 2 },
+  ];
+  const ENV = {} as NodeJS.ProcessEnv;
+
+  interface Routed { threadIdx: number; eventId: string; target: string; applied: boolean; reason: string }
+  const routed: Routed[] = [];
+  let supervisorWakes = 0;
+
+  THREADS.forEach((t, idx) => {
+    const parentFacts = { archivedAt: null, userId: t.owner };
+    for (let turn = 1; turn <= t.turns; turn++) {
+      const eventId = `evt_${t.source}_${turn}`;
+      const d: ThreadPassthroughDecision = planThreadPassthrough({
+        hook: HOOK,
+        sourceChatId: t.source,
+        source: { parentChatId: t.owning },
+        target: { isSupervisor: true },
+        parent: parentFacts,
+        // The hook's owner is the ACCOUNT that owns the subscription. Modelled
+        // per-thread: each owner subscribes their own hooks, so a cross-account
+        // re-target is refused by the identity guard below, not permitted.
+        ownerUserId: t.owner,
+      }, ENV);
+      routed.push({ threadIdx: idx, eventId, target: d.targetChatId, applied: d.applied, reason: d.reason });
+      if (d.targetChatId === SUPERVISOR) supervisorWakes++;
+    }
+  });
+
+  const totalTurns = THREADS.reduce((n, t) => n + t.turns, 0);
+
+  // ── POSITIVE: every turn of every thread reaches ITS OWN owning lane ──
+  const misrouted = routed.filter((r) => r.target !== THREADS[r.threadIdx].owning);
+  check('SAA-1.2', '≥2-OWNER: every turn of every thread reaches ITS OWN owning lane',
+    routed.length === totalTurns && misrouted.length === 0,
+    `${routed.length}/${totalTurns} turns, misrouted=${misrouted.length}`);
+
+  // ── THE NEGATIVE (the property a single-owner fixture cannot state): no
+  // emission from one owner's thread is ever delivered into a DIFFERENT
+  // owner's lane. ──
+  const crossOwner = routed.filter((r) => {
+    const ownOwner = THREADS[r.threadIdx].owner;
+    const landed = THREADS.find((t) => t.owning === r.target);
+    return landed !== undefined && landed.owner !== ownOwner;
+  });
+  check('SAA-1.2', '≥2-OWNER: NO emission crosses to a DIFFERENT owner\'s lane',
+    crossOwner.length === 0,
+    `cross-owner deliveries=${crossOwner.length} across ${new Set(THREADS.map((t) => t.owner)).size} owners`);
+
+  // ── EXACTLY-ONCE: each thread yields exactly its own turn count, no more. ──
+  const perThread = THREADS.map((_, i) => routed.filter((r) => r.threadIdx === i).length);
+  check('SAA-1.2', '≥2-OWNER: each thread delivers exactly once per turn (no lost, no doubled)',
+    perThread.every((n, i) => n === THREADS[i].turns),
+    `per-thread ${perThread.join('/')} vs turns ${THREADS.map((t) => t.turns).join('/')}`);
+
+  // ── Prior context EXACTLY ONCE: each thread's turns land in exactly ONE
+  // chat, so the lane accumulates history instead of receiving it piecemeal. ──
+  const distinctTargetsPerThread = THREADS.map((_, i) =>
+    new Set(routed.filter((r) => r.threadIdx === i).map((r) => r.target)).size);
+  check('SAA-1.2', '≥2-OWNER: prior context arrives EXACTLY ONCE (one chat per thread)',
+    distinctTargetsPerThread.every((n) => n === 1),
+    `distinct targets per thread ${distinctTargetsPerThread.join('/')}`);
+
+  // ── NO duplicate supervisor wake across the whole multi-owner replay. ──
+  check('SAA-1.2', '≥2-OWNER: no duplicate supervisor wake for any owner',
+    supervisorWakes === 0, `supervisor wakes = ${supervisorWakes}`);
+
+  // ── THREAD-KEY CONTINUITY: the multi-source-group guard must REFUSE to move
+  // a group that carries several threads — otherwise one thread's events would
+  // be handed to another thread's lane, which is the mis-delivery #2526 fixed. ──
+  const multiGroup = planThreadPassthrough({
+    hook: HOOK,
+    sourceChatId: THREADS[0].source,
+    source: { parentChatId: THREADS[0].owning },
+    target: { isSupervisor: true },
+    parent: { archivedAt: null, userId: THREADS[0].owner },
+    ownerUserId: THREADS[0].owner,
+    groupSourceChatIds: [THREADS[0].source, THREADS[2].source],
+  }, ENV);
+  check('SAA-1.2', '≥2-OWNER: a group spanning TWO threads is NOT re-targeted (thread-key continuity)',
+    multiGroup.applied === false && multiGroup.targetChatId === SUPERVISOR
+    && multiGroup.reason === 'multi_source_group',
+    `${multiGroup.reason} applied=${multiGroup.applied} -> ${multiGroup.targetChatId}`);
+
+  // …and the SAME single-thread group DOES re-target, so the guard above is not
+  // simply switching SAA-1.2 off for every group.
+  const singleGroup = planThreadPassthrough({
+    hook: HOOK,
+    sourceChatId: THREADS[0].source,
+    source: { parentChatId: THREADS[0].owning },
+    target: { isSupervisor: true },
+    parent: { archivedAt: null, userId: THREADS[0].owner },
+    ownerUserId: THREADS[0].owner,
+    groupSourceChatIds: [THREADS[0].source],
+  }, ENV);
+  check('SAA-1.2', '≥2-OWNER: a single-thread group still re-targets (the guard is not a kill switch)',
+    singleGroup.applied === true && singleGroup.targetChatId === THREADS[0].owning,
+    `${singleGroup.reason} -> ${singleGroup.targetChatId}`);
+
+  // ── IDENTITY: a re-target must never cross ACCOUNTS. Owner B's thread whose
+  // lineage parent resolves under owner A is refused, staying on the target. ──
+  const crossAccount = planThreadPassthrough({
+    hook: HOOK,
+    sourceChatId: THREADS[2].source,          // bob's thread
+    source: { parentChatId: THREADS[0].owning }, // …claiming alice's lane
+    target: { isSupervisor: true },
+    parent: { archivedAt: null, userId: THREADS[0].owner },
+    ownerUserId: THREADS[2].owner,
+  }, ENV);
+  check('SAA-1.2', '≥2-OWNER: a cross-ACCOUNT lineage edge is NEVER a delivery target',
+    crossAccount.applied === false && crossAccount.targetChatId === SUPERVISOR
+    && crossAccount.reason === 'owner_other_account',
+    `${crossAccount.reason} -> ${crossAccount.targetChatId}`);
+
+  // ── MUTATION PROOF. The cross-owner check above must be able to FAIL. Replay
+  // the same fixture with the planner deliberately ignored — every emission is
+  // forced to ONE owner's lane — and assert the same predicate then reports
+  // violations. Without this the "0 cross-owner deliveries" line would be true
+  // by construction. ──
+  {
+    const mutated: Routed[] = [];
+    THREADS.forEach((t, idx) => {
+      for (let turn = 1; turn <= t.turns; turn++) {
+        mutated.push({ threadIdx: idx, eventId: `m_${t.source}_${turn}`, target: THREADS[0].owning, applied: true, reason: 'owner_is_other_lane' });
+      }
+    });
+    const mutatedCross = mutated.filter((r) => {
+      const ownOwner = THREADS[r.threadIdx].owner;
+      const landed = THREADS.find((t) => t.owning === r.target);
+      return landed !== undefined && landed.owner !== ownOwner;
+    });
+    check('SAA-1.2', 'MUTATION PROOF: a planner ignoring lineage yields cross-owner violations',
+      mutatedCross.length > 0,
+      `mutant cross-owner deliveries=${mutatedCross.length} (the check above can fail)`);
+  }
+
+  console.log(`  · SAA-1.2 multi-owner: ${new Set(THREADS.map((t) => t.owner)).size} owners / ` +
+    `${THREADS.length} threads / ${totalTurns} turns -> ${routed.length} deliveries, ` +
+    `${supervisorWakes} supervisor wakes, ${crossOwner.length} cross-owner`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // (c) SAA-1.6 — FULL-DUPLEX ASYNC TOOLS
 //
 // Gate: both sides of the 60 s boundary, mid-call steering, delayed-result
@@ -1034,6 +1209,186 @@ async function drillCombined(): Promise<void> {
   }
 
   console.log('  · COMBINED drills executed: duplicate-hook + late-result, partial rollback, full rollback');
+
+  // ── MULTI-OWNER + DUPLICATE STORM + CRASH + PARTIAL DEPLOY, in one scenario ──
+  // The drills above all route ONE thread to ONE owning lane, so they cannot see
+  // the failure this one hunts: a duplicate-emission storm across TWO owners
+  // while one box is still stale. The risk is not "does routing work" (leg b
+  // answers that) but "can a storm or a cutover move an emission into the WRONG
+  // owner's lane, or deliver it twice". Each owner's events must stay in that
+  // owner's lane, exactly once, even with the duplicates arriving mid-crash.
+  {
+    const HOOK = { sourceChatId: null, targetChatId: 'lane_super' };
+    const OWNERS = [
+      { owner: 'user_alice', source: 'lane_src_a1', owning: 'lane_own_a1' },
+      { owner: 'user_bob', source: 'lane_src_b1', owning: 'lane_own_b1' },
+    ];
+    const OLD_BOX = { HOOK_THREAD_PASSTHROUGH_DISABLED: '1' } as unknown as NodeJS.ProcessEnv;
+    const NEW_BOX = {} as NodeJS.ProcessEnv;
+
+    const deliveries: Array<{ owner: string; target: string; eventId: string }> = [];
+    const seen = new Map<string, number>();
+
+    // ── THE REAL DEDUPE SHAPE, NOT A HARNESS-LOCAL SET (review D5) ─────────────
+    // An earlier revision of this block deduped on a local `Set` keyed
+    // `evt|src|summary` while storming `run_failed`. Two things were wrong:
+    //   1. `hooks.service.ts` applies its dedupe ONLY to
+    //      `attention_needed` / `schedule_disabled` / `schedule_cap_skipped`.
+    //      `run_failed` is never deduped, so the block was testing a rule that
+    //      does not exist for that event class — `perOwner=1/1` stayed green
+    //      even if the shipped dedupe regressed.
+    //   2. The shipped key is `hookemit:dedupe:` + base64url(JSON
+    //      [eventType, sourceChatId, summary.slice(0,120)]) sliced to 120 and
+    //      claimed with SET NX EX(window) — a TIME WINDOW, not a permanent Set.
+    // This block now mirrors that exactly, and the check at the bottom reads
+    // the shipped source and FAILS if the formula drifts from this copy.
+    const DEDUPE_WINDOW_SEC = 600;         // HOOK_EVENT_DEDUPE_WINDOW_SEC default
+    const DEDUPE_EVENT = 'attention_needed'; // the ONLY class the shipped rule covers
+    const fingerprint = (eventType: string, sourceChatId: string, summary: string): string =>
+      Buffer.from(JSON.stringify([eventType, sourceChatId, String(summary ?? '').slice(0, 120)]))
+        .toString('base64url').slice(0, 120);
+
+    const storm = (boxtag: string, env: NodeJS.ProcessEnv, summary: string, clockMs: number): void => {
+      for (const o of OWNERS) {
+        // The SAME emission arrives three times (duplicate storm), per owner.
+        for (let i = 0; i < 3; i++) {
+          const key = `${boxtag}|${fingerprint(DEDUPE_EVENT, o.source, summary)}`;
+          const prior = seen.get(key);
+          // SET NX EX window: the FIRST claim wins; a repeat inside the window is
+          // suppressed; outside it the key has expired and re-emits.
+          const isFirst = prior === undefined || clockMs - prior >= DEDUPE_WINDOW_SEC * 1000;
+          if (!isFirst) continue;
+          seen.set(key, clockMs);
+          const d = planThreadPassthrough({
+            hook: HOOK, sourceChatId: o.source, source: { parentChatId: o.owning },
+            target: { isSupervisor: true },
+            parent: { archivedAt: null, userId: o.owner }, ownerUserId: o.owner,
+          }, env);
+          deliveries.push({ owner: o.owner, target: d.targetChatId, eventId: key });
+        }
+      }
+    };
+
+    // A late result is in flight when the storm hits, and the run crashes.
+    const clock = new VirtualClock();
+    const reg = new AsyncToolRegistry({ afterMs: ASYNC_TOOL_AFTER_MS, apply: true, now: clock.now,
+      setTimer: clock.setTimer, clearTimer: clock.clearTimer, log: () => {} });
+    const w = deferred<string>();
+    const p = reg.run('run_command', w.promise);
+    await clock.advance(ASYNC_TOOL_AFTER_MS + 1);
+    const handed = await p;
+
+    storm('new', NEW_BOX, 'crash', NOW);          // new box: routing live
+    storm('old', OLD_BOX, 'crash', NOW);          // stale box: routing killed
+    const owed = reg.closeRun();              // …then the crash
+    w.resolve('late');
+    await flushAll();
+    const afterCrash = reg.takeReady();
+
+    // NEW box: one delivery per owner, each into ITS OWN owning lane.
+    const newBox = deliveries.filter((d) => d.target.startsWith('lane_own_'));
+    const misrouted = newBox.filter((d) => {
+      const o = OWNERS.find((x) => x.owning === d.target);
+      return o !== undefined && o.owner !== d.owner;
+    });
+    const perOwner = OWNERS.map((o) => newBox.filter((d) => d.owner === o.owner).length);
+
+    // OLD box: routing is off, so every emission lands on the subscribed target
+    // and NEVER in an owning lane — pre-feature behaviour verbatim.
+    const oldBox = deliveries.filter((d) => !d.target.startsWith('lane_own_'));
+
+    check('COMBINED', 'MULTI-OWNER + DUPLICATE STORM + CRASH: each owner lands once in its OWN lane, none crosses',
+      perOwner.every((n) => n === 1) && misrouted.length === 0,
+      `perOwner=${perOwner.join('/')} misrouted=${misrouted.length} routes=${newBox.length}`);
+
+    check('COMBINED', 'MULTI-OWNER + PARTIAL DEPLOY: the stale box never re-targets across owners',
+      oldBox.length > 0 && oldBox.every((d) => d.target === HOOK.targetChatId),
+      `staleBoxRoutes=${oldBox.length} all_to_subscribed=${oldBox.every((d) => d.target === HOOK.targetChatId)}`);
+
+    check('COMBINED', 'MULTI-OWNER + DUPLICATE STORM + CRASH: no delivery repeats after the crash',
+      afterCrash.length === 0 && owed.map((x) => x.correlationId).includes((handed as any).correlationId),
+      `owed=${owed.length} deliveredAfterCrash=${afterCrash.length}`);
+
+    // ── THE DRIFT ASSERTION (review D5) ───────────────────────────────────────
+    // The storm above mirrors the shipped dedupe. A mirror that nobody checks
+    // rots silently: if `hooks.service.ts` changes its event class list or its
+    // fingerprint formula, the drill keeps passing against a rule production no
+    // longer implements. This reads the SHIPPED SOURCE and fails on drift.
+    {
+      let src = '';
+      try {
+        src = require('fs').readFileSync(
+          require('path').join(__dirname, '../src/modules/crossmodel/platform/hooks.service.ts'), 'utf8');
+      } catch (e) {
+        src = '';
+      }
+      const hasClassList =
+        /eventType === 'attention_needed'\s*\|\|\s*eventType === 'schedule_disabled'\s*\|\|\s*eventType === 'schedule_cap_skipped'/.test(src);
+      const hasFingerprint =
+        /JSON\.stringify\(\[eventType, sourceChatId, String\(summary \?\? ''\)\.slice\(0, 120\)\]\)/.test(src);
+      const hasKeyPrefix = /`hookemit:dedupe:\$\{fp\}`/.test(src);
+      const hasWindowDefault = /HOOK_EVENT_DEDUPE_WINDOW_SEC \?\? 600/.test(src);
+      check('COMBINED', 'DEDUPE DRIFT: the storm mirrors the SHIPPED event class + fingerprint formula',
+        src.length > 0 && hasClassList && hasFingerprint && hasKeyPrefix && hasWindowDefault,
+        `srcBytes=${src.length} classList=${hasClassList} fingerprint=${hasFingerprint} keyPrefix=${hasKeyPrefix} window=${hasWindowDefault}`);
+    }
+
+    // ── THE CLASSIFIER DRIFT ASSERTION (review D3, 2026-11-07) ───────────────
+    // The loss classifier in the audit probes hardcodes three delivery constants
+    // and exists as TWO copies (prodq.sh copies one file into the container, so a
+    // probe cannot require a sibling module). Unchecked, that rots both ways: if
+    // the shipped horizon moves, the probe silently cries wolf (or goes blind),
+    // and if the copies diverge the two probes can disagree about whether a wake
+    // was LOST — the exact class of defect correction 4 exists to end.
+    //
+    // Two assertions, both reading real files:
+    //   (a) each of the three literals equals the SHIPPED value in hooks.service.ts
+    //   (b) the BEGIN/END classifier block is byte-identical in both probes
+    {
+      const fsp = require('fs');
+      const pth = require('path');
+      const read = (rel: string): string => {
+        try { return fsp.readFileSync(pth.join(__dirname, rel), 'utf8'); } catch { return ''; }
+      };
+      const hooksSrc = read('../src/modules/crossmodel/platform/hooks.service.ts');
+      const rtSrc = read('../../scripts/framework-audit/probe-saa12-real-thread.js');
+      const decSrc = read('../../scripts/framework-audit/probe-pending-wake-decisive.js');
+
+      // Shipped values, parsed from source (not restated by hand).
+      const shippedAttempts = /export const MAX_DELIVERY_ATTEMPTS = (\d+);/.exec(hooksSrc)?.[1] ?? '';
+      const shippedHorizon = /export const RETRY_HORIZON_MS = ([^;]+);/.exec(hooksSrc)?.[1]?.replace(/[\s_]/g, '') ?? '';
+      const shippedBusyPark = /export const BUSY_PARK_MS = ([^;]+);/.exec(hooksSrc)?.[1]?.replace(/[\s_]/g, '') ?? '';
+
+      // Probe values, parsed from the shared block in the real-thread copy.
+      const probeAttempts = /const CLS_MAX_DELIVERY_ATTEMPTS = (\d+);/.exec(rtSrc)?.[1] ?? '';
+      const probeHorizon = /const CLS_RETRY_HORIZON_MS = ([^;]+);/.exec(rtSrc)?.[1]?.replace(/[\s_]/g, '') ?? '';
+      const probeBusyPark = /const CLS_BUSY_PARK_MS = ([^;]+);/.exec(rtSrc)?.[1]?.replace(/[\s_]/g, '') ?? '';
+
+      const constantsMatch = !!shippedAttempts && !!shippedHorizon && !!shippedBusyPark
+        && shippedAttempts === probeAttempts
+        && shippedHorizon === probeHorizon
+        && shippedBusyPark === probeBusyPark;
+
+      check('COMBINED', 'CLASSIFIER DRIFT: probe constants equal the SHIPPED hooks.service.ts values',
+        constantsMatch,
+        `attempts ${probeAttempts}vs${shippedAttempts} horizon ${probeHorizon}vs${shippedHorizon} ` +
+        `busyPark ${probeBusyPark}vs${shippedBusyPark} srcBytes=${hooksSrc.length}`);
+
+      const blockOf = (s: string): string => {
+        const m = /[ \t]*\/\/ ─── BEGIN SHARED HOOK-EVENT CLASSIFIER ───[\s\S]*?\/\/ ─── END SHARED HOOK-EVENT CLASSIFIER ───/.exec(s);
+        return m ? m[0].trim() : '';
+      };
+      const rtBlock = blockOf(rtSrc);
+      const decBlock = blockOf(decSrc);
+      check('COMBINED', 'CLASSIFIER DRIFT: the two probes carry a byte-identical classifier block',
+        rtBlock.length > 0 && rtBlock === decBlock,
+        `rtBytes=${rtBlock.length} decBytes=${decBlock.length} identical=${rtBlock === decBlock}`);
+    }
+
+    console.log(`  · COMBINED multi-owner storm: ${OWNERS.length} owners, 3x duplicate storm each, ` +
+      `crash mid-flight -> ${newBox.length} owner-lane routes, ${oldBox.length} stale-box routes, ` +
+      `${misrouted.length} cross-owner`);
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1045,6 +1400,7 @@ async function main(): Promise<void> {
 
   drillSaa11();
   drillSaa12();
+  drillSaa12MultiOwner();
   await drillSaa16();
   await drillMerge1();
   await drillCombined();

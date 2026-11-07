@@ -81,6 +81,19 @@ export function regexIntentOf(pattern: unknown): string | null {
 /** Provenance stamp (context.acceptanceMetricSource) on a ticket whose metric an AUTO-FILER attached. */
 export const AUTOFILER_DEFAULT_METRIC_SOURCE = 'autofiler-default';
 
+/**
+ * Provenance stamp (context.acceptanceMetricSource) on a ticket whose metric a
+ * LANE attached itself via `file_feedback` (TICKET 31199f81, 2026-11-06).
+ *
+ * This exists because the redirect's escape hatch must be an EXPLICIT marker:
+ * once a missing marker means "decide from the metric's content", a
+ * hand-authored bar is indistinguishable from a pre-marker auto-filer stamp
+ * unless the filer says which it is. `feedback.service.ts` already reads this
+ * same literal as its telemetry fallback; platform-tools now STORES it, so a
+ * lane's judgement stays enforceable instead of being redirected away.
+ */
+export const HAND_AUTHORED_METRIC_SOURCE = 'filer';
+
 /** Default window: one day of post-fix silence is the auto-filers' own "the class stops recurring" check. */
 export const DEFAULT_METRIC_WINDOW_HOURS = 24;
 /** A literal fragment shorter than this would match unrelated log lines. */
@@ -602,14 +615,47 @@ export function designedObservabilityOfFingerprint(fingerprint: unknown, example
 }
 
 /**
+ * Is this metric's PROVENANCE an explicit hand-authored claim?
+ *
+ * TICKET 31199f81 (2026-11-06) — THE ESCAPE HATCH IS KEYED ON AN EXPLICIT
+ * MARKER, NEVER ON THE ABSENCE OF ONE. This used to be an allowlist
+ * (`source === 'autofiler-default'`, everything else refused), which made
+ * "no marker" mean "hand-authored" — and that inverted exactly the rows it was
+ * meant to protect:
+ *   - 3769b1b3 carried a stored `app_error_log_count <= 0` bar over
+ *     `utility role override unreachable`, a class that emits BY DESIGN (its
+ *     own message says the built-in chain serves the call). Its context had NO
+ *     `acceptanceMetricSource` — so the guard failed CLOSED, the bar was
+ *     measured, one residual row (the fix's own 15 s leg cap working) counted,
+ *     and the post-deploy verifier REOPENED a correct, deployed fix at
+ *     13:32:39Z on measured 1, dispatching a fresh lane onto a non-defect.
+ *   - It also made the check depend on WHO stamped the bar rather than on what
+ *     the bar can measure — so every pre-marker stamp inherited the same loop.
+ *
+ * A marker that is PRESENT and is not the auto-filer's is a lane saying "this
+ * is my metric, enforce it": that judgement stays the lane's and the bar is
+ * never redirected. A MISSING marker says nothing about authorship, so the
+ * CONTENT decides. Pure.
+ */
+function explicitlyHandAuthored(source: unknown): boolean {
+  return typeof source === 'string' && source.trim() !== '' && source !== AUTOFILER_DEFAULT_METRIC_SOURCE;
+}
+
+/**
  * Does this probe measure the VOLUME of a class that emits by design — a
- * designed ALARM (1425001e) or designed OBSERVABILITY (dc4f7ff5)? Only an
- * auto-filer default can be unsound this way: a hand-authored metric is its
- * lane's judgement, and this guard must never become the escape hatch it was
- * built to close. Pure.
+ * designed ALARM (1425001e) or designed OBSERVABILITY (dc4f7ff5)?
+ *
+ * The decision is made from the METRIC'S OWN CONTENT (`params.messagePattern`
+ * through the same classifiers the sweep uses to stamp it), evaluated at the
+ * moment of the ruling — never from stamp-time metadata, which is what
+ * TICKET 31199f81 fixed. The one provenance input left is the explicit
+ * hand-authored marker above (`explicitlyHandAuthored`): a lane can still
+ * insist its own metric be measured, and this guard must never become the
+ * escape hatch it was built to close. A markerless bar is NOT treated as
+ * hand-authored. Pure.
  */
 export function designedAlarmOfMetric(metric: AcceptanceMetric, source: unknown): { id: string; why: string; class: UnsoundMetricClass } | null {
-  if (source !== AUTOFILER_DEFAULT_METRIC_SOURCE) return null;
+  if (explicitlyHandAuthored(source)) return null;
   if (metric.probe !== 'app_error_log_count') return null;
   const pattern = String(metric.params.messagePattern ?? '');
   if (!pattern) return null;

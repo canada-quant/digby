@@ -24,6 +24,7 @@ import { healRuntimeIfCoupled } from './runtime-dylib';
 import { listChats, getMessages, checkAccess } from './chatdb';
 import { sendMessage } from './sender';
 import { listEvents, calendarAuthStatus } from './calendar';
+import { readConsentEpisode } from './calendar-consent';
 import * as browser from './browser';
 import * as computer from './computer';
 import { lastCaptureTruth, lastAutomationDenial, clearAutomationDenial, isAutomationDenialText } from './computer';
@@ -388,6 +389,26 @@ async function execute(command: AgentCommand): Promise<unknown> {
         noteCalendarRead(false);
       }
       return result;
+    }
+    // ── Calendar consent status (2026-11-06) — NON-REQUESTING ────────────
+    // Reports the LAST consent episode this Mac observed, read from the
+    // persisted record (a file read; it can never fire an EventKit request,
+    // so it is safe on the integrations card's poll — the 0.9.8 rule). The
+    // backend uses it to describe what actually happened instead of claiming
+    // a dialog it never saw. Absent episode → { state: null } with the tier
+    // read from the NON-REQUESTING authorization-status probe, so a Mac that
+    // was never asked is distinguishable from one that was asked and is
+    // still undecided.
+    case 'calendar_consent_status': {
+      const episode = readConsentEpisode();
+      const grantedNow = await calendarAuthStatus();
+      return {
+        consent: episode,
+        // true = readable now, false = not readable, null = unknown (the
+        // status probe itself failed — never reported as a denial).
+        readable: grantedNow,
+        client: process.execPath || 'unknown',
+      };
     }
     // ── Browser automation (v0.2.0+) — driven by the backend's LocalBrowserDriver ──
     // v0.5.0 (4258335e): the per-task CDP-attach opt-in rides every browser_*

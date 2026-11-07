@@ -148,6 +148,10 @@ export const INFRA_ALERT_DEDUPE_SEC = 6 * 3600;
  *  the durable-evidence rate operators asked for. A delivered wake clears the
  *  key, so a recovered target's next failure is fully evidenced again. */
 export const ENQUEUE_FAIL_ROW_DEDUPE_SEC = 3600;
+/** Ticket 2e086227: how long a caller's NX claim on an alert key is exclusive. It only has to cover one
+ *  delivery pass (a few enqueues), never the full dedupe window — a delivery that lands nothing must stay
+ *  retryable immediately (6d19f11f), and the next watchdog tick is minutes away, not seconds. */
+export const DELIVER_CLAIM_LEASE_SEC = 60;
 const ENQUEUE_FAIL_ROW_KEY = (chatId: string) => `infra-watch:enqueue-fail-row:${chatId}`;
 const ALERT_KEY = (kind: string, subject: string, severity: string) => `infra-watch:alert:${kind}:${subject}:${severity}`;
 const DEPLOY_SEEN_KEY = (runId: string | number) => `infra-watch:deployfail:${runId}`;
@@ -1249,6 +1253,12 @@ export const DECISION_BACKEND_DOWN_KIND = 'decision_gate_backend_down';
 export const DECISION_BACKEND_DOWN_LOOKBACK_MS = 30 * 60 * 1000;
 /** all_legs_failed rows inside the lookback that make the sweep alert (decision-gate.ts alerts at the same streak in-process). */
 export const DECISION_ALL_FAILED_SWEEP_MIN = 3;
+/** The in-process streak's own window, in minutes — the span decision-gate.ts's
+ *  DECISION_ALL_FAILED_STREAK_WINDOW_MS (platform/decision-gate.ts:571) counts over, and the
+ *  wording the all-failed alert uses when it is raised from that path (no windowMinutes).
+ *  Named rather than inlined so the renderer cannot silently drift from the source again
+ *  (ticket 2e086227: it hardcoded "5 minutes" while the sweep counted a 30-minute lookback). */
+export const DECISION_ALL_FAILED_STREAK_WINDOW_MIN = 5;
 
 export interface DecisionBackendDownAlertInput {
   event: 'latched' | 'all_legs_failed';
@@ -1263,6 +1273,11 @@ export interface DecisionBackendDownAlertInput {
   streak?: number;
   /** 4d476b9a: the measured cause of the newest all-failed ask (decision-gate-stall.ts); absent on pre-change rows. */
   cause?: AllFailedCause;
+  /** The window the streak was counted over, in minutes: 5 for the in-process streak
+   *  (DECISION_ALL_FAILED_STREAK_WINDOW_MS), the sweep's 30-min lookback (DECISION_BACKEND_DOWN_LOOKBACK_MS)
+   *  when it re-reads stored rows. Rendering it as a fixed "5 minutes" misstated the span on the sweep path
+   *  (ticket 2e086227). */
+  windowMinutes?: number;
 }
 
 const ALL_FAILED_CAUSES: ReadonlySet<string> = new Set(['stall', 'egress', 'provider', 'mixed', 'budget']);
@@ -1280,7 +1295,7 @@ export function renderDecisionBackendDownAlert(a: DecisionBackendDownAlertInput,
     return `[INFRA ALERT — decision backend down] ${backend} (spec ${a.spec ?? 'unknown'}) answered HTTP ${a.status ?? '401/403'} to the decision gate at ${a.at} (seen ${hhmmz(now)}, first noticed by purpose ${a.purpose}). The gate has LATCHED it for ${cooldownS} s at a time (one probe per cooldown) and every ask falls through to the next leg; the fallback logprob readout is UNCALIBRATED, so every act purpose on this backend (sweep_triage, wake_triage, auto_route, drain_triage, imessage_send as of 2026-09-26) is silently running its pre-gate heuristic — no bad answers, but ~0.5–1.3 s added per gated site and zero act-band labels accrue while it lasts. Most likely cause: ${keyHint}. Playbook: (1) get_fleet_telemetry view 'boxes' — the decisionGate tile names the latched backend, since when and whether it recovered; a recovered:true tile with no active latch means a transient episode (the 2026-09-26 06:34–06:40Z class) and nothing to do, and a stale:true episode (newest latch row older than 2 h, no recovered row) means the process that latched it died latched — recovery was never recorded but the latch is gone with it (e7b9521b); (2) still active after 15 min ⇒ dispatch_platform_task "Decision backend ${a.spec ?? backend} answering HTTP ${a.status ?? 403}" — the lane checks the key on the box (docker-compose.app.yml passes ${a.spec === 'jev' ? 'TYPESAFE_API_KEY / TYPESAFE_BASE_URL / TYPESAFE_MODEL' : 'the provider key'} to backend + worker; a 403 with a present key is quota / plan on the vendor side — read the vendor dashboard, never guess), rotates it via the owner if revoked (ONE flag_owner_question naming the key and the vendor), and confirms with the Model roles Test button (Account → Admin → Endpoints → Model roles → Decision gate) — from an agent, the same probe is test_model_role {role:'decision', candidate:'${a.spec ?? 'jev'}'} (the seat key is 'decision'; backend specs are candidate values, never seats); (3) verify: get_fleet_telemetry view 'metrics' kind 'decision_gate_backend_down' shows a 'recovered' event after the fix and view 'boxes' decisionGate.active is empty (a stale episode reads inactive too — its note says 'died latched'); loop_metrics decision_gate rows for the act purposes stop carrying modeDowngrade:'uncalibrated'.`;
   }
   const errs = (a.legErrors ?? []).slice(0, 4).join(' | ') || 'no leg detail';
-  return `[INFRA ALERT — decision gate: every backend failing] ${a.streak ?? DECISION_ALL_FAILED_SWEEP_MIN}+ decision-gate asks in the last 5 minutes had EVERY leg fail (latest ${a.at}, purpose ${a.purpose}, seen ${hhmmz(now)}): ${errs}.${a.cause ? ` Measured cause of the latest: ${allFailedCauseText(a.cause)}.` : ''} Every gated site is running its pre-gate path (fail-open — no wrong answers, but no act savings and no labels). Playbook: (1) read get_fleet_telemetry view 'boxes' (decisionGate tile) and view 'metrics' kind 'decision_gate' hours 1 — a run of 'deadline exhausted' / 'timeout' on every leg is provider latency or egress (compare box_health load), HTTP 4xx on the first leg is a key / quota problem (see the decision-backend-down playbook), 'not servable' means no key is configured at all; (2) if the readout leg (deepseek-flash) is failing too, the DeepSeek key or api.deepseek.com egress is the common cause — check with the Model roles Test button for both built-ins (from an agent: test_model_role {role:'decision', candidate:'jev'} and {role:'decision', candidate:'deepseek-flash'} — the seat key is 'decision', backend specs are candidate values, never seats); (3) verify: no new all_legs_failed rows in the next 15 min (get_fleet_telemetry view 'metrics' kind 'decision_gate_backend_down').`;
+  return `[INFRA ALERT — decision gate: every backend failing] ${a.streak ?? DECISION_ALL_FAILED_SWEEP_MIN}+ decision-gate asks in the last ${a.windowMinutes ?? DECISION_ALL_FAILED_STREAK_WINDOW_MIN} minutes had EVERY leg fail (latest ${a.at}, purpose ${a.purpose}, seen ${hhmmz(now)}): ${errs}.${a.cause ? ` Measured cause of the latest: ${allFailedCauseText(a.cause)}.` : ''} Every gated site is running its pre-gate path (fail-open — no wrong answers, but no act savings and no labels). Playbook: (1) read get_fleet_telemetry view 'boxes' (decisionGate tile) and view 'metrics' kind 'decision_gate' hours 1 — a run of 'deadline exhausted' / 'timeout' on every leg is provider latency or egress (compare box_health load), HTTP 4xx on the first leg is a key / quota problem (see the decision-backend-down playbook), 'not servable' means no key is configured at all; (2) if the readout leg (deepseek-flash) is failing too, the DeepSeek key or api.deepseek.com egress is the common cause — check with the Model roles Test button for both built-ins (from an agent: test_model_role {role:'decision', candidate:'jev'} and {role:'decision', candidate:'deepseek-flash'} — the seat key is 'decision', backend specs are candidate values, never seats); (3) verify: no new all_legs_failed rows in the next 15 min (get_fleet_telemetry view 'metrics' kind 'decision_gate_backend_down').`;
 }
 
 /**
@@ -1344,7 +1359,7 @@ export function selectDecisionBackendDownAlerts(rows: Array<{ meta: any; created
   }
   if (allFailed.length >= Math.max(1, min)) {
     const newest = allFailed.reduce((a, b) => (b.at > a.at ? b : a));
-    out.push({ event: 'all_legs_failed', purpose: newest.purpose, at: new Date(newest.at).toISOString(), legErrors: newest.legErrors, streak: allFailed.length, ...(newest.cause ? { cause: newest.cause } : {}) });
+    out.push({ event: 'all_legs_failed', purpose: newest.purpose, at: new Date(newest.at).toISOString(), legErrors: newest.legErrors, streak: allFailed.length, windowMinutes: Math.round(DECISION_BACKEND_DOWN_LOOKBACK_MS / 60_000), ...(newest.cause ? { cause: newest.cause } : {}) });
   }
   return out;
 }
@@ -1406,7 +1421,30 @@ export async function deliver(
     for (const t of targets) recordSupervisorSwitchSkip({ target: 'fleet', source: `alert:${metricKind}`, chatId: t.id });
     return 0;
   }
-  if (await (redisClient as any).get(key).catch(() => null)) return 0;
+  // CLAIM the key BEFORE the first wake, never only after the loop (ticket 2e086227): the key
+  // used to be READ here and WRITTEN once the loop finished, so two callers already in flight
+  // both saw "unclaimed" and both delivered. Prod 2026-11-06T18:53:11.756Z and .764Z: two
+  // [INFRA ALERT — decision gate] wakes 8 ms apart for ONE incident, under the SAME key. Both
+  // rows lack `viaSweep` (only the sweep stamps it), so BOTH racers were the in-process streak
+  // path — decision-gate.ts raises once per all-failed ask past the streak, so two asks settling
+  // together fire two deliveries for the one condition. NX makes exactly one caller win.
+  //
+  // The claim is a SHORT LEASE, not the full ttlSec: the 6d19f11f contract still holds — a wake
+  // that never landed must leave no dedupe key, or the alert is silenced for the whole window
+  // without a wake ever landing. So a delivery that lands nothing RELEASES the lease below, and
+  // the sweep retries on its next pass (released early / expired ⇒ reclaimable).
+  const claimValue = String(Date.now());
+  let claimHeld = false;
+  try {
+    const claimed = await (redisClient as any).set(key, claimValue, { EX: DELIVER_CLAIM_LEASE_SEC, NX: true });
+    // `!== 'OK'` (not `=== null`) is this repo's NX idiom (config/redis.ts:41, log-signal-sweep`,
+    // fileCardClassTickets) and is strictly more defensive: it also treats an undefined reply as lost.
+    if (claimed !== 'OK') return 0;
+    claimHeld = true;
+  } catch {
+    // A redis error must never SILENCE an alert: fail open and deliver. (The pre-change
+    // `.get(...).catch(() => null)` had the same posture — an unreadable key read as unclaimed.)
+  }
   let delivered = 0;
   for (const t of targets) {
     // abd733af (review finding 3): the enqueue-failure EVIDENCE (row + warn)
@@ -1455,7 +1493,19 @@ export async function deliver(
       noteFailure(String(err?.message ?? err));
     }
   }
-  if (delivered) await (redisClient as any).set(key, String(Date.now()), { EX: ttlSec }).catch(() => {});
+  // A delivery that landed a wake converts the short claim into the full dedupe window; one that
+  // landed NOTHING releases the claim so the still-true alert is retried on the next sweep pass
+  // (6d19f11f — a failed enqueue is retried, never silenced).
+  //
+  // The release is a COMPARE-AND-DELETE: only remove the key while it still holds OUR claim value.
+  // An unconditional del could erase the full-window key another caller wrote after a successful
+  // delivery (reachable when a pass's enqueues outlive the lease), which would re-alert — noise,
+  // not silence, but still wrong.
+  if (delivered) await (redisClient as any).set(key, claimValue, { EX: ttlSec }).catch(() => {});
+  else if (claimHeld) {
+    const held = await (redisClient as any).get(key).catch(() => null);
+    if (held === claimValue) await (redisClient as any).del(key).catch(() => {});
+  }
   return delivered;
 }
 

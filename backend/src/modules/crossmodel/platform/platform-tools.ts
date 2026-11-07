@@ -1088,7 +1088,7 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
     type: 'function' as const,
     function: {
       name: 'goal_premise_set',
-      description: "Register PREMISES — the numbers a goal's plan assumes: key, value, unit, note (≤160 chars: where it came from), optional source (https URL re-checked HOURLY via jsonPath or a regex's first capture group, within tolerance). Drift wakes the project supervisor ([PREMISE DRIFT]); one key valued differently across projects wakes the Fleet Supervisor ([PREMISE CONFLICT]). mode merge | replace ([] clears, keeps ONLY keys sent); max 12 per goal — merge counts the UNION with what is already registered, so trim to the ≤12 keys to KEEP with mode:'replace'. Register one the moment a plan depends on a number. KPI CONTRACT: a goal with a numeric bar has exactly ONE 'kpi:' premise — probe named in its note, target in bar + barDirection, value ONLY from a this-wake run_command receipt — never a remembered or derived figure; diagnostics go under '<key>:diag'. A target_* premise is met only by an observed value (observed + observedNote, or a source). A value moved beyond tolerance is a REVISION shown on the [BOARD] — say why. Scored premises carry a manifest; compareTo gaps render only when manifests match.",
+      description: "Register PREMISES — the numbers a goal's plan assumes: key, value, unit, note (≤160 chars: where it came from), optional source (https URL re-checked HOURLY via jsonPath/pattern, within tolerance). Drift wakes the project supervisor ([PREMISE DRIFT]); one key valued differently across projects wakes the Fleet Supervisor ([PREMISE CONFLICT]). mode merge | replace ([] clears, keeps ONLY keys sent); max 12 per goal — merge counts the UNION with what is already registered, so trim to the ≤12 keys to KEEP with mode:'replace'. Register one when a plan depends on a number. KPI CONTRACT: a goal with a numeric bar has exactly ONE 'kpi:' premise — probe named in its note, target in bar + barDirection, value ONLY from a this-wake run_command receipt — never a remembered or derived figure; diagnostics go under '<name>:diag' with NO `kpi:` prefix. A target_* premise is met only by an observed value (observed + observedNote, or a source). A beyond-tolerance move is a [BOARD] REVISION — say why. Scored premises carry a manifest; compareTo gaps render only when manifests match.",
       parameters: {
         type: 'object',
         properties: {
@@ -1098,7 +1098,7 @@ const CORE_PLATFORM_TOOL_SCHEMA = [
             items: {
               type: 'object',
               properties: {
-                key: { type: 'string', description: "Slug, 1–64 chars: letters, digits, _ . : - ('kpi:' prefix = the KPI). Long enough for '<kpi key>:diag' (a diagnostic reading) — a key over 64 is refused with a shortened key to re-send." },
+                key: { type: 'string', description: "Slug, 1–64 chars: letters, digits, _ . : - ('kpi:' prefix = the goal's ONE KPI of record). A diagnostic reading goes under '<name>:diag' with NO `kpi:` prefix — a `kpi:<name>:diag` key is refused as a SECOND KPI. Long enough for that '<name>:diag' suffix — a key over 64 is refused with a shortened key to re-send." },
                 value: { type: 'number' },
                 unit: { type: 'string', description: "≤12 chars, e.g. '%', ' tok/s', 'USD'." },
                 note: { type: 'string', description: 'Where the number came from (≤160 chars).' },
@@ -6228,6 +6228,16 @@ export async function executeConfirmedPlatformTool(ctx: ToolContext, name: strin
           return `Feedback NOT filed (invalid acceptanceMetric — fix it and retry): ${verdict.message} The metric is DATA the post-deploy verifier re-runs after your fix deploys (e.g. {probe:'app_error_log_count', params:{level:'error', messagePattern:'P2025'}, operator:'<=', target:0, windowHours:24}) — never code.`;
         }
         context.acceptanceMetric = verdict.metric;
+        // TICKET 31199f81 — AN EXPLICIT MARKER, because a lane's own metric is
+        // its judgement. The verifier's designed-alarm/observability redirect
+        // now decides from the metric's CONTENT when no marker is present, so
+        // a lane-filed bar MUST be distinguishable from the auto-filer's or a
+        // lane's genuine test of a by-design class would be redirected away.
+        // Every lane filing goes through this branch, so this is the ONE place
+        // the hatch has to be stamped for hand-authored metrics to stay
+        // enforceable.
+        const { HAND_AUTHORED_METRIC_SOURCE } = await import('../feedback/acceptance-metric-defaults');
+        context.acceptanceMetricSource = HAND_AUTHORED_METRIC_SOURCE;
       } else if (FIX_CLASS_TYPES.includes(String(args?.type || ''))) {
         context.acceptanceMetricMissing = true;
       }

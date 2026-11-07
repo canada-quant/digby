@@ -1,7 +1,7 @@
 # Digby self-host — single public entrypoint.
-#   /api/crossmodel/instances/tunnel        → relay (Digby Edge WS tunnel)
-#   /api/crossmodel/instances/*/proxy/*     → relay (per-edge HTTP/SSE proxy)
-#   /api/crossmodel/instances/*/chats/*/messages → relay (cloud→edge messaging)
+#   /api/{crossmodel,digby}/instances/tunnel        → relay (Digby Edge WS tunnel)
+#   /api/{crossmodel,digby}/instances/*/proxy/*     → relay (per-edge HTTP/SSE proxy)
+#   /api/{crossmodel,digby}/instances/*/chats/*/messages → relay (cloud→edge messaging)
 #   /api/*  → backend (Express)
 #   *       → frontend (Next.js)
 #
@@ -28,10 +28,17 @@
 	# NOTE: Caddy path wildcards only work at the START/END of a path — a
 	# middle `*` (e.g. /instances/<id>/proxy/*) does NOT match. The two
 	# middle-wildcard families therefore use path_regexp matchers.
-	@relayTunnel path /api/crossmodel/instances/tunnel
-	@relayProxy path_regexp proxy ^/api/crossmodel/instances/[^/]+/proxy(/.*)?$
+	#
+	# BOTH API prefixes are matched (crossmodel→digby rename, leg (b) phase 1).
+	# The backend serves every router under /api/crossmodel AND /api/digby, and
+	# the relay now does too — a matcher pinned to the old prefix alone would
+	# send /api/digby/instances/* to the backend, which serves none of these
+	# three families (a 404 that looks like a client bug, not a routing one).
+	# The old prefix stays canonical; this only ADDS the new one.
+	@relayTunnel path /api/crossmodel/instances/tunnel /api/digby/instances/tunnel
+	@relayProxy path_regexp proxy ^/api/(?:crossmodel|digby)/instances/[^/]+/proxy(/.*)?$
 	# Digby Edge (Phase 5): cloud→edge messaging sugar (relay convenience endpoint)
-	@relayMessages path_regexp messages ^/api/crossmodel/instances/[^/]+/chats/[^/]+/messages$
+	@relayMessages path_regexp messages ^/api/(?:crossmodel|digby)/instances/[^/]+/chats/[^/]+/messages$
 	reverse_proxy @relayTunnel relay:4100
 	reverse_proxy @relayProxy relay:4100
 	reverse_proxy @relayMessages relay:4100

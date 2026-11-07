@@ -259,9 +259,22 @@ export interface AttachedImage {
   prompt?: string;
 }
 
-/** Human caption for an attached screenshot ("Final screen · Your Mac · Google Chrome"). */
-export function screenshotCaption(source: 'browser' | 'computer', ctx: { pageUrl?: string; app?: string }): string {
-  if (source === 'computer') return `Final screen · Your Mac${ctx.app ? ` · ${ctx.app}` : ''}`;
+/**
+ * Human caption for an attached screenshot.
+ *
+ * Computer captures name the machine that ACTUALLY ran: "Your PC" for a
+ * Windows capture, "Your Mac" for macOS/absent (historical bytes preserved).
+ * Browser captures name the page host. Ticket a544f308: callers must pass the
+ * driven platform or a Windows capture silently reads as a Mac.
+ */
+export function screenshotCaption(source: 'browser' | 'computer', ctx: { pageUrl?: string; app?: string; platform?: 'macos' | 'windows' }): string {
+  // Ticket 2d461d80: a Windows capture was captioned "Your Mac" — the same
+  // hard-coded-platform class as the header's `mac:` line. `platform` is
+  // optional so every existing caller keeps its exact historical caption.
+  if (source === 'computer') {
+    const machine = ctx.platform === 'windows' ? 'Your PC' : 'Your Mac';
+    return `Final screen · ${machine}${ctx.app ? ` · ${ctx.app}` : ''}`;
+  }
   let host = '';
   try { host = ctx.pageUrl ? new URL(ctx.pageUrl).hostname.replace(/^www\./, '') : ''; } catch { host = ''; }
   return host ? `Final page · ${host}` : 'Final page';
@@ -317,7 +330,16 @@ const COMPUTER_TASK_UNVERIFIED_LABEL = [
 export function formatComputerTaskToolResult(result: ComputerAgentResult): string {
   const text = (result.finalResponse || '').trim();
   const clean = (s?: string) => (s || '').replace(/[\r\n[\]]+/g, ' ').replace(/\s{2,}/g, ' ').trim().slice(0, 200);
-  const macLine = result.localStatus ? ` · mac: ${clean(result.localStatus)}` : '';
+  // Ticket 2d461d80 (2026-11-06): this line's label is the platform the run
+  // ACTUALLY drove, never a literal. It used to be ` · mac: ` unconditionally,
+  // so a Windows-pinned attempt read "mac: connected (Windows agent v0.9.x)" —
+  // a caller reasonably concluded the device pin had been ignored and a Mac
+  // served the frames, which is how a real device-routing bug would present.
+  // `platform` is typed on ComputerAgentResult; absent (legacy/capability-gate
+  // shapes) falls back to the historical `mac:` label so old callers and the
+  // pinned tests keep their exact bytes.
+  const platformLabel = result.platform === 'windows' ? 'win' : 'mac';
+  const macLine = result.localStatus ? ` · ${platformLabel}: ${clean(result.localStatus)}` : '';
   // Ticket d427c381 (2026-10-27): the device line goes LOUD whenever the task
   // text named a device — auto-bound (param omitted) or a mismatch with the
   // explicit param — so a caller can never mistake another Mac's healthy
@@ -365,7 +387,23 @@ export function formatComputerTaskToolResult(result: ComputerAgentResult): strin
     ? ` · harness: refusedRepeats=${h.refusedRepeats} noChangeStrikes=${h.noChangeStrikes} degenerateFrames=${h.degenerateFrames}` +
       ` frame=${h.frameGeometry || 'none'} displays=${h.displayCount === null || h.displayCount === undefined ? 'unknown' : h.displayCount}` +
       (h.probesRun ? ` probe=${h.probesPassed}/${h.probesRun}${h.inputProven ? ' input-proven' : ' FAILED'}` : '') +
-      (h.frontmostChanges ? ` frontmostChanges=${h.frontmostChanges}` : '')
+      (h.frontmostChanges ? ` frontmostChanges=${h.frontmostChanges}` : '') +
+      // Ticket a7f604ab: a probe that had to RE-SERVE an older frame instead of
+      // capturing a fresh one is stated in the header — the condition that used
+      // to be invisible (and produced impossible taskbar clocks) is now a
+      // caller-visible fact the lane can VOID on.
+      (h.probeFrameReplays ? ` probeFrameReplays=${h.probeFrameReplays} STALE-FRAMES` : '')
+    : '';
+  // Ticket a7f604ab: per-frame provenance at the envelope. The header states
+  // WHICH device produced the frames and whether any of them was a replay, so
+  // freshness is machine-provable from the tool result alone (the incident:
+  // frames dated 10/25/2026 and 2/6/2026 on a correctly-pinned box, with
+  // nothing in the result to distinguish them from the live screen).
+  const fp = result.frameProvenance;
+  const frameProvenanceLine = fp
+    ? ` · frames: ${fp.frames} captured${fp.replays ? ` · ${fp.replays} REPLAYED (not live)` : ''}` +
+      (fp.device ? ` · from ${clean(fp.device)}` : '') +
+      (fp.lastCapturedAt ? ` · last capture ${fp.lastCapturedAt}` : '')
     : '';
   // c468f922 (2026-10-28): the typed PRE-LOGIN INPUT capability rides every
   // result header — `prelogin_input: unavailable` is the fact that lets a lane
@@ -377,7 +415,7 @@ export function formatComputerTaskToolResult(result: ComputerAgentResult): strin
       (result.prelogin.blockedNow ? ' · BLOCKED NOW (lock/login screen)' : '')
     : '';
   const label = `${COMPUTER_TASK_UNVERIFIED_LABEL}\n`;
-  return `${banner}[Computer task result — steps: ${result.steps}${macLine}${deviceLine}${observeLine}${harnessLine}${preloginLine}]\n${label}${text}`;
+  return `${banner}[Computer task result — steps: ${result.steps}${macLine}${deviceLine}${observeLine}${harnessLine}${frameProvenanceLine}${preloginLine}]\n${label}${text}`;
 }
 
 // ── Per-user storage quota (adversarial review M1) ──────────────────────────────
@@ -1523,7 +1561,12 @@ export class ToolCache {
           });
           if (lastShot) {
             const ls = lastShot as { data: string; mediaType: string; pageUrl?: string; app?: string; source: 'browser' | 'computer' };
-            this.attachedImages.push({ mediaType: ls.mediaType, data: ls.data, source: ls.source, pageUrl: ls.pageUrl, app: ls.app, name: screenshotCaption(ls.source, ls) });
+            // Ticket a544f308: a COMPUTER handoff frame carries the platform the
+            // handoff actually drove (result.computerPlatform) — without it this
+            // caption fell back to "Your Mac" for a Windows capture, the exact
+            // defect 2d461d80 fixed on the computer_task path. Browser frames
+            // ignore `platform` entirely (the caption is the page host).
+            this.attachedImages.push({ mediaType: ls.mediaType, data: ls.data, source: ls.source, pageUrl: ls.pageUrl, app: ls.app, name: screenshotCaption(ls.source, { ...ls, platform: result.computerPlatform }) });
           }
           const text = (result.finalResponse || '').trim();
           logger.info(`ToolExecutor: browser_task done — driver=${result.driverUsed}, steps=${result.steps}, ${text.length} chars${lastShot ? ', screenshot attached' : ''}`);
@@ -1579,7 +1622,8 @@ export class ToolCache {
           });
           if (lastScreen) {
             const ls = lastScreen as { data: string; mediaType: string; app?: string };
-            this.attachedImages.push({ mediaType: ls.mediaType, data: ls.data, source: 'computer', app: ls.app, name: screenshotCaption('computer', ls) });
+            // Ticket 2d461d80: caption the machine the run actually drove.
+            this.attachedImages.push({ mediaType: ls.mediaType, data: ls.data, source: 'computer', app: ls.app, name: screenshotCaption('computer', { ...ls, platform: result.platform }) });
           }
           logger.info(`ToolExecutor: computer_task done — steps=${result.steps}, ${(result.finalResponse || '').length} chars${lastScreen ? ', screenshot attached' : ''}`);
           if (result.capabilityNotice) {

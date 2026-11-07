@@ -113,6 +113,62 @@ export interface ComputerObservation {
   hidIdleRawSeconds?: number | null;
   remoteSession?: { active: boolean; kinds?: string[] };
   error?: string;
+  /** Ticket a7f604ab (2026-11-06): WHICH frame this is, typed.
+   *
+   *  The defect this closes: a probe-triggered rewind could re-present an
+   *  OLDER frame as the current screen, and NOTHING on the observation, the
+   *  event or the result envelope said which capture it was, which device
+   *  produced it, or when it was taken. A caller could not machine-prove
+   *  freshness even when the content looked plausible (the incident: taskbar
+   *  clocks reading 10/25/2026 and 2/6/2026 against an owner-measured
+   *  11/6/2026, on a device pin that was separately proven correct).
+   *
+   *  Stamped by the harness in computer-loop.ts on every observation that
+   *  carries a frame — never by the device, never derived from a caption.
+   *  Absent on observations with no frame (uia_tree text reads, refusals). */
+  frame?: ComputerFrameProvenance;
+}
+
+/** Ticket a7f604ab — per-frame provenance. Three facts a caller needs to
+ *  decide whether pixels are LIVE:
+ *    • `seq`        — monotonic, session-scoped frame sequence. A frame served
+ *                     later with a LOWER seq than one already seen is a
+ *                     rewind, provable from the envelope alone.
+ *    • `capturedAt` — the HARNESS clock at which this process received the
+ *                     frame. Deliberately the harness's own clock, not a
+ *                     device-reported time: a device whose wall clock is wrong
+ *                     (or whose frame is a replay from its cache) cannot
+ *                     falsify it, and it is comparable to the run's own
+ *                     timestamps.
+ *    • deviceId / device / platform — the paired device that PRODUCED this
+ *                     specific frame, from the driver selection. A caption is
+ *                     derived state and was demonstrably wrong in this family
+ *                     (2d461d80); this is the selection fact.
+ */
+export interface ComputerFrameProvenance {
+  /** 1-based monotonic frame number within this session. */
+  seq: number;
+  /** ISO-8601 harness-clock timestamp at frame receipt. */
+  capturedAt: string;
+  /** The paired agent row that produced the frame (null when unknown). */
+  deviceId: string | null;
+  /** Human device name (null when unknown — never a platform-default label). */
+  device: string | null;
+  platform: 'macos' | 'windows' | null;
+  /** Ticket a7f604ab: true when this frame is NOT the capture that followed
+   *  the most recent dispatched action — i.e. a probe fell back to an older
+   *  leg frame and is being re-presented. A caller MUST treat a replayed
+   *  frame as historical, never as "the current screen". */
+  replay?: true;
+  /** When `replay`: how old these pixels were at the moment they were
+   *  re-served (ms since `capturedAt`). The fact a caller needs to judge
+   *  staleness — deliberately wall-clock AGE, not a capture-count delta: in
+   *  the real rewind path the re-served frame is the newest capture the
+   *  session ever took (the probe's own final capture returned nothing), so a
+   *  "frames behind" count would read 0 and hide the staleness. */
+  replayAgeMs?: number;
+  /** When `replay`: why the harness could not serve a fresh frame. */
+  replayReason?: string;
 }
 
 /** Executes the action vocabulary against the paired Mac. */
@@ -183,6 +239,18 @@ export interface ComputerAgentResult {
   capabilityNotice?: string;
   /** Multi-Mac: the human name of the Mac that ran (result headers report it). */
   device?: string;
+  /** Ticket 2d461d80 (2026-11-06): the SELECTED device's platform, typed.
+   *
+   *  Before this field the platform existed only as prose inside
+   *  `localStatus`/`finalResponse`, so every consumer that wanted to say
+   *  "which machine ran" had to string-match, and the tool-result header
+   *  shipped a literal `mac:` prefix on WINDOWS-pinned attempts — the
+   *  mismatch a caller read as "the pin was ignored, a Mac served these
+   *  frames". Declaring it here makes "which OS did I drive" a fact the
+   *  header, the screenshot caption and any calling lane can branch on,
+   *  never a guess from narration. Absent when no device was selected
+   *  (capability-gate paths — same contract as the device flags below). */
+  platform?: 'macos' | 'windows';
   /** Ticket d427c381 (2026-10-27): true when the device was chosen because the
    *  TASK TEXT named it (the `device` param was omitted). The tool-result
    *  header renders the device line LOUDLY so a caller can never mistake
@@ -259,6 +327,20 @@ export interface ComputerAgentResult {
    *  harness FACTS, not the sub-agent's narration. Absent when the session
    *  never started (capability-gate paths). */
   harness?: ComputerHarnessCounters;
+  /** Ticket a7f604ab: the session's frame provenance summary. Lets a caller
+   *  that never saw an intermediate event still machine-prove what the frames
+   *  were: how many were captured, how many had to be REPLAYED (a probe rewind
+   *  that could not obtain a fresh capture), which paired device produced them
+   *  and when the newest one was captured. Absent when the session never
+   *  produced a frame. */
+  frameProvenance?: {
+    frames: number;
+    replays: number;
+    deviceId: string | null;
+    device: string | null;
+    platform: 'macos' | 'windows' | null;
+    lastCapturedAt: string | null;
+  };
 }
 
 /** cu-diag fix #3 — what the harness itself measured during a session. */
@@ -285,4 +367,11 @@ export interface ComputerHarnessCounters {
   inputProven: boolean;
   /** Frontmost-app changes observed on byte-identical frames (positive input evidence). */
   frontmostChanges: number;
+  /** Ticket a7f604ab: how many times a probe had to RE-SERVE an older frame
+   *  instead of a fresh capture (the rewind this ticket exists for). Each one
+   *  is labelled `replay:true` on the frame and never presented as live; the
+   *  count makes the condition visible in the result header so a caller can
+   *  VOID the attempt instead of trusting a stale screen. Optional so every
+   *  existing caller/harness literal keeps its exact shape. */
+  probeFrameReplays?: number;
 }

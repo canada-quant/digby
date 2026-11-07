@@ -185,7 +185,14 @@ describe('Deleted-chat terminal state — CodeSessionView.tsx (owner 2026-10-27)
   it('the cold-load catches map a 404 to the deleted state, not no_workspace/error', () => {
     // Plain path: 404 ⇒ 'deleted' (was 'error' — retryable on a dead chat).
     const plainCatch = VIEW.indexOf('catch (e: any) {', VIEW.indexOf('const full = await crossModelApi.getChat(chatId, { messageLimit: 50 });'));
-    const body = VIEW.slice(plainCatch, plainCatch + 500);
+    expect(plainCatch).toBeGreaterThanOrEqual(0);
+    // Bound the window at the NEXT catch, not a fixed character count: ticket
+    // 5060c3d2 added explanatory comment lines inside this catch (the 404
+    // mapping itself is untouched), and a 500-char window silently stopped
+    // reaching the mapping. Anchoring on the following catch keeps this pin
+    // about behaviour instead of about comment length.
+    const nextCatch = VIEW.indexOf('catch (e: any) {', plainCatch + 1);
+    const body = VIEW.slice(plainCatch, nextCatch > plainCatch ? nextCatch : plainCatch + 1500);
     expect(body).toContain("e?.response?.status === 404 ? 'deleted' : 'error'");
   });
 });

@@ -169,6 +169,34 @@ export function githubListingSourcesDisabled(): boolean {
   return process.env.GITHUB_LISTING_SOURCES_DISABLED === '1';
 }
 
+/** Tools whose result is RECALL OF OUR OWN STORED MATERIAL — never a page this
+ *  run fetched off the web, so a URL inside one is provenance of the stored
+ *  object and never a citation for THIS answer (tickets 23e80d1e +
+ *  659b5074's class, one level out).
+ *
+ *  THE DISCRIMINATOR IS PROVENANCE, NOT SHAPE: a citation chip means "a page
+ *  this answer read". `github_get_file_contents` stays harvestable because it
+ *  FETCHES the document from GitHub for this run; everything below merely
+ *  reads back something already in our store (memory hits, prior chat text,
+ *  canvases, knowledge documents, worktree files, the feedback inbox). The
+ *  reported occurrence was a stored `youtube_pipe` finding whose provenance
+ *  URL surfaced through `search_memory` and rendered as "a youtube source for
+ *  some random game" under an unrelated answer. */
+const STORED_MATERIAL_TOOLS = new Set([
+  // relevance-matched retrieval over our own store
+  'search_memory', 'list_memory', 'search_chats',
+  // deliberate reads of one stored object (chat text / canvas / document / file / inbox)
+  'get_chat_messages', 'get_supervisor_state', 'get_feedback',
+  'get_canvas', 'list_canvases', 'read_document', 'list_knowledge_documents',
+  'read_session_file', 'list_session_files',
+]);
+
+/** Kill switch for the stored-material gate (ticket 23e80d1e): =1 restores the
+ *  pre-fix harvest of URLs out of recall / stored-object reads. */
+export function storedMaterialSourcesDisabled(): boolean {
+  return process.env.STORED_MATERIAL_SOURCES_DISABLED === '1';
+}
+
 /** Bare host for status lines ('https://www.example.com/x?y' → 'example.com'). */
 export function hostOf(url: any): string {
   try { return new URL(String(url)).hostname.replace(/^www\./, ''); } catch { return ''; }
@@ -450,7 +478,7 @@ export class ChatAgentSSEAdapter {
     }
   }
 
-  private onToolResult(_name: string, result: any): void {
+  private onToolResult(name: string, result: any): void {
     // Collect source URLs (first few per result) for complete.sources.
     // Filter BEFORE counting toward the caps: tool results often LEAD with
     // redirect/consent/search-host junk, and letting those consume the
@@ -469,6 +497,17 @@ export class ChatAgentSSEAdapter {
     // GITHUB_LISTING_SOURCES_DISABLED=1 restores the old harvest.
     const text = typeof result === 'string' ? result : JSON.stringify(result ?? '');
     if (!githubListingSourcesDisabled() && GITHUB_CODE_SEARCH_LISTING_RE.test(text.slice(0, 400))) return;
+    // STORED MATERIAL IS NOT A CITATION (ticket 23e80d1e): a Sources chip means
+    // "a page THIS answer read". Tools that read back our own store — memory
+    // hits, prior chat text, canvases, knowledge documents, worktree files, the
+    // feedback inbox — merely surface content whose URLs are provenance of the
+    // stored object. The occurrence: a stored `youtube_pipe` finding carried its
+    // video URL, `search_memory` returned it, and the owner saw "a youtube
+    // source for some random game" under an unrelated answer. Gating the whole
+    // class (not just search_memory) is deliberate — the same harvest fired
+    // through every one of these doors. Web tools stay harvestable: they ARE
+    // what the run read. Kill switch: STORED_MATERIAL_SOURCES_DISABLED=1.
+    if (STORED_MATERIAL_TOOLS.has(name) && !storedMaterialSourcesDisabled()) return;
     const urls = text.match(/https?:\/\/[^\s"'\\)\]}>]+/g) || [];
     let takenFromThisResult = 0;
     for (const u of urls) {

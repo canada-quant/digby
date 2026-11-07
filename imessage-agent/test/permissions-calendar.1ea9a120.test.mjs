@@ -160,12 +160,24 @@ test('v0.7.3 sign-in guard: zero-calendars Mac classifies as no-calendar-account
 });
 
 test('v0.7.3 backend surfaced copy: no-calendar-account renders sign-in copy, not the raw shape', () => {
+  // 2026-11-06: the copy moved OUT of the tool's dispatch case into
+  // calendar/apple-calendar.ts — ONE place writes Apple Calendar copy so the
+  // tool, the new-chat context and the home card cannot drift apart. The
+  // INVARIANT is unchanged: a no-calendar-account read surfaces sign-in copy,
+  // never the raw {events:null} shape the model could read as "nothing on".
+  const policySrc = readFileSync(
+    join(src, '..', '..', 'backend', 'src', 'modules', 'crossmodel', 'calendar', 'apple-calendar.ts'),
+    'utf8',
+  );
+  assert.match(policySrc, /case 'no-calendar-account':/, 'the state has its own copy arm');
+  assert.match(policySrc, /not signed in to an Apple account/, 'the surfaced copy names the fix (sign in)');
+  // And the tool still routes through the shared policy rather than telling
+  // its own story.
   const backendSrc = readFileSync(
     join(src, '..', '..', 'backend', 'src', 'modules', 'crossmodel', 'coding', 'coding-integrations.ts'),
     'utf8',
   );
-  assert.match(backendSrc, /res\.unavailable\?\.reason === 'no-calendar-account'/, 'the dispatch case branches on the reason');
-  assert.match(backendSrc, /not signed in to the Apple account\)/, 'the surfaced copy names the fix (sign in)');
+  assert.match(backendSrc, /readAppleCalendar\(userId/, 'the tool uses the shared Apple read');
 });
 
 test('v0.7.3 version pin: the sign-in guard ships stamped', () => {

@@ -563,8 +563,71 @@ CRITICAL RULES:
     }
   }
 
-  // Combine additional contexts (Google + GitHub + X + Slack + Asana + Xero + Plaid + iMessage)
-  const contextParts = [googleAdditionalContext, githubAdditionalContext, xAdditionalContext, slackAdditionalContext, asanaAdditionalContext, xeroAdditionalContext, plaidAdditionalContext, imessageAdditionalContext]
+  // ── macOS Apple Calendar: prefetch on calendar intent (2026-11-06) ───────
+  // The owner's report ("calendar sync isn't working or showing in my digby
+  // calendar on new chats or context") had TWO halves. The device half is the
+  // agent's consent path; THIS is the context half: Google Calendar was
+  // prefetched on calendar intent while Apple Calendar — the calendar actually
+  // holding the owner's day — was never fetched at all, so the assistant
+  // answered new-chat questions about "today" with no knowledge of the events
+  // on the Macs. Latency-bounded and intent-gated exactly like the other
+  // families: one dispatch on a calendar-ish message, never on every send.
+  //
+  // It runs INSIDE the existing prefetch deadline race (`buildIntegrationContext
+  // Bounded`), and the read itself is bounded by the read dispatch timeout, so
+  // a wedged Mac cannot wedge a turn. A failure is CLASSIFIED, never an empty
+  // day: `readAppleCalendar` answers a state, and the non-ok states reach the
+  // prompt as one honest line (so the model says "I can't see your Mac's
+  // calendar because X" instead of inventing a free day).
+  let appleCalendarContext: string | undefined;
+  if (userId) {
+    try {
+      const { detectGoogleIntent } = await import('./google/intent-detector');
+      // Reuse the Google calendar intent detector: it is the project's single
+      // definition of "this message is about a calendar/schedule" (calendar,
+      // calendars, "what's on my agenda", "meeting … today", "<name> calendar").
+      // A second regex set would drift from it.
+      if (detectGoogleIntent(message).calendar) {
+        sendEvent('progress', { message: STATUS.integration.appleCalendar, stage: 'apple-calendar' });
+        const { listAgents, isOnline } = await import('./imessage/imessage.service');
+        const agents = await listAgents(userId);
+        // Only pay the dispatch when some Mac could plausibly answer; the
+        // policy module still owns WHICH Mac and why.
+        if (agents.some((a) => isOnline(a.lastSeenAt))) {
+          const { readAppleCalendar, appleCalendarEventsForPrompt, appleCalendarDeviceTag } = await import('./calendar/apple-calendar');
+          const read = await readAppleCalendar(userId, { days: 7, agents });
+          const tag = appleCalendarDeviceTag(read);
+          if (read.state === 'ok') {
+            const body = appleCalendarEventsForPrompt(read);
+            if (body) {
+              appleCalendarContext =
+                `═══ APPLE CALENDAR (from the user's Mac) ═══\n` +
+                `${body}\n${tag}\n` +
+                `(These are the user's own macOS/Apple Calendar events, read from their Mac — distinct from any Google calendar data above.)\n` +
+                `═══ END APPLE CALENDAR ═══`;
+            }
+          } else {
+            // Classified failure: say WHY inside the context so the answer can
+            // be honest ("I can't see the Mac calendar because access was never
+            // granted") instead of silently omitting the family — which is the
+            // shape that made the owner believe nothing was wired up.
+            appleCalendarContext =
+              `═══ APPLE CALENDAR (UNAVAILABLE) ═══\n` +
+              `${read.error || 'The Mac calendar could not be read.'}\n` +
+              `Do NOT tell the user their calendar is empty — say the macOS calendar could not be read and name the reason.\n` +
+              `═══ END APPLE CALENDAR ═══`;
+          }
+        }
+      }
+    } catch (calErr: any) {
+      // Graceful: a broken Apple calendar leg must never block the turn (the
+      // same contract as every other family).
+      logger.warn(`Apple Calendar context injection failed (non-blocking): ${calErr?.message || calErr}`);
+    }
+  }
+
+  // Combine additional contexts (Google + GitHub + X + Slack + Asana + Xero + Plaid + iMessage + Apple Calendar)
+  const contextParts = [googleAdditionalContext, githubAdditionalContext, xAdditionalContext, slackAdditionalContext, asanaAdditionalContext, xeroAdditionalContext, plaidAdditionalContext, imessageAdditionalContext, appleCalendarContext]
     .filter((c): c is string => !!c);
   const combinedAdditionalContext = contextParts.length > 0
     ? contextParts.join('\n\n')

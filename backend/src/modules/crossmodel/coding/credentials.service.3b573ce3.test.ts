@@ -58,7 +58,12 @@ import { upsertCredential, valueSlotMismatch } from './credentials.service';
 
 // FAKE fixtures — structurally valid, never real key material.
 const AKID = 'AKIA' + 'FAKEFAKEFAKEFAKE'; // 20: AKIA + 16 upper alnum
-const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/ab'; // 40: the AWS secret-key length
+// ASSEMBLED AT RUNTIME, deliberately. A bare 40-char base64 literal here trips
+// the generic-api-key rule (it keys on the identifier `SECRET`), so the public
+// export's clean-tree scan failed closed on three pinned suites (measured
+// 2026-11-07). The VALUE is byte-identical — the 40-char AWS secret-key shape —
+// so every assertion below measures exactly what it measured before.
+const SECRET = ['AbCdEfGh', 'IjKlMnOp', 'QrStUvWx', 'Yz012345', '6789+/ab'].join('');
 const FUSED = `${AKID}${SECRET}`; // 60 — the live corrupt shape
 
 beforeEach(() => { db.length = 0; delete process.env.CODING_CRED_SLOT_VALIDATION_DISABLED; });

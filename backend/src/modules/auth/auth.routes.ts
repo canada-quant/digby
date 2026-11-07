@@ -120,4 +120,31 @@ router.post('/change-password', authenticate, authController.changePassword);
  */
 router.delete('/account', authenticate, authController.deleteAccount);
 
+/**
+ * @swagger
+ * /api/auth/verify-email:
+ *   post:
+ *     summary: Consume an email-verification token
+ *     description: >
+ *       Public on purpose — the emailed link is opened in whatever browser the
+ *       user reads mail in. The token is the credential (32 random bytes,
+ *       stored only as sha256, single-use, 24 h). A repeat use of a burned
+ *       token answers success when the account is already verified, and is
+ *       refused when it is not.
+ *     tags: [Auth]
+ */
+router.post('/verify-email', authController.verifyEmail);
+
+/**
+ * @swagger
+ * /api/auth/resend-verification:
+ *   post:
+ *     summary: Re-send the verification link to the signed-in user
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ */
+router.post('/resend-verification', authenticate, authController.resendVerification);
+
 export default router;

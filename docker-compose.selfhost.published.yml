@@ -40,8 +40,12 @@
 #
 # Database migrations run automatically via the one-shot `migrate` service
 # before the backend starts. Optional services:
-#   --profile mcp    Google/GitHub/X/Slack/Asana/Digby/BrightData MCP servers
-#                    (each needs its own OAuth app credentials in .env)
+#   --profile mcp    Google/GitHub/X/Slack/Asana/Discord/BrightData MCP CONNECTORS
+#                    of one gateway (each needs its own OAuth app credentials in
+#                    .env). `digby-mcp` is NOT here — it is its own opt-in
+#                    profile, `--profile mcp-platform` (docs/MCP_GATEWAY.md).
+#   --profile mcp-platform  digby-mcp: the hosted platform API re-exported as
+#                    MCP tools (per-user token pass-through, loopback only)
 #   --profile tools  Adminer DB UI on http://localhost:9521
 #
 # NOTE: this file builds images from the local source tree. Once published
@@ -708,8 +712,19 @@ services:
 
   # Digby platform API as MCP tools — per-user pass-through auth, pointed at
   # THIS instance's backend (not digby.ai).
+  #
+  # NOT IN THE DEFAULT `mcp` PROFILE (todo 924725a4, 2026-11-06). The MCP
+  # product surface is ONE gateway (see docs/MCP_GATEWAY.md) whose connector
+  # options are GitHub/Google/Slack/Asana/Discord/X. This service is different
+  # in kind: it re-exports the ONE-VENDOR hosted platform API, and unlike every
+  # connector above it holds no shared `*_MCP_API_KEY` at all — it accepts any
+  # non-empty `Bearer` at the listener and lets the upstream decide (that is
+  # deliberate: docs/DIGBY_MCP.md, confused-deputy note). It therefore does not
+  # belong on a default install of a product that must be vendor-neutral.
+  # Keep the opt-in explicit and separate so enabling the connectors can never
+  # silently widen the listener surface.
   digby-mcp:
-    profiles: ["mcp"]
+    profiles: ["mcp-platform"]
     image: ${DIGBY_IMAGE_REGISTRY:-ghcr.io/canada-quant/digby}-digby-mcp:${DIGBY_IMAGE_TAG:-latest}
     container_name: digby-digby-mcp
     ports:

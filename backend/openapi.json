@@ -65,6 +65,9 @@
       "name": "openapi"
     },
     {
+      "name": "org"
+    },
+    {
       "name": "plaid"
     },
     {
@@ -276,6 +279,44 @@
     "/api/auth/account": {
       "delete": {
         "summary": "Permanently delete the current user's account",
+        "tags": [
+          "auth"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        }
+      }
+    },
+    "/api/auth/verify-email": {
+      "post": {
+        "summary": "Consume an email-verification token",
+        "tags": [
+          "auth"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        }
+      }
+    },
+    "/api/auth/resend-verification": {
+      "post": {
+        "summary": "Re-send the verification link to the signed-in user",
         "tags": [
           "auth"
         ],
@@ -12143,6 +12184,101 @@
           }
         },
         "description": "GET /api/crossmodel/admin/traffic/flow?userId= | ?visitorId= — one subject's timeline (admin).\nAdmin-only (role enforced in the controller)."
+      }
+    },
+    "/api/crossmodel/admin/orgs": {
+      "get": {
+        "summary": "List workspaces (admin only)",
+        "tags": [
+          "org"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Admin-only (role enforced in the controller)."
+      }
+    },
+    "/api/crossmodel/admin/orgs/{orgId}/suspension": {
+      "put": {
+        "summary": "Suspend or reinstate a workspace (admin only)",
+        "tags": [
+          "org"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Admin-only (role enforced in the controller).",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/admin/orgs/{orgId}/quota": {
+      "put": {
+        "summary": "Set a workspace's daily message limit (admin only)",
+        "tags": [
+          "org"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Admin-only (role enforced in the controller).",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     }
   },

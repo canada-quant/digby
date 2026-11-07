@@ -13,7 +13,15 @@ jest.mock('../../../config/redis', () => ({
   __esModule: true,
   default: {
     get: jest.fn(async (k: string) => redisStore.get(k) ?? null),
-    set: jest.fn(async (k: string, v: string) => { redisStore.set(k, v); return 'OK'; }),
+    // NX honoured, exactly like the real client (config/redis.ts:41 `set(key, value, { NX: true, EX })`).
+    // Ticket 2e086227: infra-watch's deliver() now CLAIMS an alert key with SET NX before the first wake,
+    // so a double that always answers 'OK' would report every claim as won and the dedupe would never hold.
+    set: jest.fn(async (k: string, v: string, opts?: { NX?: boolean }) => {
+      if (opts?.NX && redisStore.has(k)) return null;
+      redisStore.set(k, v);
+      return 'OK';
+    }),
+    del: jest.fn(async (k: string) => (redisStore.delete(k) ? 1 : 0)),
   },
 }));
 const mockPrisma: any = {

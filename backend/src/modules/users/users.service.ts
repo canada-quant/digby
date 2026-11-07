@@ -2,6 +2,10 @@ import prisma from '../../config/database';
 import { hashPassword } from '../../utils/password';
 import { AppError } from '../../middleware/error-handler';
 import { CreateUserInput, UpdateUserInput, ListUsersQuery } from './users.validation';
+// Phase 2 Cloud: the auto-created personal org (todo ea95fa0b leg 1 item 2)
+// and the logger its failure path reports through.
+import { ensurePersonalOrg } from '../crossmodel/org/org.service';
+import logger from '../../utils/logger';
 
 export class UsersService {
   /**
@@ -141,6 +145,15 @@ export class UsersService {
         updatedAt: true,
       },
     });
+
+    // Personal org (Phase 2 Cloud): every user-creation path satisfies the
+    // one-default-org invariant. Non-fatal — the send guard self-heals lazily
+    // (org.service.ts ensurePersonalOrgForUser).
+    try {
+      await ensurePersonalOrg(user.id, user.email, user.name);
+    } catch (err: any) {
+      logger.warn(`createUser: personal org creation failed for ${user.id} (send path will self-heal): ${err?.message ?? err}`);
+    }
 
     return user;
   }

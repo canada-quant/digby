@@ -97,7 +97,6 @@ import { TranscriptAttachmentChips } from '@/components/ui/custom/prompt/transcr
 import { ExpandableDataImage } from '@/components/ui/custom/prompt/expandable-data-image';
 import { classifyAssistantCard, classifySystemRow } from '@/lib/machine-wake';
 import { bundleMachineGroups, groupMachineRows, type MachineTurnGroup as MachineTurnGroupItem } from '@/lib/machine-turn-grouping';
-import ThinkingAd from './ThinkingAd';
 import type { ChatComposerHandle } from './ChatComposerTextarea';
 import { useVoiceComposer } from './use-voice-composer';
 import type { CodingChrome } from './FloatingChrome';
@@ -969,7 +968,7 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       endpoint (server-side cm_session context). Coding sessions always pass a
       real id. */
   chatId: string | null;
-  /** Kids-mode account (COPPA) — gates the sponsored ThinkingAd slot. Kids are
+  /** Kids-mode account (COPPA). Kids are
       signed IN (user.isChild), so "coding needs auth" is NOT a sufficient guard. */
   isKid?: boolean;
   /** Lets the host page keep its sidebar "generating" dot honest. */
@@ -2744,7 +2743,18 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
             !!(full.isSupervisor || full.isProjectSupervisor),
           );
           startPendingRowPoll(restored, chatId);
-          const attach = !!plainRef.current?.attachOnLoad;
+          // Ticket 5060c3d2 (owner: "when i leave a chat and come back mid
+          // response i dont see the current progress"): the attach decision now
+          // consults SERVER truth first. `attachOnLoad` is the page's LOCAL
+          // mark, which dies with the unmount — so a fresh tab / a return after
+          // a hard reload saw nothing attached while the run was still live.
+          // `full.running` is the same cross-process busy truth the sidebar
+          // uses (in-process registry ∪ Redis liverun key ∪ durable
+          // agent_runs), carried on the one round trip this effect already
+          // makes. The tri-state probe below stays as the fallback for older
+          // backends that don't send the field yet (deploy skew): `undefined`
+          // is NOT `true`, so pre-existing behaviour is preserved exactly.
+          const attach = !!plainRef.current?.attachOnLoad || full.running === true;
           setLive({ parts: [], pendingApproval: null, running: attach });
           // Initial load settled — the plain auto-start (C3 blocker 1) may now
           // fire; if `attach` is true a run is live and the live.running gate
@@ -2775,7 +2785,18 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
           // Owner 2026-10-27 (stale-delete UI report): 404 = the chat row is
           // GONE (deleted) — terminal deleted copy, not the retryable error
           // state (a retry would just 404 again). Anything else stays 'error'.
-          if (activeIdRef.current === chatId) setLoadFailed(e?.response?.status === 404 ? 'deleted' : 'error');
+          //
+          // Ticket 5060c3d2: settle the load flag on the failure path too. The
+          // terminal arms above the plain loader shield it today, but leaving
+          // `plainLoaded` false kept the plain auto-start gate
+          // (`if (!plainLoaded || live.running) return;`) shut forever after a
+          // failed load, and made "the loader clears once the load settles" an
+          // invariant the code did not actually hold. setLoadFailed already
+          // decides the rendered outcome; this only stops the flag lying.
+          if (activeIdRef.current === chatId) {
+            setLoadFailed(e?.response?.status === 404 ? 'deleted' : 'error');
+            setPlainLoaded(true);
+          }
         }
       })();
       return;
@@ -4098,6 +4119,35 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
       </div>
     );
   }
+  // Ticket 5060c3d2 (owner: "the chat ui is so bad i cant open older chats").
+  // A PLAIN chat had no loading state at all: the loader above is coding-gated,
+  // and the transcript load effect hard-clears `messages` before its blocking
+  // GET, so the empty-state branch below painted the NEW-CHAT home hero ("Ask
+  // Digby anything") for the whole round trip. Opening any older/uncached chat
+  // therefore looked exactly like failing to open it.
+  //
+  // How long is that window? Up to the api client's timeout — `API_TIMEOUT_MS`
+  // = 45 s (lib/api-client.ts) — after which the GET rejects and the catch
+  // renders the retryable error arm ABOVE this block. It is a bounded 45 s
+  // window, NOT an forever one: don't be tempted to add an abort controller
+  // here on the belief that the client has no timeout.
+  //
+  // Show an honest loader until the transcript has settled. Gated on
+  // `messages.length === 0` so a snapshot first paint (ce78ab80) still renders
+  // instantly, on `!live.running` so a re-attach keeps the live chrome, and on
+  // a real `chatId` so the NEW-CHAT / guest home (chatless, no question of
+  // opening history) never flashes a spinner before paint — an effect, not a
+  // render, is what settles `plainLoaded` there.
+  if (plain && chatId && !plainLoaded && messages.length === 0 && !live.running) {
+    return (
+      <div className="flex flex-1 min-w-0 flex-col">
+      {header}
+      <div className="flex-1 flex items-center justify-center text-muted-foreground">
+        <DigbyLoader size={40} label="Opening chat" />
+      </div>
+      </div>
+    );
+  }
 
   // Plain mode renders at the user's chat text-size preference; coding keeps
   // the dense transcript scale (sizes undefined → component defaults).
@@ -4810,14 +4860,7 @@ export default function CodeSessionView({ header, chatId, onRunningChange, onTit
                     </div>
                   </div>
                 )}
-                {/* Sponsored slot — under the status line AND any input card
-                    (approval / question) while the run streams (audit
-                    2026-09-15: an ad between the status and a card asking the
-                    user something buried the ask). Mounts/unmounts with this
-                    live-run card, so each run requests a fresh ad and the GPT
-                    slot is destroyed when the run finishes. Gated on !isKid
-                    (COPPA) — same audience rule as the chat surface. */}
-                {!isKid && <ThinkingAd />}
+                {/* Sponsored slot REMOVED (todo 9a3e82af) — Digby is ad-free in-product. */}
               </div>
             )}
 

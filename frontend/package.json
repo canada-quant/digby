@@ -88,11 +88,13 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
     "@tailwindcss/typography": "^0.5.15",
+    "@types/jsdom": "^21.1.7",
     "@types/node": "^24.10.4",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9.39.2",
     "eslint-config-next": "^15.5.9",
+    "jsdom": "^25.0.1",
     "postcss": "^8.4.49",
     "sharp": "^0.33.5",
     "tailwindcss": "^4.1.18",

@@ -101,9 +101,14 @@ jest.mock('./coding/coding-data.service', () => ({
   getChatCapability: (...a: any[]) => mockGetChatCapability(...a),
 }));
 const mockGetBusyChatIds = jest.fn();
+const mockIsChatBusy = jest.fn(async (..._a: any[]): Promise<boolean> => false);
 jest.mock('./chat-agent/chat-busy', () => ({
   __esModule: true,
   getBusyChatIds: (...a: any[]) => mockGetBusyChatIds(...a),
+  // Ticket 5060c3d2: getChatById carries the SAME cross-process busy truth on
+  // the single-chat read, so the open path can attach to a live run without
+  // relying on local marks + a one-shot tri-state probe.
+  isChatBusy: (...a: any[]) => mockIsChatBusy(...a),
 }));
 const mockGetPendingAttentionMap = jest.fn();
 jest.mock('./coding/session-run-lock', () => ({
@@ -494,6 +499,60 @@ describe('updateChat — per-chat lead model (WI-O #4c)', () => {
     await expect(crossModelService.updateChat(CHAT.id, OWNER, { leadModel: 'deepseek-flash' }))
       .rejects.toMatchObject({ statusCode: 400, message: expect.stringContaining('set_session_model') });
     expect(mockPrisma.crossModelChat.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('getChatById — live run truth (ticket 5060c3d2)', () => {
+  beforeEach(() => {
+    mockChatAccess(CHAT, null);
+    mockIsChatBusy.mockResolvedValue(false);
+  });
+
+  // Owner report: "when i leave a chat and come back mid response i dont see
+  // the current progress". The open path had only LOCAL marks (dead after the
+  // unmount) plus ONE one-shot probe whose tri-state `null` means UNKNOWN — so
+  // a fresh tab / hard reload during a run rendered a settled chat with no
+  // spinner and no answer. The chat GET is the one round trip the view always
+  // makes, so it must carry the same cross-process busy truth listChats ships.
+
+  it('reports running:true on the PAGED shape (the shape the unified view uses) when a run is live', async () => {
+    mockIsChatBusy.mockResolvedValue(true);
+    mockPrisma.crossModelMessage.findMany.mockResolvedValue([msgRow('m1', t(1))]);
+
+    const chat: any = await crossModelService.getChatById(CHAT.id, OWNER, 'read', { messageLimit: 50 });
+
+    expect(mockIsChatBusy).toHaveBeenCalledWith(CHAT.id);
+    expect(chat.running).toBe(true);
+  });
+
+  it('reports running:false on the paged shape when nothing is answering', async () => {
+    mockPrisma.crossModelMessage.findMany.mockResolvedValue([msgRow('m1', t(1))]);
+
+    const chat: any = await crossModelService.getChatById(CHAT.id, OWNER, 'read', { messageLimit: 50 });
+
+    expect(chat.running).toBe(false);
+  });
+
+  it('reports running on the LEGACY (unpaged) shape too — both returns carry it', async () => {
+    mockIsChatBusy.mockResolvedValue(true);
+
+    const chat: any = await crossModelService.getChatById(CHAT.id, OWNER);
+
+    expect(chat.running).toBe(true);
+    // Still the legacy shape: no paging envelope keys.
+    expect(chat).not.toHaveProperty('hasMoreMessages');
+  });
+
+  it('a liveness hiccup degrades to running:false instead of failing the whole GET', async () => {
+    // Best-effort discipline, same as every other busy read: a Redis/DB
+    // hiccup must never 500 a transcript fetch — the chat simply reads idle.
+    mockIsChatBusy.mockRejectedValue(new Error('redis down'));
+    mockPrisma.crossModelMessage.findMany.mockResolvedValue([msgRow('m1', t(1))]);
+
+    const chat: any = await crossModelService.getChatById(CHAT.id, OWNER, 'read', { messageLimit: 50 });
+
+    expect(chat.running).toBe(false);
+    expect(chat.messages.map((m: any) => m.id)).toEqual(['m1']); // transcript intact
   });
 });
 

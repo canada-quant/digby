@@ -23,7 +23,9 @@ import { WebSocketServer } from 'ws';
 import prisma from './config/database';
 import { connectRedis } from './config/redis';
 import logger from './utils/logger';
-import { RelayCore, TUNNEL_PATH, PROXY_PATH_RE, MESSAGES_PATH_RE } from './relay/relay-core';
+import {
+  RelayCore, TUNNEL_PATH, isTunnelPath, PROXY_PATH_RE, MESSAGES_PATH_RE,
+} from './relay/relay-core';
 
 const RELAY_PORT = parseInt(process.env.RELAY_PORT || '4100', 10);
 
@@ -61,7 +63,9 @@ export function createRelayServer(core: RelayCore): http.Server {
 
   server.on('upgrade', (req, socket, head) => {
     const u = new URL(req.url || '/', 'http://relay');
-    if (u.pathname !== TUNNEL_PATH) {
+    // Membership, not equality: the tunnel endpoint is served under every API
+    // prefix (api/crossmodel + api/digby) so an edge can dial either one.
+    if (!isTunnelPath(u.pathname)) {
       socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
       socket.destroy();
       return;

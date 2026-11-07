@@ -145,7 +145,7 @@ test('405927c9: build-app.sh refuses a DMG bundling a stale agent', () => {
 });
 
 test('405927c9: the tree agent matches the current release (lockstep pin)', () => {
-  assert.match(configTs, /AGENT_VERSION = '0\.9\.23'/);
+  assert.match(configTs, /AGENT_VERSION = '0\.9\.24'/);
 });
 
 // ── 3. The duplicates — no shape installs beside a self-managed agent ───────

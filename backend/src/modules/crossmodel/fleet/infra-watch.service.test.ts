@@ -113,6 +113,8 @@ import {
   alertDecisionBackendDown,
   renderDecisionBackendDownAlert,
   selectDecisionBackendDownAlerts,
+  // ticket 2e086227 — the claim lease
+  DELIVER_CLAIM_LEASE_SEC,
 } from './infra-watch.service';
 import { fileFeedbackTicket } from '../feedback/feedback.service';
 import * as fsp from 'fs/promises';
@@ -973,6 +975,104 @@ describe('deliver() enqueue failure contract (6d19f11f)', () => {
     expect(rows().filter((m) => m?.kind === 'product_alert')).toEqual([
       expect.objectContaining({ sessionId: 'fleet-sup-1', meta: expect.objectContaining({ kind: 'chips', outcome: 'enqueue_failed' }) }),
     ]);
+  });
+});
+
+// ── Ticket 2e086227: the alert-dedupe claim race + the streak window text ──────
+// Prod 2026-11-06T18:53:11.756Z and .764Z: TWO [INFRA ALERT — decision gate] wakes
+// 8 ms apart for ONE incident, under the SAME dedupe key (both infra_alert rows lack
+// `viaSweep`, so both came from the in-process streak path). deliver() READ the key
+// and wrote it only AFTER the delivery loop, so two callers already in flight both
+// read "unclaimed" and both delivered. The claim is now an NX set made BEFORE the
+// first wake, held as a short lease and released when nothing landed (6d19f11f).
+describe('deliver() dedupe claim is NX-atomic (ticket 2e086227)', () => {
+  const targets = [{ id: 'fleet-sup-1', userId: 'owner-1' }];
+  const KEY = 'infra-watch:alert:decision_backend:all_legs_failed:streak';
+  const rows = () => mockRecordLoopMetric.mock.calls.map((c) => c[0]);
+
+  beforeEach(() => { redisStore.clear(); mockRecordLoopMetric.mockClear(); });
+
+  it('two CONCURRENT deliveries of one key wake the supervisor exactly ONCE (the 8 ms double-alert); the loser records nothing and the key holds for the full window', async () => {
+    const wake = jest.fn(async () => ({ ok: true }));
+    const [a, b] = await Promise.all([
+      deliver(targets, KEY, 6 * 3600, '[INFRA ALERT — decision gate: every backend failing]', { kind: 'decision_backend', event: 'all_legs_failed' }, wake as any),
+      deliver(targets, KEY, 6 * 3600, '[INFRA ALERT — decision gate: every backend failing]', { kind: 'decision_backend', event: 'all_legs_failed' }, wake as any),
+    ]);
+    expect(wake).toHaveBeenCalledTimes(1);
+    expect(a + b).toBe(1);
+    // Exactly ONE delivered row (a delivered row carries no outcome) — the pre-fix
+    // check-then-act let both callers through and wrote two.
+    expect(rows().filter((m) => m?.kind === 'infra_alert')).toHaveLength(1);
+    // The claim was converted to the full dedupe key, so a LATER pass is still a no-op.
+    expect(redisStore.has(KEY)).toBe(true);
+    expect(await deliver(targets, KEY, 6 * 3600, 'x', { kind: 'decision_backend' }, wake as any)).toBe(0);
+    expect(wake).toHaveBeenCalledTimes(1);
+  });
+
+  it('the claim is a LEASE, not the dedupe window: a delivery that lands NOTHING releases it, so the next pass retries (6d19f11f preserved)', async () => {
+    const wake = jest.fn(async (): Promise<any> => ({ ok: false, error: 'target chat not found' }));
+    expect(await deliver(targets, KEY, 6 * 3600, 'x', { kind: 'decision_backend' }, wake as any)).toBe(0);
+    // The claim must NOT outlive a zero-delivery pass, or the still-true alert is
+    // silenced for 6 h without a wake ever landing — the exact 6d19f11f regression.
+    expect(redisStore.has(KEY)).toBe(false);
+    wake.mockImplementation(async () => ({ ok: true }));
+    expect(await deliver(targets, KEY, 6 * 3600, 'x', { kind: 'decision_backend' }, wake as any)).toBe(1);
+    expect(redisStore.has(KEY)).toBe(true);
+  });
+
+  it('the claim carries a SHORT lease with EX in the SAME atomic command — dropping EX would leave a permanent lock on a crash, and every double ignores EX so only an explicit assertion catches it', async () => {
+    const wake = jest.fn(async () => ({ ok: true }));
+    await deliver(targets, KEY, 6 * 3600, 'x', { kind: 'decision_backend' }, wake as any);
+    const redisMock: any = jest.requireMock('../../../config/redis').default;
+    const claimCall = (redisMock.set as jest.Mock).mock.calls.find((c) => c[2]?.NX);
+    expect(claimCall).toBeDefined();
+    // Atomic claim: NX + EX together. The lease is FAR shorter than the dedupe window it upgrades to.
+    expect(claimCall[2]).toEqual({ EX: DELIVER_CLAIM_LEASE_SEC, NX: true });
+    expect(DELIVER_CLAIM_LEASE_SEC).toBeLessThan(6 * 3600);
+    expect(DELIVER_CLAIM_LEASE_SEC).toBeLessThanOrEqual(300);
+  });
+
+  it('the release is a COMPARE-AND-DELETE: a zero-delivery pass never erases a full-window key another caller wrote after a successful delivery', async () => {
+    // Another caller already holds the FULL-window key (delivered). Our pass claims nothing —
+    // simulate by pre-seeding the key so our NX claim loses; nothing must be deleted.
+    redisStore.set(KEY, 'won-by-someone-else');
+    const wake = jest.fn(async (): Promise<any> => ({ ok: false, error: 'x' }));
+    expect(await deliver(targets, KEY, 6 * 3600, 'x', { kind: 'decision_backend' }, wake as any)).toBe(0);
+    expect(redisStore.get(KEY)).toBe('won-by-someone-else');
+    // And when WE held the claim and delivered nothing, we DO release it (retry on next pass).
+    redisStore.clear();
+    expect(await deliver(targets, KEY, 6 * 3600, 'x', { kind: 'decision_backend' }, wake as any)).toBe(0);
+    expect(redisStore.has(KEY)).toBe(false);
+  });
+
+  it('a redis error on the claim fails OPEN — the alert still goes out (an unreadable key never silences)', async () => {
+    const redisMock: any = jest.requireMock('../../../config/redis').__esModule ? jest.requireMock('../../../config/redis').default : jest.requireMock('../../../config/redis');
+    const realSet = redisMock.set.getMockImplementation();
+    redisMock.set.mockImplementation(async (k: string, v: string, o?: any) => {
+      if (o?.NX) throw new Error('redis down');
+      redisStore.set(k, v);
+      return 'OK';
+    });
+    try {
+      const wake = jest.fn(async () => ({ ok: true }));
+      expect(await deliver(targets, 'infra-watch:alert:disk:box-a:crit', 3600, '[INFRA ALERT — disk]', { kind: 'disk' }, wake as any)).toBe(1);
+      expect(wake).toHaveBeenCalledTimes(1);
+    } finally {
+      redisMock.set.mockImplementation(realSet);
+    }
+  });
+
+  it('the all-failed alert states the window it actually counted — 5 min in-process, the sweep\'s lookback when it re-reads rows', () => {
+    const common = { event: 'all_legs_failed' as const, purpose: 'task_kind', at: NOW.toISOString(), legErrors: ['TypeSafe Jev: timeout'], streak: 4 };
+    // Pre-change rows / the in-process streak (5 min): unchanged wording.
+    expect(renderDecisionBackendDownAlert(common, NOW)).toContain('4+ decision-gate asks in the last 5 minutes');
+    // The sweep counts DECISION_BACKEND_DOWN_LOOKBACK_MS (30 min) — it must not claim 5.
+    expect(renderDecisionBackendDownAlert({ ...common, windowMinutes: 30 }, NOW)).toContain('4+ decision-gate asks in the last 30 minutes');
+    expect(renderDecisionBackendDownAlert({ ...common, windowMinutes: 30 }, NOW)).not.toContain('last 5 minutes');
+    // selectDecisionBackendDownAlerts stamps the window it really used.
+    const mk = (s: number) => ({ createdAt: new Date(NOW.getTime() - s * 1000), meta: { event: 'all_legs_failed', purpose: 'task_kind', legErrors: ['x'] } });
+    const alerts = selectDecisionBackendDownAlerts([mk(30), mk(20), mk(10)]);
+    expect(alerts[0]).toEqual(expect.objectContaining({ event: 'all_legs_failed', streak: 3, windowMinutes: 30 }));
   });
 });
 

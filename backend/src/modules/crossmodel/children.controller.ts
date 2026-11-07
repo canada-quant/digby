@@ -13,6 +13,8 @@ import { AuthRequest } from '../../middleware/auth';
 import prisma from '../../config/database';
 import { hashPassword, comparePassword } from '../../utils/password';
 import logger from '../../utils/logger';
+// Phase 2 Cloud: the auto-created personal org (todo ea95fa0b leg 1 item 2).
+import { ensurePersonalOrg } from './org/org.service';
 
 const PIN_RE = /^\d{4,6}$/;
 
@@ -111,6 +113,14 @@ export class ChildrenController {
       select: { id: true, name: true, firstName: true, email: true, childAge: true, childGuardrails: true, createdAt: true },
     });
     logger.info(`Digby Kids: parent ${parentId} created child ${child.id} (age ${age})`);
+    // Personal org for the child account too (Phase 2 Cloud): a child is a full
+    // User row with its own login, so it must satisfy the same invariant as any
+    // other account. Non-fatal — the send guard self-heals lazily.
+    try {
+      await ensurePersonalOrg(child.id, child.email, child.firstName);
+    } catch (err: any) {
+      logger.warn(`children: personal org creation failed for ${child.id} (send path will self-heal): ${err?.message ?? err}`);
+    }
     res.status(201).json({ success: true, data: childView(child) });
   }
 

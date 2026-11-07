@@ -75,6 +75,30 @@ const EXT_MIME_MAP: Record<string, string> = {
   'txt': 'text/plain', 'csv': 'text/csv', 'json': 'application/json',
   'xml': 'text/xml', 'md': 'text/markdown', 'markdown': 'text/markdown',
   'pdf': 'application/pdf',
+  // Ticket 33a742c1: the PLAIN-TEXT family. The pickers have always listed
+  // these extensions in `accept` (users CAN choose them), but they were absent
+  // here — so a .log/​.out/​.diff declared '' or the browser's
+  // 'application/octet-stream' and the upload then depended ENTIRELY on the
+  // server byte-sniffing it back to text. Any control byte in the first 8 KB
+  // (autosave logs routinely carry them) failed that sniff and the file was
+  // rejected AFTER the composer had already shown it attached. Declaring the
+  // text type up front routes them through the known-text branch instead.
+  'log': 'text/plain', 'out': 'text/plain', 'diff': 'text/plain',
+  'patch': 'text/plain',
+  'yaml': 'text/plain', 'yml': 'text/plain', 'toml': 'text/plain',
+  'ini': 'text/plain', 'cfg': 'text/plain', 'conf': 'text/plain',
+  'sh': 'text/plain', 'bash': 'text/plain', 'zsh': 'text/plain',
+  'sql': 'text/plain', 'env': 'text/plain',
+  'ts': 'text/plain', 'tsx': 'text/plain', 'js': 'text/plain',
+  'jsx': 'text/plain', 'mjs': 'text/plain', 'cjs': 'text/plain',
+  'py': 'text/plain', 'rb': 'text/plain', 'go': 'text/plain',
+  'rs': 'text/plain', 'java': 'text/plain', 'kt': 'text/plain',
+  'swift': 'text/plain', 'php': 'text/plain',
+  'c': 'text/plain', 'h': 'text/plain', 'cpp': 'text/plain',
+  'hpp': 'text/plain', 'cs': 'text/plain',
+  'html': 'text/plain', 'htm': 'text/plain', 'css': 'text/plain',
+  'scss': 'text/plain', 'less': 'text/plain', 'vue': 'text/plain',
+  'svelte': 'text/plain',
   'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   // Audio (ticket 6c050917): several browsers report file.type = '' for
@@ -84,14 +108,78 @@ const EXT_MIME_MAP: Record<string, string> = {
   'opus': 'audio/ogg', 'flac': 'audio/flac', 'webm': 'audio/webm',
 };
 
+/** One file that failed to stage. Surfaced INLINE by the composer (ticket
+ *  33a742c1) — a toast alone let a rejection read as "the file just vanished":
+ *  the chip never appeared, the message still sent, and nothing stayed on
+ *  screen to explain it. */
+export interface AttachmentRejection {
+  filename: string;
+  reason: string;
+}
+
+/**
+ * Inline staging-failure notice — renders next to the attachment chips so a
+ * rejected file leaves a trace the user can read BEFORE sending, instead of
+ * disappearing silently after the upload completes.
+ */
+export function AttachmentNotice({ rejections, onDismiss }: { rejections: AttachmentRejection[]; onDismiss?: () => void }) {
+  if (!rejections.length) return null;
+  const names = rejections.slice(0, 3).map((r) => r.filename).join(', ')
+    + (rejections.length > 3 ? ` +${rejections.length - 3} more` : '');
+  // The first concrete reason is the useful one; the rest are usually the same.
+  const reason = rejections[0]?.reason || 'Unsupported file type';
+  return (
+    <div role="alert" className="flex items-start gap-1.5 rounded-xl border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive max-w-full">
+      <span className="flex-1 min-w-0">
+        Couldn&apos;t attach {names} — {reason}
+      </span>
+      {onDismiss && (
+        /* type="button" is LOAD-BEARING (review B1, ticket 33a742c1): this
+           notice renders inside the composer's <form>, and an unmarked button
+           defaults to type="submit" — clicking the X to CLEAR an error would
+           submit the draft and send it. */
+        <button type="button" onClick={onDismiss} className="p-0.5 rounded hover:bg-destructive/20 flex-shrink-0" title="Dismiss">
+          <X className="size-3" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Resolve the MIME the upload route should be told for one file (ticket
+ * 33a742c1). A GENERIC declaration ('', 'application/octet-stream') must not
+ * win over the extension map: browsers/OSes disagree about plain-text
+ * extensions and several declare the generic binary type for `.log`/`.diff`/
+ * code files, which used to leave the whole judgement to the server's byte
+ * sniff — and a single control byte in the first 8 KB failed that sniff, so a
+ * file the picker had accepted was rejected after the composer showed it
+ * attached. A CONCRETE declared type (image/audio/pdf/…) still wins, exactly
+ * as before; only genuinely unknown extensions fall through to the server's
+ * sniff. Pure. Exported for tests.
+ */
+export function resolveAttachmentMime(fileName: string, declaredMime: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  const declared = (declaredMime || '').toLowerCase();
+  const isGenericDeclared = declared === '' || declared === 'application/octet-stream';
+  if (!isGenericDeclared) return declared;
+  return EXT_MIME_MAP[ext] || declared || 'application/octet-stream';
+}
+
 /**
  * Read + stage files via POST /crossmodel/upload. Per-file failures toast and
  * are skipped (never thrown); the returned array holds only successful uploads.
  * Never rejects — callers can rely on `await` without try/catch.
+ *
+ * `opts.onRejected` (ticket 33a742c1) receives one entry per file that did NOT
+ * stage, so the composer can keep an INLINE, persistent error next to the
+ * chips. Before this, a rejected file produced only a transient toast and no
+ * chip — which reads exactly like an attachment silently vanishing after
+ * upload while the message still sends.
  */
 export async function uploadChatFiles(
   fileList: FileList | File[],
-  opts?: { projectId?: string | null; onBytesReady?: () => void },
+  opts?: { projectId?: string | null; onBytesReady?: () => void; onRejected?: (rejections: AttachmentRejection[]) => void },
 ): Promise<AttachmentInfo[]> {
   const files = Array.from(fileList);
   if (files.length === 0) return [];
@@ -101,6 +189,7 @@ export async function uploadChatFiles(
   // this ordering defeats).
   type FileReadResult = { file: File; buffer: ArrayBuffer; localPreview?: string };
   const readResults: FileReadResult[] = [];
+  const rejected: AttachmentRejection[] = [];
 
   for (const file of files) {
     const localPreview = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined;
@@ -115,6 +204,8 @@ export async function uploadChatFiles(
     } catch {
       // Common causes: file is an iCloud Drive stub (not downloaded locally),
       // on a network drive, or the OS revoked access mid-read.
+      const reason = 'the file could not be read (an iCloud Drive stub or a locked file is the usual cause)';
+      rejected.push({ filename: file.name, reason });
       toast.error(
         `Could not read "${file.name}". If it's in iCloud Drive, right-click → Download Now in Finder first.`,
         { duration: 6000 }
@@ -123,7 +214,10 @@ export async function uploadChatFiles(
     }
   }
 
-  if (readResults.length === 0) return [];
+  if (readResults.length === 0) {
+    if (rejected.length) opts?.onRejected?.(rejected);
+    return [];
+  }
 
   // ── PHASE 2: All bytes in memory — safe for callers to flip upload state ──
   opts?.onBytesReady?.();
@@ -140,8 +234,9 @@ export async function uploadChatFiles(
         binaryStr += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.byteLength)));
       }
       const base64 = btoa(binaryStr);
-      const ext = file.name.split('.').pop()?.toLowerCase() || '';
-      const effectiveMimeType = file.type || EXT_MIME_MAP[ext] || 'application/octet-stream';
+      // Generic declared types ('', 'application/octet-stream') defer to the
+      // extension map — see resolveAttachmentMime (ticket 33a742c1).
+      const effectiveMimeType = resolveAttachmentMime(file.name, file.type);
       const res = await fetch(`${apiBase}/crossmodel/upload`, {
         method: 'POST',
         headers: {
@@ -157,7 +252,9 @@ export async function uploadChatFiles(
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        toast.error(`${file.name}: ${err.error || 'Upload failed'}`);
+        const reason = typeof err?.error === 'string' && err.error ? err.error : 'the upload was refused';
+        rejected.push({ filename: file.name, reason });
+        toast.error(`${file.name}: ${reason}`);
         if (localPreview) URL.revokeObjectURL(localPreview);
         continue;
       }
@@ -176,9 +273,15 @@ export async function uploadChatFiles(
           : `📄 ${data.filename} ready — Digby will read it in your next message`
       );
     } catch (err: any) {
+      const reason = err?.message || 'the upload failed';
+      rejected.push({ filename: file.name, reason });
       toast.error(err.message || `Failed to upload ${file.name}`);
       if (localPreview) URL.revokeObjectURL(localPreview);
     }
   }
+  // Ticket 33a742c1: hand every failed file to the composer so it can keep an
+  // INLINE notice. Reported AFTER the whole batch (not per file) so a
+  // multi-file pick yields one notice, not a toast storm.
+  if (rejected.length) opts?.onRejected?.(rejected);
   return newItems;
 }

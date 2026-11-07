@@ -73,6 +73,7 @@ function sanitizeUploadIds(raw: unknown): string[] {
 import { buildIntegrationContext, buildIntegrationContextBounded } from './integration-context';
 import { buildGuestLocationBlock } from './guest-location';
 import { parseCalendarEventsText } from './calendar-events.parser';
+import { appleEventsForCard, mergeAppleAndGoogleEvents } from './calendar/home-calendar-merge';
 import {
   checkDeepResearchQuota,
   reserveDeepResearchQuota,
@@ -1821,6 +1822,34 @@ export class CrossModelController {
       if (typeof message !== 'string' || bareTok === '' || bareTok === 'undefined' || bareTok === 'null' || bareTok === '[object object]') {
         res.status(400).json({ error: 'Message is required.' });
         return;
+      }
+
+      // ── Phase 2 Cloud: per-org send quota (todo ea95fa0b leg 1 item 3) ──────
+      // Placement is load-bearing. It MUST sit above flushSse(): once the SSE
+      // headers are out the only answer left is an in-stream error frame, and a
+      // quota refusal has to be a real HTTP status the client can render. It
+      // also sits above the Auto router, the turn-plan/gate awaits and
+      // startDetachedChatRun — and the compute plan (checker, council, deeper
+      // rung, lead effort) is decided INSIDE the run, strictly later — so no
+      // escalation can reach a model without first paying this reservation.
+      // Guests have no org and are not metered here (their ceiling is the
+      // per-IP stream limiter); every org whose limit is NULL is unlimited.
+      if (userId) {
+        const { guardOrgSend } = await import('./org/org-quota.service');
+        try {
+          await guardOrgSend(userId);
+        } catch (quotaErr: any) {
+          if (quotaErr?.name === 'OrgQuotaExceededError') {
+            res.status(429).json({
+              error: quotaErr.message,
+              code: 'ORG_QUOTA_EXCEEDED',
+              reason: quotaErr.detail?.reason,
+            });
+            return;
+          }
+          // Any other failure is NOT a quota verdict — let it surface normally.
+          throw quotaErr;
+        }
       }
 
       // Compute policy step 0 (2026-09-26): the first byte goes out BEFORE the
@@ -4444,10 +4473,14 @@ export class CrossModelController {
 
   // ── Home Page Calendar Events ───────────────────────────────────────────────
 
-  async getCalendarEventsForHome(req: Request, res: Response) {
-    const user = (req as any).user;
-    if (!user?.id) return res.status(401).json({ error: 'Authentication required' });
-    const userId = user.id;
+  /**
+   * The GOOGLE half of the home Today card, as a plain payload — extracted
+   * (2026-11-06) so the Apple Calendar half can be merged in without
+   * duplicating Google's several early-return branches. Behaviour is
+   * unchanged: `connected` still tracks the Google row only, and a failed
+   * Google read still reports `error: 'unavailable' | 'reconnect'`.
+   */
+  private async buildGoogleHomeCalendar(userId: string): Promise<any> {
     // Owner 2026-10-21 ("where did the calendar view go from the main
     // homepage?"): a connected calendar whose fetch failed used to answer
     // `connected:false` (the catch) or `connected:true, events:[]` (the fan-out
@@ -4459,7 +4492,7 @@ export class CrossModelController {
 
     try {
       if (!process.env.GOOGLE_OAUTH_CLIENT_ID) {
-        return res.json({ success: true, data: { connected: false, events: [] } });
+        return { connected: false, events: [] };
       }
 
       const googleRow = await (prisma as any).googleOAuthToken.findFirst({
@@ -4468,7 +4501,7 @@ export class CrossModelController {
       });
 
       if (!googleRow) {
-        return res.json({ success: true, data: { connected: false, events: [] } });
+        return { connected: false, events: [] };
       }
       connected = true;
 
@@ -4483,10 +4516,10 @@ export class CrossModelController {
       if (!resolution.ok) {
         if (resolution.reason === 'refresh_failed') {
           logger.warn(`getCalendarEventsForHome: Google token refresh failed for userId=${userId} — reconnect needed`);
-          return res.json({ success: true, data: { connected: true, events: [], error: 'reconnect' } });
+          return { connected: true, events: [], error: 'reconnect' };
         }
         if (resolution.reason === 'not_connected') {
-          return res.json({ success: true, data: { connected: false, events: [] } });
+          return { connected: false, events: [] };
         }
       }
 
@@ -4532,22 +4565,123 @@ export class CrossModelController {
       const rawEvents = await googleMcp.getCalendarEvents(userId, startUtc.toISOString(), endUtc.toISOString(), 25, userTz);
 
       if (!rawEvents || rawEvents.trim() === '') {
-        return res.json({ success: true, data: { connected: true, events: [] } });
+        return { connected: true, events: [] };
       }
       // The fan-out returns its failure text (no section header) when EVERY
       // account failed — that is an outage to report, not an empty day.
       if (!rawEvents.includes('[Google Calendar Events]')) {
         logger.warn(`getCalendarEventsForHome: calendar fetch failed for userId=${userId}: ${rawEvents.slice(0, 200)}`);
-        return res.json({ success: true, data: { connected: true, events: [], error: 'unavailable' } });
+        return { connected: true, events: [], error: 'unavailable' };
       }
 
       const events = parseCalendarEventsText(rawEvents, userTz);
       logger.info(`getCalendarEventsForHome: found ${events.length} events for userId=${userId}`);
-      return res.json({ success: true, data: { connected: true, events: events.slice(0, 20) } });
+      return { connected: true, events: events.slice(0, 20) };
     } catch (error: any) {
       logger.error('getCalendarEventsForHome error:', error.message);
-      return res.json({ success: true, data: { connected, events: [], ...(connected ? { error: 'unavailable' } : {}) } });
+      return { connected, events: [], ...(connected ? { error: 'unavailable' } : {}) };
     }
+  }
+
+  /**
+   * GET /calendar-events — the home Today card, now UNIFIED (2026-11-06).
+   *
+   * WHY: the card was Google-only by construction. With no Google row it
+   * answered `connected:false`, so an owner whose real calendar is Apple
+   * Calendar got a "Connect your calendar" prompt and never saw an event —
+   * reported as "calendar sync isn't working or showing in my digby calendar".
+   * The two sources are now merged:
+   *
+   *   • Google events keep their exact old shape (title/startTime/startEpoch/
+   *     account/aiPrompts …) plus `source:'google'` so a client can tell them
+   *     apart. The legacy response fields are untouched — the existing card
+   *     renders the merged list unchanged.
+   *   • Apple events are normalised into the SAME display shape (startRaw/
+   *     endRaw/startEpoch/endEpoch/title/location/account) with
+   *     `source:'apple'` and the source device label.
+   *   • `connected` becomes "SOME calendar is connected", and `apple` carries
+   *     this Mac read's own state so the card can be honest about the Apple
+   *     half (never-requested / denied / no-account / unreachable) without
+   *     turning the whole card into an error.
+   *   • The MAC read is bounded and never throws: a dead Mac leaves Google's
+   *     answer exactly as it was.
+   *
+   * DEDUPE is deliberately conservative (mergeAppleAndGoogleEvents): the same
+   * meeting is usually on BOTH calendars, and showing it twice is worse than
+   * showing it once — but silently DELETING a distinct event is worse still.
+   * So a pair is collapsed only when the normalised title matches AND the
+   * start instants agree within 60 s (an all-day/datetime mismatch never
+   * collapses, and Apple's version is the one kept because it carries the
+   * user's own calendar/source label).
+   */
+  async getCalendarEventsForHome(req: Request, res: Response) {
+    const user = (req as any).user;
+    if (!user?.id) return res.status(401).json({ error: 'Authentication required' });
+    const userId = user.id;
+
+    const [google, apple] = await Promise.all([
+      this.buildGoogleHomeCalendar(userId).catch((e: any) => {
+        logger.warn(`getCalendarEventsForHome: Google half failed: ${e?.message || e}`);
+        return { connected: false, events: [], error: 'unavailable' };
+      }),
+      this.buildAppleHomeCalendar(req, userId).catch((e: any) => {
+        logger.warn(`getCalendarEventsForHome: Apple half failed: ${e?.message || e}`);
+        return { state: 'calendar-unreachable' as const, events: [] as any[], error: 'The Mac calendar could not be read.' };
+      }),
+    ]);
+
+    const googleEvents: any[] = Array.isArray(google?.events) ? google.events.map((e: any) => ({ ...e, source: 'google' })) : [];
+    const appleEvents: any[] = Array.isArray(apple?.events) ? apple.events : [];
+    const events = mergeAppleAndGoogleEvents(appleEvents, googleEvents).slice(0, 40);
+
+    // `connected` = SOME source can serve (keeps the old Google semantics when
+    // no Apple Mac is paired, and stops hiding the card from an Apple-only user).
+    const appleUsable = apple?.state === 'ok';
+    const connected = Boolean(google?.connected) || appleUsable;
+
+    // A Google-only outage keeps its historical `error` so the existing card
+    // copy is unchanged; an Apple-only problem rides `apple.state` instead.
+    const data: any = { connected, events };
+    if (google?.error) data.error = google.error;
+    if (apple) {
+      data.apple = {
+        state: apple.state,
+        device: apple.device ?? null,
+        via: apple.via ?? 'none',
+        ...(apple.error ? { error: apple.error } : {}),
+        ...(apple.consent ? { consent: apple.consent } : {}),
+        ...(apple.skippedSignedOut?.length ? { skippedSignedOut: apple.skippedSignedOut } : {}),
+      };
+    }
+    return res.json({ success: true, data });
+  }
+
+  /**
+   * The APPLE half of the home Today card: today's events from the owner's Mac,
+   * already filtered to the local day, normalised into the card's display
+   * shape. Never throws; a failure is a classified state with `events: []`
+   * (an empty ARRAY is safe here because `state` says whether it means "free
+   * day" or "couldn't read" — the card reads the state).
+   */
+  private async buildAppleHomeCalendar(req: Request, userId: string): Promise<any> {
+    const { readAppleCalendar } = await import('./calendar/apple-calendar');
+    // Explicit device selection: ?device=<label> — the honest way to look at a
+    // particular Mac (and the only way to inspect one that is not the default).
+    const device = typeof (req as any)?.query?.device === 'string' ? String((req as any).query.device) : null;
+    // 2 days so "today" is always inside the window even across a DST/timezone
+    // boundary; the local-day filter below is what actually scopes the card.
+    const read = await readAppleCalendar(userId, { device, days: 2 });
+    if (read.state !== 'ok' || !read.events) {
+      return { state: read.state, device: read.device, via: read.via, events: [], error: read.error, consent: read.consent, skippedSignedOut: read.skippedSignedOut };
+    }
+    let userTz = 'UTC';
+    try {
+      const mem = await prisma.userMemory.findUnique({ where: { userId }, select: { facts: true } });
+      const facts = (mem?.facts as Record<string, string>) || {};
+      if (facts.timezone) userTz = facts.timezone;
+    } catch { /* fall back to UTC */ }
+    const forCard = appleEventsForCard(read.events, userTz);
+    return { state: 'ok', device: read.device, via: read.via, events: forCard, consent: read.consent };
   }
 
   // (The frontier fact-check stream — GET /fact-check/stream, a direct Gemini

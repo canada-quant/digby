@@ -27,6 +27,14 @@ export interface RegisterData {
   metaEventId?: string;
   /** Meta ClickID (`_fbc`) — the backend also reads the cookie and our own fbclid capture. */
   metaFbc?: string;
+  /**
+   * "I accept the Terms of Service and Acceptable Use" (Phase 2 Cloud, todo
+   * ea95fa0b). Sent only when the box is actually ticked — see the signup form.
+   * The backend records it against the new user (terms.service) and decides
+   * whether a MISSING acceptance refuses the signup via the live
+   * `require_terms_acceptance` policy (default OFF).
+   */
+  acceptedTerms?: boolean;
 }
 
 export const authApi = {
@@ -76,5 +84,29 @@ export const authApi = {
       localStorage.setItem('accessToken', response.data.data.accessToken);
     }
     return response.data.data;
+  },
+
+  /**
+   * POST /auth/verify-email { token } — consume an emailed verification token.
+   *
+   * DELIBERATELY UNAUTHENTICATED (the /verify-email page calls this): the link is
+   * routinely opened in a different browser or on a phone than the one that
+   * signed up, so requiring a session would strand exactly the users verification
+   * exists to serve. The token IS the credential — 32 random bytes, sha256-stored
+   * server-side, single-use, 24 h.
+   */
+  async verifyEmail(token: string) {
+    const response = await apiClient.post('/auth/verify-email', { token });
+    return response.data.data as { alreadyVerified: boolean };
+  },
+
+  /**
+   * POST /auth/resend-verification — re-send the link to the signed-in user.
+   * Returns `mailed: false` (with an `error`) when SMTP is unavailable, which
+   * the page reports honestly rather than claiming an email arrived.
+   */
+  async resendVerification() {
+    const response = await apiClient.post('/auth/resend-verification');
+    return response.data.data as { mailed: boolean; error?: string };
   },
 };

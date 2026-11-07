@@ -2,7 +2,9 @@
 
 > Ask once. Get the best of every AI.
 
-**Digby AI** is an agentic chat platform orchestrated by **Kimi K3** — it answers directly for quick lookups, cross-checks itself with independent AI researchers for harder questions, and convenes a multi-model research council (GLM-5.3 + DeepSeek V4.1 Flash — both autonomous agentic researchers) for deep research — blending everything into one synthesized answer and streaming it in real time. It learns who you are, remembers context across sessions, and turns the bugs and feature requests you submit into shipped code.
+**Digby AI** is an agentic chat platform where **every model is an admin-assignable seat** — no model is hard-wired. It answers directly for quick lookups, cross-checks itself with an independent second model for harder questions, and convenes a multi-model research council for deep research, blending everything into one synthesized answer and streaming it in real time. It learns who you are, remembers context across sessions, and turns the bugs and feature requests you submit into shipped code.
+
+> **Model-agnostic by design.** Out of the box the lead seat ships on Kimi K3, the Double Checker on DeepSeek V4.1 Flash and the third council seat on GLM-5.3 — but those are **defaults on editable seats**, not dependencies. Every model call in the product is a seat an administrator can repoint (Account → Admin → Endpoints → Model roles), to another built-in model or to **any OpenAI-compatible server** you run yourself (Ollama, vLLM, LM Studio, an OpenRouter or LiteLLM proxy). A single-endpoint instance is a supported configuration: the Double Checker then resolves to the lead's own model and the independent check is honestly reported as skipped rather than faked. No frontier-provider key is read anywhere.
 
 Live at: **[digby.ai](https://digby.ai)**
 
@@ -17,19 +19,20 @@ Live at: **[digby.ai](https://digby.ai)**
 
 ### Core Chat
 - **🧠 Auto / Quick / Ensemble / Deep Research** — Digby picks the shape per message: one fast agent answer, an independently cross-checked answer, or a full multi-model research council — with **Dig deeper** under answers to take them further
-- **🔀 Smart Synthesis** — Kimi K3 blends all responses into one coherent answer
+- **🔀 Smart Synthesis** — the lead seat (Digby) blends everything into one coherent answer
 - **📡 Real-Time Streaming** — SSE streams each step as it happens
 - **🌐 Web Search** — Live internet access via BrightData MCP
 - **⏹️ Stop Button** — Cancel any in-progress response
-- **📊 Model Transparency** — See individual model responses, timing, and source models
+- **📊 Model Transparency** — the "How Digby answered" disclosure under each answer shows timing, whether web search ran and which sources were used; administrators additionally see the per-model breakdown
 - **🛠️ Digby Operates Digby** — 17 account tools let Digby set things up for you from inside the chat (memory, schedules, project knowledge bases, canvases, share links, Telegram notifications, per-chat instructions) — and it proactively offers the next step ("would you like me to…")
 - **🎨 Rich Markdown** — Tables, code blocks, syntax highlighting, headings
 
-### The Lineup (2026-09-10)
-- **Kimi K3 orchestrates every level** — L1 Quick, L2 Ensemble main + synthesis, L3 Deep Research council lead (the built-in default; the prod store override since 2026-09-22 seats glm-5.3 there with kimi-k3 fallback — see the model matrix note below)
-- **DeepSeek V4.1 Flash** (`deepseek-flash`, reasoning max, 1M context, native vision) — the Double Checker (a full agentic peer with its own tool loop) at Level 2 and an autonomous Level 3 council colleague (the vendor retired V4 Pro / V4 Flash on 2026-09-10; both legacy ids alias forward)
-- **GLM-5.3** (reasoning max) — autonomous L3 council colleague
-- **No frontier models** (since 2026-09-22) — every model call is an admin-editable seat on the four open-model providers (Moonshot, DeepSeek, Z.AI, DashScope) or your own endpoint
+### The Lineup (defaults, 2026-11-06)
+- **The lead seat (`chat_orchestrator`, persona "Digby") orchestrates every depth** — it runs the tools, talks to you, writes the final answer, and reconciles what the checkers found. Out of the box it ships on **Kimi K3**; the production instance seats it on `glm-5.3` with a `kimi-k3` fallback. **Either way it is one editable seat, not a dependency** — point it at any built-in or any OpenAI-compatible endpoint and the whole pipeline follows.
+- **DeepSeek V4.1 Flash** (`deepseek-flash`, reasoning max, 1M context, native vision) — the **Double Checker** (a full agentic peer with its own tool loop) for a verified answer, and a council colleague for deep research (the vendor retired V4 Pro / V4 Flash on 2026-09-10; both legacy ids alias forward)
+- **GLM-5.3** (reasoning max) — the third council seat and the default coding model
+- **No frontier models** (since 2026-09-22) — every model call is an admin-editable seat on the open-model providers (Moonshot, DeepSeek, Z.AI, DashScope) **or your own endpoint**; a seat you cannot serve falls back along its declared chain rather than failing the turn
+- **23 seats, one registry** — lead, Quick lane, both supervisors, both checkers, coding/worker roles, utility, embeddings, reranker, ASR/TTS, image reader, PDF OCR, browser agent, computer-use vision, kids, decision gate, image generation. Nothing in the product calls a model outside a seat.
 
 ### Memory & Personalization
 - **🧠 User Memory** — Digby remembers facts across every session (name, occupation, tech level, etc.)
@@ -77,19 +80,46 @@ Live at: **[digby.ai](https://digby.ai)**
 - **🔔 Update Notifications** — Users see a toast with what changed on each deploy
 - **⚡ Offline Support** — Basic offline page via service worker
 
+### One super-agent, many lanes
+- **🧭 The agent can spawn agents** — a chat can start a full coding session (`start_coding_session`) as a **child with its own git worktree and container**; children run in parallel on the worker fleet, report back by waking the parent, and a project supervisor fans work out across its project. Deep, independent work therefore lands as a lane, not as a longer chat.
+- **🛰️ Fleet + supervisors on two tiers** — a **Fleet Supervisor** watches every chat and session you own (wildcard event hooks + a periodic sweep) and a **Project Supervisor** does the same inside one project; both are steerable chats you talk to directly, and both triage tickets, steer lanes and report upward.
+- **❓ Async Q&A — the run asks, you answer when you can** — a run that needs a decision raises an inline card (`ask_user`), or flags a decision into a persistent **Management → Inbox** "Needs owner" list that never expires and posts the answer back into the chat that asked. Agents also message each other directly (`send_chat_message`), so a parent can steer a child mid-run without you relaying anything.
+- **🧮 Decision-model routing** — the harness's own small judgments (route this send, park this wake, is this claim evidenced, which lane owns this goal…) are **typed decisions**, not prose: 24 registered purposes, each asked of a calibrated **decision seat** (TypeSafe Jev by default, any decision model you register), each with a readiness bar before it may act and a fail-open to the deterministic rule it replaces. Live state: `get_decision_gate_status`; doctrine: [`docs/DECISION_GATE_ROLLOUT_PLAYBOOK.md`](docs/DECISION_GATE_ROLLOUT_PLAYBOOK.md).
+- **🔁 Self-improving by design** — the fleet that fixes Digby *is* Digby: tickets from the feedback loop are triaged by the supervisors and implemented by coding lanes, verified by the same typecheck→lint→test chain, and merged through the same gates.
+
+---
+
+## 📦 Editions — Self-Hosted, Cloud, Enterprise
+
+One codebase, three ways to run it. The distinction is who operates it, not what the features are.
+
+| | **Self-Hosted** | **Cloud** | **Enterprise** |
+|---|---|---|---|
+| **Who runs it** | You — your machine or server | Us ([digby.ai](https://digby.ai)) | You, under the commercial licence |
+| **Install** | `docker compose -f docker-compose.selfhost.yml up -d --build`, or `scripts/selfhost/install.sh` pulling published images (no clone needed) | — | Delivered with the commercial licence |
+| **Your data** | Your own Postgres + Redis in your own compose stack; nothing reaches digby.ai unless you pair it | Managed AWS (ca-central-1) | Your infrastructure |
+| **Models** | Your provider keys, or your own OpenAI-compatible endpoint — at least one is required | Managed seats | Managed seats, or point them at your own endpoints |
+| **Ad measurement** | **Off by default** — the build ships with Digby's own Google Ads/GA4 tag and Meta Pixel **disabled at build time** (`NEXT_PUBLIC_*_DISABLED` default to `1` in `frontend/Dockerfile` and `${…:-1}` in the compose file), so no ad script is ever handed to the page and **no ad request is made at runtime** (pinned by a rendered-runtime test); the Meta Conversions API stays inert without `META_CAPI_ACCESS_TOKEN` | On — the hosted build explicitly passes the switches through to keep live signup attribution | **Off by default**, same build args as Self-Hosted |
+| **Autonomy boundary** | `DIGBY_INSTANCE=selfhost`: the self-improvement loop resolves its repo/DB/deploy targets from *your* env and hard-fails with an `ISOLATION BOUNDARY` error rather than reaching for production Digby's repo — point it at your fork to let it improve itself | Production instance | Your targets |
+| **Cloud link** | An Edge instance can pair **to** a cloud Digby over an outbound WSS tunnel (no inbound ports) | Accepts paired Edge instances | Same, on your terms |
+| **Licence** | AGPL-3.0-or-later | AGPL-3.0-or-later | Commercial — see [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) |
+
+**Enterprise tier.** The commercial licence is for organisations that need to embed Digby in a closed-source product, host a modified version without publishing changes, or obtain warranty/indemnity/support. The enterprise edition adds the controls large deployments ask for that are deliberately **not** in this repository — single sign-on (SAML/OIDC), SCIM provisioning, RBAC beyond the per-project `viewer`/`editor`/`admin` roles, and compliance audit-log export. **This repository is a complete, self-hostable product**; nothing in the table above is a crippled demo of the other editions.
+
 ---
 
 ## 🤖 AI Model Matrix
 
-### Agentic Lineup (2026-09-10)
+### Agentic Lineup (built-in defaults, 2026-11-06)
 | Role | Model | Provider |
 |------|-------|----------|
-| **Orchestrator** (L1 Quick, L2 Ensemble main + synthesis, L3 council lead) | `kimi-k3` | Moonshot AI |
-| **Double Checker** (L2 full agentic peer) + L3 council colleague | `deepseek-flash` (DeepSeek V4.1 Flash; legacy `deepseek-v4-pro` aliases forward) | DeepSeek |
-| **L3 council colleague** | `glm-5.3` | Z.ai |
-| **Decision gate** (seat #19 — the harness's own typed judgments, never a chat answer) | TypeSafe Jev `jev-1.13.0` (built-in chain; DeepSeek logprob readout fallback) | TypeSafe |
+| **Orchestrator / lead** (the chat seat at every depth: answers, synthesizes, reconciles the checkers) | `kimi-k3` (built-in default; prod store seats `glm-5.3` with a `kimi-k3` fallback) | Moonshot AI / Z.ai |
+| **Quick answers** (the Auto Quick lane — lookups and live facts, thinking off) | follows the Helper seat until assigned | — |
+| **Double Checker** (the independent second model: the parallel verified answer, and a deep-research council colleague) | `deepseek-flash` (DeepSeek V4.1 Flash; legacy `deepseek-v4-pro` aliases forward) | DeepSeek |
+| **Triple Checker** (the third deep-research council seat) | `glm-5.3` | Z.ai |
+| **Decision gate** (the harness's own typed judgments — never a chat answer) | TypeSafe Jev `jev-1.13.0` (built-in chain; DeepSeek logprob readout fallback) | TypeSafe |
 
-_One-shot GPT-5.6 / Grok 4.5 council consultants are retired — the deep-research council is Kimi K3 + DeepSeek V4.1 Flash + GLM-5.3. The Gemini frontier fact-check route was deleted on 2026-09-22 (no frontier provider is called anywhere). The rows above are the UNSET built-in defaults: the production store override (2026-09-22, recorded 2026-09-25) seats glm-5.3 as chat orchestrator / supervisor / coding default with kimi-k3 fallback — Account → Admin → Endpoints → Model roles is the source of truth._
+_Every row is a **default on an editable seat**, never a hard dependency — Account → Admin → Endpoints → Model roles is the source of truth, and any seat can be repointed at any OpenAI-compatible endpoint. One-shot GPT-5.6 / Grok 4.5 council consultants are retired and the Gemini frontier fact-check route was deleted on 2026-09-22, so no frontier provider is called anywhere. The deep-research council is the lead + the Double Checker + the Triple Checker; on a single-model instance the check that cannot disagree is skipped and reported honestly rather than faked._
 
 ### Digby Code (coding sessions)
 | Role | Model |
@@ -101,8 +131,10 @@ _One-shot GPT-5.6 / Grok 4.5 council consultants are retired — the deep-resear
 ### Background & Utility
 | Role | Model |
 |------|-------|
-| **Profile interview / companion voice** | Kimi K3 via Moonshot |
+| **Profile interview / companion voice** | the lead seat's model (built-in default: Kimi K3 via Moonshot) |
 | **Memory consolidation + extraction** | DeepSeek V4.1 Flash `deepseek-flash`, thinking pinned off (utility LLM; Qwen3.6-27B fallback) |
+
+_All three tables describe **built-in defaults**; every row is an editable seat (Account → Admin → Endpoints → Model roles) and can be repointed at a built-in model or any OpenAI-compatible endpoint._
 
 ---
 
@@ -121,14 +153,16 @@ buildChatQueryContext
   └── Google Workspace data (if connected + relevant)
      │
      ▼
-Agentic harness (Kimi K3 orchestrator)
-  ├── L1 Quick: direct grounded answer, live web search
-  ├── L2 Ensemble: the Double Checker (DeepSeek V4.1 Flash, a full agentic peer) drafts IN PARALLEL, reconciled into the final answer
-  └── L3 Deep Research: council lead dispatches autonomous colleagues
-        (GLM-5.3, DeepSeek V4.1 Flash) — all streamed live
-     │
+Compute policy (per human send — answers the depth question from the send's own signals)
+  ├── Quick: the lead answers directly, grounded, live web search, thinking off
+  ├── Ensemble: the lead answers FIRST and streams; the Double Checker (a different
+  │     seat, full agentic peer, own web search) works the same question IN PARALLEL
+  │     behind it and its verdict is the Checked / Updated pill — the answer never waits
+  └── Deep Research: the lead dispatches council colleagues (Double + Triple Checker)
+        as autonomous researchers — all streamed live
+     │  Dig deeper under any answer buys the next unspent rung (verify → research)
      ▼
-Synthesis — Kimi K3 blends everything into one coherent answer
+Synthesis — the lead seat blends everything into one coherent answer
      │
      ▼
 postProcess
@@ -228,12 +262,14 @@ JWT_SECRET=<min 32 chars>
 JWT_REFRESH_SECRET=<min 32 chars>
 
 # Frontier models: NONE since 2026-09-22 — no OPENAI / XAI / GOOGLE key is read anywhere
-MOONSHOT_API_KEY=sk-...    # Kimi K3 synthesis + orchestration
-TYPESAFE_API_KEY=...       # optional (2026-09-24): decision gate seat #19 on TypeSafe Jev; falls back to a DeepSeek logprob readout
+# Model keys are per SEAT, not per pipeline stage: set the keys for whichever
+# models you assign. These are the built-in defaults.
+MOONSHOT_API_KEY=sk-...    # Kimi K3 — built-in default for the lead (chat) seat
+TYPESAFE_API_KEY=...       # optional (2026-09-24): the decision gate seat on TypeSafe Jev; falls back to a DeepSeek logprob readout
 
 # Open source models (all direct provider APIs)
 ZAI_API_KEY=...             # GLM-5.3 + glm-5.3-flash vision (api.z.ai international)
-DEEPSEEK_API_KEY=...        # DeepSeek V4.1 Flash (deepseek-flash): Double Checker (L2 + L3 council) + utility LLM
+DEEPSEEK_API_KEY=...        # DeepSeek V4.1 Flash (deepseek-flash): Double Checker (verify + council) + utility LLM
 DASHSCOPE_API_KEY=...       # RAG embeddings/rerank + utility/helper fallback (intl)
 
 # Web search (optional)
@@ -272,8 +308,8 @@ exists but is an emergency fallback only.)
 2. **Complete the profile interview** — Digby learns who you are and adapts its voice
 3. **Depth is automatic** — Digby picks the shape per message (✨ fast answer, cross-checked, or research council); tap **Dig deeper** under an answer to go further
 4. **Toggle Web Search** 🌐 for real-time internet access
-5. **Ask anything** — see three models respond in parallel, then see the synthesis
-6. **Click** "How each AI answered" to see individual model responses
+5. **Ask anything** — the answer streams immediately; the independent check lands behind it as the **Checked ✓ / Updated** pill, and deep research dispatches the council
+6. **Open** "How Digby answered" under a response for its timing, web-search use and sources (administrators also see the per-model breakdown)
 7. **Use Canvas** — AI creates rich documents in a side panel (like Claude artifacts)
 8. **Upload files** — images, PDFs, Word docs (drag-and-drop or paperclip icon)
 9. **Connect Google** — Account → Integrations → "Connect Google" for Gmail/Calendar/Drive
@@ -313,7 +349,7 @@ GET  /api/crossmodel/stream?streamToken=xxx
 // Model responses (real-time as each completes)
 { type: "model-response", data: { model, response, time, modelUsed, webSearchUsed, error? } }
 
-// Synthesis chunks (streaming Kimi output)
+// Synthesis chunks (streaming lead-model output)
 { type: "chunk", data: { content: "..." } }
 
 // Canvas creation
@@ -382,7 +418,7 @@ crossmodel/
 │       │       │   ├── glm.integration.ts       # GLM-5.3 (open source)
 │       │       │   ├── deepseek.integration.ts  # DeepSeek V4.1 Flash (deepseek-flash) — legacy query/synthesis paths
 │       │       │   ├── qwen-kid.integration.ts  # Digby Kids (Qwen 3.6 Flash, child-safe chat)
-│       │       │   └── moonshot.integration.ts  # Kimi K3 synthesis + companion voice
+│       │       │   └── moonshot.integration.ts  # Moonshot provider client (hosts the lead seat; Kimi K3 is the fallback default)
 │       │       ├── langgraph/
 │       │       │   ├── memory.graph.ts          # Memory pipelines (plain async steps; LangGraph removed 2026-07-10)
 │       │       │   ├── pipeline-utils.ts        # Shared follow-up/canvas parsing
@@ -487,7 +523,14 @@ const VERSION_MESSAGE = '✨ What changed · Tap to reload!';
 - O(1) per-identity rate limit counters (no O(n) cache scans)
 - Google OAuth tokens encrypted at rest (AES-256-GCM)
 - TLS terminated by nginx behind the AWS ALB (instance ports closed except via the load balancer + SSH)
-- MCP gateway requires `MCP_DIGBY_TOKEN` secret
+- MCP gateway requires `MCP_DIGBY_TOKEN` secret (auth-proxy fails closed: a
+  missing key is rejected, not treated as "no auth")
+- The one keyless MCP service — `digby-mcp`, which re-exports the platform API
+  via per-user token pass-through — binds to `127.0.0.1:8206` only, never all
+  interfaces; `backend/scripts/mcp-surface.test.ts` fails if a public listener
+  is ever added without a shared-key gate, and
+  `scripts/mcp/probe-public-mcp-surface.sh` verifies the deployed host denies
+  anonymous callers
 
 ---
 
@@ -567,10 +610,9 @@ obligation attaches to **modifications you distribute or operate for others**.
 
 ## 🙏 Acknowledgments
 
-- **Moonshot AI** — Kimi K3 synthesis + orchestration
+- **Moonshot AI** — Kimi K3 (built-in default for the lead seat)
 - **Z.ai** — GLM-5.3
 - **DeepSeek** — DeepSeek V4.1 Flash (`deepseek-flash`)
-- **Moonshot** — Kimi K3
 - **Alibaba DashScope** — Qwen (embeddings, rerank, helper, kids, speech)
 - **BrightData** — Web search MCP
 - **shadcn/ui** — Beautiful React components

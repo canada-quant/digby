@@ -11,6 +11,12 @@ import logger from '../../utils/logger';
 import { recordPasswordChangeCutoff } from './password-change-cutoff';
 // Prisma-only leaf (the store table): chat-keyed rows of the account's chats (2026-10-23).
 import { storeDeleteChatScoped, type StoreDeleteClient } from '../crossmodel/memory/context-store';
+// Phase 2 Cloud: the auto-created personal org (todo ea95fa0b leg 1 item 2).
+import { ensurePersonalOrg } from '../crossmodel/org/org.service';
+// Phase 2 Cloud: email verification on self-serve signup (leg 1 item 1).
+import { issueEmailVerification, resendEmailVerification } from '../crossmodel/org/email-verification.service';
+// Phase 2 Cloud: ToS/AUP acceptance at signup (leg 1 item 5).
+import { evaluateTermsAcceptance, recordTermsAcceptance } from '../crossmodel/org/terms.service';
 
 const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -109,6 +115,8 @@ export interface RegisterInput {
   password: string;
   firstName?: string;
   lastName?: string;
+  /** Phase 2 Cloud leg 1 item 5 — the client's ToS/AUP checkbox. */
+  acceptedTerms?: boolean;
 }
 
 export interface LoginInput {
@@ -134,6 +142,15 @@ export class AuthService {
 
     if (existingUser) {
       throw new AppError(400, 'User already exists');
+    }
+
+    // ToS/AUP acceptance (Phase 2 Cloud leg 1 item 5). Evaluated BEFORE the user
+    // row exists so a policy refusal cannot leave an account behind. Recording is
+    // unconditional when the client sent `acceptedTerms: true` (evidence must
+    // exist even while enforcement is still OFF); refusing is policy-gated.
+    const terms = await evaluateTermsAcceptance(data.acceptedTerms);
+    if (!terms.allowed) {
+      throw new AppError(400, terms.message ?? 'Terms acceptance is required');
     }
 
     // Hash password
@@ -166,6 +183,40 @@ export class AuthService {
         createdAt: true,
       },
     });
+
+    // Personal org (Phase 2 Cloud, todo ea95fa0b leg 1 item 2): every account
+    // gets exactly one auto-created org + OWNER membership, so "signup with or
+    // without a team" is ONE code path downstream. Deliberately NOT fatal: the
+    // send guard self-heals a missing org lazily (org.service.ts), and refusing
+    // a registration that otherwise succeeded over org bookkeeping would be the
+    // worse failure. A throw here is logged, not surfaced.
+    try {
+      await ensurePersonalOrg(user.id, user.email, user.firstName);
+    } catch (err: any) {
+      logger.warn(`register: personal org creation failed for ${user.id} (send path will self-heal): ${err?.message ?? err}`);
+    }
+
+    // ToS/AUP acceptance recording (Phase 2 Cloud leg 1 item 5). Non-fatal like
+    // the org above: a bookkeeping failure must not fail a registration that
+    // otherwise succeeded. Only recorded when the client actually accepted —
+    // terms.service decides that, and returns recorded:false otherwise, so this
+    // never fabricates an acceptance timestamp.
+    if (terms.recorded && terms.version) {
+      await recordTermsAcceptance(user.id, terms.version);
+    }
+
+    // Email verification (Phase 2 Cloud leg 1 item 1): mint the token and email
+    // the link. Non-fatal by design — a signup that otherwise succeeded must not
+    // fail because SMTP is down or the instance has no public URL yet; the user
+    // can re-request from the resend surface. Enforcement is policy-gated
+    // (emailVerificationRequired, default OFF) so this ships dark.
+    let verificationMailed = false;
+    try {
+      const issued = await issueEmailVerification(user.id, user.email);
+      verificationMailed = issued.mailed;
+    } catch (err: any) {
+      logger.warn(`register: verification issue failed for ${user.id}: ${err?.message ?? err}`);
+    }
 
     // Generate tokens
     const accessToken = generateAccessToken({

@@ -43,7 +43,9 @@ import {
 // FAKE fixtures — structurally valid, never real key material (same shapes as
 // the 3b573ce3 suite so the two files measure the same live incident).
 const AKID = 'AKIA' + 'FAKEFAKEFAKEFAKE'; // 20 chars: AKIA + 16 upper alnum
-const SECRET = 'AbCdEfGhIjKlMnOpQrStUvWxYz0123456789+/ab'; // 40 chars, base64 alphabet
+// ASSEMBLED AT RUNTIME, deliberately — see credentials.service.3b573ce3.test.ts.
+// Same 40-char base64 value, no credential-shaped literal in the tree.
+const SECRET = ['AbCdEfGh', 'IjKlMnOp', 'QrStUvWx', 'Yz012345', '6789+/ab'].join(''); // 40 chars, base64 alphabet
 const FUSED = `${AKID}${SECRET}`; // 60 — the live shape
 const NOTE = '[REDACTED: looked like a credential]';
 

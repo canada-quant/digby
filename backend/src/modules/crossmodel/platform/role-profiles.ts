@@ -87,7 +87,7 @@ export function roleKpiContract(scope: 'project' | 'fleet'): string {
   }
   return `## Mission KPI contract
 - Every goal with a numeric bar has exactly ONE mission KPI premise: key prefixed \`kpi:\`, the of-record probe named ONCE in its note (command, config, sample size), its bar in \`bar\`. Its value is set ONLY from a this-wake run_command receipt id (\`receiptId\` — the \`id\` on the receipt row get_run_receipts prints, or that run's \`id\`), never from a remembered figure, a derived ratio or an internal timer; goal_premise_set refuses a kpi: premise without an existing ok:true receipt in this project.
-- Any other rate (an internal timer, a partial-phase or diagnostic-window reading) registers under its OWN key — \`<kpi key>:diag\` with the config in its note — and is NEVER quoted as the KPI. An owner-facing KPI sentence quotes the register value with key and receipt ("kpi:<metric> <value> <unit>, receipt <id>"); any other rate is named by its own key.
+- Any other rate (an internal timer, a partial-phase or diagnostic-window reading) registers under its OWN key — \`<name>:diag\` with the config in its note, and with NO \`kpi:\` prefix (a \`kpi:<name>:diag\` key is refused as a SECOND KPI: the prefix is what makes a key the KPI of record) — and is NEVER quoted as the KPI. An owner-facing KPI sentence quotes the register value with key and receipt ("kpi:<metric> <value> <unit>, receipt <id>"); any other rate is named by its own key.
 - The [BOARD] line, the status card and the brief carry the register (receipt · age · bar · last change); a reply typing a rate the register does not hold gets a harness \`(KPI of record: …)\` footer. A docs-only PR, a fold or a verdict is NOT "moved toward a goal" — only a receipted KPI move is.`;
 }
 

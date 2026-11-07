@@ -228,11 +228,21 @@ describe('designedAlarmOfMetric — the verifier route (ticket 1425001e)', () =>
     expect(hit?.id).toBe('gateway-or-ours');
   });
 
-  it('REFUSES a hand-authored metric — a lane can never route its own acceptance test away', () => {
+  it('REFUSES an EXPLICITLY hand-authored metric — a lane can never route its own acceptance test away', () => {
     // Same probe, but the lane attached it itself: its judgement, not ours to override.
     expect(designedAlarmOfMetric(LIVE_METRIC as any, 'filer')).toBeNull();
-    expect(designedAlarmOfMetric(LIVE_METRIC as any, undefined)).toBeNull();
-    expect(designedAlarmOfMetric(LIVE_METRIC as any, null)).toBeNull();
+    expect(designedAlarmOfMetric(LIVE_METRIC as any, 'manual')).toBeNull();
+  });
+
+  // TICKET 31199f81 (2026-11-06): ABSENCE of a provenance marker is not a
+  // hand-authored claim. The old allowlist made undefined/null mean
+  // "hand-authored", so every pre-marker stamp failed CLOSED and was measured
+  // against a bar its class can never meet — that is what wrongly reopened
+  // 3769b1b3. The hatch is an EXPLICIT marker; content decides otherwise.
+  it('classifies a MARKERLESS metric on its content (ticket 31199f81)', () => {
+    expect(designedAlarmOfMetric(LIVE_METRIC as any, undefined)?.id).toBe('gateway-or-ours');
+    expect(designedAlarmOfMetric(LIVE_METRIC as any, null)?.id).toBe('gateway-or-ours');
+    expect(designedAlarmOfMetric(LIVE_METRIC as any, '')?.id).toBe('gateway-or-ours');
   });
 
   it('only judges the app_error_log_count probe (a loop_metric_count is never a "volume" default)', () => {

@@ -494,8 +494,8 @@ test('933e6ca4: the frontend hint distinguishes app vs agent (wiring pins)', () 
 
 test('933e6ca4 → 405927c9: the fix is stamped — tree current (single-agent-convergence line 0.9.x)', () => {
   const pkg = JSON.parse(read('package.json'));
-  assert.equal(pkg.version, '0.9.23');
-  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.23'/);
+  assert.equal(pkg.version, '0.9.24');
+  assert.match(read('src/config.ts'), /AGENT_VERSION = '0\.9\.24'/);
   assert.match(read('src/config.ts'), /933e6ca4/);
   assert.match(read('src/config.ts'), /405927c9/);
 });

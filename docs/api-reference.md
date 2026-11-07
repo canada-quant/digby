@@ -19,13 +19,64 @@ SSE endpoints (`/stream`, `/profile/stream`) also accept `?token=<jwt>` as a que
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/auth/register` | Public | Create account |
+| POST | `/auth/register` | Public | Create account (also creates a personal org + sends a verification link) |
 | POST | `/auth/login` | Public | Get access + refresh tokens |
 | POST | `/auth/logout` | Required | Revoke refresh token |
 | POST | `/auth/refresh` | Cookie | Refresh access token |
 | GET | `/auth/me` | Required | Get current user |
+| POST | `/auth/verify-email` | Public | Consume an email-verification token (`{ token }`) |
+| POST | `/auth/resend-verification` | Required | Re-send the verification link |
 
 Rate limit on `/auth/login` and `/auth/register`: **20 requests per 15 minutes**.
+
+#### Email verification
+
+`register` mints a single-use, 24-hour token and emails `<SELFHOST_PUBLIC_URL>/verify-email?token=…`;
+only the token's **sha256** is stored, so a database read cannot mint a link. Re-requesting
+supersedes the previous link. A mail failure never fails the signup — the response still
+succeeds and the user can use `resend-verification`.
+
+Enforcement is **off by default** so that deploying this cannot lock out accounts created
+before it existed (every pre-existing row has `emailVerifiedAt = NULL`). It is controlled by
+the `require_email_verification` SystemSetting (`true`/`1` turns hard enforcement on, live,
+with no deploy), the same admin-PUT pattern as `deep_research_daily_limit`.
+
+#### Org quota (Phase 2 Cloud free tier)
+
+Every account is placed in exactly one auto-created **personal organization** (`personal: true`,
+an `OWNER` membership flagged `isDefault`). Sends are metered against that org:
+
+- `organizations.dailyMessageLimit` — per-UTC-day messages. **`NULL` means unlimited**, which is
+  the posture for every pre-existing account and every self-host instance, so this changes no
+  existing behaviour until a limit is deliberately set.
+- `org_model_usage_daily` — per-org, per-day, **per-model** token totals, capped via the
+  `org_model_token_limits` SystemSetting (`{"default": n, "<model>": n|null}`).
+
+Exhaustion **fails closed**: the send is refused with `429` and
+`code: "ORG_QUOTA_EXCEEDED"`, never silently degraded to a cheaper model. The reservation is
+taken before the run starts and the compute plan is chosen inside the run, so no deeper rung
+(deeper look, council, double checker) can reach a model without first paying it. Machine
+wakes (schedules, hooks, webhooks) are metered too, so they cannot be used to dodge the cap.
+A suspended org (`suspended: true`) is refused regardless of remaining quota — the per-tenant
+kill switch.
+
+**Operator surface (admin only).** Both levers above have a reader in the quota guard, so they
+also need a writer an operator can actually reach — a control you cannot apply is not a control.
+Mounted behind the normal auth guard; each handler applies `isAdminViewer` (ADMIN role, plus the
+owner e-mail on production only — on a self-hosted instance the ADMIN role is the only authority).
+
+- `GET /api/crossmodel/admin/orgs?q=&limit=` — list workspaces (name/slug match, newest first).
+  Discovery for the two writes below, which both take an org id.
+- `PUT /api/crossmodel/admin/orgs/:orgId/suspension` — body `{ suspended: boolean, reason?: string }`.
+  Suspending REQUIRES a non-empty `reason` (400 otherwise); reinstating (`suspended: false`) clears
+  it, so a lifted suspension leaves no stale explanation on a live workspace. Members can still
+  sign in and read their data while suspended — they cannot send.
+- `PUT /api/crossmodel/admin/orgs/:orgId/quota` — body `{ dailyMessageLimit: number | null }`.
+  A whole number ≥ 0 meters that tenant per UTC day; `null` restores unlimited (the self-host and
+  pre-existing-account posture). `0` is a hard stop: the counter increments before the compare, so
+  `0` refuses every send while leaving the tenant un-suspended.
+
+Both writes are idempotent and reversible with the same call, and neither touches usage history.
 
 ---
 

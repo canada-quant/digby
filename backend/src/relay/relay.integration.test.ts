@@ -143,3 +143,46 @@ describe('proxy round-trip through a real tunnel', () => {
     expect(status).toBe(200);
   });
 });
+
+/**
+ * RELAY PREFIX ALIASING — the WS upgrade handler (relay.ts) must accept the
+ * tunnel under BOTH prefixes. This is the leg the unit test cannot prove:
+ * `isTunnelPath` is only half the path — createRelayServer's 'upgrade' listener
+ * is what actually admits or 404s the socket, and it was previously an
+ * equality test against the single canonical path. Real socket, real server.
+ */
+describe('tunnel upgrade under the aliased prefix', () => {
+  const connect = (path: string) => new WebSocket(`ws://127.0.0.1:${port}${path}`, {
+    headers: { authorization: 'Bearer dgi_good' },
+  });
+
+  it('upgrades /api/digby/instances/tunnel exactly like the canonical path', async () => {
+    const ws = connect('/api/digby/instances/tunnel');
+    await new Promise<void>((r, reject) => { ws.on('open', r); ws.on('error', reject); });
+    ws.send(JSON.stringify({ v: 1, type: 'ping' }));
+    const frame = await new Promise<any>(r => ws.on('message', (raw) => r(JSON.parse(raw.toString()))));
+    expect(frame).toMatchObject({ v: 1, type: 'pong' });
+    ws.close();
+    await new Promise(r => setImmediate(r));
+  });
+
+  it('still serves the canonical /api/crossmodel path (nothing was removed)', async () => {
+    const ws = connect(TUNNEL_PATH);
+    await new Promise<void>((r, reject) => { ws.on('open', r); ws.on('error', reject); });
+    ws.close();
+    await new Promise(r => setImmediate(r));
+  });
+
+  it('404s a tunnel path under an unknown prefix', async () => {
+    const ws = connect('/api/other/instances/tunnel');
+    const status = await new Promise<number>((resolve) => {
+      ws.on('unexpected-response', (_req, res) => resolve(res.statusCode || 0));
+      ws.on('open', () => resolve(101));
+    });
+    expect(status).toBe(404);
+    // The server already destroyed this socket (never upgraded), so closing it
+    // here throws "closed before the connection was established" — nothing to
+    // tear down.
+    await new Promise(r => setImmediate(r));
+  });
+});

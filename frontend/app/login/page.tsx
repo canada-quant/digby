@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 import { BrandLogo } from '@/components/ui/custom/BrandLogo';
 import { useBranding } from '@/app/branding/BrandingProvider';
 import { PasswordToggle } from '@/components/ui/password-toggle';
+import { Checkbox } from '@/components/ui/checkbox';
 import { reportGoogleAdsSignup } from '@/lib/google-ads';
 import { trackVisitEvent } from '@/lib/visitor-analytics';
 import { currentFbc, newMetaEventId, reportMetaSignup } from '@/lib/meta-pixel';
@@ -62,6 +63,12 @@ function LoginContent() {
   const [signupPassword, setSignupPassword] = useState('');
   const [signupConfirm, setSignupConfirm] = useState('');
   const [signupName, setSignupName] = useState('');
+  /**
+   * Phase 2 Cloud (todo ea95fa0b): affirmative Terms of Service / Acceptable Use
+   * acceptance. Deliberately NOT defaulted to true — an acceptance we pre-tick is
+   * not an acceptance, and the backend stores whatever we send as evidence.
+   */
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   // First-party visitor analytics (owner 2026-10-07): which auth form the visitor saw — a funnel step.
   useEffect(() => { trackVisitEvent(tab === 'signup' ? 'signup_view' : 'login_view'); }, [tab]);
@@ -103,6 +110,15 @@ function LoginContent() {
       toast.error("Passwords don't match");
       return;
     }
+    // Phase 2 Cloud (todo ea95fa0b): the acceptance is a real gate in the UI even
+    // though the backend's `require_terms_acceptance` policy defaults OFF. The
+    // policy switch exists to avoid refusing the pre-existing account back
+    // catalogue; it is not a licence for a NEW signup to skip the checkbox.
+    if (!acceptedTerms) {
+      setFormError('Please accept the Terms of Service and Acceptable Use to continue.');
+      toast.error('Please accept the Terms of Service and Acceptable Use to continue.');
+      return;
+    }
 
     setFormError(null);
     setIsLoading(true);
@@ -121,6 +137,9 @@ function LoginContent() {
         lastName,
         metaEventId,
         metaFbc: currentFbc(),
+        // Recorded as evidence against the new user by terms.service. Sent as
+        // `true` only because the guard above refused every other path through.
+        acceptedTerms: true,
       });
       // Google Ads sign-up conversion (owner 2026-10-04, lib/google-ads.ts) — never blocks or breaks the sign-up.
       reportGoogleAdsSignup();
@@ -436,6 +455,35 @@ function LoginContent() {
               {formError && tab === 'signup' && (
                 <p role="alert" className="text-sm text-destructive">{formError}</p>
               )}
+
+              {/* Phase 2 Cloud (todo ea95fa0b) — affirmative ToS/AUP acceptance.
+                  Unticked by default so the recorded acceptance is the user's,
+                  not a pre-filled default the backend would store as evidence. */}
+              <div className="flex items-start gap-2.5 pt-1">
+                <Checkbox
+                  id="signup-terms"
+                  checked={acceptedTerms}
+                  onCheckedChange={(v) => setAcceptedTerms(v === true)}
+                  disabled={isLoading}
+                  aria-describedby="signup-terms-label"
+                  className="mt-0.5"
+                />
+                <label
+                  id="signup-terms-label"
+                  htmlFor="signup-terms"
+                  className="text-xs leading-relaxed text-muted-foreground cursor-pointer select-none"
+                >
+                  I accept the{' '}
+                  <Link href="/terms" target="_blank" rel="noopener noreferrer" className="text-ink hover:text-ink-2 underline underline-offset-2">
+                    Terms of Service
+                  </Link>{' '}
+                  and{' '}
+                  <Link href="/terms#acceptable-use" target="_blank" rel="noopener noreferrer" className="text-ink hover:text-ink-2 underline underline-offset-2">
+                    Acceptable Use
+                  </Link>
+                  .
+                </label>
+              </div>
 
               <Button
                 type="submit"

@@ -202,7 +202,10 @@ it does **not** require a frontend rebuild on this path.
 Optional profiles:
 
 ```bash
-# MCP integration servers (Google/GitHub/X/Slack/Asana/Discord + BrightData gateway)
+# MCP integration servers — the CONNECTOR options of one gateway
+# (Google/GitHub/X/Slack/Asana/Discord + the BrightData gateway).
+# Note: `digby-mcp` is NOT included — it is its own opt-in profile,
+# `--profile mcp-platform` (see docs/MCP_GATEWAY.md and docs/DIGBY_MCP.md).
 docker compose -f docker-compose.selfhost.yml --profile mcp up -d --build
 
 # Adminer DB UI on http://localhost:9521
@@ -352,10 +355,24 @@ knobs at `/branding/asset/<file>`:
 >   -t acme/digby-frontend:1.0.0 .
 > ```
 >
-> **The `NEXT_PUBLIC_*_DISABLED=1` flags are required.** They are what the
-> published image uses to compile Digby's production ad/analytics tags out of a
-> self-host build; omitting them produces an image that reports page views to
-> Digby's accounts. Pass exactly these three.
+> **These flags are now the DEFAULT, but pass them anyway.** Until 2026-11-06
+> they were required: `frontend/Dockerfile` declared them with empty defaults,
+> so omitting them compiled Digby's production ad/analytics tags (GA4
+> `G-NK7XPHC7FE`, Google Ads `AW-16512038948`, Meta pixel `4660227547545860`)
+> into a self-host build and the instance reported page views to Digby's
+> accounts. The Dockerfile now defaults all three to `1`, so a bare
+> `docker build` is ad-free; the hosted `digby.ai` deployment is the one place
+> that opts back in, explicitly, through `docker-compose.app.yml`. Passing the
+> three flags stays documented because it is explicit, survives a revert, and
+> costs nothing. Pinned by `frontend/lib/ad-build-posture.test.ts` and
+> `frontend/lib/ad-render-gate.test.ts`.
+>
+> **What that pair of tests proves, and what it does not.** They prove the
+> switches are declared, defaulted off, forwarded to the build, and that the
+> rendered components emit no ad-host URL under this posture (and *do* emit one
+> when the posture enables it, so the check is not vacuous). They do **not**
+> prove a live browser makes zero ad requests — the tags mount after hydration,
+> so that needs a network capture against a deployed instance.
 >
 > `--target production` is stated explicitly for clarity, not necessity:
 > `frontend/Dockerfile` has two stages — `build` then `production` — and Docker
@@ -612,8 +629,8 @@ multipart `/audio/transcriptions` with a tiny silent WAV) — not just
   **JSON delta chunks** (`data: {"choices":[{"delta":{"content":"…"}}]}`).
   Some gateways (certain LiteLLM/vLLM proxy configs) instead stream **plain
   text** in each `data:` line — Digby tolerates that (you'll get answers), but
-  a raw-text stream **cannot carry tool calls**, so agentic work (Level 2, the
-  coding agent) degrades to prose-only. Test with
+  a raw-text stream **cannot carry tool calls**, so agentic work (the Double
+  Checker's independent check, the coding agent) degrades to prose-only. Test with
   `curl -N .../v1/chat/completions -d '{"model":"…","messages":[…],"stream":true}'`:
   if the `data:` lines aren't JSON objects, configure the gateway to emit
   standard OpenAI streaming chunks to unlock function-calling. (A green Test

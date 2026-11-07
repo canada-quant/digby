@@ -242,5 +242,14 @@ export interface BrowserAgentResult {
    *  mode (computerInputMode 'observe': camera on the user's desktop, every
    *  input action refused). Undefined for browser-driver runs. */
   computerObserveOnly?: boolean;
+  /** Ticket a544f308 (2026-11-06): the HANDED-OFF computer run's platform,
+   *  carried through verbatim from ComputerAgentResult.platform.
+   *
+   *  Without this the handoff silently dropped the typed fact 2d461d80 added,
+   *  so the caller's attached-screenshot caption fell back to "Your Mac" for a
+   *  WINDOWS capture — the exact defect the parent ticket fixed one path over.
+   *  Undefined for browser-driver runs and for a handoff that selected no
+   *  device (same contract as ComputerAgentResult.platform). */
+  computerPlatform?: 'macos' | 'windows';
   steps: number;
 }

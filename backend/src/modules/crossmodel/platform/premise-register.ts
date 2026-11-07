@@ -414,7 +414,11 @@ export const KPI_RECEIPT_RULE = (key: string): string => {
   // prefix used to yield `kpi:foo:diag`, which reads as ANOTHER KPI premise and
   // is refused for a missing receipt — the same dead end one level over).
   const bare = key.replace(/^(kpi:)+/i, '');
-  const diag = shortenPremiseKey(`${bare}:diag`);
+  // A key that ALREADY ends in `:diag` must not get a SECOND suffix — the rule
+  // offered `games_flowing_to_sim:diag:diag` for the very spelling the contract
+  // taught (family fdf5c19f, member 99b06f9e): legal, but a nonsense name for a
+  // diagnostic that already IS one.
+  const diag = shortenPremiseKey(/:diag$/i.test(bare) ? bare : `${bare}:diag`);
   const where = diag ? `(e.g. "${diag}")` : '(pick a new slug of letters/digits/_ . : -)';
   return `premise "${key}": a kpi: premise is the goal's ONE of-record number and is set ONLY from a this-wake run_command receipt id — pass receiptId (the \`id\` on the receipt row get_run_receipts prints for the lane that ran the probe, or that run's id), never a remembered figure, a derived ratio or an internal timer. A diagnostic-window / slow-regime / partial-config reading is NOT the KPI: register it under its own key ${where} with the config in its note.`;
 };
@@ -519,6 +523,72 @@ function kpiAdviceCaveat(existing: GoalPremise[] | undefined, mode: 'merge' | 'r
     return `NOTE: the kpi: path is CLOSED on this goal right now — it already holds ${existing.length}/${PREMISE_MAX_PER_GOAL} premises with no kpi: key, so adding one is refused at the cap. Register the number under its own non-kpi key${shape}, or free a slot with mode:'replace' first.`;
   }
   return null;
+}
+
+/**
+ * Mishap 99b06f9e (2026-11-07, ticket-lane family `tool-failure-streak`, session
+ * c9868b86 run fad39f29 — a 3× `goal_premise_set` streak on goal f78208f8):
+ * the fifth iteration of the af24badf class in this file, and the first where
+ * the DEAD END was authored by the framework's own CONTRACT rather than by a
+ * refusal text.
+ *
+ * The lane registered `games_flowing_to_sim`, then tried to register its
+ * diagnostic reading and chose `kpi:games_flowing_to_sim:diag` — because BOTH
+ * places that teach the naming convention said to:
+ *   · the `goal_premise_set` key schema (`platform-tools.ts`: "Long enough for
+ *     '<kpi key>:diag' (a diagnostic reading)"), and
+ *   · the project Mission KPI contract fed to every supervisor
+ *     (`role-profiles.ts`: "registers under its OWN key — `<kpi key>:diag`").
+ * But `isKpiPremise` (kpi-of-record.ts) classifies ANY `kpi:`-prefixed key as
+ * the KPI of record, so the taught spelling is refused as a SECOND KPI — and
+ * the refusal said only "every other rate registers under a non-kpi key"
+ * without ever naming the landing key. The lane repeated it (a third call
+ * added a `kpi:…:diag` beside the plain key), and the breaker tripped.
+ *
+ * The fix is NOT to relax the one-per-goal guard (that guard is correct: the
+ * `:diag` key really would become the of-record number and its bar would win).
+ * Two things change: the two teaching sites stop prescribing the refused shape
+ * and spell the landing key outright, and this refusal NAMES it — so a caller
+ * that arrives with the taught spelling is corrected in ONE round-trip instead
+ * of being told only what not to do.
+ *
+ * The advice is derived from the caller's OWN keys, so it never names a write
+ * this register would refuse (af24badf's rule): the landing key for
+ * `kpi:<bare>:diag` is `<bare>:diag`, which carries no prefix and is a plain,
+ * accepted non-KPI key.
+ */
+export function kpiDiagLandingAdvice(kpis: Array<{ key: string }>): string {
+  const landings: string[] = [];
+  for (const p of kpis) {
+    const raw = String(p.key ?? '');
+    if (!/^kpi:/i.test(raw)) continue;
+    // Strip EVERY `kpi:` prefix, exactly as KPI_RECEIPT_RULE does: stripping
+    // one would name `kpi:a:diag` for a `kpi:kpi:a:diag` key — itself refused
+    // as a second KPI, i.e. the dead end one level over (adversarial review,
+    // this ticket).
+    const bare = raw.replace(/^(kpi:)+/i, '');
+    // Only the diagnostic SHAPE gets a named landing key: a plain second rate
+    // has no canonical name to offer, so it keeps the generic instruction.
+    if (!/:diag$/i.test(bare)) continue;
+    // The offered key must ACTUALLY LAND (af24badf's rule). `shortenPremiseKey`
+    // is this module's own authority on that: it legalises an illegal start
+    // (`:diag`, `_x:diag`, `-x:diag` all become a key KEY_RE accepts), keeps a
+    // `:diag` suffix, and returns '' when no legal form exists — those are
+    // dropped rather than advised (adversarial review, this ticket).
+    const k = shortenPremiseKey(bare);
+    if (k && !landings.includes(k)) landings.push(k);
+  }
+  if (!landings.length) {
+    return `A diagnostic reading goes under a key with NO \`kpi:\` prefix — the \`kpi:\` prefix is what makes a key the KPI of record, so \`kpi:<name>:diag\` is refused as a second one.`;
+  }
+  // Bounded: this answer is consumed after a head-slice (DISPLAY_RESULT_CAP in
+  // coding/agent.ts) and a 1200-char capture on the breaker path, so a long
+  // call must not push the actionable part past the cut.
+  const MAX_NAMED = 4;
+  const shown = landings.slice(0, MAX_NAMED).map((k) => `"${k}"`).join(', ');
+  const more = landings.length > MAX_NAMED ? ` (+${landings.length - MAX_NAMED} more)` : '';
+  const one = landings.length === 1;
+  return `Drop the \`kpi:\` prefix from the diagnostic key(s): ${shown}${more} ${one ? 'is' : 'are'} the same reading as a plain, accepted non-KPI premise (a \`kpi:\` prefix is what makes a key the KPI of record, so \`kpi:<name>:diag\` is a SECOND one). Bar fields (\`bar\`/\`barDirection\`) are dead on a non-KPI key — put the bar and its ceiling in the note.`;
 }
 
 /**
@@ -963,7 +1033,7 @@ export function normalizePremises(
   if (kpis.length > 1) {
     return {
       ok: false,
-      error: `a goal carries at most ONE kpi: premise (got ${kpis.map((p) => p.key).join(', ')}) — the of-record number has one key; every other rate registers under a non-kpi key`,
+      error: `a goal carries at most ONE kpi: premise (got ${kpis.map((p) => p.key).join(', ')}) — the of-record number has one key; every other rate registers under a non-kpi key. ${kpiDiagLandingAdvice(incoming.filter((p) => isKpiPremise(p)))}`,
       kpiRefusal: { reason: 'second_kpi', key: kpis.map((p) => p.key).join(', ') },
     };
   }

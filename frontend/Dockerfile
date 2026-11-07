@@ -12,10 +12,19 @@ ENV NEXT_PUBLIC_HIDE_REASONING_DISABLED=$NEXT_PUBLIC_HIDE_REASONING_DISABLED
 ARG NEXT_PUBLIC_MINIMAL_VIEW_DISABLED=
 ENV NEXT_PUBLIC_MINIMAL_VIEW_DISABLED=$NEXT_PUBLIC_MINIMAL_VIEW_DISABLED
 # Google Ads tag (2026-10-04, lib/google-ads.ts): '1' turns the site-wide tag + the Sign-up conversion off.
-ARG NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED=
+#
+# DEFAULTS TO OFF (todo 9a3e82af, 2026-11-06). This image is the PUBLIC /
+# Self-Hosted / Enterprise build, and those tiers must be ad-free: the ids baked
+# in here are DIGBY'S OWN GA4 + Ads accounts, so a bare `docker build` used to
+# compile a stranger's instance to report into our ad accounts. Only the hosted
+# digby.ai deployment turns them back on, and it does so EXPLICITLY by passing
+# an empty value through docker-compose.app.yml (empty !== '1', so the tag
+# loads there). A self-host / published image passes '1' and gets no tag at all.
+# Pinned by frontend/lib/ad-build-posture.test.ts.
+ARG NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED=1
 ENV NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED=$NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED
 # Google Analytics GA4 on the same tag (2026-10-06, ticket 4bb5fe23): '1' drops only the G-NK7XPHC7FE config.
-ARG NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED=
+ARG NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED=1
 ENV NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED=$NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED
 # First-party visitor analytics (2026-10-07, lib/visitor-analytics.ts): '1' turns the web capture off (no visitor id, no requests).
 ARG NEXT_PUBLIC_VISITOR_ANALYTICS_DISABLED=
@@ -25,7 +34,9 @@ ENV NEXT_PUBLIC_VISITOR_ANALYTICS_DISABLED=$NEXT_PUBLIC_VISITOR_ANALYTICS_DISABL
 ARG NEXT_PUBLIC_CLIENT_ERROR_REPORT_DISABLED=
 ENV NEXT_PUBLIC_CLIENT_ERROR_REPORT_DISABLED=$NEXT_PUBLIC_CLIENT_ERROR_REPORT_DISABLED
 # Meta Pixel kill switch (2026-10-07, frontend/lib/meta-pixel.ts): =1 → no pixel, no browser events.
-ARG NEXT_PUBLIC_META_PIXEL_DISABLED=
+# DEFAULTS TO OFF for the same reason as the Google tag above (todo 9a3e82af):
+# a public/Self-Hosted/Enterprise build must not ship Digby's pixel id.
+ARG NEXT_PUBLIC_META_PIXEL_DISABLED=1
 ENV NEXT_PUBLIC_META_PIXEL_DISABLED=$NEXT_PUBLIC_META_PIXEL_DISABLED
 # Wall-of-text repair on the live render (2026-10-06, ticket 6ee7a779): '1' turns it off.
 ARG NEXT_PUBLIC_MARKDOWN_WALL_REPAIR_DISABLED=
