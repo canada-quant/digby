@@ -27,6 +27,15 @@ name: Publish self-host images
 # under running self-hosters on every merge; a tagged release is reproducible
 # and a stranger can pin it. `workflow_dispatch` covers the first cut and any
 # re-publish of an existing sha.
+#
+# `latest` MEANS "the newest release" (2026-11-07, todo b05753aa). Before this,
+# a `v*` tag push applied ONLY the version tag + sha tag and never moved
+# `latest` — so `latest` fell back to whatever manual dispatch ran last, and the
+# documented stranger quick-start (install.sh sets no tag) installed an OLD
+# image that carried no revision label. Measured 2026-11-06: `latest` resolved to
+# `sha-eda9a18f…` while the release was `1.0.1` = `743c9c7e…`. The release path
+# now also writes `latest`, so the default install is the newest release. A
+# dispatch still sets `latest` explicitly (that is how the first cut lands).
 on:
   push:
     tags:
@@ -100,6 +109,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-backend:${{ steps.tag.outputs.value }}
             ${{ env.REGISTRY }}/${{ github.repository }}-backend:sha-${{ github.sha }}
+            ${{ github.ref_type == 'tag' && format('{0}/{1}-backend:latest', env.REGISTRY, github.repository) || '' }}
           # Source revision provenance (ticket b37bf85f): the EXACT commit this
           # workflow checked out, stamped as org.opencontainers.image.revision
           # on the image and baked in as the backend's DEPLOY_SHA, which
@@ -123,6 +133,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-backend:${{ steps.tag.outputs.value }}-build
             ${{ env.REGISTRY }}/${{ github.repository }}-backend:sha-${{ github.sha }}-build
+            ${{ github.ref_type == 'tag' && format('{0}/{1}-backend:latest-build', env.REGISTRY, github.repository) || '' }}
           build-args: |
             DEPLOY_SHA=${{ github.sha }}
           cache-from: type=gha,scope=backend-build
@@ -190,6 +201,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-frontend:${{ steps.tag.outputs.value }}
             ${{ env.REGISTRY }}/${{ github.repository }}-frontend:sha-${{ github.sha }}
+            ${{ github.ref_type == 'tag' && format('{0}/{1}-frontend:latest', env.REGISTRY, github.repository) || '' }}
           build-args: |
             DEPLOY_SHA=${{ github.sha }}
             NEXT_PUBLIC_API_URL=/api
@@ -253,6 +265,7 @@ jobs:
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.name }}:${{ steps.tag.outputs.value }}
             ${{ env.REGISTRY }}/${{ github.repository }}-${{ matrix.name }}:sha-${{ github.sha }}
+            ${{ github.ref_type == 'tag' && format('{0}/{1}-{2}:latest', env.REGISTRY, github.repository, matrix.name) || '' }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 

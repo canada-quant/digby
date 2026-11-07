@@ -171,6 +171,16 @@ say "─────────────────────────
 
 say ""
 say "pulling images (this is the step that needs no source tree)…"
+# WHICH TAG (2026-11-07, todo b05753aa). With DIGBY_IMAGE_TAG unset the compose
+# resolves `:latest`, and since the release path now also writes `latest` that
+# means the NEWEST RELEASE — the behaviour a stranger expects. Say it out loud so
+# nobody has to infer it from the compose default.
+if [ -n "${DIGBY_IMAGE_TAG:-}" ]; then
+  IMAGE_TAG_NOTE="$DIGBY_IMAGE_TAG (pinned by you)"
+else
+  IMAGE_TAG_NOTE="latest — the newest release; claim pinning with DIGBY_IMAGE_TAG=<version>"
+fi
+say "  image tag: ${IMAGE_TAG_NOTE}"
 PULL_FILL=$(printf '%s%s' 'pull-only' '-placeholder')
 env "JWT_SECRET=$PULL_FILL" "JWT_REFRESH_SECRET=$PULL_FILL" \
   docker compose -f "$COMPOSE" pull || die "image pull failed.

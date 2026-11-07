@@ -197,6 +197,31 @@ describe('publish workflow and render script agree', () => {
     expect(on).not.toContain('branches:');
   });
 
+  it('a release push ALSO moves `latest`, so the default install is the newest release (b05753aa)', () => {
+    // The defect this pins (measured 2026-11-06): a `v*` tag push applied only
+    // the version tag + sha tag, so `latest` was left at whatever manual
+    // dispatch ran last — and the documented stranger quick-start (install.sh
+    // sets no tag, compose resolves `:latest`) installed an OLD image with no
+    // revision label. `latest` must mean "newest release", per image family.
+    const wf = read(WORKFLOW);
+    for (const family of ['backend', 'frontend']) {
+      const latestOnTag = new RegExp(
+        `github\\.ref_type == 'tag'[^\\n]*-${family}:latest`,
+      );
+      expect({ family, emitsLatestOnTag: latestOnTag.test(wf) }).toEqual({
+        family,
+        emitsLatestOnTag: true,
+      });
+    }
+    // ...and every OTHER published image family (the matrix) does the same. The
+    // matrix line is built with `format('{0}/{1}-{2}:latest', ...)`, so match the
+    // real shape rather than a literal ${{ matrix.name }} interpolation.
+    expect(wf).toMatch(/github\.ref_type == 'tag'[\s\S]{0,120}format\('[^']*-[^']*:latest'[\s\S]{0,80}matrix\.name/);
+    // The migrate service pulls `-build`; without a `latest-build` the migrate
+    // container of a default install would not exist.
+    expect(wf).toContain('-backend:latest-build');
+  });
+
   it('builds BOTH backend stages — without the build tag, migrate has nothing to pull', () => {
     const wf = read(WORKFLOW);
     expect(wf).toContain('target: production');

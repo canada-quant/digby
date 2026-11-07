@@ -25,6 +25,11 @@ jest.mock('../../../config/database', () => ({
     orgUsageDaily: { upsert: jest.fn(), update: jest.fn(), findUnique: jest.fn() },
     orgModelUsageDaily: { upsert: jest.fn(), findMany: jest.fn() },
     systemSetting: { findUnique: jest.fn() },
+    // The atomic lifetime-spend admission (spend-cap.service.ts) opens a
+    // transaction whose FIRST statement is a pg advisory lock, then reads the
+    // lifetime total through one positional-param raw query.
+    $transaction: jest.fn(),
+    $queryRawUnsafe: jest.fn(),
   },
 }));
 jest.mock('../../../utils/logger', () => ({
@@ -104,27 +109,32 @@ describe('reserveOrgMessage', () => {
     expect(d.remaining).toBe(0);
   });
 
-  it('REFUSES the send that lands over the limit — the fail-closed verdict', async () => {
+  it('NEVER refuses on a LEGACY limit value (owner directive 2026-11-07T06:40Z)', async () => {
+    // "we dont want to limit by messages or anything for digby.ai". An org that
+    // still carries an old dailyMessageLimit (set before this directive, or by an
+    // operator's per-tenant abuse PUT) must STILL send — a stored limit value is
+    // not a licence to reintroduce a refusal path.
     orgExists(5);
     db.orgUsageDaily.upsert.mockResolvedValue({ messages: 6 });
 
     const d = await reserveOrgMessage('user-1');
 
-    expect(d.allowed).toBe(false);
-    expect(d.reason).toBe('messages');
+    expect(d.allowed).toBe(true);
+    // The counter still ran — it is the usage meter the cost panels read.
+    expect(db.orgUsageDaily.upsert).toHaveBeenCalled();
+    // The limit is reported for display only; it refuses nothing.
     expect(d.limit).toBe(5);
-    expect(d.remaining).toBe(0);
   });
 
-  it('refunds the reservation when it refuses, so a rejected attempt never eats a slot', async () => {
+  it('does not "refund" because nothing is ever refused (no decrement path)', async () => {
     orgExists(1);
     db.orgUsageDaily.upsert.mockResolvedValue({ messages: 2 });
 
     await reserveOrgMessage('user-1');
 
-    expect(db.orgUsageDaily.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { messages: { decrement: 1 } } }),
-    );
+    // The refund existed only to put back a slot a refusal had taken. With no
+    // refusal there is no refund, and the recorded usage stays truthful.
+    expect(db.orgUsageDaily.update).not.toHaveBeenCalled();
   });
 
   it('counts atomically at the database (an increment, never a read-then-write)', async () => {
@@ -159,12 +169,14 @@ describe('reserveOrgMessage', () => {
 });
 
 describe('guardOrgSend', () => {
-  it('throws a 429-shaped error (never a "busy" value a caller would queue)', async () => {
+  it('NEVER refuses on a message count — a legacy limit cannot block a send', async () => {
+    // Owner directive 2026-11-07T06:40Z: no message-count limits on digby.ai.
+    // The org still carries a stored limit of 1 and the counter reads 2, i.e.
+    // the exact shape that used to throw the 429. It must now pass.
     orgExists(1);
     db.orgUsageDaily.upsert.mockResolvedValue({ messages: 2 });
 
-    await expect(guardOrgSend('user-1')).rejects.toBeInstanceOf(OrgQuotaExceededError);
-    await expect(guardOrgSend('user-1')).rejects.toMatchObject({ statusCode: 429, name: 'OrgQuotaExceededError' });
+    await expect(guardOrgSend('user-1')).resolves.toEqual({ organizationId: 'org-1' });
   });
 
   it('passes through for an org under its limit', async () => {
@@ -181,13 +193,17 @@ describe('per-model token quota', () => {
         ? Promise.resolve({ key: where.key, value: JSON.stringify(limits) })
         : Promise.resolve(null));
 
-  it('refuses when a model is ALREADY at its daily ceiling', async () => {
+  it('NEVER refuses on tokens — a legacy token ceiling cannot block a send', async () => {
+    // Owner directive 2026-11-07T06:40Z: "we dont want to limit by messages or
+    // anything". This is the exact shape that used to throw: the model is already
+    // past its configured ceiling. Token totals are still ACCUMULATED (the
+    // recordOrgTokens tests below prove that) but they refuse nothing.
     orgExists(100);
     db.orgUsageDaily.upsert.mockResolvedValue({ messages: 1 });
     withLimits({ 'kimi-k3': 1000 });
     db.orgModelUsageDaily.findMany.mockResolvedValue([{ model: 'kimi-k3', tokensIn: 700, tokensOut: 400 }]);
 
-    await expect(guardOrgSend('user-1')).rejects.toMatchObject({ name: 'OrgQuotaExceededError' });
+    await expect(guardOrgSend('user-1')).resolves.toEqual({ organizationId: 'org-1' });
   });
 
   it('allows while the model is under its ceiling', async () => {
@@ -260,6 +276,20 @@ describe('compute depth cannot bypass the reservation', () => {
     expect(runEntry).toBeGreaterThan(-1);
     expect(plan).toBeGreaterThan(-1);
     expect(plan).toBeGreaterThan(runEntry);
+  });
+
+  it('(d) the send guard uses the ATOMIC admission, never the check-then-run preflight', () => {
+    // Review defect 2026-11-07: `assertWithinLifetimeSpendCap` reads the lifetime
+    // total and returns — two concurrent sends both read the same number and both
+    // pass. Only `admitWithinLifetimeSpendCap` takes the per-user advisory lock and
+    // writes a hold. A revert to the preflight here would silently reopen the race
+    // while every other test in the repo stayed green, so the call site is pinned.
+    const src = fs.readFileSync(path.join(__dirname, 'org-quota.service.ts'), 'utf8');
+    expect(src).toContain('admitWithinLifetimeSpendCap({ id: userId })');
+    expect(src).not.toContain('assertWithinLifetimeSpendCap({ id: userId })');
+    // …and the preflight is still exported for the callers/tests that only want the read.
+    const spendCap = fs.readFileSync(path.join(__dirname, 'spend-cap.service.ts'), 'utf8');
+    expect(spendCap).toContain('export async function assertWithinLifetimeSpendCap');
   });
 
   it('(c) a machine wake is metered too — schedules/hooks cannot dodge the cap', () => {

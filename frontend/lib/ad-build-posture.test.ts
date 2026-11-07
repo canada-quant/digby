@@ -108,14 +108,20 @@ describe('frontend/Dockerfile — the public image defaults to AD-FREE', () => {
 });
 
 describe('self-host + published images are explicitly ad-free', () => {
-  it('docker-compose.selfhost.yml defaults every ad switch to 1', () => {
+  it('docker-compose.selfhost.yml carries NO ad switch at all (removed, not merely defaulted off)', () => {
+    // 2026-11-07 (todo b05753aa): the self-host stack used to FORWARD the three
+    // switches with `${NAME:-1}`. Defaulting them off still shipped the plumbing
+    // — and a stranger reading the file had to reason about Digby's own ad
+    // accounts to know their instance was clean. The switches are now removed
+    // from the self-host compose entirely, so the posture is structural: there
+    // is nothing to flip and nothing to explain. Absence is the assertion.
     const text = readRepo('docker-compose.selfhost.yml');
-    const wrong: string[] = [];
-    for (const name of AD_SWITCHES) {
-      const dflt = composeDefault(text, name);
-      if (dflt !== '1') wrong.push(`${name}=${JSON.stringify(dflt)}`);
-    }
-    expect({ selfHostNotDisabled: wrong }).toEqual({ selfHostNotDisabled: [] });
+    const present = AD_SWITCHES.filter((name) => text.includes(name));
+    expect({ selfHostAdSwitchesStillPresent: present }).toEqual({ selfHostAdSwitchesStillPresent: [] });
+    // ...and the same must hold for the generated published variant.
+    const published = readRepo('docker-compose.selfhost.published.yml');
+    const presentPublished = AD_SWITCHES.filter((name) => published.includes(name));
+    expect({ publishedAdSwitchesStillPresent: presentPublished }).toEqual({ publishedAdSwitchesStillPresent: [] });
   });
 
   it('the published image workflow builds with every ad switch = 1', () => {

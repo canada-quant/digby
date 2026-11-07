@@ -655,6 +655,24 @@ export async function startDetachedChatRun(args: Omit<ChatAgentRunArgs, 'send' |
         logger.info(`chat-agent: org quota exhausted — not starting machine run for ${chatId ?? 'anonymous'} (origin ${String(args.messageOrigin ?? (args.machineWake ? 'machineWake' : 'unknown'))}): ${quotaErr.message}`, { source: 'chat-agent' });
         return null;
       }
+      // A POLICY verdict, not an infra fault (ticket fdb4523f): an unverified
+      // account under require_email_verification. Same posture as a quota
+      // refusal — do not start the run, and do not mislabel it "proceeding".
+      if (quotaErr?.name === 'EmailVerificationRequiredError') {
+        logger.info(`chat-agent: email verification required — not starting machine run for ${chatId ?? 'anonymous'}: ${quotaErr.message}`, { source: 'chat-agent' });
+        return null;
+      }
+      // The ONE usage limit (owner directive 2026-11-07T06:40Z): a hard lifetime
+      // model-spend cap for non-admin users. Recognized by NAME for the same
+      // reason the quota classes are: this call crosses a dynamic import(), and a
+      // duplicated module instance makes `instanceof` unreliable there. Without
+      // this arm the cap verdict would fall through to the infra waker below,
+      // log "proceeding", and start a run for an over-cap user — the exact
+      // fail-open this guard exists to prevent.
+      if (quotaErr?.name === 'SpendCapReachedError') {
+        logger.info(`chat-agent: lifetime spend cap reached — not starting machine run for ${chatId ?? 'anonymous'}: ${quotaErr.message}`, { source: 'chat-agent' });
+        return null;
+      }
       // NOT a quota verdict — an infra error must not silently swallow a wake.
       logger.warn(`chat-agent: machine-run quota check failed, proceeding: ${quotaErr?.message ?? quotaErr}`, { source: 'chat-agent' });
     }

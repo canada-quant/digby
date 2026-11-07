@@ -80,8 +80,18 @@ describe('the pure renderers', () => {
   });
 });
 
+// `docs/FRAMEWORK_LESSONS.md` is an INTERNAL ledger the public export DROPS
+// (scrub-rules: internal engineering ledgers, 2026-11-07 todo b05753aa), so this
+// suite — which SHIPS in the export — must skip where the doc is absent instead
+// of throwing ENOENT and reddening the whole exported jest leg. The block still
+// runs in the private tree, where the doc lives.
+const HAS_LESSONS_DOC = (() => {
+  try { return fs.existsSync(path.join(REPO_ROOT, LESSONS_DOC_PATH)); } catch { return false; }
+})();
+
 describe('recordLesson on a temp copy of the REAL files', () => {
   it('refuses without writing; dry-run writes nothing; a real call appends to both files under every real section anchor', async () => {
+    if (!HAS_LESSONS_DOC) return; // absent by export policy — nothing to pin here
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lesson-'));
     const coreSrc = fs.readFileSync(path.join(REPO_ROOT, CORE_DOCTRINE_PATH), 'utf8');
     const doc = fs.readFileSync(path.join(REPO_ROOT, LESSONS_DOC_PATH), 'utf8');

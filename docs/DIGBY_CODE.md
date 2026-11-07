@@ -3,8 +3,7 @@
 > The authoritative developer reference for **Digby Code**, Digby AI's agentic
 > coding surface (rendered inline in the main chat page via
 > `frontend/app/crossmodel/components/CodeSessionView.tsx`; the legacy
-> `/crossmodel/code` page was retired). For the harness/scaffolding deep
-> dive see [`DIGBY_CODE_HARNESS.md`](./DIGBY_CODE_HARNESS.md).
+> `/crossmodel/code` page was retired).
 
 Digby Code lets a user point an open-source model (GLM-5.2 by default) at a
 repository and have it build features, fix bugs, and open PRs — autonomously,
@@ -192,7 +191,7 @@ turn → execute tool calls → repeat → final answer. `MAX_STEPS = 200` top-l
 
 ## Harness primitives — GOAL / LOOP / MONITOR
 
-Full detail in [`DIGBY_CODE_HARNESS.md`](./DIGBY_CODE_HARNESS.md). In brief:
+In brief:
 
 - **GOAL** (`plan.service.ts`): `update_plan({goal, acceptance_criteria, steps})`
   — one full-array-rewrite tool, server-enforced single `in_progress`, mirrored to
@@ -297,8 +296,7 @@ lockfiles only, no execution) and writes a lean project-specific `AGENTS.md`,
 `.digby/config.json` (commands + verify chain + `loop` block, plus a starter
 repo-owned `hooks` section when the detected tooling supports one), `.digbyignore`,
 `.digby/notes/learnings.md`, `.digby/README.md`, then commits on the session
-branch. An existing `AGENTS.md` is respected, never clobbered. Full detail in
-[`DIGBY_CODE_HARNESS.md`](./DIGBY_CODE_HARNESS.md).
+branch. An existing `AGENTS.md` is respected, never clobbered.
 
 ---
 
@@ -608,6 +606,5 @@ frontend/
   components/ui/custom/resize-handle.tsx          resizable-rail handle
 ```
 
-See also: [`DIGBY_CODE_HARNESS.md`](./DIGBY_CODE_HARNESS.md) (scaffolding + harness
-internals), [`crossmodel-architecture-v2.md`](./archive/crossmodel-architecture-v2.md),
+See also: [`crossmodel-architecture-v2.md`](./archive/crossmodel-architecture-v2.md),
 [`deployment.md`](./archive/deployment.md).

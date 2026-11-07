@@ -29,6 +29,9 @@
       "name": "auth"
     },
     {
+      "name": "branding"
+    },
+    {
       "name": "cloud-link"
     },
     {
@@ -3418,6 +3421,52 @@
         "parameters": [
           {
             "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/branding/pack": {
+      "get": {
+        "summary": "The ACTIVE branding pack for this instance (public)",
+        "tags": [
+          "branding"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        }
+      }
+    },
+    "/api/crossmodel/branding/pack/{packId}/asset/{slot}": {
+      "get": {
+        "summary": "One asset of the ACTIVE branding pack (public)",
+        "tags": [
+          "branding"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "parameters": [
+          {
+            "name": "packId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "slot",
             "in": "path",
             "required": true,
             "schema": {
@@ -12272,6 +12321,149 @@
         "parameters": [
           {
             "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/admin/branding/packs": {
+      "get": {
+        "summary": "List branding packs (admin only)",
+        "tags": [
+          "branding"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Admin-only (role enforced in the controller)."
+      },
+      "post": {
+        "summary": "Create a branding pack, optionally with assets (admin only)",
+        "tags": [
+          "branding"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Admin-only (role enforced in the controller)."
+      }
+    },
+    "/api/crossmodel/admin/branding/packs/{packId}/activate": {
+      "post": {
+        "summary": "Activate a branding pack (admin only)",
+        "tags": [
+          "branding"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Admin-only (role enforced in the controller).",
+        "parameters": [
+          {
+            "name": "packId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/admin/branding/packs/rollback": {
+      "post": {
+        "summary": "Roll back to the shipped Digby branding (admin only)",
+        "tags": [
+          "branding"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Admin-only (role enforced in the controller)."
+      }
+    },
+    "/api/crossmodel/admin/branding/packs/{packId}": {
+      "delete": {
+        "summary": "Delete a branding pack (admin only)",
+        "tags": [
+          "branding"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "description": "Admin-only (role enforced in the controller).",
+        "parameters": [
+          {
+            "name": "packId",
             "in": "path",
             "required": true,
             "schema": {

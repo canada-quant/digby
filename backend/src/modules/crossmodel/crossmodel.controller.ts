@@ -72,8 +72,10 @@ function sanitizeUploadIds(raw: unknown): string[] {
 }
 import { buildIntegrationContext, buildIntegrationContextBounded } from './integration-context';
 import { buildGuestLocationBlock } from './guest-location';
-import { parseCalendarEventsText } from './calendar-events.parser';
-import { appleEventsForCard, mergeAppleAndGoogleEvents } from './calendar/home-calendar-merge';
+import { mergeAppleAndGoogleEvents } from './calendar/home-calendar-merge';
+// The two calendar halves are MODULE-LEVEL on purpose — Express calls the
+// route handler with no receiver, so `this.` is undefined here (9ea25082).
+import { buildGoogleHomeCalendar, buildAppleHomeCalendar } from './calendar/home-calendar';
 import {
   checkDeepResearchQuota,
   reserveDeepResearchQuota,
@@ -1844,6 +1846,18 @@ export class CrossModelController {
               error: quotaErr.message,
               code: 'ORG_QUOTA_EXCEEDED',
               reason: quotaErr.detail?.reason,
+            });
+            return;
+          }
+          // THE ONE USAGE LIMIT (owner directive 2026-11-07T06:40Z): a hard
+          // lifetime model-spend cap for non-admin users. A distinct code so the
+          // client can render "you've reached your limit" rather than a generic
+          // failure — and so it is never confused with the org quota verdict
+          // above (different remedy: nothing resets until support raises it).
+          if (quotaErr?.name === 'SpendCapReachedError') {
+            res.status(402).json({
+              error: quotaErr.message,
+              code: 'SPEND_CAP_REACHED',
             });
             return;
           }
@@ -4473,115 +4487,6 @@ export class CrossModelController {
 
   // ── Home Page Calendar Events ───────────────────────────────────────────────
 
-  /**
-   * The GOOGLE half of the home Today card, as a plain payload — extracted
-   * (2026-11-06) so the Apple Calendar half can be merged in without
-   * duplicating Google's several early-return branches. Behaviour is
-   * unchanged: `connected` still tracks the Google row only, and a failed
-   * Google read still reports `error: 'unavailable' | 'reconnect'`.
-   */
-  private async buildGoogleHomeCalendar(userId: string): Promise<any> {
-    // Owner 2026-10-21 ("where did the calendar view go from the main
-    // homepage?"): a connected calendar whose fetch failed used to answer
-    // `connected:false` (the catch) or `connected:true, events:[]` (the fan-out
-    // failure text parsed to nothing) — both made the home Today card vanish
-    // as if the calendar had never been connected. `connected` now tracks the
-    // Google row, and a failed read carries `error:'unavailable'` so the card
-    // can say so and offer a retry.
-    let connected = false;
-
-    try {
-      if (!process.env.GOOGLE_OAUTH_CLIENT_ID) {
-        return { connected: false, events: [] };
-      }
-
-      const googleRow = await (prisma as any).googleOAuthToken.findFirst({
-        where: { userId },
-        select: { userId: true },
-      });
-
-      if (!googleRow) {
-        return { connected: false, events: [] };
-      }
-      connected = true;
-
-      const googleMcp = await import('./google/google-mcp');
-
-      // Dead credentials (the 2026-10-21 case: Google OAuth client id / secret
-      // rotated ⇒ every refresh token minted under the old client fails) —
-      // `getAllValidTokens` then yields no account and the fetch returned ''
-      // = "Nothing today". Say RECONNECT instead; the card links to
-      // Account → Integrations.
-      const resolution = await googleMcp.resolveGoogleAccount(userId);
-      if (!resolution.ok) {
-        if (resolution.reason === 'refresh_failed') {
-          logger.warn(`getCalendarEventsForHome: Google token refresh failed for userId=${userId} — reconnect needed`);
-          return { connected: true, events: [], error: 'reconnect' };
-        }
-        if (resolution.reason === 'not_connected') {
-          return { connected: false, events: [] };
-        }
-      }
-
-      // Load user's timezone from memory so we query the correct "today"
-      // (server runs in UTC; without this, a user at 10 PM EDT sees tomorrow's events)
-      let userTz = 'UTC';
-      try {
-        const mem = await prisma.userMemory.findUnique({ where: { userId }, select: { facts: true } });
-        const facts = (mem?.facts as Record<string, string>) || {};
-        if (facts.timezone) userTz = facts.timezone;
-      } catch { /* non-fatal — fall back to UTC */ }
-
-      // Compute start/end of "today" in the user's local timezone, then convert to UTC.
-      // We get the user's local date string (e.g. "2026-04-13") and build midnight/end-of-day
-      // in their timezone by computing the UTC offset from the timezone.
-      const now = new Date();
-      const localDateStr = now.toLocaleDateString('en-CA', { timeZone: userTz }); // "2026-04-13" (ISO format)
-
-      // Compute the UTC offset for the user's timezone by comparing the same instant
-      // formatted in UTC vs the user's timezone. This correctly handles DST.
-      const utcParts = now.toLocaleString('en-US', { timeZone: 'UTC', hour12: false,
-        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const tzParts  = now.toLocaleString('en-US', { timeZone: userTz, hour12: false,
-        year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const parseLocaleDate = (s: string) => {
-        // Format: "MM/DD/YYYY, HH:MM:SS" — parse to a comparable timestamp
-        const m = s.match(/(\d+)\/(\d+)\/(\d+),?\s*(\d+):(\d+):(\d+)/);
-        if (!m) return 0;
-        return Date.UTC(+m[3], +m[1] - 1, +m[2], +m[4] === 24 ? 0 : +m[4], +m[5], +m[6]);
-      };
-      const utcMs = parseLocaleDate(utcParts);
-      const tzMs  = parseLocaleDate(tzParts);
-      // offsetMs = how many ms to ADD to a "local wall clock" Date to get UTC
-      // e.g. for EDT (UTC-4): offsetMs = +4h (local midnight + 4h = UTC midnight of that local day)
-      const offsetMs = utcMs - tzMs;
-
-      // Build start/end of day as UTC ISO strings
-      const startUtc = new Date(new Date(`${localDateStr}T00:00:00Z`).getTime() + offsetMs);
-      const endUtc   = new Date(new Date(`${localDateStr}T23:59:59Z`).getTime() + offsetMs);
-
-      logger.info(`getCalendarEventsForHome: userTz=${userTz}, localDate=${localDateStr}, queryRange=${startUtc.toISOString()} to ${endUtc.toISOString()}`);
-
-      const rawEvents = await googleMcp.getCalendarEvents(userId, startUtc.toISOString(), endUtc.toISOString(), 25, userTz);
-
-      if (!rawEvents || rawEvents.trim() === '') {
-        return { connected: true, events: [] };
-      }
-      // The fan-out returns its failure text (no section header) when EVERY
-      // account failed — that is an outage to report, not an empty day.
-      if (!rawEvents.includes('[Google Calendar Events]')) {
-        logger.warn(`getCalendarEventsForHome: calendar fetch failed for userId=${userId}: ${rawEvents.slice(0, 200)}`);
-        return { connected: true, events: [], error: 'unavailable' };
-      }
-
-      const events = parseCalendarEventsText(rawEvents, userTz);
-      logger.info(`getCalendarEventsForHome: found ${events.length} events for userId=${userId}`);
-      return { connected: true, events: events.slice(0, 20) };
-    } catch (error: any) {
-      logger.error('getCalendarEventsForHome error:', error.message);
-      return { connected, events: [], ...(connected ? { error: 'unavailable' } : {}) };
-    }
-  }
 
   /**
    * GET /calendar-events — the home Today card, now UNIFIED (2026-11-06).
@@ -4620,11 +4525,11 @@ export class CrossModelController {
     const userId = user.id;
 
     const [google, apple] = await Promise.all([
-      this.buildGoogleHomeCalendar(userId).catch((e: any) => {
+      buildGoogleHomeCalendar(userId).catch((e: any) => {
         logger.warn(`getCalendarEventsForHome: Google half failed: ${e?.message || e}`);
         return { connected: false, events: [], error: 'unavailable' };
       }),
-      this.buildAppleHomeCalendar(req, userId).catch((e: any) => {
+      buildAppleHomeCalendar(req, userId).catch((e: any) => {
         logger.warn(`getCalendarEventsForHome: Apple half failed: ${e?.message || e}`);
         return { state: 'calendar-unreachable' as const, events: [] as any[], error: 'The Mac calendar could not be read.' };
       }),
@@ -4656,33 +4561,6 @@ export class CrossModelController {
     return res.json({ success: true, data });
   }
 
-  /**
-   * The APPLE half of the home Today card: today's events from the owner's Mac,
-   * already filtered to the local day, normalised into the card's display
-   * shape. Never throws; a failure is a classified state with `events: []`
-   * (an empty ARRAY is safe here because `state` says whether it means "free
-   * day" or "couldn't read" — the card reads the state).
-   */
-  private async buildAppleHomeCalendar(req: Request, userId: string): Promise<any> {
-    const { readAppleCalendar } = await import('./calendar/apple-calendar');
-    // Explicit device selection: ?device=<label> — the honest way to look at a
-    // particular Mac (and the only way to inspect one that is not the default).
-    const device = typeof (req as any)?.query?.device === 'string' ? String((req as any).query.device) : null;
-    // 2 days so "today" is always inside the window even across a DST/timezone
-    // boundary; the local-day filter below is what actually scopes the card.
-    const read = await readAppleCalendar(userId, { device, days: 2 });
-    if (read.state !== 'ok' || !read.events) {
-      return { state: read.state, device: read.device, via: read.via, events: [], error: read.error, consent: read.consent, skippedSignedOut: read.skippedSignedOut };
-    }
-    let userTz = 'UTC';
-    try {
-      const mem = await prisma.userMemory.findUnique({ where: { userId }, select: { facts: true } });
-      const facts = (mem?.facts as Record<string, string>) || {};
-      if (facts.timezone) userTz = facts.timezone;
-    } catch { /* fall back to UTC */ }
-    const forCard = appleEventsForCard(read.events, userTz);
-    return { state: 'ok', device: read.device, via: read.via, events: forCard, consent: read.consent };
-  }
 
   // (The frontier fact-check stream — GET /fact-check/stream, a direct Gemini
   // call critiquing an open-source transcript — was RETIRED 2026-09-22: the

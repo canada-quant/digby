@@ -21,10 +21,15 @@
  *     A missing org therefore self-heals on first use instead of refusing the
  *     user's message.
  *
- * LIMITS: a NULL dailyMessageLimit means UNLIMITED. Personal orgs are created
- * with NULL, so this whole feature is a no-op for self-host instances and for
- * every pre-existing account until a limit is deliberately set on an org. Only a
- * numeric limit is metered (org-quota.service.ts).
+ * LIMITS: a NULL dailyMessageLimit means UNLIMITED, and that is now the ONLY
+ * posture this file creates. Every NEW org is created with `dailyMessageLimit:
+ * null` — there is no env default, no hosted-only branch and no creation knob
+ * (owner directive 2026-11-07T06:40Z: "we dont want to limit by messages or
+ * anything for digby.ai"; the one usage limit is the lifetime spend cap in
+ * spend-cap.service.ts). An operator can still cap or suspend ONE specific
+ * abusive tenant through the admin surface (setOrgDailyLimit /
+ * setOrgSuspension below) — that is a deliberate act on a named org, never a
+ * default applied to everyone.
  */
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
@@ -38,7 +43,7 @@ export interface DefaultOrg {
   slug: string;
   suspended: boolean;
   suspendedReason: string | null;
-  /** null = unlimited (the pre-existing-account / self-host posture). */
+  /** null = unlimited — the ONLY value this module ever CREATES (see LIMITS). */
   dailyMessageLimit: number | null;
 }
 
@@ -193,7 +198,12 @@ export async function ensurePersonalOrg(
           slug,
           personal: true,
           ownerId: userId,
-          // NULL limit = unlimited: shipping this must not throttle anyone.
+          // NO MESSAGE LIMIT, EVER (owner 2026-11-07T06:40Z: "we dont want to
+          // limit by messages or anything for digby.ai"). A newly created org is
+          // hard-wired UNLIMITED: there is no env knob, no hosted-only branch and
+          // nothing to misconfigure. The one usage limit is the lifetime spend cap
+          // (spend-cap.service.ts), and an operator who needs to stop ONE abusive
+          // tenant uses the admin surface — a named decision, never a default.
           dailyMessageLimit: null,
           memberships: { create: { userId, role: 'OWNER', isDefault: true } },
         },

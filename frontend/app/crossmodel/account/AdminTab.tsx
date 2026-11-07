@@ -29,6 +29,8 @@ import { SetupSection } from './SetupSection';
 import { DebugModeSection } from './DebugModeSection';
 // Always-Auto depth policy (audit 2026-09-26): the Settings section's "Depth policy" panel.
 import { PatienceAutoOnlySection } from './PatienceAutoOnlySection';
+// Phase 2 Cloud — seasonal/holiday branding packs (todo 61dc8aaf).
+import { BrandingPacksSection } from './BrandingPacksSection';
 import { ConnectedInstancesSection } from '../components/ConnectedInstancesSection';
 // Users & traffic (owner 2026-10-07): first-party visitor analytics — sources, users table, user flow.
 import { TrafficSection } from './TrafficSection';
@@ -59,9 +61,10 @@ import {
   Globe,
   Inbox,
   Wrench,
+  Palette,
 } from 'lucide-react';
 
-type AdminSection = 'overview' | 'setup' | 'jobs' | 'users' | 'traffic' | 'feedback' | 'costs' | 'settings' | 'endpoints' | 'cloud' | 'instances';
+type AdminSection = 'overview' | 'setup' | 'jobs' | 'users' | 'traffic' | 'feedback' | 'costs' | 'settings' | 'endpoints' | 'cloud' | 'instances' | 'branding';
 
 export function AdminTab() {
   const [section, setSection] = useState<AdminSection>('overview');
@@ -217,6 +220,9 @@ export function AdminTab() {
     { id: 'costs', label: 'API Costs', icon: DollarSign },
     { id: 'endpoints', label: 'Endpoints', icon: Cable },
     { id: 'instances', label: 'Instances', icon: Server },
+    // Phase 2 Cloud (todo 61dc8aaf): seasonal/holiday skins an operator can put
+    // on and take off at runtime — no rebuild, no frontend fork.
+    { id: 'branding', label: 'Branding packs', icon: Palette },
     { id: 'cloud', label: 'Cloud link', icon: Cloud },
     { id: 'settings', label: 'Settings', icon: Settings },
   ];
@@ -840,6 +846,10 @@ export function AdminTab() {
 
       {/* CLOUD LINK (Digby Edge — this instance paired TO a cloud, edge side) */}
       {section === 'cloud' && <CloudLinkSection />}
+
+      {/* BRANDING PACKS (Phase 2 Cloud, todo 61dc8aaf) — seasonal/holiday skins
+          an admin puts on and takes off at runtime; no rebuild, no fork. */}
+      {section === 'branding' && <BrandingPacksSection />}
 
       {/* SETUP (self-host setup hardening 2026-10-20): what this instance has configured + how to fix each gap */}
       {section === 'setup' && <SetupSection />}

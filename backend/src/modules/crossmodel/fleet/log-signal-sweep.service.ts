@@ -48,6 +48,31 @@
  *          RULE2_MIN_REPEATS_UNPARSED occurrences (3) fire instead — never 2,
  *          because a per-session / per-chat suppression promise legitimately
  *          logs once per subject and ids are stripped from the fingerprint.
+ *          PER-SUBJECT (ticket 2e9ea13e): the fingerprint elides ids, so a group
+ *          interleaves SUBJECTS and the aggregate gap can be a gap BETWEEN two
+ *          different ones. Where the promise is per-subject (the suggested-
+ *          questions backoff is the Redis key `user:suggested-questions:
+ *          failed:<userId>`; the session-history quarantine is per project) the
+ *          window is compared WITHIN a subject: `minSubjectGapMs` is the
+ *          smallest gap between consecutive occurrences naming the SAME id, and
+ *          rule 2 reads it when present. Production proof for the class that
+ *          filed this: the only sub-5-minute pair in the 24 h window was
+ *          15:55:15Z/15:55:55Z (40.6 s) across two DIFFERENT users — both kept
+ *          their own 5-min backoff; every same-user pair was ≥ 5 min 06 s.
+ *          `minSubjectGapMs` is `undefined` when the class names no subject at
+ *          all (a global promise like "quarantined for 6h" keeps the aggregate
+ *          meaning) and `null` when subjects are named but none repeated (no
+ *          promise was broken).
+ *          KNOWN RESIDUAL (accepted, documented — adversarial review N-B):
+ *          a class whose EVERY row names a DISTINCT subject and whose whole
+ *          burst fits inside ≤ RULE1_MIN_HOURS-1 distinct hours with < a boot
+ *          episode of silence now yields no signal at all: rule 2 is correctly
+ *          quiet (nobody broke their own promise) and rule 1 needs either 3
+ *          hours or 3 silence-separated clusters. That shape is not a broken
+ *          promise, so it is not rule 2's to claim; it is pinned by a test so a
+ *          future emit site that makes a GLOBAL promise while naming a subject
+ *          noun cannot go unpoliced unnoticed. A multi-subject outage that
+ *          lasts ≥3 hours (or spans ≥3 boot episodes) still surfaces via rule 1.
  *   4. Files ONE ticket per fingerprint per ISO week through the SAME insert
  *      path the file_feedback tool uses (feedback.fileFeedbackTicket — its
  *      caps + dedup apply), capped at LOG_SIGNAL_TICKETS_PER_PASS per sweep
@@ -678,8 +703,19 @@ export interface LogFingerprint {
   episodes: number;
   firstAt: number;
   lastAt: number;
-  /** Smallest gap between consecutive occurrences, ms — null when count < 2. */
+  /** Smallest gap between consecutive occurrences, ms — null when count < 2.
+   *  This is the AGGREGATE gap across every subject the fingerprint elides; rule
+   *  2 must not police a per-subject promise with it (see minSubjectGapMs). */
   minGapMs: number | null;
+  /** Smallest gap between consecutive occurrences OF THE SAME SUBJECT, ms.
+   *  `null` = the messages name subjects but NO subject repeated (a per-subject
+   *  promise may be honoured). `undefined`/absent = no subject identity in the
+   *  message at all, so nothing can be scoped and rule 2 keeps using minGapMs.
+   *  (2e9ea13e: `… for userId=<uuid> — backing off 5 min` is a PER-USER promise;
+   *  the fingerprint folds every userId to `<uuid>`, so the group interleaves
+   *  users and minGapMs measured a gap BETWEEN users — 40.6 s for two different
+   *  users, rendered as "as close as 1 min apart" against a promise both kept.) */
+  minSubjectGapMs?: number | null;
   levels: string[];
   sources: string[];
   /** Raw message of the NEWEST row (promise + duration parsing read this). */
@@ -689,24 +725,83 @@ export interface LogFingerprint {
 const ts = (v: Date | string): number => (v instanceof Date ? v.getTime() : Date.parse(String(v)));
 
 /**
+ * The SUBJECT a message names, if any — the thing a per-subject suppression
+ * promise is made about. (2e9ea13e: rule 2 compared occurrences across the whole
+ * fingerprint, but the fingerprint elides ids, so two DIFFERENT users retrying
+ * 40 s apart convicted `… for userId=<uuid> — backing off 5 min` of breaking a
+ * promise each of them kept. The backoff is a per-user Redis key:
+ * `user:suggested-questions:failed:<userId>` — the promise IS per subject.)
+ *
+ * Returns a stable key (noun + the id as written) or null when the message names
+ * no identifier-shaped subject. Deliberately conservative: the value must LOOK
+ * like an id (a uuid, or >= 8 chars carrying at least one digit), so prose after
+ * a noun ("session history sync") is never mistaken for a subject.
+ */
+const SUBJECT_NOUNS = [
+  'userid', 'user', 'project', 'session', 'chat', 'org', 'organization', 'tenant',
+  'workspace', 'account', 'conversation', 'thread', 'client', 'browser', 'device',
+  'job', 'run', 'file', 'document', 'repo', 'repository', 'instance', 'key', 'id',
+].join('|');
+const SUBJECT_TOKEN_RE = new RegExp(
+  `\\b(${SUBJECT_NOUNS})\\s*(?:=|:|#)?\\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[A-Za-z0-9][A-Za-z0-9._-]{7,})\\b`,
+  'i',
+);
+/** An id-shaped token: a uuid anywhere inside it, or >= 8 chars with a digit. */
+function looksLikeSubjectId(tok: string): boolean {
+  if (/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(tok)) return true;
+  return tok.length >= 8 && /\d/.test(tok);
+}
+export function subjectKeyOf(raw: string): string | null {
+  const text = String(raw ?? '');
+  for (const m of text.matchAll(new RegExp(SUBJECT_TOKEN_RE.source, 'gi'))) {
+    const noun = String(m[1]).toLowerCase();
+    const value = String(m[2]);
+    // `session history` / `key management` — a noun followed by prose, not an id.
+    if (!looksLikeSubjectId(value)) continue;
+    // `id` is too generic to scope on its own unless the value is a real uuid.
+    if (noun === 'id' && !/^[0-9a-f]{8}-/i.test(value)) continue;
+    return `${noun}:${value.toLowerCase()}`;
+  }
+  return null;
+}
+
+/**
  * Group rows by fingerprint and compute each group's recurrence shape. Pure;
  * rows may arrive in any order (they are sorted internally).
  */
 export function summarizeLogFingerprints(rows: ReadonlyArray<LogSignalRow>, gapMs: number = BOOT_EPISODE_GAP_MS): LogFingerprint[] {
-  const groups = new Map<string, { times: number[]; levels: Set<string>; sources: Set<string>; newestAt: number; newestRaw: string }>();
+  const groups = new Map<string, { times: number[]; levels: Set<string>; sources: Set<string>; newestAt: number; newestRaw: string; subjectTimes: Map<string, number[]> }>();
   for (const r of rows) {
     const t = ts(r.createdAt);
     if (!Number.isFinite(t)) continue; // undateable row — skip, never throw
     const fp = normalizeLogMessage(r.message);
     if (!fp) continue;
-    const g = groups.get(fp) ?? { times: [], levels: new Set<string>(), sources: new Set<string>(), newestAt: -Infinity, newestRaw: '' };
+    const g = groups.get(fp) ?? { times: [], levels: new Set<string>(), sources: new Set<string>(), newestAt: -Infinity, newestRaw: '', subjectTimes: new Map<string, number[]>() };
     g.times.push(t);
+    // Rule 2's promise is often PER SUBJECT (`for userId=<uuid> — backing off
+    // 5 min`; the backoff key itself is `user:suggested-questions:failed:<id>`).
+    // Bucket the timestamp by the id the RAW message names so the promised
+    // window is compared within a subject, never across the ids the
+    // fingerprint elided (2e9ea13e).
+    const subject = subjectKeyOf(r.message);
+    if (subject) {
+      const bucket = g.subjectTimes.get(subject);
+      if (bucket) bucket.push(t); else g.subjectTimes.set(subject, [t]);
+    }
     if (r.level) g.levels.add(String(r.level));
     if (r.source) g.sources.add(String(r.source));
     // Track the NEWEST row's RAW message in the same pass (its numbers stay
     // intact for Rule 2's promise + duration parsing) — no second scan.
     if (t >= g.newestAt) { g.newestAt = t; g.newestRaw = String(r.message); }
     groups.set(fp, g);
+  }
+  for (const g of groups.values()) {
+    // Subject identity is only meaningful when the WHOLE class carries one. A
+    // class whose rows mostly name no subject is a global promise; scoping it
+    // by the handful of rows that happen to carry an id would let those rows
+    // escape policing entirely.
+    const scopedRows = [...g.subjectTimes.values()].reduce((n, a) => n + a.length, 0);
+    if (scopedRows !== g.times.length) g.subjectTimes = new Map();
   }
   const out: LogFingerprint[] = [];
   for (const [fingerprint, g] of groups) {
@@ -719,6 +814,20 @@ export function summarizeLogFingerprints(rows: ReadonlyArray<LogSignalRow>, gapM
       if (gap > gapMs) episodes++;
       if (minGapMs === null || gap < minGapMs) minGapMs = gap;
     }
+    // Same-subject gap: undefined when the class names NO subject at all (rule 2
+    // then keeps its aggregate semantics — the legacy contract), null when
+    // subjects are named but none repeated.
+    let minSubjectGapMs: number | null | undefined;
+    if (g.subjectTimes.size > 0) {
+      minSubjectGapMs = null;
+      for (const subjectTimes of g.subjectTimes.values()) {
+        const st = subjectTimes.sort((a, b) => a - b);
+        for (let i = 1; i < st.length; i++) {
+          const gap = st[i] - st[i - 1];
+          if (minSubjectGapMs === null || gap < minSubjectGapMs) minSubjectGapMs = gap;
+        }
+      }
+    }
     out.push({
       fingerprint,
       count: times.length,
@@ -727,6 +836,7 @@ export function summarizeLogFingerprints(rows: ReadonlyArray<LogSignalRow>, gapM
       firstAt: times[0],
       lastAt: times[times.length - 1],
       minGapMs,
+      ...(minSubjectGapMs === undefined ? {} : { minSubjectGapMs }),
       levels: [...g.levels],
       sources: [...g.sources],
       exampleMessage: g.newestRaw,
@@ -763,8 +873,13 @@ export function classifyRecurringLogSignals(
     const promise = detectSuppressionPromise(fp.exampleMessage);
     if (promise) {
       const windowMs = parsePromisedWindowMs(fp.exampleMessage);
+      // A per-SUBJECT promise is policed within its subject (2e9ea13e): gaps
+      // BETWEEN the ids the fingerprint elided are not evidence of a broken
+      // promise. `undefined` = the class names no subject at all, so the
+      // aggregate gap keeps its legacy meaning.
+      const gapMs = fp.minSubjectGapMs === undefined ? fp.minGapMs : fp.minSubjectGapMs;
       const fired = windowMs !== null
-        ? fp.count >= minRepeats && fp.minGapMs !== null && fp.minGapMs < windowMs
+        ? fp.count >= minRepeats && gapMs !== null && gapMs !== undefined && gapMs < windowMs
         : fp.count >= minRepeatsUnparsed;
       if (fired) {
         out.push({ ...fp, rule: 'rule2-suppression', promise, promisedWindowMs: windowMs });
@@ -883,8 +998,15 @@ const defaultFileLogSignalTicket: FileLogSignalTicket = async (opts) => {
 export function logSignalTicketDescription(s: RecurringLogSignal, now: Date): string {
   const first = new Date(s.firstAt).toISOString();
   const last = new Date(s.lastAt).toISOString();
+  // The evidence gap must be the SAME gap the rule measured: for a per-subject
+  // promise that is the within-subject gap, never the cross-subject one the
+  // fingerprint's elided ids create (2e9ea13e).
+  const evidenceGapMs = s.minSubjectGapMs === undefined ? s.minGapMs : s.minSubjectGapMs;
+  const gapNote = evidenceGapMs !== null && evidenceGapMs !== undefined
+    ? ` as close as ${Math.round(evidenceGapMs / 60000)} min apart${s.minSubjectGapMs !== undefined ? ' for the SAME subject' : ''}`
+    : '';
   const ruleLine = s.rule === 'rule2-suppression'
-    ? `RULE 2 — broken suppression promise: the message promises "${s.promise}"${s.promisedWindowMs ? ` for ${Math.round(s.promisedWindowMs / 60000)} min` : ' (no explicit window parsed)'} yet ${s.count} occurrences landed${s.minGapMs !== null ? ` as close as ${Math.round(s.minGapMs / 60000)} min apart` : ''} inside the last 24 h.`
+    ? `RULE 2 — broken suppression promise: the message promises "${s.promise}"${s.promisedWindowMs ? ` for ${Math.round(s.promisedWindowMs / 60000)} min` : ' (no explicit window parsed)'} yet ${s.count} occurrences landed${gapNote} inside the last 24 h.`
     : s.rule === 'rule1-hours'
       ? `RULE 1 — recurrence across ${s.hours} distinct hours (${s.count} rows in 24 h).`
       : `RULE 1 — recurrence across ${s.episodes} boot episodes (silence-separated clusters; ${s.count} rows in 24 h) — the once-per-worker-boot shape.`;

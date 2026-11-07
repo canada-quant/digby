@@ -13,7 +13,7 @@
 jest.mock('../../../config/database', () => ({
   __esModule: true,
   default: {
-    organization: { create: jest.fn() },
+    organization: { create: jest.fn(), updateMany: jest.fn(), findUnique: jest.fn() },
     membership: { findFirst: jest.fn() },
     user: { findUnique: jest.fn() },
   },
@@ -26,7 +26,7 @@ jest.mock('../../../utils/logger', () => ({
 jest.mock('../../../config/env', () => ({ __esModule: true, env: {} }));
 
 import prisma from '../../../config/database';
-import { ensurePersonalOrg, ensurePersonalOrgForUser, slugify } from './org.service';
+import { ensurePersonalOrg, ensurePersonalOrgForUser, slugify, setOrgDailyLimit } from './org.service';
 
 const org = prisma as unknown as {
   organization: { create: jest.Mock };
@@ -139,5 +139,80 @@ describe('ensurePersonalOrgForUser (the send-path self-heal)', () => {
     org.user.findUnique.mockResolvedValue(null);
     await expect(ensurePersonalOrgForUser('ghost')).rejects.toThrow('Account not found');
     expect(org.organization.create).not.toHaveBeenCalled();
+  });
+});
+/**
+ * NO MESSAGE-COUNT LIMIT ON A NEW ORG (owner directive 2026-11-07T06:40Z:
+ * "we dont want to limit by messages or anything for digby.ai").
+ *
+ * This replaces the old `defaultOrgDailyLimit` branch table, which was DELETED
+ * along with the env knob it read (`ORG_DEFAULT_DAILY_MESSAGE_LIMIT`, also gone
+ * from docker-compose.app.yml and .env.example). The property that matters now is
+ * the opposite one, and it must hold unconditionally:
+ *
+ *   a NEWLY CREATED org is UNLIMITED — on every instance shape, with every
+ *   environment, and with no knob anywhere able to change it.
+ *
+ * The "hosted instance shape" case is the important one: that is precisely where
+ * the old code used to stamp a limit, so a regression that re-introduces
+ * instance-dependent defaulting shows up here and nowhere else.
+ */
+describe('a created org is ALWAYS unlimited (no message-count limit, ever)', () => {
+  const createdEnvBackup = { ...process.env };
+  afterAll(() => { process.env = { ...createdEnvBackup }; });
+  afterEach(() => { process.env = { ...createdEnvBackup }; });
+
+  it('writes dailyMessageLimit: null at organization.create', async () => {
+    org.organization.create.mockResolvedValue(createdOrg);
+    await ensurePersonalOrg('user-1', 'paul@example.com', 'Paul');
+    expect(org.organization.create.mock.calls[0][0].data.dailyMessageLimit).toBeNull();
+  });
+
+  it.each([undefined, '', 'prod', 'PROD'])(
+    'stays null on a HOSTED instance shape (DIGBY_INSTANCE=%p) — where the old default used to stamp a limit',
+    async (kind) => {
+      if (kind === undefined) delete process.env.DIGBY_INSTANCE;
+      else process.env.DIGBY_INSTANCE = kind;
+      // Every knob the old implementation read. NONE of them may have an effect.
+      process.env.ORG_DEFAULT_DAILY_MESSAGE_LIMIT = '25';
+      org.organization.create.mockResolvedValue(createdOrg);
+
+      await ensurePersonalOrg('user-1', 'paul@example.com');
+
+      expect(org.organization.create.mock.calls[0][0].data.dailyMessageLimit).toBeNull();
+    },
+  );
+
+  it.each(['selfhost', 'edge'])('stays null on a %s instance shape', async (kind) => {
+    process.env.DIGBY_INSTANCE = kind;
+    process.env.ORG_DEFAULT_DAILY_MESSAGE_LIMIT = '25';
+    org.organization.create.mockResolvedValue(createdOrg);
+
+    await ensurePersonalOrg('user-1', 'paul@example.com');
+
+    expect(org.organization.create.mock.calls[0][0].data.dailyMessageLimit).toBeNull();
+  });
+
+  it('the lazily self-healed org (the path every pre-existing account takes) is unlimited too', async () => {
+    process.env.ORG_DEFAULT_DAILY_MESSAGE_LIMIT = '25';
+    org.organization.create.mockResolvedValue(createdOrg);
+
+    const result = await ensurePersonalOrgForUser('user-1');
+
+    expect(result.dailyMessageLimit).toBeNull();
+    expect(org.organization.create.mock.calls[0][0].data.dailyMessageLimit).toBeNull();
+  });
+
+  it('an operator can still cap ONE named org through the admin writer (that is not a default)', async () => {
+    // setOrgDailyLimit is deliberately untouched by the directive — abuse control
+    // on a specific tenant is a decision, not a policy applied to everyone.
+    const row = { ...createdOrg, dailyMessageLimit: 5 };
+    (org as any).organization.updateMany = jest.fn().mockResolvedValue({ count: 1 });
+    (org as any).organization.findUnique = jest.fn().mockResolvedValue(row);
+
+    const updated = await setOrgDailyLimit('org-1', 5);
+
+    expect((org as any).organization.updateMany).toHaveBeenCalledWith({ where: { id: 'org-1' }, data: { dailyMessageLimit: 5 } });
+    expect(updated.dailyMessageLimit).toBe(5);
   });
 });

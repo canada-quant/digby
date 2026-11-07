@@ -2327,6 +2327,75 @@ model SystemSetting {
   @@map("system_settings")
 }
 
+/// Phase 2 Cloud — admin-selectable seasonal/holiday BRANDING PACKS (todo
+/// 61dc8aaf), the Cloud layer ON TOP of the shared branding core (d2d32b57).
+///
+/// WHY THE BYTES LIVE IN POSTGRES: the shared core rebrands a SELF-HOSTED
+/// instance from `DIGBY_BRAND_*` env + a mounted `branding/` directory. On the
+/// Cloud deployment neither exists — `docker-compose.app.yml` gives the
+/// frontend container NO volumes and no `DIGBY_BRANDING_DIR`, and the Backend
+/// mounts nothing the Frontend can see. So a Cloud-branding asset has no
+/// filesystem to live in: it is stored as bytea and served by the backend,
+/// exactly like `ChatFile`. That also makes rollback atomic (one row flip)
+/// and keeps an uploaded pack out of the deploy pipeline entirely.
+///
+/// `SystemSetting` is deliberately NOT the store: a pack is a multi-asset
+/// object with per-file validation state, not a key/value string.
+model BrandingPack {
+  id          String   @id @default(uuid())
+  /// Operator-facing pack name — "Winter 2026", "Canada Day".
+  name        String
+  /// Free-text intent, shown in the admin list only.
+  description String?
+  /// 'draft' | 'active' | 'archived'. AT MOST ONE 'active' row exists — the
+  /// partial unique index in the migration enforces it in the database, so two
+  /// concurrent activations cannot both win.
+  status      String   @default("draft")
+  /// The pack's brand text/theme as validated JSON
+  /// (`{ name, shortName, tagline, description, logoAlt, titleSuffix,
+  ///    theme: { light, dark, backgroundLight, backgroundDark } }`).
+  /// Asset binaries live in BrandingPackAsset; this is the copy the public
+  /// endpoint serves.
+  manifest    Json
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  /// Set when the pack becomes 'active' and cleared on rollback — the audit
+  /// trail an operator needs to answer "when did the holiday skin go live?".
+  activatedAt DateTime?
+
+  assets BrandingPackAsset[]
+
+  @@index([status])
+  @@map("branding_packs")
+}
+
+/// One binary asset slot of a BrandingPack (logo, logoDark, spinner, icon512…).
+/// `slot` matches a `Branding.assets` key in the frontend core, so the runtime
+/// overlay is a straight merge with no second naming scheme.
+model BrandingPackAsset {
+  id        String @id @default(uuid())
+  packId    String
+  /// 'logo' | 'logoCompact' | 'logoLight' | 'logoDark' | 'spinner' |
+  /// 'spinnerStatic' | 'favicon16' | 'favicon32' | 'icon192' | 'icon512' |
+  /// 'appleTouchIcon'
+  slot      String
+  /// Sniffed from the bytes, never taken from the upload's own header.
+  mimeType  String
+  sizeBytes Int
+  width     Int?
+  height    Int?
+  /// Hex sha256 of `data` — lets a deploy probe prove the served bytes are the
+  /// bytes that were validated.
+  sha256    String
+  data      Bytes
+
+  pack BrandingPack @relation(fields: [packId], references: [id], onDelete: Cascade)
+
+  @@unique([packId, slot])
+  @@map("branding_pack_assets")
+}
+
 /// Instance-wide web-search provider configuration (ticket 6f4d42f2): the
 /// admin-settable Bright Data credentials that let a self-hosted / Digby Edge
 /// instance run web search WITHOUT env vars — the admin enters the API key in
@@ -2538,6 +2607,26 @@ model SpendDailyRollup {
   @@id([day, subjectKind, subjectId])
   @@index([subjectKind, subjectId])
   @@map("spend_daily_rollups")
+}
+
+/// Admission HOLD for the one usage limit (the lifetime $ spend cap, org/spend-cap.service.ts).
+/// One row per admitted send, INSERTed inside the same transaction that holds a Postgres
+/// transaction-scoped advisory lock on the userId — that lock is what makes admission atomic
+/// per user, so two concurrent sends cannot both read the same "room left" under the cap.
+/// A row is a RESERVATION of a small fixed amount (`DIGBY_SPEND_RESERVATION_USD`, default $1),
+/// never a charge: the real cost lands in loop_metrics run_spend after the run. `expiresAt`
+/// (30-minute TTL) guarantees a crashed run cannot hold budget forever; rows past it are
+/// ignored by the admission read. Deliberately no FK to users — these are ephemeral budget
+/// holds, not account history (see the migration header).
+model SpendCapAdmission {
+  id          String   @id @default(uuid())
+  userId      String
+  reservedUsd Float
+  createdAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  @@index([userId, expiresAt])
+  @@map("spend_cap_admissions")
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

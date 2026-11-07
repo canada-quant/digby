@@ -163,6 +163,16 @@ export class AuthService {
         password: hashedPassword,
         firstName: data.firstName,
         lastName: data.lastName,
+        // AUTO-VERIFIED AT CREATION (owner directive 2026-11-07T06:40Z: "we dont
+        // want to limit usage by email verfication at all … people need to freely
+        // use digby.ai logged in or not"). Every NEW account is stamped verified
+        // the same way the 94 grandfathered pre-existing accounts were backfilled,
+        // so all 94 + every new signup share ONE posture. The verification gate
+        // itself is a permanent no-op (org/email-verification.service.ts), so this
+        // is belt AND braces: even a stale build that still consulted the setting
+        // cannot block a new signup, and the "verify your email" prompt never
+        // appears because the account is already verified.
+        emailVerifiedAt: new Date(),
         // Self-host first-admin bootstrap (2026-10-20): the SELFHOST_ADMIN_EMAIL
         // address registers as ADMIN on a non-production instance; undefined
         // keeps the schema default (USER) everywhere else.
@@ -180,6 +190,7 @@ export class AuthService {
         firstName: true,
         lastName: true,
         role: true,
+        emailVerifiedAt: true,
         createdAt: true,
       },
     });
@@ -205,17 +216,24 @@ export class AuthService {
       await recordTermsAcceptance(user.id, terms.version);
     }
 
-    // Email verification (Phase 2 Cloud leg 1 item 1): mint the token and email
-    // the link. Non-fatal by design — a signup that otherwise succeeded must not
-    // fail because SMTP is down or the instance has no public URL yet; the user
-    // can re-request from the resend surface. Enforcement is policy-gated
-    // (emailVerificationRequired, default OFF) so this ships dark.
+    // Email verification (Phase 2 Cloud leg 1 item 1) — NO LONGER ISSUED AT
+    // SIGNUP (owner 2026-11-07T06:40Z). The account is created already verified
+    // (see `emailVerifiedAt: new Date()` above), so mailing a "verify your
+    // email" link would be a prompt with nothing left to do — exactly the
+    // friction the owner's directive removes. `issueEmailVerification` stays
+    // exported and is still reachable from the resend surface (a user who WANTS
+    // to confirm an address, or an operator whose account predates the
+    // backfill), and the one guard here is the verification state itself rather
+    // than a hard-coded skip, so the export cannot silently drift out of use.
+    // Non-fatal posture unchanged: nothing in this block may fail a signup.
     let verificationMailed = false;
-    try {
-      const issued = await issueEmailVerification(user.id, user.email);
-      verificationMailed = issued.mailed;
-    } catch (err: any) {
-      logger.warn(`register: verification issue failed for ${user.id}: ${err?.message ?? err}`);
+    if (!user.emailVerifiedAt) {
+      try {
+        const issued = await issueEmailVerification(user.id, user.email);
+        verificationMailed = issued.mailed;
+      } catch (err: any) {
+        logger.warn(`register: verification issue failed for ${user.id}: ${err?.message ?? err}`);
+      }
     }
 
     // Generate tokens

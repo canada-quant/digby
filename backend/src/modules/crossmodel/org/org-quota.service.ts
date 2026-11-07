@@ -32,6 +32,15 @@ import prisma from '../../../config/database';
 import logger from '../../../utils/logger';
 import { AppError } from '../../../middleware/app-error';
 import { ensurePersonalOrgForUser, type DefaultOrg } from './org.service';
+// Email verification enforcement: now a PERMANENT NO-OP (owner 2026-11-07T06:40Z).
+// The import stays so the send guard keeps the documented seam — see the call in
+// guardOrgSend and the directive in email-verification.service.ts.
+import { assertEmailVerifiedForSend } from './email-verification.service';
+// THE ONLY USAGE LIMIT (owner 2026-11-07T06:40Z): hard lifetime $ cap, admins exempt.
+// The ATOMIC admission (review defect 2026-11-07): a preflight read alone let two
+// concurrent sends both pass at the same remaining headroom, so the guard reserves a
+// per-send hold under a per-user Postgres advisory lock instead.
+import { admitWithinLifetimeSpendCap } from './spend-cap.service';
 
 /** Refusal carrying HTTP 429 so the error handler answers a real status, not a 500. */
 export class OrgQuotaExceededError extends AppError {
@@ -152,24 +161,23 @@ export async function reserveOrgMessage(userId: string): Promise<QuotaDecision> 
   }
 
   const limit = org.dailyMessageLimit;
-  if (limit === null) {
-    // Unlimited: the counter still runs (it is the usage meter) but nothing is refused.
-    return { allowed: true, organizationId: org.id, used: after, limit: null, remaining: null };
-  }
-
-  if (after > limit) {
-    // Over the line — put the slot back so the recorded usage stays at the limit.
-    await prisma.orgUsageDaily.update({
-      where: { organizationId_day: { organizationId: org.id, day } },
-      data: { messages: { decrement: 1 } },
-    }).catch(() => { /* the refund is best-effort; a stuck counter never over-charges the user */ });
-    return {
-      allowed: false, reason: 'messages', organizationId: org.id, used: limit, limit, remaining: 0,
-      message: `Daily message limit reached (${limit} per day). Resets at midnight UTC.`,
-    };
-  }
-
-  return { allowed: true, organizationId: org.id, used: after, limit, remaining: Math.max(0, limit - after) };
+  // ── NO MESSAGE-COUNT REFUSAL (owner directive 2026-11-07T06:40Z) ───────────
+  // "we dont want to limit by messages or anything for digby.ai". The counter
+  // above STILL RUNS — it is the usage meter the dashboards and cost panels read
+  // — but it never refuses a send. This deliberately holds even when an operator
+  // has set a legacy `dailyMessageLimit` on the org (admin quota PUT) or a legacy
+  // row predates this change: a limit VALUE must never reintroduce a refusal
+  // path on Cloud. The `limit` fields below are informational only.
+  //
+  // What still refuses here: an org `suspended` by an operator (the per-tenant
+  // kill switch, kept on purpose — it is an abuse lever, not a usage limit).
+  return {
+    allowed: true,
+    organizationId: org.id,
+    used: after,
+    limit: limit ?? null,
+    remaining: limit === null ? null : Math.max(0, limit - after),
+  };
 }
 
 /**
@@ -181,36 +189,17 @@ export async function reserveOrgMessage(userId: string): Promise<QuotaDecision> 
  */
 export async function assertOrgTokensAvailable(orgId: string): Promise<void> {
   if (!orgId) return;
-  const limits = await modelTokenLimits();
-  const models = Object.keys(limits).filter(m => m !== 'default' && limits[m] !== null);
-  const defaultLimit = limits.default ?? null;
-  if (!models.length && defaultLimit === null) return; // nothing capped
-
-  const day = utcDayKey();
-  try {
-    const rows = await prisma.orgModelUsageDaily.findMany({
-      where: { organizationId: orgId, day },
-      select: { model: true, tokensIn: true, tokensOut: true },
-    });
-    for (const r of rows) {
-      const cap = limits[r.model] ?? defaultLimit;
-      if (cap === null || cap === undefined) continue;
-      const used = r.tokensIn + r.tokensOut;
-      if (used >= cap) {
-        throw new OrgQuotaExceededError(
-          `Daily token limit reached for ${r.model} (${cap.toLocaleString()} tokens). Resets at midnight UTC.`,
-          { reason: 'tokens', organizationId: orgId, used, limit: cap },
-        );
-      }
-    }
-  } catch (err: any) {
-    // Recognize our OWN refusal by class OR name. Getting this wrong in either
-    // direction is a real defect: a false negative lets an over-quota send
-    // through (it is mistaken for an infra error), a false positive refuses a
-    // send on a DB blip.
-    if (isQuotaExceededError(err)) throw err;
-    logger.warn(`org-quota: token check unavailable for org ${orgId}, allowing send: ${err?.message ?? err}`);
-  }
+  // ── NO TOKEN-COUNT REFUSAL (owner directive 2026-11-07T06:40Z) ─────────────
+  // "we dont want to limit by messages or anything for digby.ai". Token totals
+  // are still ACCUMULATED by recordOrgTokens below — they feed the cost panels —
+  // but no ceiling refuses a send. This holds even when an operator has set
+  // `org_model_token_limits` (a legacy row, or an admin write): a limit VALUE
+  // must never reintroduce a refusal path on Cloud. The funcname is kept so the
+  // one call site in guardOrgSend stays the documented place a reader looks.
+  //
+  // Deliberately NOT reading modelTokenLimits(): a read that cannot refuse is a
+  // wasted query on the hot send path.
+  return;
 }
 
 /**
@@ -243,12 +232,28 @@ export async function recordOrgTokens(orgId: string, model: string, tokensIn: nu
 }
 
 /**
- * THE SEND GUARD — one call that reserves a message slot and enforces the token
- * ceiling. Throws OrgQuotaExceededError (429) when the send must be refused;
- * never returns a "busy"-shaped value, because callers already treat those as
- * "queue it" and the user would wait forever instead of seeing a refusal.
+ * THE SEND GUARD — one call that enforces the lifetime spend cap, reserves a
+ * message slot and enforces the token ceiling. Throws SpendCapReachedError (402)
+ * or OrgQuotaExceededError (429) when the send must be refused; never returns a
+ * "busy"-shaped value, because callers already treat those as "queue it" and the
+ * user would wait forever instead of seeing a refusal.
  */
 export async function guardOrgSend(userId: string): Promise<{ organizationId: string }> {
+  // THE ONLY USAGE LIMIT (owner 2026-11-07T06:40Z): a hard lifetime $ cap per
+  // non-admin user. Runs FIRST — before the message reservation — so a user over
+  // their cap neither sends nor consumes a message slot.
+  //
+  // Email verification used to be enforced here (ticket fdb4523f) and is now a
+  // PERMANENT NO-OP (`assertEmailVerifiedForSend`, same owner directive). The call
+  // is kept as the one documented place a reader looks for that gate; it reads
+  // nothing and cannot throw, so the hot path gained no query.
+  await assertEmailVerifiedForSend(userId);
+  // ATOMIC ADMISSION (review defect 2026-11-07): reserves a per-send budget hold
+  // inside a transaction that holds a per-user Postgres advisory lock, so two
+  // concurrent sends can never both pass against the same remaining headroom.
+  // Throws SpendCapReachedError (402) exactly like the preflight it replaced.
+  await admitWithinLifetimeSpendCap({ id: userId });
+
   const decision = await reserveOrgMessage(userId);
   if (!decision.allowed) {
     throw new OrgQuotaExceededError(decision.message ?? 'Daily limit reached.', {

@@ -11,7 +11,8 @@ Live at: **[digby.ai](https://digby.ai)**
 ![Digby AI](https://img.shields.io/badge/AI-Multi--Model-7C3AED?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-AGPL--3.0--or--later-blue?style=for-the-badge)
 ![Stack](https://img.shields.io/badge/Stack-Next.js_16_+_Express-000?style=for-the-badge)
-![Deploy](https://img.shields.io/badge/Deploy-AWS_EC2_via_GitHub_Actions-orange?style=for-the-badge)
+![Self-host](https://img.shields.io/badge/Self--host-Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white)
+![CI](https://github.com/canada-quant/digby/actions/workflows/ci.yml/badge.svg)
 
 ---
 
@@ -58,7 +59,7 @@ Live at: **[digby.ai](https://digby.ai)**
 - **🎯 Goals + todos, ✅ verify loop, 🖥️ background processes** — plan tracking (editable from the Overview sidebar), a cheapest-first typecheck→lint→test verify chain with a **hard "green-before-PR" gate**, and dev-server/watcher monitoring.
 - **🧠 3-tier memory + 🔎 retrieval** — user / project / session memory, plus explorer/researcher findings offloaded to a searchable session store (`search_memory`) for large codebases.
 - **♻️ Resilient runs** — reattach to an in-progress run after navigating away, Stop button, partial-transcript durability, and in-loop context compaction.
-- **Docs:** [`docs/DIGBY_CODE.md`](docs/DIGBY_CODE.md) · [`docs/DIGBY_CODE_HARNESS.md`](docs/DIGBY_CODE_HARNESS.md)
+- **Docs:** [`docs/DIGBY_CODE.md`](docs/DIGBY_CODE.md)
 
 ### Feedback & Self-Improvement
 - **👍/👎 Message Feedback** — Rate any response (thumbs up/down with reasons)
@@ -84,7 +85,7 @@ Live at: **[digby.ai](https://digby.ai)**
 - **🧭 The agent can spawn agents** — a chat can start a full coding session (`start_coding_session`) as a **child with its own git worktree and container**; children run in parallel on the worker fleet, report back by waking the parent, and a project supervisor fans work out across its project. Deep, independent work therefore lands as a lane, not as a longer chat.
 - **🛰️ Fleet + supervisors on two tiers** — a **Fleet Supervisor** watches every chat and session you own (wildcard event hooks + a periodic sweep) and a **Project Supervisor** does the same inside one project; both are steerable chats you talk to directly, and both triage tickets, steer lanes and report upward.
 - **❓ Async Q&A — the run asks, you answer when you can** — a run that needs a decision raises an inline card (`ask_user`), or flags a decision into a persistent **Management → Inbox** "Needs owner" list that never expires and posts the answer back into the chat that asked. Agents also message each other directly (`send_chat_message`), so a parent can steer a child mid-run without you relaying anything.
-- **🧮 Decision-model routing** — the harness's own small judgments (route this send, park this wake, is this claim evidenced, which lane owns this goal…) are **typed decisions**, not prose: 24 registered purposes, each asked of a calibrated **decision seat** (TypeSafe Jev by default, any decision model you register), each with a readiness bar before it may act and a fail-open to the deterministic rule it replaces. Live state: `get_decision_gate_status`; doctrine: [`docs/DECISION_GATE_ROLLOUT_PLAYBOOK.md`](docs/DECISION_GATE_ROLLOUT_PLAYBOOK.md).
+- **🧮 Decision-model routing** — the harness's own small judgments (route this send, park this wake, is this claim evidenced, which lane owns this goal…) are **typed decisions**, not prose: every registered purpose is asked of a calibrated **decision seat** (TypeSafe Jev by default, any decision model you register), each with a readiness bar before it may act and a fail-open to the deterministic rule it replaces. Live state: `get_decision_gate_status`.
 - **🔁 Self-improving by design** — the fleet that fixes Digby *is* Digby: tickets from the feedback loop are triaged by the supervisors and implemented by coding lanes, verified by the same typecheck→lint→test chain, and merged through the same gates.
 
 ---
@@ -99,7 +100,7 @@ One codebase, three ways to run it. The distinction is who operates it, not what
 | **Install** | `docker compose -f docker-compose.selfhost.yml up -d --build`, or `scripts/selfhost/install.sh` pulling published images (no clone needed) | — | Delivered with the commercial licence |
 | **Your data** | Your own Postgres + Redis in your own compose stack; nothing reaches digby.ai unless you pair it | Managed AWS (ca-central-1) | Your infrastructure |
 | **Models** | Your provider keys, or your own OpenAI-compatible endpoint — at least one is required | Managed seats | Managed seats, or point them at your own endpoints |
-| **Ad measurement** | **Off by default** — the build ships with Digby's own Google Ads/GA4 tag and Meta Pixel **disabled at build time** (`NEXT_PUBLIC_*_DISABLED` default to `1` in `frontend/Dockerfile` and `${…:-1}` in the compose file), so no ad script is ever handed to the page and **no ad request is made at runtime** (pinned by a rendered-runtime test); the Meta Conversions API stays inert without `META_CAPI_ACCESS_TOKEN` | On — the hosted build explicitly passes the switches through to keep live signup attribution | **Off by default**, same build args as Self-Hosted |
+| **Ads & product telemetry** | **No first-party ads or analytics in the build.** The self-host images ship with no ad or tracking tags: no Google Ads/GA4 tag, no Meta pixel, no Meta Conversions API, and no `ads.txt` (pinned by a build-posture test). Nothing is sent anywhere except to the model providers you configure | Runs Digby's own measurement on digby.ai | **Off by default**, same posture as Self-Hosted |
 | **Autonomy boundary** | `DIGBY_INSTANCE=selfhost`: the self-improvement loop resolves its repo/DB/deploy targets from *your* env and hard-fails with an `ISOLATION BOUNDARY` error rather than reaching for production Digby's repo — point it at your fork to let it improve itself | Production instance | Your targets |
 | **Cloud link** | An Edge instance can pair **to** a cloud Digby over an outbound WSS tunnel (no inbound ports) | Accepts paired Edge instances | Same, on your terms |
 | **Licence** | AGPL-3.0-or-later | AGPL-3.0-or-later | Commercial — see [LICENSE-COMMERCIAL.md](LICENSE-COMMERCIAL.md) |
@@ -194,7 +195,7 @@ memoryGraphNode (LangGraph)
 │  Session branches, implements, runs typecheck→lint→test,    │
 │  opens a PR → review → merge to main                        │
 │       ↓                                                     │
-│  GitHub Actions blue-green deploys to production            │
+│  GitHub Actions build/test CI gates the merge                │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -221,79 +222,82 @@ memoryGraphNode (LangGraph)
 - **TypeScript**
 
 ### Infrastructure
-- **Docker** + **Docker Compose** (blue-green: `docker-compose.base.yml` + `docker-compose.app.yml`; `docker-compose.prod.yml` is an emergency fallback only)
-- **GitHub Actions** (push to main → EC2 deploy, `prisma migrate deploy`)
-- **AWS ca-central-1** — two EC2 t3.large (box A `203.0.113.10` stateful, box B `203.0.113.11` stateless) behind ALB `example-alb`
-- **AWS RDS Postgres** (ca-central-1) — the app database (pgvector); Redis runs on box A
-- **Box C** `example-ca-node` (m7i-flex.2xlarge, 1 TB root) — the coding worker (`CODING_WORKER_CONCURRENCY=32`, compose default 12), deployed by the workflow's extra-hosts step, never in `EC2_HOSTS`. Since the 2026-09-26 deploy speed-ups a wave takes ~18 min of deploy-job time (run 36209251894: 17.7 min; 28 min incl. queue) against the 49–59 min baseline — switches in `docs/REMOTE_OPS.md`
-- **nginx** on the boxes terminates TLS for `digby.ai` (direct, no tunnel)
+- **Docker** + **Docker Compose** — `docker-compose.selfhost.yml` is the complete self-host stack; `docker-compose.selfhost.published.yml` is the same stack pulling published images (no source clone)
+- **GitHub Actions** — build/test CI, image publishing and an anonymous install-smoke run; all of it build/test/publish only, with no production credentials
+- **PostgreSQL 16** (+ pgvector) and **Redis 7** run as containers in the same compose stack
+- **Caddy** terminates TLS and fronts the frontend + backend on a single port (`8080` by default)
 
 ### Self-Improvement
-- **Feedback → shipped code** — the `file_feedback` platform tool loop (agents file tickets into `user_feature_requests` with dedup + rate caps; the fleet supervisor triages; Digby Code sessions implement) — see the diagram above. The old external autopilot (Cline/Claude Code on a dev box) was removed 2026-07-20.
+- **Feedback → shipped code** — the `file_feedback` platform tool loop (agents file tickets into `user_feature_requests` with dedup + rate caps; a supervisor triages; Digby Code sessions implement) — see the diagram above.
 
 ---
 
 ## 📦 Quick Start
 
-### Prerequisites
-- Docker & Docker Compose
-- API keys (see Environment Variables below)
+Two ways to run Digby. The **published images** path needs no source clone and
+no build; the **from-source** path builds the stack locally.
 
-### 1. Clone
+### A. Install from published images (no clone)
+
 ```bash
-git clone https://github.com/example-org/crossmodel.git
-cd crossmodel
+curl -fsSLO https://raw.githubusercontent.com/canada-quant/digby/main/scripts/selfhost/install.sh
+sh install.sh
 ```
 
-### 2. Configure environment
+`install.sh` writes the compose file and a `.env` seeded from
+[`selfhost.env.example`](selfhost.env.example), then pulls and starts the stack
+on **http://localhost:8080**. It never overwrites an existing `.env`, and it
+never writes a secret for you. Pin a release with
+`DIGBY_IMAGE_TAG=<version> sh install.sh`.
+
+### B. Build from source
+
+Prerequisites: Docker with the Compose v2 plugin.
+
 ```bash
-cp .env.example .env
-# Edit .env with your API keys
+git clone https://github.com/canada-quant/digby.git
+cd digby
+
+cp selfhost.env.example .env    # then edit — see the variables below
+docker compose -f docker-compose.selfhost.yml up -d --build
 ```
 
-**Required `.env` variables:**
+Schema migrations run automatically via the one-shot `migrate` service.
+
+### Environment
+
+At minimum you need the two JWT secrets (generate your own — `openssl rand -hex 32`)
+and **one** model API key. Every model call is an admin-editable seat, so no
+particular provider is required; the built-in defaults use Moonshot (lead),
+DeepSeek (checker) and Z.AI (council/coding).
+
 ```env
-# Database
+# Database + cache (compose service names by default)
 DATABASE_URL=postgresql://admin:password@postgres:5432/admin_db
 REDIS_URL=redis://redis:6379
 
-# Auth
-JWT_SECRET=<min 32 chars>
-JWT_REFRESH_SECRET=<min 32 chars>
+# Auth — generate your own, never reuse an example
+JWT_SECRET=<openssl rand -hex 32>
+JWT_REFRESH_SECRET=<openssl rand -hex 32>
 
-# Frontier models: NONE since 2026-09-22 — no OPENAI / XAI / GOOGLE key is read anywhere
-# Model keys are per SEAT, not per pipeline stage: set the keys for whichever
-# models you assign. These are the built-in defaults.
-MOONSHOT_API_KEY=sk-...    # Kimi K3 — built-in default for the lead (chat) seat
-TYPESAFE_API_KEY=...       # optional (2026-09-24): the decision gate seat on TypeSafe Jev; falls back to a DeepSeek logprob readout
+# One model provider is enough to start (seats are editable in Account → Admin)
+MOONSHOT_API_KEY=...        # Kimi K3 — built-in default for the lead seat
+DEEPSEEK_API_KEY=...        # DeepSeek V4.1 Flash — Double Checker + utility
+ZAI_API_KEY=...             # GLM-5.3 — council seat + default coding model
+DASHSCOPE_API_KEY=...       # embeddings / rerank / STT
 
-# Open source models (all direct provider APIs)
-ZAI_API_KEY=...             # GLM-5.3 + glm-5.3-flash vision (api.z.ai international)
-DEEPSEEK_API_KEY=...        # DeepSeek V4.1 Flash (deepseek-flash): Double Checker (verify + council) + utility LLM
-DASHSCOPE_API_KEY=...       # RAG embeddings/rerank + utility/helper fallback (intl)
-
-# Web search (optional)
-BRIGHTDATA_API_TOKEN=...
-MCP_DIGBY_TOKEN=...         # Shared secret for MCP gateway
-
-# Google Workspace (optional)
-GOOGLE_OAUTH_CLIENT_ID=...
+# Optional
+BRIGHTDATA_API_TOKEN=...    # web search
+MCP_DIGBY_TOKEN=...         # shared secret for the MCP gateway
+GOOGLE_OAUTH_CLIENT_ID=...  # Google Workspace integration
 GOOGLE_OAUTH_CLIENT_SECRET=...
-GOOGLE_TOKEN_ENCRYPTION_KEY=<32 bytes hex = openssl rand -hex 32>
-GOOGLE_MCP_API_KEY=...
+GOOGLE_TOKEN_ENCRYPTION_KEY=<openssl rand -hex 32>
 ```
 
-### 3. Start (self-host stack)
-```bash
-cp selfhost.env.example .env   # then edit .env — see docs/SELF_HOST.md
-docker compose -f docker-compose.selfhost.yml up -d --build
-```
-Schema migrations run automatically via the one-shot `migrate` service. Full
-guide (LAN access, TLS, integrations, backups, auto-updates):
-[`docs/SELF_HOST.md`](docs/SELF_HOST.md). (`docker-compose.prod.yml` still
-exists but is an emergency fallback only.)
+The full operator guide — LAN access, TLS, integrations, backups, auto-update,
+branding, and every switch — is [`docs/SELF_HOST.md`](docs/SELF_HOST.md).
 
-### 4. Access
+### Access
 | Service | URL |
 |---------|-----|
 | App (Caddy entrypoint) | http://localhost:8080 |
@@ -399,7 +403,7 @@ GET  /api/crossmodel/stream?streamToken=xxx
 ## 📁 Project Structure
 
 ```
-crossmodel/
+digby/
 ├── backend/
 │   ├── prisma/
 │   │   ├── schema.prisma              # All models (User, CrossModelChat, UserMemory,
@@ -449,11 +453,10 @@ crossmodel/
 │       ├── server.ts                  # MCP tool handler
 │       └── tools/                     # Gmail, Calendar, Drive, Sheets, Docs tools
 │
-├── scripts/                           # Ops scripts (ec2-ops/, backup/, deploy helpers)
+├── scripts/                           # Deploy + self-host + CI scripts (see docs/SELF_HOST.md)
 │
-├── memory-bank/                       # Project memory (session documentation)
 ├── docker-compose.selfhost.yml        # Self-host full-stack compose (see docs/SELF_HOST.md)
-├── docker-compose.prod.yml            # Emergency-fallback production compose
+├── docker-compose.selfhost.published.yml  # Same stack, published images (no clone)
 └── README.md
 ```
 
@@ -461,46 +464,39 @@ crossmodel/
 
 ## 🔧 Configuration Details
 
-### Port Mapping (Production — blue-green architecture)
+### Port Mapping (self-host stack)
 
 | Container | Internal | External |
 |-----------|----------|---------|
-| frontend (blue) | 3000 | **8248** |
-| frontend (green) | 3000 | **8249** |
-| backend (blue) | 4000 | **4001** |
-| backend (green) | 4000 | **4002** |
-| PostgreSQL | 5432 | **9384** |
-| Redis | 6379 | **7856** |
-| Adminer | 8080 | **9521** |
-| MCP Gateway | 8000 | **8200** |
-| Google MCP | 3001 | **8201** |
+| Caddy (public entrypoint) | 8080 | **`${SELFHOST_PORT:-8080}`** on `${SELFHOST_BIND_ADDR:-0.0.0.0}` |
+| backend | 4000 | **4000** (127.0.0.1 only) |
+| relay | 4100 | **4100** (127.0.0.1 only) |
+| PostgreSQL | 5432 | internal only |
+| Redis | 6379 | internal only |
+| Adminer (`--profile tools`) | 8080 | **9521** (127.0.0.1 only) |
+| MCP gateway / connectors (`--profile mcp`) | 8000 | **8200**–**8207** (127.0.0.1 only) |
 
 ### Deployment
+
+The self-host stack deploys with compose:
+
 ```bash
-# Deploy to production (triggers GitHub Actions):
-git push origin main
+# Build locally and start (from-source path)
+docker compose -f docker-compose.selfhost.yml up -d --build
 
-# Check deployment status:
-gh run list --limit 5
+# Or pull published images (no clone)
+docker compose -f docker-compose.selfhost.published.yml pull
+docker compose -f docker-compose.selfhost.published.yml up -d
 
-# SSH to production:
-ssh -i /home/paul/.ssh/crossmodel-prod.pem ubuntu@203.0.113.10
-
-# View production logs (active color — check /opt/crossmodel/.active-color):
-ssh -i /home/paul/.ssh/crossmodel-prod.pem ubuntu@203.0.113.10 \
-  "docker logs admin-backend-green --tail=50"
-
-# Blue-green deploy (zero downtime):
-ssh -i /home/paul/.ssh/crossmodel-prod.pem ubuntu@203.0.113.10 \
-  "sudo bash /opt/crossmodel/deploy-blue-green.sh"
-
-# Instant rollback:
-ssh -i /home/paul/.ssh/crossmodel-prod.pem ubuntu@203.0.113.10 \
-  "sudo bash /opt/crossmodel/rollback.sh"
-
-# Manual health check:
-curl -s https://digby.ai/api/health
+# Health
+curl -s http://localhost:8080/api/health
 ```
+
+Schema migrations run automatically through the one-shot `migrate` service
+before the backend starts. Updates are `pull` + `up -d`, not `git pull`; the
+published-image path is documented in
+[`docs/SELF_HOST.md`](docs/SELF_HOST.md#install-from-published-images-no-source-clone).
+`deploy/selfhost/` carries the optional Caddy + auto-update systemd units.
 
 ### Service Worker (PWA)
 Every deploy must increment `CACHE_NAME` in `frontend/public/sw.js`:
@@ -522,7 +518,7 @@ const VERSION_MESSAGE = '✨ What changed · Tap to reload!';
 - Stream token ownership check (prevents cross-user token theft)
 - O(1) per-identity rate limit counters (no O(n) cache scans)
 - Google OAuth tokens encrypted at rest (AES-256-GCM)
-- TLS terminated by nginx behind the AWS ALB (instance ports closed except via the load balancer + SSH)
+- TLS terminated by Caddy in the compose stack (no ports need to be exposed beyond it)
 - MCP gateway requires `MCP_DIGBY_TOKEN` secret (auth-proxy fails closed: a
   missing key is rejected, not treated as "no auth")
 - The one keyless MCP service — `digby-mcp`, which re-exports the platform API
@@ -561,10 +557,11 @@ curl -N -H "Authorization: Bearer $TOKEN" \
 ## 🐛 Troubleshooting
 
 ### Backend won't start
-- Check active color: `cat /opt/crossmodel/.active-color`
-- Check container logs: `docker logs admin-backend-green --tail=50` (replace green with blue if active)
-- Verify all required env vars are set in `.env`
-- Run `sudo docker compose -f docker-compose.prod.yml restart admin-backend-green`
+- Verify all required env vars are set in `.env` (the two JWT secrets and at least one model key)
+- Check container logs: `docker compose -f docker-compose.selfhost.yml logs backend --tail=50`
+- Check the one-shot migration ran: `docker compose -f docker-compose.selfhost.yml logs migrate --tail=50`
+- Restart a single service: `docker compose -f docker-compose.selfhost.yml restart backend`
+- Published-image path: `docker compose -f docker-compose.selfhost.published.yml logs backend --tail=50`
 
 ### Synthesis returns very short responses
 - The 200-char safe-streaming buffer and MIN_SYNTHESIS_LENGTH guard should prevent this
@@ -576,8 +573,8 @@ curl -N -H "Authorization: Bearer $TOKEN" \
 
 ### Google OAuth fails
 - Verify `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_TOKEN_ENCRYPTION_KEY` in `.env`
-- Verify redirect URI registered in Google Cloud Console: `https://digby.ai/api/crossmodel/google/callback`
-- Check `google-mcp-prod` container is running: `docker ps | grep google-mcp`
+- Verify the redirect URI registered in Google Cloud Console matches your instance's public URL: `<SELFHOST_PUBLIC_URL>/api/crossmodel/google/callback`
+- Check the `google-mcp` container is running: `docker ps | grep google-mcp`
 
 ### MCP web search failing
 - Circuit breaker may be open (after 3 failures, 5-min cooldown)

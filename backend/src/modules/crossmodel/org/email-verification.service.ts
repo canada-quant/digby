@@ -13,13 +13,17 @@
  *    user, so an old link cannot be used to undo a newer decision, and the
  *    table cannot grow one live token per click.
  *
- * ENFORCEMENT IS POLICY-GATED, and ON by default for NEW signups only where it
- * is deliberate — see `emailVerificationRequired()`. This matters: every account
- * that existed before this feature has NULL emailVerifiedAt, so a hard
- * enforcement-by-default would lock the entire existing user base out of chat on
- * deploy. The flag is a SystemSetting (admin-flippable live, no deploy), and the
- * default is OFF; the surfaces (token issue, verify, resend, status) ship now so
- * turning it on is a one-row change rather than a code change.
+ * ⚠ ENFORCEMENT IS GONE, PERMANENTLY (owner directive 2026-11-07T06:40Z): "we
+ * dont want to limit usage by email verfication at all … people need to freely
+ * use digby.ai logged in or not". `assertEmailVerifiedForSend` is a NO-OP and
+ * there is no policy that turns it back on — see its doc comment. New accounts
+ * are created ALREADY VERIFIED (auth.service.ts register stamps
+ * `emailVerifiedAt`), the same posture as the 94 grandfathered existing rows, so
+ * the "verify your email" prompt never appears on a fresh signup.
+ *
+ * What this file still owns: the token machinery (mint / verify / resend). It is
+ * kept because the verify + resend surfaces ship and an operator may want to
+ * confirm an address; nothing in it may gate a SEND.
  */
 import { createHash, randomBytes } from 'crypto';
 import prisma from '../../../config/database';
@@ -36,13 +40,17 @@ export const REQUIRE_VERIFICATION_SETTING = 'require_email_verification';
 const sha256 = (raw: string): string => createHash('sha256').update(raw).digest('hex');
 
 /**
- * Is a verified email REQUIRED to send? Default OFF.
+ * LEGACY READ — exported for compatibility only. NOTHING GATES ON IT.
  *
- * Read through SystemSetting so the owner can flip it live (the same
- * admin-PUT pattern as deep_research_daily_limit / patience_auto_only) with no
- * deploy. Any read failure falls back to the SAFE default for availability —
- * 'off' — because the failure mode of 'on' during a DB blip is locking every
- * user out of chat.
+ * Before 2026-11-07 this was the policy behind the send gate. It is no longer
+ * consulted by `assertEmailVerifiedForSend` (a permanent no-op) or by any other
+ * send path, and re-wiring it into one would contradict the owner directive —
+ * see the header. The function is kept because the SystemSetting row it reads
+ * (`require_email_verification`) still exists on deployed instances and admin
+ * surfaces/tests reference the key; deleting the reader would make a stale row
+ * silently meaningless with no way to see it.
+ *
+ * Read failure falls back to 'off' (there is nothing to fail closed on).
  */
 export async function emailVerificationRequired(): Promise<boolean> {
   try {
@@ -52,6 +60,66 @@ export async function emailVerificationRequired(): Promise<boolean> {
     logger.warn(`email-verification: policy read failed, treating as OFF: ${err?.message ?? err}`);
     return false;
   }
+}
+
+/** Refusal text when an unverified account tries to send with the policy ON. */
+export const UNVERIFIED_SEND_MESSAGE =
+  'Please verify your email address before sending. Check your inbox for the verification link, or request a new one.';
+
+/**
+ * The typed refusal that USED to be thrown by the verification gate (ticket
+ * fdb4523f). ⚠ IT IS NO LONGER THROWN ANYWHERE (owner 2026-11-07T06:40Z — see
+ * `assertEmailVerifiedForSend`). Exported for compatibility only: other modules
+ * and tests reference it by name, and a `name===` check in chat-agent.service.ts
+ * must keep compiling and must keep failing safe if such an error ever resurfaces
+ * from a stale build.
+ *
+ * It carries a `name` for the same reason OrgQuotaExceededError does: the
+ * machine-wake seam (chat-agent.service.ts) must tell a POLICY verdict apart
+ * from an infra fault. It catches guardOrgSend and treats a recognized verdict
+ * as "do not start this wake", but deliberately PROCEEDS on anything else so an
+ * unrestorable DB blip never silently swallows every scheduled run.
+ *
+ * AppError's constructor re-parents the prototype to AppError.prototype, which
+ * severs `instanceof` for subclasses (the OrgQuotaExceededError lesson), so the
+ * real prototype is restored here. Copy this idiom for any new typed refusal.
+ */
+export class EmailVerificationRequiredError extends AppError {
+  constructor() {
+    super(403, UNVERIFIED_SEND_MESSAGE);
+    this.name = 'EmailVerificationRequiredError';
+    Object.setPrototypeOf(this, EmailVerificationRequiredError.prototype);
+  }
+}
+
+/**
+ * ⛔ PERMANENT NO-OP — DELIBERATE, NOT A POLICY TOGGLE (owner 2026-11-07T06:40Z).
+ *
+ * OWNER'S WORDS: "we dont want to limit usage by email verfication at all …
+ * people need to freely use digby.ai logged in or not … and we dont want to
+ * limit by messages or anything for digby.ai … maybe a hard $100 usage cap per
+ * user non admins".
+ *
+ * So this function reads NOTHING — no SystemSetting, no user row — and can never
+ * throw. It stays exported because `guardOrgSend` imports it (org-quota.service.ts)
+ * and it is the documented seam a future reader will look for; the single call
+ * site is kept as the honest answer to "where is the verification gate?" — the
+ * answer is "here, and it does nothing".
+ *
+ * DO NOT restore the setting read "just behind a flag". Email verification is not
+ * a usage lever any more; the ONLY usage limit in this product is the lifetime
+ * spend cap (org/spend-cap.service.ts). If verification ever needs to matter it
+ * must not be on the send path at all, because this same gate refused every
+ * unverified account — admins included — on a live instance (measured
+ * 2026-11-07: 94 of 94 accounts carried a NULL emailVerifiedAt, so flipping it ON
+ * blocked all of them).
+ *
+ * `EmailVerificationRequiredError` below is likewise never thrown from here; it
+ * remains exported because chat-agent.service.ts and existing callers/tests
+ * reference it by name, and a few historical rows in logs carry it.
+ */
+export async function assertEmailVerifiedForSend(_userId: string): Promise<void> {
+  // Intentionally empty. See the directive above.
 }
 
 /** Where the emailed link points. Null when the instance has no public URL. */

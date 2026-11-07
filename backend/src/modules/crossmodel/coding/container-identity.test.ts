@@ -321,7 +321,18 @@ describe('ticket 9a391db3 — what a swap actually takes (the /tmp-installed too
     });
 
     test('REPLAY d9ed0c1f: the harness doc stops claiming the durable $HOME survives a swap (refuted by 9a391db3)', async () => {
-      const doc = await fs.readFile(path.join(__dirname, '../../../../../docs/DIGBY_CODE_HARNESS.md'), 'utf8');
+      // `docs/DIGBY_CODE_HARNESS.md` is an INTERNAL framework ledger and the
+      // public export DROPS it (scrub-rules: internal engineering ledgers).
+      // This suite ships in the export, so the read must be guarded: absence is
+      // BY POLICY, not a failure. The pin still runs in the private tree, which
+      // is where the doc lives and where the claim would regress.
+      const docPath = path.join(__dirname, '../../../../../docs/DIGBY_CODE_HARNESS.md');
+      let doc: string;
+      try {
+        doc = await fs.readFile(docPath, 'utf8');
+      } catch {
+        return; // not present in this tree (public export) — nothing to pin
+      }
       // The pre-#2404 sentence promised a surviving $HOME; HOME=/tmp is the
       // writable layer, so it cannot survive. A doc that says otherwise sends a
       // lane looking for its key on a volume that never held it.

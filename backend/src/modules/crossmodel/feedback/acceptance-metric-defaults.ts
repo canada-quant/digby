@@ -601,6 +601,172 @@ const DESIGNED_OBSERVABILITY_SIGNATURES: ReadonlyArray<{
     test: (p) => /pdf fetch\/extract failed/i.test(p) && !OURS_PDF_FETCH_ARM_RE.test(p),
     why: 'the web-search PDF fetch/extract warn is per-target observability for an external document host refusing us or exceeding a deliberate size bound — one warn per target, never retried, so its volume tracks which third-party URLs a research session cites, never whether a fix works',
   },
+  {
+    // ── TICKET b73eae1b (2026-11-07, family lane 39ecd1b9) ──────────────────
+    // `suggested-questions: draft yielded <n> candidates, <n> pass the
+    // mechanical check (drops {}, source check skipped) for userId=<uuid> —
+    // skipping critic`
+    //
+    // THE EMITTER (suggested-questions.service.ts:947) sits in an EXPLICIT
+    // DESIGNED branch: `if (checked.kept.length < MIN_QUESTIONS)` — the comment
+    // above it says a second reasoning call "cannot rescue a draft already below
+    // the survivor threshold", so the run SKIPS the critic and takes the
+    // defaults+backoff path. One warn per generation attempt, then it returns
+    // []. The draft prompt itself legalises a small draft: DRAFT_SYSTEM says
+    // "Produce fewer than MIN_CANDIDATES only when the context holds fewer than
+    // 3 usable items", and the service header prefers "fewer chips" to padded
+    // ones. So a thin user context structurally yields this row.
+    //
+    // WHY ITS BAR CANNOT CLEAR (the measured trap the ticket fell into). The
+    // autofiler stamped `<= 2 / 24 h` on the derived fragment. Measured on this
+    // ticket's own 11 rows, EVERY one reads `(drops {})` — i.e.
+    // `mechanicalCheck` dropped NOTHING, so `kept === candidates < 3` and the
+    // DRAFT itself came back empty or tiny. The recurrence driver is therefore
+    // the draft provider's yield (utilityChat returning '' when every leg fails,
+    // utils/utility-llm.ts, or model prose carrying no JSON array), which no fix
+    // in this repo bounds — it tracks provider-seat health and user-context
+    // thinness, exactly like the adjudicated utility-override-failover class. A
+    // retry or a `question`-key alias could REDUCE it; neither can hold ≤2
+    // across a provider blip, so a correct fix would reopen on the next one.
+    //
+    // SURFACE ASYMMETRY, MEASURED — the same trap utility-override-failover
+    // documents above, and the reason a naive `draft yielded` predicate would
+    // have been DEAD CODE here. `stableLiteralFragment` drops the message's
+    // prefix (it is not literal — it carries the varying counts), so the
+    // autofiler's derived messagePattern begins MID-MESSAGE:
+    //     'pass the mechanical check (drops {}, source check skipped) for us'
+    // verified by running logSignalDefaultMetric on this ticket's own
+    // fingerprint. The fingerprint surface carries `draft yielded … candidates`;
+    // the metric surface cannot, because those words are before the kept run.
+    // So the predicate accepts EITHER self-description. Both are this class's
+    // own prose, and neither appears in the :590 sibling.
+    //
+    // NOT A FILING-STOP, and NOT the :590 sibling's bar. This warn must keep
+    // filing: it is the only per-attempt account of WHY a user got defaults.
+    // The sibling `suggested-questions: <n> usable results for userId=… —
+    // backing off …` is a DIFFERENT emit site (service.ts:590) and a different
+    // ticket (d7a1ad46); the two CO-FIRE for one user event (this path returns
+    // [], which fails the `>= MIN_QUESTIONS` test that logs :590), so the
+    // predicates must not overlap. The sibling's fingerprint and its derived
+    // fragment (`usable results for userid=`) match neither arm. Pinned below.
+    id: 'suggested-questions-draft-yield',
+    test: (p) => /draft yielded\b.*\bcandidates/i.test(p) || /pass the mechanical check\b/i.test(p),
+    why: 'the suggested-questions draft-yield warn records a designed branch: a draft already below the survivor threshold skips the critic and takes defaults + a bounded backoff, one warn per attempt, so its volume tracks the draft provider\'s yield and the thinness of a user\'s context — never whether a fix works',
+  },
+  {
+    // ── TICKET 9ffb9f8c (2026-11-07, family lane 39ecd1b9) ──────────────────
+    // `action-verifier: pre-delivery strike — <n> phantom claim(s) in supervisor
+    // <id>'s note; the note was delivered as writ`
+    //
+    // VERDICT: DESIGNED OBSERVABILITY — the guard WORKING, already pinned twice.
+    // The emitter (platform/action-verifier.ts, the PRE-DELIVERY guard) is
+    // explicitly observe-only for the ACTION class under defaults: nothing is
+    // removed, the note is delivered as written, and the warn plus a
+    // `guard_strike` row are the only account. Every residual row is the
+    // detector RECORDING a real conviction of a fabricated claim in a
+    // supervisor's note — the fabrication class the owner rules target. Prior
+    // adjudications: 82029969 (citation class, "the guard doing its DESIGNED
+    // job … not a defect in the guard") and 91fb1905 (the same emit site under
+    // BRIEFING-UNVERIFIED-FILTER). log-signal-family.30dfad06.pin.test.ts:55-61
+    // re-asserts member 18d83feb for this exact site as "DESIGNED, already
+    // pinned twice".
+    //
+    // WHY THE BAR CANNOT CLEAR. Its volume tracks how often MODEL NARRATION
+    // fabricates an id-less action claim — a property of the lanes' prose, not
+    // of this repo's code. There is nothing a fix could tighten without
+    // stopping the detector from convicting, which would blind the fleet to the
+    // very class the owner rules target. Also measured: its derived fragment is
+    // FRAGILE — stableLiteralFragment returns `'s note; the note was delivered
+    // as writ'`, which starts MID-WORD (the digit-folded supervisor id broke the
+    // preceding literal run). A bar counting that fragment measures a
+    // meaningless slice of prose.
+    //
+    // NOT the `action-verifier-drop-guard` sibling (:526 above). That is a
+    // DIFFERENT emit site (`dropped <n> LLM-extracted note claim(s) narrating
+    // THIRD-PARTY lane status`, ticket e35f9985/bbd8521e). Neither arm below
+    // matches it: the drop-guard message contains no `phantom` and no
+    // `delivered as writ`. Pinned, because if this signature ever swallowed the
+    // sibling, the sibling's own adjudicated bar would silently vanish.
+    id: 'action-verifier-predelivery-strike',
+    test: (p) => /phantom claim\(s\) in supervisor/i.test(p) || /note was delivered as writ/i.test(p),
+    why: 'the action-verifier PRE-DELIVERY strike is the fabrication guard convicting phantom claims in a supervisor note before delivery — observe-only by design, so every residual row is the detector recording a REAL conviction, and its rate tracks model narration rather than whether a fix works',
+  },
+  {
+    // ── TICKET 9289d163 (2026-11-07, family lane 39ecd1b9) ──────────────────
+    // `CloudBrowserDriver: BrightData Scraping Browser CDP unavailable
+    // (ip_forbidden?) → read-only scrape mode`
+    //
+    // VERDICT: DESIGNED OBSERVABILITY of a standing EXTERNAL condition, with an
+    // owner-side remedy the source already states. cloud-driver.ts:14-21
+    // documents the posture verbatim: "If that connection is refused (today it
+    // returns 407 ip_forbidden because the prod server's IP isn't on the
+    // BrightData zone's allowlist — fix: allowlist the IP or disable the zone's
+    // IP-whitelist), the driver drops to a read-only scrape mode … The instant
+    // the zone is allowlisted, navigate connects and the real browser is used —
+    // NO CODE CHANGE." The warn is the mode transition's only account, and the
+    // fallback is the designed degrade (the agent keeps working, read-only), not
+    // a crash.
+    //
+    // ONCE PER DRIVER INSTANCE, never a storm: `mode` starts 'unknown' and is
+    // only ever assigned 'cdp' or 'scrape', so the emit sits under
+    // `mode === 'unknown'` and fires at most once per instance. A fresh driver
+    // is built per browser session, so 10 rows / 6 hours ≈ 10 sessions where CDP
+    // was armed and the FIRST attempt failed. Its volume tracks the zone's
+    // allowlist state and gateway health — an owner action, never a code fix.
+    //
+    // This is the one whose bar the fleet most needs NOT to count: the whole
+    // block is armed only when CLOUD_BROWSER_CDP is set, so the rows are
+    // evidence that the hosted browser's interactive path is degraded, not a
+    // defect to be measured away.
+    id: 'cloud-browser-cdp-unavailable',
+    test: (p) => /scraping browser cdp unavailable/i.test(p),
+    why: 'the cloud browser CDP-unavailable warn records a designed degrade to read-only scrape mode when the BrightData zone will not accept this server\'s egress IP — once per driver instance, remedied by an owner-side zone allowlist and not by any code change, so its rate tracks external zone state, never whether a fix works',
+  },
+  {
+    // ── TICKET d7a1ad46 (LEAD of the log-signal family, 2026-11-07 lane
+    //    39ecd1b9; originally filed 2026-11-01, prior lane d0e5e838) ─────────
+    // `suggested-questions: <n> usable results for userId=<uuid> (min <n>) —
+    //  backing off <n> min before retry`
+    //
+    // WHY A SIGNATURE RATHER THAN A SERVICE FIX. The warn is emitted ONCE per
+    // generation attempt (suggested-questions.service.ts:590) and the attempt
+    // then arms a backoff marker the controller READS before kicking another
+    // regeneration — 5 min for a transient miss, 30 min when a real draft was
+    // thinned by the critic. So the class cannot become a request-rate storm,
+    // and its rate tracks how many users hit a yield miss, which no fix here
+    // bounds. The 30dfad06 pin already adjudicated it DESIGNED on exactly that
+    // reasoning ("the recurrence driver is a real per-user yield miss, not a
+    // retry loop; silencing it would blind the fleet to users who never get a
+    // personalized set").
+    //
+    // THE REOPEN (sighting 2) WAS BASED ON A MISREADING, MEASURED 2026-11-07.
+    // It claimed the 5-min promise was broken — "11 occurrences as close as
+    // 1 min apart". The per-user rows refute it: d1185fde 18:38:31.617Z →
+    // 18:43:37.969Z = 5m06s, 867c4f48 11:05:52.705Z → 11:11:00.115Z = 5m07s,
+    // and EVERY same-user pair in the 24 h window is >= the 5-minute backoff.
+    // The sub-5-minute adjacencies are across DIFFERENT users (22097a46 at
+    // 15:55:55.850Z vs 158ffa30 at 15:55:15.277Z — two people 40 s apart),
+    // which the PER-USER backoff never promised to space. The sweep was
+    // comparing a global rate against a per-subject promise. (That exact
+    // measuring defect is being fixed on its own ticket, 2e9ea13e, as "rule 2
+    // measures the promised window per SUBJECT" — this signature handles the
+    // METRIC side; the two are complementary, not duplicates.)
+    //
+    // WHICH ROWS ARE LEFT. Every one of the 12 live rows reads
+    // `0 usable results`, and that path CO-FIRES the sibling :947 draft-yield
+    // warn for the same user event (it returns [], failing `>= MIN_QUESTIONS`).
+    // So the dominant driver is the DRAFT provider's yield — the class
+    // `suggested-questions-draft-yield` above — not anything this repo's code
+    // decides. The critic-thinning and exception arms exist but did not appear
+    // in the window.
+    //
+    // NOT the :947 sibling. Its message carries `draft yielded … pass the
+    // mechanical check` and never `usable results`; this predicate requires
+    // `usable results`, so the two stay disjoint in both directions. Pinned.
+    id: 'suggested-questions-low-yield',
+    test: (p) => /usable results for user(?:id)?=/i.test(p),
+    why: 'the suggested-questions low-yield warn is emitted once per generation attempt before arming the per-user backoff the controller reads, so it cannot storm; its rate tracks how many users hit a transient draft-yield miss, and the class is already adjudicated designed (30dfad06) — the 2026-11-07 reopen misread a PER-USER promise against a global rate',
+  },
 ];
 
 /** The unsoundness FAMILY a matched signature belongs to — the verifier's note reads from this. */

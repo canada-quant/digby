@@ -19,9 +19,8 @@
 #                    MCP tools (per-user token pass-through, loopback only)
 #   --profile tools  Adminer DB UI on http://localhost:9521
 #
-# NOTE: this file builds images from the local source tree. Once published
-# images land (ghcr.io), the `build:` blocks will switch to `image:` refs so
-# self-hosters never need the source.
+# The self-host stack is ad-free by construction: no first-party ad or
+# analytics tag is compiled into these images (see frontend/Dockerfile).
 
 name: digby-selfhost
 
@@ -301,9 +300,6 @@ services:
       # hosts / plain http by default (SSRF fence). A LAN-only instance may allow them.
       - USER_MCP_ALLOW_PRIVATE_HOSTS=${USER_MCP_ALLOW_PRIVATE_HOSTS:-}
       - USER_MCP_ALLOW_HTTP=${USER_MCP_ALLOW_HTTP:-}
-      # Meta Conversions API (sign-up events to Digby's ad account) — OFF on a
-      # self-host unless you point it at your own pixel.
-      - META_CAPI_DISABLED=${META_CAPI_DISABLED:-1}
       # First admin: the account registered (or next signed in) with this email
       # becomes ADMIN on THIS instance — no psql needed (Account → Admin → Setup).
       - SELFHOST_ADMIN_EMAIL=${SELFHOST_ADMIN_EMAIL:-}
@@ -513,9 +509,6 @@ services:
       # hosts / plain http by default (SSRF fence). A LAN-only instance may allow them.
       - USER_MCP_ALLOW_PRIVATE_HOSTS=${USER_MCP_ALLOW_PRIVATE_HOSTS:-}
       - USER_MCP_ALLOW_HTTP=${USER_MCP_ALLOW_HTTP:-}
-      # Meta Conversions API (sign-up events to Digby's ad account) — OFF on a
-      # self-host unless you point it at your own pixel.
-      - META_CAPI_DISABLED=${META_CAPI_DISABLED:-1}
       # First admin: the account registered (or next signed in) with this email
       # becomes ADMIN on THIS instance — no psql needed (Account → Admin → Setup).
       - SELFHOST_ADMIN_EMAIL=${SELFHOST_ADMIN_EMAIL:-}
@@ -579,12 +572,6 @@ services:
         # Baked into the JS bundle at build time — changing the public URL
         # means rebuilding the frontend image.
         - NEXT_PUBLIC_API_URL=${SELFHOST_PUBLIC_URL:-http://localhost:8080}/api
-        # Digby's production Google Ads / GA4 tag and Meta Pixel are compiled
-        # OUT of a self-host build (set to 0 only to report page views to Digby's
-        # ad accounts). Account → Admin → Setup shows which build is running.
-        - NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED=${NEXT_PUBLIC_GOOGLE_ADS_TAG_DISABLED:-1}
-        - NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED=${NEXT_PUBLIC_GOOGLE_ANALYTICS_DISABLED:-1}
-        - NEXT_PUBLIC_META_PIXEL_DISABLED=${NEXT_PUBLIC_META_PIXEL_DISABLED:-1}
         # The public site is pre-rendered at build time: this hides the digby.ai
         # desktop installers (they sign into production, not this instance).
         - DIGBY_INSTANCE=selfhost

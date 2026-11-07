@@ -20,7 +20,7 @@
 #   docker compose -f docker-compose.selfhost.published.yml up -d
 #
 # Pinning a release (recommended for anything you care about):
-#   DIGBY_IMAGE_TAG=1.0.1 docker compose -f docker-compose.selfhost.published.yml up -d
+#   DIGBY_IMAGE_TAG=1.0.2 docker compose -f docker-compose.selfhost.published.yml up -d
 #
 # NOTE ON THE FRONTEND: the image is built with a RELATIVE API base (/api), so
 # it is correct on http://localhost:8080, on a LAN IP and on a real domain with
@@ -48,9 +48,8 @@
 #                    MCP tools (per-user token pass-through, loopback only)
 #   --profile tools  Adminer DB UI on http://localhost:9521
 #
-# NOTE: this file builds images from the local source tree. Once published
-# images land (ghcr.io), the `build:` blocks will switch to `image:` refs so
-# self-hosters never need the source.
+# The self-host stack is ad-free by construction: no first-party ad or
+# analytics tag is compiled into these images (see frontend/Dockerfile).
 
 name: digby-selfhost
 
@@ -300,9 +299,6 @@ services:
       # hosts / plain http by default (SSRF fence). A LAN-only instance may allow them.
       - USER_MCP_ALLOW_PRIVATE_HOSTS=${USER_MCP_ALLOW_PRIVATE_HOSTS:-}
       - USER_MCP_ALLOW_HTTP=${USER_MCP_ALLOW_HTTP:-}
-      # Meta Conversions API (sign-up events to Digby's ad account) — OFF on a
-      # self-host unless you point it at your own pixel.
-      - META_CAPI_DISABLED=${META_CAPI_DISABLED:-1}
       # First admin: the account registered (or next signed in) with this email
       # becomes ADMIN on THIS instance — no psql needed (Account → Admin → Setup).
       - SELFHOST_ADMIN_EMAIL=${SELFHOST_ADMIN_EMAIL:-}
@@ -500,9 +496,6 @@ services:
       # hosts / plain http by default (SSRF fence). A LAN-only instance may allow them.
       - USER_MCP_ALLOW_PRIVATE_HOSTS=${USER_MCP_ALLOW_PRIVATE_HOSTS:-}
       - USER_MCP_ALLOW_HTTP=${USER_MCP_ALLOW_HTTP:-}
-      # Meta Conversions API (sign-up events to Digby's ad account) — OFF on a
-      # self-host unless you point it at your own pixel.
-      - META_CAPI_DISABLED=${META_CAPI_DISABLED:-1}
       # First admin: the account registered (or next signed in) with this email
       # becomes ADMIN on THIS instance — no psql needed (Account → Admin → Setup).
       - SELFHOST_ADMIN_EMAIL=${SELFHOST_ADMIN_EMAIL:-}

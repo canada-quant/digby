@@ -44,6 +44,7 @@ import { CLOUD_LINK_RECEIVE_PATH_RE, cloudLinkReceiveLimiterKey } from './module
 import { INSTANCE_PAIR_PATH_RE } from './modules/crossmodel/instances/instances.service';
 import { visitorAdminRoutes } from './modules/crossmodel/visitors/visitor.routes';
 import { orgAdminRoutes } from './modules/crossmodel/org/org-admin.routes';
+import { brandingPackPublicRoutes, brandingPackAdminRoutes } from './modules/crossmodel/branding/branding-pack.routes';
 import { clientIpForHash } from './modules/crossmodel/visitors/visitor.service';
 import { hashIp } from './modules/crossmodel/visitors/ip-hash';
 import { streamLimiterSkip, uploadLimiterSkip, guestStreamAttachLimiterSkip, guestStreamAttachLimiterKey } from './middleware/rate-limit-paths';
@@ -453,6 +454,11 @@ mountApi(app, '', publicShareRoutes); // public share links — no auth at all
 mountApi(app, '', codingPublicRoutes); // Digby Code SSE/preview (query-token) — optionalAuthenticate + handler self-check
 mountApi(app, '', generatedFilesPublicRoutes); // generated-file download (query-token — chat markdown links send no Authorization header)
 mountApi(app, '', crossmodelOpenRoutes); // stream/upload/feedback/OAuth/webhooks — open posture
+// Phase 2 Cloud brandings packs (todo 61dc8aaf) — PUBLIC half: every visitor,
+// logged out included, must see an active seasonal skin, so the active-pack read
+// and its asset bytes sit BEFORE the guard. Both routes are read-only and can
+// only reach the ONE pack with status='active'.
+mountApi(app, '', brandingPackPublicRoutes);
 mountApi(app, '', instancesOpenRoutes); // Digby Edge Phase 3 — instance pair/complete + self-revoke (self-authenticating, uniform 401)
 // P3 — external platform API + scoped agent tokens. Path-scoped mount in the
 // OPEN section: the router self-authenticates per-route (user JWT OR scoped
@@ -478,6 +484,10 @@ mountApi(app, '/reports', reportsRoutes); // content reports (M2-prep 1.2/1.4) �
 mountApi(app, '', webhookAuthedRoutes); // per-chat webhook token lifecycle (owner-only); the OPEN fire router lives in crossmodel-open.routes.ts
 mountApi(app, '', visitorAdminRoutes); // first-party visitor analytics — Account → Admin → Users & traffic (admin-gated per handler); the OPEN POST /visit-events lives in crossmodel-open.routes.ts
 mountApi(app, '', orgAdminRoutes); // Phase 2 Cloud — tenant abuse kill switch + free-tier daily limit (admin-gated per handler)
+// Phase 2 Cloud branding packs (todo 61dc8aaf) — ADMIN half: upload → validate →
+// preview → activate → rollback. Behind the guard AND gated per handler on
+// isAdminViewer (the owner-email fallback never applies on a self-host instance).
+mountApi(app, '', brandingPackAdminRoutes);
 
 // 404 handler
 app.use(notFound);

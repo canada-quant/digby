@@ -42,10 +42,12 @@ jest.mock('../platform/instance-setup', () => ({
 
 import { createHash } from 'crypto';
 import prisma from '../../../config/database';
+import { AppError } from '../../../middleware/app-error';
 import {
   issueEmailVerification, consumeEmailVerification, resendEmailVerification,
   emailVerificationRequired, verificationLinkFor, VERIFICATION_TTL_MS,
-  REQUIRE_VERIFICATION_SETTING,
+  REQUIRE_VERIFICATION_SETTING, assertEmailVerifiedForSend, UNVERIFIED_SEND_MESSAGE,
+  EmailVerificationRequiredError,
 } from './email-verification.service';
 
 const db = prisma as unknown as {
@@ -200,6 +202,59 @@ describe('emailVerificationRequired (the enforcement policy)', () => {
   it('falls back to OFF (never lock everyone out) when the policy cannot be read', async () => {
     db.systemSetting.findUnique.mockRejectedValue(new Error('db down'));
     await expect(emailVerificationRequired()).resolves.toBe(false);
+  });
+});
+
+/**
+ * THE GATE IS GONE (owner directive 2026-11-07T06:40Z: "we dont want to limit
+ * usage by email verfication at all … people need to freely use digby.ai logged
+ * in or not").
+ *
+ * The block that used to live here asserted a 403 for an unverified account under
+ * policy ON. That behaviour is deliberately REMOVED, so these tests now assert the
+ * opposite property in the strongest available form: the call reads NOTHING (no
+ * policy row, no user row) and never throws — whatever the setting says, whichever
+ * way the user row is shaped, and even when the database is down. A regression
+ * that quietly restores the read fails on every one of them.
+ */
+describe('assertEmailVerifiedForSend — PERMANENT NO-OP (owner 2026-11-07T06:40Z)', () => {
+  it('never reads the policy row or the user row', async () => {
+    await expect(assertEmailVerifiedForSend('user-1')).resolves.toBeUndefined();
+    expect(db.systemSetting.findUnique).not.toHaveBeenCalled();
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('still allows the send when the setting says ON and the account is UNVERIFIED (the exact case that used to 403)', async () => {
+    db.systemSetting.findUnique.mockResolvedValue({ key: REQUIRE_VERIFICATION_SETTING, value: 'true' });
+    db.user.findUnique.mockResolvedValue({ emailVerifiedAt: null });
+
+    await expect(assertEmailVerifiedForSend('user-1')).resolves.toBeUndefined();
+
+    // Nothing was consulted, so no setting row can revive the gate.
+    expect(db.systemSetting.findUnique).not.toHaveBeenCalled();
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('allows a MISSING user row and an unreadable database alike (it cannot throw)', async () => {
+    db.user.findUnique.mockResolvedValue(null);
+    db.systemSetting.findUnique.mockRejectedValue(new Error('db down'));
+    await expect(assertEmailVerifiedForSend('ghost')).resolves.toBeUndefined();
+  });
+
+  it('the typed error still exists and is recognizable, but nothing throws it any more', async () => {
+    // Kept exported for compatibility (chat-agent.service.ts matches it by name;
+    // existing callers import it). Pinned so a "delete the dead class" refactor
+    // does not break those imports — and pinned NO-OP in the same breath.
+    const err = new EmailVerificationRequiredError();
+    expect(err).toBeInstanceOf(AppError);
+    expect(err).toBeInstanceOf(EmailVerificationRequiredError);
+    expect(err.name).toBe('EmailVerificationRequiredError');
+    expect(err.statusCode).toBe(403);
+    expect(err.message).toBe(UNVERIFIED_SEND_MESSAGE);
+
+    db.systemSetting.findUnique.mockResolvedValue({ key: REQUIRE_VERIFICATION_SETTING, value: 'true' });
+    db.user.findUnique.mockResolvedValue({ emailVerifiedAt: null });
+    await expect(assertEmailVerifiedForSend('user-1')).resolves.toBeUndefined();
   });
 });
 

@@ -23,6 +23,9 @@ jest.mock('../../../config/database', () => ({
     orgUsageDaily: { upsert: jest.fn(), update: jest.fn() },
     orgModelUsageDaily: { upsert: jest.fn(), findMany: jest.fn() },
     systemSetting: { findUnique: jest.fn() },
+    // The lifetime spend cap (spend-cap.service.ts) reads the total through one
+    // positional-param raw query, exactly like the visitors analytics service.
+    $queryRawUnsafe: jest.fn(),
   },
 }));
 jest.mock('../../../utils/logger', () => ({
@@ -34,6 +37,7 @@ jest.mock('../../../config/env', () => ({ __esModule: true, env: {} }));
 import prisma from '../../../config/database';
 import { ensurePersonalOrg } from './org.service';
 import { guardOrgSend, OrgQuotaExceededError, recordOrgTokens } from './org-quota.service';
+import { REQUIRE_VERIFICATION_SETTING } from './email-verification.service';
 
 const db = prisma as unknown as {
   organization: { create: jest.Mock };
@@ -42,6 +46,7 @@ const db = prisma as unknown as {
   orgUsageDaily: { upsert: jest.Mock; update: jest.Mock };
   orgModelUsageDaily: { upsert: jest.Mock; findMany: jest.Mock };
   systemSetting: { findUnique: jest.Mock };
+  $queryRawUnsafe: jest.Mock;
 };
 
 /**
@@ -81,49 +86,57 @@ function installFakeCounters(limit: number | null) {
   });
   db.orgModelUsageDaily.findMany.mockResolvedValue([]);
   db.systemSetting.findUnique.mockResolvedValue(null);
+  // The lifetime spend cap: every fixture user starts at $0 lifetime spend, so the
+  // cap never interferes with the message-metering arithmetic this file is about.
+  db.$queryRawUnsafe.mockResolvedValue([{ usd: 0 }]);
   return daily;
 }
 
 beforeEach(() => {
   jest.clearAllMocks();
   db.orgModelUsageDaily.upsert.mockResolvedValue({});
+  db.$queryRawUnsafe.mockResolvedValue([{ usd: 0 }]);
 });
 
-describe('signup → send → quota exhausted', () => {
-  it('a fresh signup gets a personal org, and its sends are then metered against that org', async () => {
-    installFakeCounters(3);
+describe('signup → send → metered WITHOUT any message refusal', () => {
+  it('a fresh signup gets a personal org and its sends are metered, but never refused', async () => {
+    const daily = installFakeCounters(null);
 
-    // 1. SIGNUP: the personal org is created for the new user.
+    // 1. SIGNUP: the personal org is created for the new user — and it is
+    //    UNLIMITED (owner directive 2026-11-07T06:40Z: no message limits).
     const org = await ensurePersonalOrg('user-1', 'paul@example.com', 'Paul');
     expect(org.id).toBe('org-personal');
-    expect(org.dailyMessageLimit).toBe(3);
+    expect(org.dailyMessageLimit).toBeNull();
 
     // 2. The quota guard resolves THE SAME org from the user id — this is the
     //    seam the unit tests each covered alone.
     db.membership.findFirst.mockResolvedValue({ organization: org });
 
-    // 3. SENDS 1..3 are allowed.
-    for (let i = 1; i <= 3; i++) {
+    // 3. Sends are allowed, and the usage METER still advances for each one.
+    for (let i = 1; i <= 6; i++) {
       await expect(guardOrgSend('user-1')).resolves.toEqual({ organizationId: 'org-personal' });
     }
 
-    // 4. SEND 4 is REFUSED — the fail-closed verdict.
-    await expect(guardOrgSend('user-1')).rejects.toBeInstanceOf(OrgQuotaExceededError);
+    // The meter is real: six sends recorded, none refused, nothing clamped.
+    const row = [...daily.values()][0];
+    expect(row.messages).toBe(6);
   });
 
-  it('after the refusal the user is exactly AT the limit, not past it (the refund held)', async () => {
+  it('a LEGACY stored limit does not refuse either — the meter keeps counting', async () => {
+    // The org carries an old limit of 2 and sends 1..4 all pass. This is the
+    // exact sequence that used to end in a 429; the directive removes it.
     const daily = installFakeCounters(2);
     const org = await ensurePersonalOrg('user-1', 'paul@example.com');
-    db.membership.findFirst.mockResolvedValue({ organization: org });
+    db.membership.findFirst.mockResolvedValue({ organization: { ...org, dailyMessageLimit: 2 } });
 
-    await guardOrgSend('user-1');
-    await guardOrgSend('user-1');
-    await expect(guardOrgSend('user-1')).rejects.toBeInstanceOf(OrgQuotaExceededError);
-    // A refused attempt must not permanently consume a slot: still exactly 2.
-    await expect(guardOrgSend('user-1')).rejects.toBeInstanceOf(OrgQuotaExceededError);
+    for (let i = 0; i < 4; i++) {
+      await expect(guardOrgSend('user-1')).resolves.toEqual({ organizationId: 'org-personal' });
+    }
 
+    // Nothing was refunded, because nothing was ever refused: the meter holds
+    // the true count of sends (4), not the clamped limit (2).
     const row = [...daily.values()][0];
-    expect(row.messages).toBe(2);
+    expect(row.messages).toBe(4);
   });
 
   it('THE DEPTH PROPERTY: a "deep" send costs exactly one message, same as a quick one', async () => {
@@ -175,17 +188,99 @@ describe('signup → send → quota exhausted', () => {
     expect(dailyIncrements).toEqual([500, 100, 40]);
   });
 
-  it('a DIFFERENT org has its own independent counter (no cross-tenant leakage)', async () => {
-    installFakeCounters(1);
+  it('tenant counters stay independent (no cross-tenant leakage in the meter)', async () => {
+    installFakeCounters(null);
     const orgA = await ensurePersonalOrg('user-a', 'a@example.com');
     const orgB = { ...orgA, id: 'org-b', slug: 'b' };
 
     db.membership.findFirst.mockResolvedValue({ organization: orgA });
     await guardOrgSend('user-a');
-    await expect(guardOrgSend('user-a')).rejects.toBeInstanceOf(OrgQuotaExceededError);
+    await guardOrgSend('user-a');
 
-    // Tenant B is untouched by tenant A exhausting its own pool.
+    // Tenant A's sends land on A's meter (installFakeCounters creates 'org-personal')…
+    const rowA = db.orgUsageDaily.upsert.mock.calls.at(-1)![0];
+    expect(rowA.where.organizationId_day.organizationId).toBe(orgA.id);
+
+    // …and tenant B's send lands on B's, independently. Each org keeps its own
+    // counter now that no limit exists to trip over.
     db.membership.findFirst.mockResolvedValue({ organization: orgB });
     await expect(guardOrgSend('user-b')).resolves.toEqual({ organizationId: 'org-b' });
+    const rowB = db.orgUsageDaily.upsert.mock.calls.at(-1)![0];
+    expect(rowB.where.organizationId_day.organizationId).toBe('org-b');
+  });
+});
+/**
+ * THE GATE IS GONE (owner directive 2026-11-07T06:40Z: "we dont want to limit
+ * usage by email verfication at all … people need to freely use digby.ai logged
+ * in or not").
+ *
+ * What used to live here pinned the POSITION of the verification gate (verify
+ * BEFORE reserve). That ordering is moot: `assertEmailVerifiedForSend` is now a
+ * permanent no-op, so there is no refusal left to order. Rather than delete the
+ * coverage, these tests invert it — the send guard must ALLOW an unverified
+ * account, with the `require_email_verification` setting flipped ON, and must
+ * still meter the message normally afterwards.
+ *
+ * The assertion names `reserveOrgMessage`'s own DB touches (the membership read
+ * inside `orgForUser`, then the counter upsert), so it tracks the real
+ * implementation rather than a symbol we chose.
+ */
+describe('guardOrgSend — an unverified account is NEVER blocked (owner 2026-11-07T06:40Z)', () => {
+  /** Policy row set to ON — the strongest possible attempt to arm the old gate. */
+  function armPolicyOn(verified: boolean) {
+    installFakeCounters(5);
+    db.systemSetting.findUnique.mockImplementation(({ where }: any) =>
+      Promise.resolve(where.key === REQUIRE_VERIFICATION_SETTING ? { key: where.key, value: 'true' } : null),
+    );
+    // Org-quota paths read { email, firstName }; the (removed) gate read
+    // { emailVerifiedAt }. Serve both shapes so this stays honest whichever
+    // projection the code asks for.
+    db.user.findUnique.mockImplementation(({ select }: any) =>
+      select && 'emailVerifiedAt' in select
+        ? Promise.resolve({ emailVerifiedAt: verified ? new Date() : null })
+        : Promise.resolve({ email: 'paul@example.com', firstName: 'Paul', emailVerifiedAt: verified ? new Date() : null }),
+    );
+    const org = { id: 'org-personal', slug: 'paul', suspended: false, suspendedReason: null, dailyMessageLimit: 5 };
+    db.membership.findFirst.mockResolvedValue({ organization: org });
+    return org;
+  }
+
+  it('a send from an UNVERIFIED account under require_email_verification=ON is ALLOWED and metered', async () => {
+    armPolicyOn(false);
+
+    await expect(guardOrgSend('user-1')).resolves.toEqual({ organizationId: 'org-personal' });
+
+    // It really did go through the normal path: the org was resolved and the
+    // message reservation was taken.
+    expect(db.membership.findFirst).toHaveBeenCalled();
+    expect(db.orgUsageDaily.upsert).toHaveBeenCalledTimes(1);
+    // And the gate read nothing at all (no policy row, no verification row).
+    const verificationReads = db.user.findUnique.mock.calls.filter(
+      (c) => c[0]?.select && 'emailVerifiedAt' in c[0].select,
+    );
+    expect(verificationReads).toHaveLength(0);
+  });
+
+  it('does not throw EmailVerificationRequiredError for an unverified account (the old 403 is unreachable)', async () => {
+    armPolicyOn(false);
+
+    let threw: any = null;
+    try {
+      await guardOrgSend('user-1');
+    } catch (e) {
+      threw = e;
+    }
+
+    expect(threw).toBeNull(); // it resolved, so nothing was refused
+    expect(threw?.name).not.toBe('EmailVerificationRequiredError');
+  });
+
+  it('six unverified sends all pass — verification never eats a slot', async () => {
+    armPolicyOn(false);
+    for (let i = 1; i <= 6; i++) {
+      await expect(guardOrgSend('user-1')).resolves.toEqual({ organizationId: 'org-personal' });
+    }
+    // There is no message-limit refusal either any more (owner directive
+    // 2026-11-07T06:40Z), so the sequence simply keeps passing.
   });
 });

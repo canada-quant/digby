@@ -316,13 +316,31 @@ describe('appleCalendarStateLine — copy states only what was OBSERVED', () => 
 
 const TZ = 'America/Vancouver';
 
+/**
+ * The card fixtures are anchored to the LOCAL DAY THAT CONTAINS `NOW`, not to a
+ * hardcoded calendar date.
+ *
+ * These tests exercise `appleEventsForCard`, which keeps only events overlapping
+ * `localDayWindow(TZ, now)`. `NOW` must stay on the real clock (see its comment
+ * above: the production 45 s `isOnline` rule is real-clock), so a fixture pinned
+ * to a fixed date silently falls out of the window once that date is no longer
+ * today — which is exactly how this suite went red at 00:00 PST on 2026-11-07
+ * for every branch, including ones that never touch the calendar (the fixtures
+ * said 2026-11-06; the window had rolled to 2026-11-07). Deriving the instants
+ * from `localDayWindow` makes the test date-independent without freezing the
+ * clock.
+ */
+const TODAY = localDayWindow(TZ, NOW);
+/** Noon-ish in the local day: comfortably inside the window whatever the offset. */
+const TODAY_START = TODAY.start + 12 * 3600_000;
+
 function appleEvent(over: Partial<AppleCalendarEvent> = {}): AppleCalendarEvent {
   return {
     id: 'evt-1',
     calendar: 'Personal',
     title: 'Dentist',
-    startDate: '2026-11-06T18:00:00Z',
-    endDate: '2026-11-06T19:00:00Z',
+    startDate: new Date(TODAY_START).toISOString(),
+    endDate: new Date(TODAY_START + 3600_000).toISOString(),
     location: 'Main St',
     allDay: false,
     notes: null,
@@ -335,14 +353,25 @@ describe('appleEventsForCard', () => {
     const rows = appleEventsForCard([appleEvent()], TZ, NOW);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ title: 'Dentist', source: 'apple', eventId: 'evt-1', account: 'Personal', location: 'Main St' });
-    expect(rows[0].startEpoch).toBe(Date.parse('2026-11-06T18:00:00Z'));
+    expect(rows[0].startEpoch).toBe(TODAY_START);
     expect(rows[0].startTime).toMatch(/AM|PM/);
     expect(rows[0].aiPrompts.length).toBeGreaterThan(0);
   });
 
   it('keeps only events overlapping the local day (an overnight block still counts today)', () => {
-    const overnight = appleEvent({ id: 'o', startDate: '2026-11-05T22:00:00Z', endDate: '2026-11-06T19:00:00Z' });
-    const tomorrow = appleEvent({ id: 't', title: 'Tomorrow', startDate: '2026-11-08T18:00:00Z', endDate: '2026-11-08T19:00:00Z' });
+    // Started "yesterday" locally and still running into today; and one wholly
+    // tomorrow. Derived from TODAY so the pair stays meaningful on any date.
+    const overnight = appleEvent({
+      id: 'o',
+      startDate: new Date(TODAY.start - 2 * 3600_000).toISOString(),
+      endDate: new Date(TODAY_START + 3600_000).toISOString(),
+    });
+    const tomorrow = appleEvent({
+      id: 't',
+      title: 'Tomorrow',
+      startDate: new Date(TODAY.end + 18 * 3600_000).toISOString(),
+      endDate: new Date(TODAY.end + 19 * 3600_000).toISOString(),
+    });
     const rows = appleEventsForCard([overnight, tomorrow], TZ, NOW);
     expect(rows.map((r) => r.eventId)).toEqual(['o']);
   });

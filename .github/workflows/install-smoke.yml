@@ -78,31 +78,33 @@ on:
       from_tag:
         description: "Starting image tag to install (an older release; the upgrade baseline)"
         required: false
-        default: "1.0.0"
+        default: "1.0.1"
       to_tag:
         description: "Image tag to upgrade to (the release under test)"
         required: false
-        default: "1.0.1"
+        default: "1.0.2"
   schedule:
     # Weekly, against the release pair below.
     #
     # WHY THE SCHEDULED DEFAULT IS A VERSION PAIR AND NOT `latest` (measured
     # 2026-11-06, run 42225599977). This workflow's FIRST dispatch used
     # from_tag=latest and went RED at the revision assertion with "image carries
-    # no revision label". That was not a flake and not a workflow bug: the
-    # `latest` tag currently resolves to `sha-eda9a18f…`, an image built BEFORE
-    # the revision stamp existed (it carries zero labels), while `1.0.0`
-    # (0330c871) and `1.0.1` (743c9c7e) are both correctly stamped.
+    # no revision label". That was not a flake and not a workflow bug: at the
+    # time `latest` resolved to `sha-eda9a18f…`, an image built BEFORE the
+    # revision stamp existed (it carries zero labels), while `1.0.0`
+    # (0330c871) and `1.0.1` (743c9c7e) were both correctly stamped.
     #
-    # The underlying defect is in the RELEASE pipeline, not here: on a `v*` tag
-    # push the publish workflow applies the VERSION tag plus the sha tag, so
-    # `latest` is never advanced by a release and still points at the last
-    # MANUAL dispatch. docs/SELF_HOST.md describes `latest` as "the newest
-    # publish of the default branch", which is therefore not true right now.
-    # Fixing that changes release-tagging semantics and belongs in its own
-    # reviewed change; until then this schedule must not test a tag that the
-    # release channel does not maintain, or it would be red every Monday for a
-    # reason that says nothing about the release under test.
+    # The underlying defect was in the RELEASE pipeline, not here: on a `v*` tag
+    # push the publish workflow applied the VERSION tag plus the sha tag but not
+    # `latest`, so `latest` fell back to the last MANUAL dispatch. That is FIXED
+    # as of 2026-11-07 (todo b05753aa): a `v*` tag push now also writes `latest`
+    # and `latest-build`, so `latest` tracks the newest release and a default
+    # install is current.
+    #
+    # The scheduled pair stays a VERSION pair on purpose even now that `latest`
+    # tracks releases: an upgrade test must name both endpoints explicitly, and
+    # `latest` moving underneath a run would make the pair's identity
+    # non-deterministic. Keep it deterministic.
     #
     # Bump this pair when a new release is cut: from_tag = the previous release,
     # to_tag = the new one. They must DIFFER, or the "revision changed"

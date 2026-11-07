@@ -556,6 +556,158 @@ describe('summarizeLogFingerprints', () => {
   });
 });
 
+// ── Rule 2 is a PER-SUBJECT promise (the d7a1ad46 / 2e9ea13e false positive) ──
+//
+// The reported defect was "the message promises a 5-minute backoff yet 11
+// occurrences landed as close as 1 min apart". The premise is false for this
+// class: `suggested-questions: … for userId=<uuid> — backing off 5 min` makes
+// its promise PER USER, the fingerprint elides the userId to `<uuid>`, so the
+// group interleaves many users and `minGapMs` measured a gap BETWEEN users.
+// Production rows for that fingerprint (24 h to 2026-11-07T00:36Z) contain
+// exactly one sub-5-minute pair — 2026-11-06T15:55:15Z (userId 158ffa30) and
+// 15:55:55Z (userId 22097a46), 40.6 s apart, DIFFERENT users — while every
+// same-user pair is >= 306 s (5 min 06 s). Rule 2 must compare gaps WITHIN a
+// subject, or it convicts an honored promise.
+describe('rule 2 measures the promised window PER SUBJECT', () => {
+  const SQ = (userId: string, n = 0) =>
+    `suggested-questions: ${n} usable results for userId=${userId} (min 3) — backing off 5 min before retry`;
+
+  it('two DIFFERENT users retrying 40 s apart is NOT a broken 5-min promise (the live false positive)', () => {
+    // The exact production pair: 15:55:15Z user A, 15:55:55Z user B.
+    const rows: LogSignalRow[] = [
+      { level: 'warn', message: SQ('158ffa30-c056-4d97-94c8-e21c75dd50b7'), source: 's', createdAt: new Date('2026-11-06T15:55:15.277Z') },
+      { level: 'warn', message: SQ('22097a46-2372-453c-b1d4-5b46bbc3f4f4'), source: 's', createdAt: new Date('2026-11-06T15:55:55.850Z') },
+    ];
+    const [fp] = summarizeLogFingerprints(rows);
+    expect(fp.count).toBe(2);
+    // The aggregate gap really is 40 s — but no SUBJECT repeated at all, so the
+    // per-subject gap is null and rule 2's parsed branch cannot fire.
+    expect(fp.minGapMs).toBeLessThan(60_000);
+    expect(fp.minSubjectGapMs).toBeNull();
+    const fired = classifyRecurringLogSignals([{ ...fp, hours: 1, episodes: 1 }]);
+    expect(fired.filter((s) => s.rule === 'rule2-suppression')).toHaveLength(0);
+  });
+
+  it('the SAME user retrying inside its 5-min backoff DOES still fire rule 2', () => {
+    const rows: LogSignalRow[] = [
+      { level: 'warn', message: SQ('d1185fde-ab83-4fac-8bdd-f00362b03ec2'), source: 's', createdAt: new Date('2026-11-06T18:38:31.617Z') },
+      { level: 'warn', message: SQ('d1185fde-ab83-4fac-8bdd-f00362b03ec2'), source: 's', createdAt: new Date('2026-11-06T18:39:31.617Z') }, // 60 s later
+    ];
+    const [fp] = summarizeLogFingerprints(rows);
+    expect(fp.minSubjectGapMs).toBe(60_000);
+    const fired = classifyRecurringLogSignals([{ ...fp, hours: 1, episodes: 1 }]);
+    expect(fired.map((s) => s.rule)).toEqual(['rule2-suppression']);
+    expect(fired[0].promisedWindowMs).toBe(5 * M);
+  });
+
+  it('a group of DIFFERENT users is quiet on rule 2 even when the aggregate gap is tiny', () => {
+    // 6 distinct users, 10 s apart — 50 s of wall clock, one fingerprint.
+    const us = ['a', 'b', 'c', 'd', 'e', 'f'].map((c) => `${c}1111111-2222-4333-8444-55556666777${c}`);
+    const rows: LogSignalRow[] = us.map((u, i) => ({
+      level: 'warn', message: SQ(u), source: 's',
+      createdAt: new Date(Date.parse('2026-11-06T10:00:00.000Z') + i * 10_000),
+    }));
+    const [fp] = summarizeLogFingerprints(rows);
+    expect(fp.count).toBe(6);
+    expect(fp.minGapMs).toBe(10_000);
+    const fired = classifyRecurringLogSignals([{ ...fp, hours: 1, episodes: 1 }]);
+    expect(fired.filter((s) => s.rule === 'rule2-suppression')).toHaveLength(0);
+  });
+
+  it('the ticket description quotes the SUBJECT gap, never the cross-user one', () => {
+    const rows: LogSignalRow[] = [
+      { level: 'warn', message: SQ('158ffa30-c056-4d97-94c8-e21c75dd50b7'), source: 's', createdAt: new Date('2026-11-06T15:55:15.277Z') },
+      { level: 'warn', message: SQ('158ffa30-c056-4d97-94c8-e21c75dd50b7'), source: 's', createdAt: new Date('2026-11-06T16:03:15.277Z') }, // same user, 8 min
+      { level: 'warn', message: SQ('22097a46-2372-453c-b1d4-5b46bbc3f4f4'), source: 's', createdAt: new Date('2026-11-06T16:03:55.277Z') },
+    ];
+    const [fp] = summarizeLogFingerprints(rows);
+    expect(fp.minSubjectGapMs).toBe(8 * M);
+    // 40 s cross-user gap must not be rendered as the promise evidence…
+    expect(fp.minGapMs).toBe(40_000);
+    const s = classifyRecurringLogSignals([{ ...fp, hours: 3 }])[0];
+    expect(s.rule).toBe('rule1-hours'); // hours 3, no subject violated 5 min
+    expect(renderLogSignalAlert([s], [], NOW)).not.toMatch(/as close as 0 min apart/);
+  });
+});
+
+// ── DETECTOR-RECALL REPLAY (log-signal sweep rule 2) ─────────────────────────
+// The subject scoping above NARROWS rule 2. These replay the detector's prior
+// TRUE POSITIVES and assert they still convict, so the narrowing cannot quietly
+// switch the rule off for the classes it was built for.
+describe('DETECTOR-RECALL REPLAY — rule 2 prior true positives still fire', () => {
+  it('DETECTOR-RECALL REPLAY: one project quarantined 6h, repeating every 40 min, still fires', () => {
+    const P = 'chat_3f2a71c0-1b2c-4d3e-9f00-aabbccddee01';
+    const msg = `session history sync: project ${P} — push refused permanently (terminal auth; quarantined for 6h, one fresh attempt after): 401 Bad credentials`;
+    const rows: LogSignalRow[] = [0, 40, 80, 120].map((m) => row(m, msg));
+    const [fp] = summarizeLogFingerprints(rows);
+    expect(fp.minSubjectGapMs).toBe(40 * M);
+    const fired = classifyRecurringLogSignals([fp]);
+    expect(fired.map((s) => s.rule)).toEqual(['rule2-suppression']);
+    expect(fired[0].promise).toBe('quarantined');
+    expect(fired[0].promisedWindowMs).toBe(6 * H);
+    expect(logSignalTicketDescription(fired[0], NOW)).toContain('as close as 40 min apart');
+  });
+
+  it('DETECTOR-RECALL REPLAY: the unparsed-window 3-repeat branch is unchanged', () => {
+    const three = classifyRecurringLogSignals([{
+      fingerprint: 'x', count: 3, hours: 1, episodes: 1, firstAt: 0, lastAt: 0,
+      minGapMs: M, levels: ['warn'], sources: [], exampleMessage: 'suppressed: will not repeat',
+    }]);
+    expect(three.map((x) => x.rule)).toEqual(['rule2-suppression']);
+  });
+
+  it('DETECTOR-RECALL REPLAY: a hand-built signal with no subject field still reads minGapMs (legacy contract)', () => {
+    const legacy = classifyRecurringLogSignals([{
+      fingerprint: 'x', count: 2, hours: 1, episodes: 1, firstAt: 0, lastAt: 0,
+      minGapMs: 30_000, levels: ['warn'], sources: [], exampleMessage: 'quarantined for 6h',
+    }]);
+    expect(legacy.map((x) => x.rule)).toEqual(['rule2-suppression']);
+  });
+
+  // The e2e sweep fixture quarantines FIFTEEN DIFFERENT projects. Before the
+  // subject scoping that shape convicted rule 2 (aggregate gap 10 min < the 6 h
+  // promise); afterwards it must NOT — fifteen distinct projects each burning
+  // their own 6 h quarantine broke no promise. Detection is NOT weakened: the
+  // signal still surfaces, now via rule 1, which is the honest reading.
+  it('DETECTOR-RECALL REPLAY: many DISTINCT subjects still SURFACE (rule 1), never silently dropped', () => {
+    const P = (n: number) => `chat_3f2a71c0-1b2c-4d3e-9f00-aabbccddee${n.toString(16).padStart(2, '0')}`;
+    const msg = (p: string) => `session history sync: project ${p} — push refused permanently (terminal auth; quarantined for 6h, one fresh attempt after): 401`;
+    const rows: LogSignalRow[] = [240, 230, 220, 180, 170, 160, 120, 110, 100, 60, 50, 40, 20, 10, 1]
+      .map((m, i) => row(m, msg(P(i + 1))));
+    const [fp] = summarizeLogFingerprints(rows);
+    expect(fp.count).toBe(15);
+    expect(fp.minSubjectGapMs).toBeNull();      // no project repeated
+    const fired = classifyRecurringLogSignals([fp]);
+    expect(fired).toHaveLength(1);              // STILL a signal
+    // Via recurrence (either rule-1 leg), never a false promise claim.
+    expect(fired[0].rule === 'rule1-hours' || fired[0].rule === 'rule1-boots').toBe(true);
+  });
+
+  // The KNOWN RESIDUAL named in the module doc — pinned so it stays VISIBLE and
+  // deliberate instead of being rediscovered as a bug. All-distinct subjects,
+  // whole burst inside ≤2 distinct hours with <5 min spacing: rule 2 is
+  // correctly quiet (nobody broke their own promise) and rule 1 has neither 3
+  // hours nor 3 silence-separated clusters. A future emit site that makes a
+  // GLOBAL promise while naming a subject noun must revisit this, not inherit
+  // silence.
+  it('DETECTOR-RECALL REPLAY: the documented residual — all-distinct subjects inside ≤2 h is quiet (by design), ≥3 h still surfaces', () => {
+    const P = (n: number) => `chat_3f2a71c0-1b2c-4d3e-9f00-aabbccddee${n.toString(16).padStart(2, '0')}`;
+    const msg = (p: string) => `session history sync: project ${p} — push refused permanently (terminal auth; quarantined for 6h, one fresh attempt after): 401`;
+    // 8 distinct projects inside ONE hour → documented residual: no signal.
+    const burst: LogSignalRow[] = [0, 4, 8, 12, 16, 20, 24, 28].map((m, i) => row(m, msg(P(i + 1))));
+    const [burstFp] = summarizeLogFingerprints(burst);
+    expect(burstFp.minSubjectGapMs).toBeNull();
+    expect(burstFp.hours).toBeLessThan(3);       // below rule 1's hour floor
+    expect(classifyRecurringLogSignals([burstFp])).toEqual([]);
+    // The SAME shape spread over ≥3 hours is NOT silent — rule 1 catches it.
+    const spread: LogSignalRow[] = [300, 240, 180, 120, 60, 1].map((m, i) => row(m, msg(P(i + 1))));
+    const [spreadFp] = summarizeLogFingerprints(spread);
+    const fired = classifyRecurringLogSignals([spreadFp]);
+    expect(fired).toHaveLength(1);
+    expect(fired[0].rule).toBe('rule1-hours');
+  });
+});
+
 describe('classifyRecurringLogSignals', () => {
   const fp = (over: Partial<ReturnType<typeof summarizeLogFingerprints>[number]>) => ({
     fingerprint: 'x', count: 1, hours: 1, episodes: 1, firstAt: 0, lastAt: 0,

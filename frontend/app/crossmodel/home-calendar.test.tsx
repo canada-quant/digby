@@ -29,21 +29,32 @@ describe('home Today card never vanishes while the calendar is connected', () =>
   it('a dead Google token (rotated OAuth client) reads RECONNECT with a link to Integrations, never an empty day', () => {
     expect(PAGE).toContain('Google needs to be reconnected to read your calendar.');
     expect(PAGE).toContain("router.push('/account?tab=integrations')");
-    const ctrl = src('../../../backend/src/modules/crossmodel/crossmodel.controller.ts');
-    expect(ctrl).toContain('googleMcp.resolveGoogleAccount(userId)');
     // 2026-11-06: the Google half moved into buildGoogleHomeCalendar so the
     // Apple half could be merged into ONE response — the reconnect verdict is
     // still produced there, unchanged.
-    expect(ctrl).toContain("return { connected: true, events: [], error: 'reconnect' };");
+    // 2026-11-07 (ticket 9ea25082): the two halves then moved OUT of the
+    // controller class into calendar/home-calendar.ts, because Express calls a
+    // route handler with no receiver and `this.` is undefined inside it. The
+    // reconnect contract is unchanged; only its HOME file is. These pins follow
+    // the code rather than being loosened — a regression in the verdict still
+    // fails here.
+    const halve = src('../../../backend/src/modules/crossmodel/calendar/home-calendar.ts');
+    expect(halve).toContain('googleMcp.resolveGoogleAccount(userId)');
+    expect(halve).toContain("return { connected: true, events: [], error: 'reconnect' };");
   });
   it('the connect row still renders when not connected', () => {
     expect(PAGE).toContain('{!calendarConnected && !calendarLoading && (');
     expect(PAGE).toContain('Connect your calendar');
   });
   it('the backend reports a failed read as error:unavailable on a connected calendar', () => {
+    // 2026-11-07 (ticket 9ea25082): the two halves moved to
+    // calendar/home-calendar.ts (unbound-handler fix). The honest-read contract
+    // below is asserted against the file that now owns it; the merged ENDPOINT
+    // assertions still target the controller, where that merge still lives.
+    const halve = src('../../../backend/src/modules/crossmodel/calendar/home-calendar.ts');
+    expect(halve).toContain("return { connected: true, events: [], error: 'unavailable' };");
+    expect(halve).toContain("return { connected, events: [], ...(connected ? { error: 'unavailable' } : {}) };");
     const ctrl = src('../../../backend/src/modules/crossmodel/crossmodel.controller.ts');
-    expect(ctrl).toContain("return { connected: true, events: [], error: 'unavailable' };");
-    expect(ctrl).toContain("return { connected, events: [], ...(connected ? { error: 'unavailable' } : {}) };");
     // The merged endpoint must still carry the Google error through to the
     // client (`data.error`) instead of swallowing it while merging sources.
     expect(ctrl).toContain('if (google?.error) data.error = google.error;');

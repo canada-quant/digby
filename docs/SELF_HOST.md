@@ -4,7 +4,7 @@ Run the entire Digby stack on your own machine or server — your own database,
 UI, coding worker, STT, MCP integrations, and model providers. Nothing talks to
 digby.ai unless you configure it to.
 
-> **🔒 Isolation boundary (owner standing requirement, ticket c75b5f34): your self-hosted Digby self-improves on ITS OWN copy only.** `docker-compose.selfhost.yml` sets `DIGBY_INSTANCE=selfhost`: the instance's autonomous loop (merge → deploy → verify → auto-fix) resolves its repo/DB/deploy targets from YOUR environment — never production Digby's repo (`example-org/crossmodel`), DB, or infrastructure. Any attempt to resolve a production target from this instance hard-fails with an `ISOLATION BOUNDARY` error by design; to let it improve itself, point it at YOUR fork (see *Updating* / the `GITHUB_REPO_SLUG` notes in `selfhost.env.example`). This instance shares no secrets, database, or deploy path with digby.ai.
+> **🔒 Isolation boundary: your self-hosted Digby self-improves on ITS OWN copy only.** `docker-compose.selfhost.yml` sets `DIGBY_INSTANCE=selfhost`: the instance's autonomous loop (merge → deploy → verify → auto-fix) resolves its repo/DB/deploy targets from YOUR environment — never Digby's repository, DB, or infrastructure. Any attempt to resolve a production target from this instance hard-fails with an `ISOLATION BOUNDARY` error by design; to let it improve itself, point it at YOUR fork (see *Updating* / the `GITHUB_REPO_SLUG` notes in `selfhost.env.example`). This instance shares no secrets, database, or deploy path with digby.ai.
 
 > **Distribution:** two install paths, both supported.
 > **Published images (no source tree needed)** — `scripts/selfhost/install.sh`
@@ -94,8 +94,8 @@ reported by `/api/health` equals the running image's
 instance runs*).
 
 Start it yourself from **Actions → Install smoke → Run workflow**, choosing
-`from_tag` (the upgrade baseline — an older release, default `1.0.0`) and
-`to_tag` (the release under test, default `1.0.1`). The two must be **different
+`from_tag` (the upgrade baseline — an older release, default `1.0.1`) and
+`to_tag` (the release under test, default `1.0.2`). The two must be **different
 releases**: the run asserts the revision actually changed, so a pair that
 resolves to the same build is rejected as not-an-upgrade. It also fires weekly
 against that pair. A green run is the evidence that a release is installable —
@@ -108,51 +108,49 @@ unconditionally when the job ends.
 
 ### Pinning a release
 
-`:latest` is convenient; a pinned tag is reproducible. The published images
-carry three tag families:
+`:latest` means **the newest release** — the release path writes it, so the
+default install is current. A pinned tag is still what you want for anything
+you care about, because it is reproducible. The published images carry three
+tag families:
 
-- `latest` — the newest **manual** publish of the default branch. ⚠ **Not
-  currently the newest release:** on a `v*` tag push the publish workflow
-  applies the version tag and the sha tag, so a release does not advance
-  `latest`. Measured 2026-11-06: `latest` resolved to `sha-eda9a18f…`, an image
-  built *before* the revision stamp existed (it carries no
-  `org.opencontainers.image.revision` label at all), while `1.0.1` is
-  `743c9c7e…`. **Pin a version or a sha rather than relying on `latest`** —
-  this is also why the install smoke test defaults to a version pair.
-  (Workflow: `.github/workflows/publish-images.yml`; the tag step yields the
-  version on a tag push, else the dispatch input.)
+- `latest` — the newest released version. A `v*` tag push applies the version
+  tag, the sha tag **and** `latest`, so `latest` advances with every release
+  and a default install always lands on the newest one. (Workflow:
+  `.github/workflows/publish-images.yml`; the tag step yields the version on a
+  tag push, else the dispatch input.)
 - `sha-<full 40-char commit sha>` — one per published commit. This is the
-  reproducible pin: it names the precise source the image was built from.
-- `<version>` — a released version, e.g. `1.0.1`. The workflow strips the
-  leading `v` from the git tag, so git tag `v1.0.1` produces image tag `1.0.1`.
+  tightest pin: it names the precise source the image was built from.
+- `<version>` — a released version, e.g. `1.0.2`. The workflow strips the
+  leading `v` from the git tag, so git tag `v1.0.2` produces image tag `1.0.2`.
+
+Want to confirm what you are running? `GET /api/health` reports `revision`,
+which is the exact commit baked into the image
+(`org.opencontainers.image.revision`), so a version tag and a sha tag of the
+same release report the same revision.
 
 ```bash
-# pin to the current release
-DIGBY_IMAGE_TAG=1.0.1 \
+# pin to a specific release
+DIGBY_IMAGE_TAG=1.0.2 \
   docker compose -f docker-compose.selfhost.published.yml up -d
 ```
 
 **Releases.** `canada-quant/digby` publishes a git tag and a GitHub release per
 version, and `publish-images.yml` builds every image from that exact tagged
-commit. **`v1.0.1`** was cut at commit
-`743c9c7eb4f3`; its images are published as both `1.0.1` and
-`sha-743c9c7eb4f3…`, so you can pin by version or by source commit and get
-byte-identical images.
+commit. **`v1.0.2`** is the current release; its images are published as
+`1.0.2`, `latest` and `sha-<commit>`, so you can pin by version or by source
+commit and get byte-identical images.
 
-`v1.0.0` was **withdrawn**. Its images are still pullable, but its source
-archive predates a public-tree fix and carried two production systemd units the
-export policy withholds — no credentials, but material that should not have
-shipped. Use `v1.0.1`.
+`v1.0.1` was cut at public commit `743c9c7eb4f3`. Its images (`1.0.1` and
+`sha-743c9c7eb4f3…`) remain published and pullable, but that release predates
+the documentation cleanup — prefer `1.0.2` for new installs.
 
-> ℹ️ **This page has now been wrong in three directions, so check before trusting
-> it.** It first showed a bare `DIGBY_IMAGE_TAG=1.0.0` when no such tag existed
-> (the pull failed); a later revision marked that `⚠ STALE` and claimed the
-> repository had **zero** tags and **zero** releases; then it documented `v1.0.0`
-> as the current release, which was true until `v1.0.0` was withdrawn. Each
-> statement was accurate when written. **The current release is `v1.0.1`.** If a
-> documented tag ever fails to pull, check
-> `https://github.com/canada-quant/digby/releases` before assuming this page is
-> current.
+`v1.0.0` was **withdrawn**. Its source archive predates a public-tree fix and
+carried material that should not have shipped — no credentials, but not part of
+the product. Use a current release.
+
+> ℹ️ **Check the releases page before trusting this page.** A documented tag
+> that fails to pull means this guide is behind: see
+> `https://github.com/canada-quant/digby/releases`.
 
 ### What is different from the from-source path
 
@@ -355,24 +353,13 @@ knobs at `/branding/asset/<file>`:
 >   -t acme/digby-frontend:1.0.0 .
 > ```
 >
-> **These flags are now the DEFAULT, but pass them anyway.** Until 2026-11-06
-> they were required: `frontend/Dockerfile` declared them with empty defaults,
-> so omitting them compiled Digby's production ad/analytics tags (GA4
-> `G-NK7XPHC7FE`, Google Ads `AW-16512038948`, Meta pixel `4660227547545860`)
-> into a self-host build and the instance reported page views to Digby's
-> accounts. The Dockerfile now defaults all three to `1`, so a bare
-> `docker build` is ad-free; the hosted `digby.ai` deployment is the one place
-> that opts back in, explicitly, through `docker-compose.app.yml`. Passing the
-> three flags stays documented because it is explicit, survives a revert, and
-> costs nothing. Pinned by `frontend/lib/ad-build-posture.test.ts` and
-> `frontend/lib/ad-render-gate.test.ts`.
->
-> **What that pair of tests proves, and what it does not.** They prove the
-> switches are declared, defaulted off, forwarded to the build, and that the
-> rendered components emit no ad-host URL under this posture (and *do* emit one
-> when the posture enables it, so the check is not vacuous). They do **not**
-> prove a live browser makes zero ad requests — the tags mount after hydration,
-> so that needs a network capture against a deployed instance.
+> **Ad-free is the built default, and these flags are belt and braces.**
+> `frontend/Dockerfile` declares all three disabled by default, so a bare
+> `docker build` produces an image with no first-party ad or analytics tag. The
+> self-host compose does not forward them at all — there is nothing to turn on.
+> Passing the three flags anyway stays documented because it is explicit and
+> survives a revert. Your instance makes no ad or measurement request; the only
+> outbound traffic is to the model providers you configure.
 >
 > `--target production` is stated explicitly for clarity, not necessity:
 > `frontend/Dockerfile` has two stages — `build` then `production` — and Docker
@@ -684,7 +671,7 @@ the same `POST /v1/systemone` request and response, so each one is registered
 the same way — Account → Admin → Endpoints → **Add endpoint**, Server type
 **Decision model (TypeSafe-compatible /systemone)**.
 
-> **Which parts your build has (2026-09-26 wave, integrated).** The
+> **Which parts your build has.** The
 > per-purpose panel, challengers and "Promote to primary" come with the
 > backend's `platform/decision-gate-backends.ts` (the panel hides when the
 > route is absent). Laya's wire quirks (`distribution` score lists, no `model`
@@ -748,21 +735,21 @@ envelope `{ result: { answers, usage, model } }`. On such a proxy
 refused ("a typed-decision model, not a chat model"), so the model must be
 flagged, not guessed:
 
-> **⚠ agx-laya on the cql-llm gateway is a TYPED-DECISION SERVICE — never
-> target it with bare chat completions** (ticket 3c18284e, 2026-10-20). A bare
+> **⚠ A typed-decision route on a gateway is a TYPED-DECISION SERVICE — never
+> target it with bare chat completions.** A bare
 > completion (with or without `logprobs`) is refused by the gateway's own
 > guard, in ~30 ms, HTTP 400, body verbatim: `litellm.BadRequestError:
 > agx-laya is a typed-decision model, not a chat model. Send "questions":
 > {key: {...}} ... or "preset": ...`. The guard fires BEFORE logprobs is
 > considered, so an `allowed_openai_params` pin cannot bypass it and no model
 > can read token logprobs out of it — only the questions shape above answers
-> (200 in ~80 ms, class probabilities in `result.answers.{key}`). Since the
-> 3c18284e fix the runtime LEARNS this: when a decision-gate logprob-readout
-> leg 400s with that guard body, the same leg is retried over the questions
-> shape and the spec is latched for later asks — so an unflagged registration
-> self-heals on its first ask. The `decision:'systemone_chat'` flag (below)
-> remains the declarative first choice; `stanne-qwen3-4b-utility` is NOT a
-> logprob-readout candidate either (500, invalid response object). The learned
+> (200 in ~80 ms, class probabilities in `result.answers.{key}`). The runtime
+> LEARNS this: when a decision-gate logprob-readout leg 400s with that guard
+> body, the same leg is retried over the questions shape and the spec is
+> latched for later asks — so an unflagged registration self-heals on its first
+> ask. The `decision:'systemone_chat'` flag (below) remains the declarative
+> first choice; a utility-shaped chat sibling is NOT a logprob-readout candidate
+> either (500, invalid response object). The learned
 > latch is reported by the admin decision-readiness API (`GET
 > /admin/model-roles/decision-readiness` — the `typedDecisionLatched` field;
 > no dedicated frontend surface yet) and can be cleared with `POST
@@ -787,7 +774,7 @@ flagged, not guessed:
    the seat Test button / the model's **Verify** button run one typed noul +
    choice through the chat route).
 
-**A typed-decision route on a plain chat endpoint (ticket 2df5ed65).** A
+**A typed-decision route on a plain chat endpoint.** A
 LiteLLM-style gateway registered as Server type **OpenAI-compatible** lists
 its decision routes next to chat models. The endpoint **Test** button is
 kind-aware for them: a model flagged **[typed decisions]** (or kind
@@ -813,7 +800,7 @@ after `DECISION_GATE_STATE_RETENTION_DAYS` (28). Export it as laya-evals JSONL
 `npm run decision-gate:export -- --purpose=wake_triage --days=28 > out.jsonl`
 (inside the image: `node dist/scripts/decision-gate-export.js …`). Once a
 challenger has ≥ 1 week of paired rows, `npm run decision-gate:cascade --
---days=14 --purpose=wake_triage --first='cql-litellm:agx-laya' --margin=0.03`
+--days=14 --purpose=wake_triage --first='<label>:<modelId>' --margin=0.03`
 prints, per confidence cutoff τ, how much of the purpose the cheap first leg
 could answer at ≤ 10 % in-band error (exact-binomial Learn-then-Test at level
 0.05, fixed-sequence strict→loose) without being worse than the primary by
@@ -870,7 +857,7 @@ on, in resolution order:
   `BRIGHTDATA_API_TOKEN` from `.env` — it is a front for the same account, so
   it needs the env key (a store-only instance searches through the direct API
   instead). A self-hosted instance never falls back to Digby's production
-  `mcp.digby.ai` gateway: a token without `MCP_DIGBY_URL` is reported as a
+  Digby's hosted gateway: a token without `MCP_DIGBY_URL` is reported as a
   misconfiguration on the checklist and ignored.
 
 With none of these configured, the web-search tools answer "web search is not
@@ -881,7 +868,7 @@ a generic outage error, so the operator knows exactly what to do.
 
 These are **five separate stages**, and an operator debugging "search is broken"
 needs to know which one failed — they fail independently and look similar from
-the outside (owner report 2026-11-05: a saved key does not prove any of them work).
+the outside (a saved key does not prove any of them work).
 
 | Stage | What it does | Where | Fails as |
 |---|---|---|---|
@@ -965,7 +952,7 @@ im:history  mpim:history  im:read  mpim:read
 search:read  users:read  chat:write
 ```
 
-`im:history` / `mpim:history` (added 2026-10-12, ticket 24541fb3) are what
+`im:history` / `mpim:history` (added 2026-10-12) are what
 DM / group-DM message reads need — `im:read` / `mpim:read` alone only LIST
 those conversations. Connections made before they were requested must be
 reconnected once: Slack grants are additive, so re-authorizing appends the new
@@ -1089,7 +1076,7 @@ interrupts running coding sessions; they auto-resume from checkpoint.
 
 Your instance can run Digby's autonomous loop (fix → PR → merge → rebuild →
 verify) against **its own copy of the repo**. Two things make that safe by
-design (ticket c75b5f34):
+design:
 
 1. **`DIGBY_INSTANCE=selfhost`** (set by `docker-compose.selfhost.yml`): the
    backend/worker resolve their loop targets from YOUR env —
@@ -1104,13 +1091,13 @@ design (ticket c75b5f34):
    ```
 
    With them unset, the fleet pulse / deploy telemetry / self-merge simply
-   report nothing about any repo; setting any of them to the PRODUCTION repo
-   (`example-org/crossmodel`) **hard-fails** with an `ISOLATION BOUNDARY`
-   error — that is the boundary working, not a bug.
+   report nothing about any repo; setting any of them to Digby's own production
+   repository **hard-fails** with an `ISOLATION BOUNDARY` error — that is the
+   boundary working, not a bug.
 2. **Your own stack**: your postgres (the `digby_postgres_data` volume),
-   your redis, your deploy = the `git pull` + rebuild above. The production
-   EC2 boxes, the prod RDS instance, and every prod secret are unreachable
-   from this compose file — nothing here is forwarded to it.
+   your redis, your deploy = the `git pull` + rebuild above. Digby's own
+   production infrastructure and secrets are unreachable from this compose file
+   — nothing here is forwarded to it.
 
 Connect a GitHub account (Settings → Integrations) whose token can write your
 fork, and the loop runs end-to-end on your copy.
@@ -1126,11 +1113,9 @@ docker exec digby-postgres pg_dump -U admin -d admin_db | gzip > digby-backup-$(
 The coding-workspaces volume (`digby_coding_workspaces`) holds session
 worktrees — back it up too if you have uncommitted session work that matters.
 
-> **The server-side `scripts/backup/digby-backup.sh` digest script is a
-> PRODUCTION tool** (S3 offsite copy, prod container names). On a self-hosted
-> box its non-prod dump leg reads this instance's own `digby-postgres`
-> container, but the one-liner above is the documented self-host backup —
-> do not point the script's `BACKUP_PG_HOST` at any production database.
+> A server-side digest script exists for Digby's own hosted service; it is not
+> part of this repository. The one-liner above is the documented self-host
+> backup.
 
 ## Troubleshooting
 
