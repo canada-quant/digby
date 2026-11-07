@@ -223,7 +223,7 @@ memoryGraphNode (LangGraph)
 
 ### Infrastructure
 - **Docker** + **Docker Compose** — `docker-compose.selfhost.yml` is the complete self-host stack; `docker-compose.selfhost.published.yml` is the same stack pulling published images (no source clone)
-- **GitHub Actions** — build/test CI, image publishing and an anonymous install-smoke run; all of it build/test/publish only, with no production credentials
+- **GitHub Actions** — build/test CI, image publishing, an anonymous install-smoke run (published images) and an anonymous clean-room suite (source build, restart, model config + first chat, branding); all of it build/test/publish only, with no production credentials
 - **PostgreSQL 16** (+ pgvector) and **Redis 7** run as containers in the same compose stack
 - **Caddy** terminates TLS and fronts the frontend + backend on a single port (`8080` by default)
 

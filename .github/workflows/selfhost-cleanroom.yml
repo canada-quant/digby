@@ -90,7 +90,7 @@ env:
   STUB_NAME: digby-openai-stub
   STUB_PORT: "8899"
   STUB_MODEL: stub-model
-  STUB_LABEL: SmokeStub
+  STUB_LABEL: smokestub # MUST be lowercase: endpoint labels are normalized to lower-case on write (model-endpoints.service.ts normalizeLabel), and a seat spec label must match /^[a-z0-9][a-z0-9_-]{0,63}$/.
 
 jobs:
   clean-room:
@@ -345,11 +345,15 @@ jobs:
           code=$(curl -sS -o roles2.json -w '%{http_code}' \
             -H "Authorization: Bearer $SMOKE_TOKEN" "$base/admin/model-roles")
           [ "$code" = "200" ] || { echo "::error::reading model roles returned HTTP $code"; exit 1; }
-          echo "  lead seat now: $(jq -r '.. | objects | select(has("key")) | select(.key=="chat_orchestrator") | (.model // .value // .spec // "")' roles2.json 2>/dev/null | head -1)"
-          if ! grep -q "$STUB_MODEL" roles2.json; then
-            echo "::error::the lead seat does not mention '$STUB_MODEL' after the write — the assignment did not persist"
-            head -c 1200 roles2.json; echo; exit 1
-          fi
+          # Assert the chat_orchestrator ROW, not any occurrence anywhere in the
+          # document: a grep over the whole payload would pass on the model id
+          # appearing in some other seat and hide a failed assignment.
+          seat=$(jq -r '.. | objects | select(.key? == "chat_orchestrator") | (.model // .value // .spec // "")' roles2.json 2>/dev/null | head -1)
+          echo "  lead seat now: $seat"
+          case "$seat" in
+            *"$STUB_MODEL"*) echo "  chat_orchestrator names $STUB_MODEL" ;;
+            *) echo "::error::chat_orchestrator reads '$seat' — the assignment did not persist"; head -c 1200 roles2.json; echo; exit 1 ;;
+          esac
           echo "  M2 PASS — endpoint registered, lead seat assigned and read back"
 
       - name: M3 — a successful first chat
