@@ -99,31 +99,40 @@ function pairSites(text: string): PairSite[] {
   return sites;
 }
 
-/** "**`v1.0.3`** is the current release" -> "1.0.3" */
+/** `"**\`v<X.Y.Z>\`** is the current release"` -> `"<X.Y.Z>"` */
 function documentedCurrentRelease(guideText: string): string | undefined {
   const m = /\*\*`v(\d+\.\d+\.\d+)`\*\*\s+is the current release/.exec(guideText);
   return m?.[1];
 }
 
 /**
- * The dispatch defaults the GUIDE tells a stranger to expect:
- *
- *   `from_tag` (the upgrade baseline — an older release, default `1.0.1`) and
- *   `to_tag` (the release under test, default `1.0.2`).
+ * The dispatch defaults the GUIDE tells a stranger to expect, in the
+ * "Start it yourself" paragraph of the smoke section.
  *
  * Why this is pinned separately: the release-event path uses the workflow
  * `env:` fallbacks, so the `workflow_dispatch` `default:` values are the ones a
  * HUMAN reads and hand-types when they start a run from the Actions UI. They
- * drifted independently of the fallbacks — after the pair moved to 1.0.2→1.0.3
- * the guide still advertised 1.0.1/1.0.2, i.e. a stranger following the page
- * would dispatch the PREVIOUS pair and prove nothing about the current release.
- * That is the same defect class as the two stale-release smoke runs.
+ * drifted independently of the fallbacks: after the pair moved one release
+ * forward, the guide still advertised the PREVIOUS pair, so a stranger following
+ * the page would dispatch an upgrade that proves nothing about the current
+ * release. Same defect class as the two stale-release smoke runs (#2688).
+ *
+ * NO LITERAL VERSIONS IN THIS FILE, deliberately. Pinning the documentation to a
+ * version means the guard's own commentary can go stale and ship that stale pair
+ * to the public tree — the very defect it exists to catch, one layer in. The
+ * expected values come from the workflow at test time, never from prose here.
+ *
+ * Line breaks are normalised first: the paragraph is prose that gets reflowed by
+ * ordinary copy-editing, and a rewrap must not read as drift. The windows are
+ * backtick-bounded so the parser cannot skip a MISSING default and silently latch
+ * onto the next tag's value — that case must fall to `undefined` and fail loud.
  */
 function documentedDispatchDefaults(
   guideText: string,
 ): { from: string; to: string } | undefined {
-  const from = /`from_tag`[^\n]*?default\s+`(\d+\.\d+\.\d+)`/.exec(guideText);
-  const to = /`to_tag`[^\n]*?default\s+`(\d+\.\d+\.\d+)`/.exec(guideText);
+  const flat = guideText.replace(/\s+/g, ' ');
+  const from = /`from_tag`[^`]{0,160}?default\s+`(\d+\.\d+\.\d+)`/.exec(flat);
+  const to = /`to_tag`[^`]{0,160}?default\s+`(\d+\.\d+\.\d+)`/.exec(flat);
   if (!from || !to) return undefined;
   return { from: from[1], to: to[1] };
 }
