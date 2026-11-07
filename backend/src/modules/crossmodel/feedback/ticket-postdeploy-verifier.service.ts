@@ -60,6 +60,8 @@ import {
   measureAcceptanceBaseline,
   regexIntentOf,
   healAutofilerDefaultMetric,
+  healEmitterScopedPattern,
+  fingerprintOfLogSignalTitle,
   designedAlarmOfMetric,
 } from './ticket-metric';
 import { parseClosureEvidenceNote, resolveFixStateFromEvidence } from './fix-state';
@@ -106,6 +108,9 @@ interface VerifierRow {
   context: unknown;
   /** The filing time — the anchor of the metric's pre-fix baseline window. */
   createdAt?: Date | string;
+  /** The stable `log-signal: <fingerprint>` title — carries the ticket's OWN
+   *  emit-class fingerprint, which the emitter-scope heal needs (d634e874). */
+  title?: string | null;
 }
 
 function verCtxOf(row: VerifierRow): VerificationCtx {
@@ -162,6 +167,18 @@ export async function verifyTicketRow(row: VerifierRow, now: Date = new Date()):
   if (heal.healed) {
     metric = heal.metric;
     await recordVerifierMetric({ ticketId: row.id.slice(0, 8), verdict: 'metric_healed', probe: metric.probe, reason: 'autofiler-default predates the logClass exclusion' });
+  }
+  // EMITTER-SCOPE HEAL (d634e874, 2026-11-07): a stored auto-filer pattern
+  // derived before the emitter scope existed counts EVERY seat role sharing the
+  // `warnSeatFailure` template, so a fix that reduced its own emit class to one
+  // row still fails the bar on other classes' rows. Re-scope it to the ticket's
+  // own role from its stable title. Narrow (auto-filer-stamped,
+  // app_error_log_count, fingerprint names an emitter, pattern not yet scoped) —
+  // a hand-authored metric is never rewritten.
+  const emitHeal = healEmitterScopedPattern(metric, stCtx.acceptanceMetricSource, fingerprintOfLogSignalTitle(row.title));
+  if (emitHeal.healed) {
+    metric = emitHeal.metric;
+    await recordVerifierMetric({ ticketId: row.id.slice(0, 8), verdict: 'metric_rescoped', probe: metric.probe, reason: `autofiler-default pattern predates emitter scope (${emitHeal.role})` });
   }
   let ver = verCtxOf(row);
   const gateOn = !acceptanceBaselineGateDisabled();
@@ -482,7 +499,7 @@ export async function runTicketPostdeployVerifierOnce(): Promise<string> {
         where: { status: 'reopened' },
         orderBy: [{ priority: 'desc' }, { updatedAt: 'asc' }],
         take: 20, // bounded per tick; leftovers ride the next tick
-        select: { id: true, type: true, status: true, priority: true, adminNote: true, userId: true, context: true, createdAt: true },
+        select: { id: true, type: true, status: true, priority: true, adminNote: true, userId: true, context: true, createdAt: true, title: true },
       }) ?? []) as unknown as VerifierRow[];
       for (const r of reopened) {
         if ((await redirectWronglyReopenedRow(r, now)) === 'redirected') withdrawn++;
@@ -494,7 +511,7 @@ export async function runTicketPostdeployVerifierOnce(): Promise<string> {
       where: { status: 'awaiting_verification' },
       orderBy: [{ priority: 'desc' }, { updatedAt: 'asc' }],
       take: 50, // bounded per tick; leftover rows ride the next tick
-      select: { id: true, type: true, status: true, priority: true, adminNote: true, userId: true, context: true, createdAt: true },
+      select: { id: true, type: true, status: true, priority: true, adminNote: true, userId: true, context: true, createdAt: true, title: true },
     }) ?? []) as unknown as VerifierRow[];
     if (!rows.length) {
       return `${withdrawn ? `${withdrawn} reopen(s) withdrawn: ` : ''}no tickets awaiting verification`.slice(0, 200);

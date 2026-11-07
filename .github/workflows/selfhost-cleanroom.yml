@@ -56,21 +56,29 @@ name: Self-host clean room (source build, restart, first chat, branding)
 # database and pass vacuously.
 
 on:
-  # DISPATCH-ONLY UNTIL PROVEN GREEN — deliberately NO `schedule:` yet.
+  # PROVEN GREEN 2026-11-07T16:57:15Z — run 42393490383 on public 062ed5d,
+  # conclusion: success. Every leg passed on a real CI runner:
+  #   S source build · healthy-through-Caddy · D signup+first-admin bootstrap ·
+  #   login · B branding · R restart persistence · M1 stub endpoint ·
+  #   M2 lead-seat assignment · M3 first chat (the stub's answer streamed).
   #
-  # This workflow has never executed (it cannot: the authoring lane has no
-  # container runtime, so legs S/R/M/B can only run on a CI runner, and it must
-  # ship to the public repo before it can be dispatched there). A scheduled
-  # trigger added at ship time would fire this file's first-ever run unattended,
-  # in the PUBLIC repo, and a defect in it would be a permanent red X on a
-  # release that works exactly as designed — the watchdog precedent recorded in
-  # scrub-rules.txt ("a workflow that can only ever be red is worse than one
-  # that is absent").
+  # The dispatch-only gate this comment used to enforce existed for one reason:
+  # a scheduled trigger firing the file's FIRST-EVER run unattended in the
+  # PUBLIC repo would show a permanent red X on a release that works exactly as
+  # designed (watchdog precedent in scrub-rules.txt: "a workflow that can only
+  # ever be red is worse than one that is absent"). That risk is now spent —
+  # it took four dispatches to get there, and every one of the three failures
+  # was a defect in this FIXTURE, never in the product:
+  #   42382800212  uppercase 'SmokeStub' vs the lowercased label
+  #   42387236446  asserted .model/.value/.spec; the row has override/effective
+  #   42389686062  called the run-ATTACH endpoint; and the marker is split
+  #                across two SSE deltas on purpose, so a raw grep could not
+  #                match a working chat
   #
-  # ORDER OF OPERATIONS: ship -> dispatch once -> observe green -> THEN add the
-  # weekly cron below. Do not add it before the first green run.
-  #     schedule:
-  #       - cron: "43 6 * * 1"
+  # Weekly, Monday 06:43 UTC. It runs against the SOURCE build, so it catches a
+  # self-host regression within a week without anyone remembering to dispatch.
+  schedule:
+    - cron: "43 6 * * 1"
   workflow_dispatch:
 
 concurrency:

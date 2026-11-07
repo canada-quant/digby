@@ -84,6 +84,8 @@ export {
   logSignalDefaultMetric,
   frameworkFindingDefaultMetric,
   healAutofilerDefaultMetric,
+  healEmitterScopedPattern,
+  fingerprintOfLogSignalTitle,
   designedAlarmOfMetric,
   designedAlarmOfFingerprint,
   designedObservabilityOfFingerprint,

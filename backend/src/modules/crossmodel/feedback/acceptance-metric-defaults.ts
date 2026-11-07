@@ -147,6 +147,65 @@ function preferDiscriminating(
   return alt ?? chosen;
 }
 
+/**
+ * THE EMITTER'S OWN NAME (ticket d634e874, 2026-11-07).
+ *
+ * `warnSeatFailure` (seat-call.ts:280) renders ONE template for EVERY seat role
+ * that shares it:
+ *
+ *     `${role} seat: ${p.model} (${p.label}) failed — ${describeSeatError(err)}`
+ *
+ * so `pdf_ocr seat: …`, `vision_describe seat: …` and `computer_vision seat: …`
+ * differ ONLY in the role token in front. That token is the emit CLASS, and it
+ * must survive derivation.
+ *
+ * MEASURED — it did not. `normalizeLogMessage` turns each model/error number
+ * into a `<n>` placeholder, so the fingerprint's pieces are
+ * `pdf_ocr seat: api-optimize-zai-glm-` (35 chars) and
+ * `-flash (llm-cql (custom endpoint)) failed — timeout of` (53). The longest run
+ * wins, the SHORT role-bearing run loses, and the derived pattern is
+ * `flash (llm-cql (custom endpoint)) failed — timeout of` — which is a literal
+ * substring of the vision_describe AND computer_vision rows too. Probe output
+ * before this guard, all three roles deriving the identical string:
+ *
+ *     pdf_ocr   → "flash (llm-cql (custom endpoint)) failed — timeout of"
+ *     vision…   → "flash (llm-cql (custom endpoint)) failed — timeout of"
+ *     computer… → "flash (llm-cql (custom endpoint)) failed — timeout of"
+ *
+ * CONSEQUENCE (live, ticket d634e874): the bar counted three emit classes. The
+ * 22-row pdf_ocr amplification was fixed and deployed, the pdf_ocr count fell to
+ * 1, and the post-deploy verifier still REOPENED the ticket at 15:05:49Z on
+ * `measured 3` — two vision_describe and one computer_vision row from other
+ * files. No fix to the pdf_ocr emitter could ever have cleared it.
+ *
+ * THE RULE: when a message NAMES ITS OWN EMITTER, the derived pattern must keep
+ * that name. `<role> seat: ` is that template's shape, and the role token is
+ * what separates one seat's rows from another's. The sibling-discrimination pass
+ * cannot cover this: it only fires when a colliding sibling is VISIBLE in the
+ * same pass, and a seat role that starts failing next week is by definition not
+ * in it (the same bounded-guarantee limitation `ambiguousFragmentSibling`
+ * documents). Keeping the emitter's name is structural — it does not depend on
+ * who else happens to be emitting today.
+ *
+ * `required` distinguishes "this message names an emitter" from "it does not":
+ * a message that names one but yields no qualifying run gets NO bar (null,
+ * flagged by the caller) rather than a cross-emitter bar. Never a silent
+ * weakening — the caller's `acceptanceMetricMissing` flag keeps the absence on
+ * the done-bar board.
+ */
+const EMITTER_ROLE_PREFIX_RE = /^([a-z][a-z0-9_.-]{1,40}) seat: /;
+
+export function emitterScopedRun(fingerprint: unknown, pool: ReadonlyArray<string>): { required: boolean; run: string | null } {
+  const fp = typeof fingerprint === 'string' ? fingerprint : '';
+  const m = EMITTER_ROLE_PREFIX_RE.exec(fp);
+  if (!m) return { required: false, run: null };
+  const armed = `${m[1]} seat:`;
+  const run = [...new Set(pool.map((x) => String(x).slice(0, LOG_FRAGMENT_MAX).trim()))]
+    .filter((x) => x.length >= LOG_FRAGMENT_MIN && !regexIntentOf(x) && x.startsWith(armed))
+    .sort((a, b) => b.length - a.length)[0];
+  return { required: true, run: run ?? null };
+}
+
 export function stableLiteralFragment(fingerprint: unknown, exampleMessage?: unknown, avoid?: (candidate: string) => boolean): string | null {
   const fp = typeof fingerprint === 'string' ? fingerprint : '';
   const trimEdges = (x: string) => x.replace(/^[\s:;,.\-—–'"`]+|[\s:;,\-—–'"`]+$/g, '');
@@ -154,13 +213,27 @@ export function stableLiteralFragment(fingerprint: unknown, exampleMessage?: unk
     .split(/<[a-z_-]+>|\[REDACTED[^\]]*\]|…/i)
     .map(trimEdges)
     .filter((x) => x.length >= LOG_FRAGMENT_MIN && !regexIntentOf(x));
+  // EMITTER SCOPE (d634e874) — resolved BEFORE the length/whitespace choices
+  // below, because those are exactly what drops the role token. `required`
+  // means the message names its own emitter (`<role> seat: …`), so a run
+  // WITHOUT that name measures some other emitter's rows.
+  const emitter = emitterScopedRun(fp, pieces);
+  /** When the message names its own emitter, ONLY a run keeping that name may
+   *  become the bar. No fallback: a fallback is precisely how the cross-emitter
+   *  tail got in. If the emitter-scoped run still collides with a same-role
+   *  sibling, the CALLER detects it (its `residual` check) and files with
+   *  `acceptanceMetricMissing` rather than a bar that measures someone else. */
+  const withEmitter = (fallback: string | null): string | null => {
+    if (!emitter.required) return fallback;
+    return emitter.run; // null ⇒ no bar (never a cross-emitter one)
+  };
   if (!pieces.length) return null;
   const best = [...pieces].sort((a, b) => b.length - a.length)[0].slice(0, LOG_FRAGMENT_MAX).trim();
   const raw = typeof exampleMessage === 'string' ? exampleMessage : '';
   // No raw example (direct callers / older shapes): the fingerprint fragment,
   // as before — the filing-time baseline gate still measures every stored
   // metric against the real rows and drops a vacuous one.
-  if (!raw) return best;
+  if (!raw) return withEmitter(best);
   if (raw.toLowerCase().includes(best.toLowerCase())) {
     // DISCRIMINATION ALSO HERE (30dfad06): the early-return path is the COMMON
     // one (the fingerprint fragment is a substring of the raw example), and it
@@ -168,7 +241,8 @@ export function stableLiteralFragment(fingerprint: unknown, exampleMessage?: unk
     // here would leave the sibling-spanning bar in place. Offer the other
     // fingerprint pieces as alternatives so a discriminating run can be chosen.
     const earlyOut = preferDiscriminating(best, pieces, avoid).slice(0, LOG_FRAGMENT_MAX).trim();
-    return earlyOut.length >= LOG_FRAGMENT_MIN ? earlyOut : null;
+    const resolved = withEmitter(earlyOut.length >= LOG_FRAGMENT_MIN ? earlyOut : null);
+    return resolved && resolved.length >= LOG_FRAGMENT_MIN ? resolved : null;
   }
   // The fingerprint fragment is NOT a substring of the raw example — the two
   // differ in whitespace (the fingerprint collapsed it). Re-derive from the
@@ -218,8 +292,17 @@ export function stableLiteralFragment(fingerprint: unknown, exampleMessage?: unk
   // longest run happens to be the shared head).
   const pool = [...candidates, ...(stable ? [stable] : [])];
   const chosen = stable ?? rawBest;
+  // EMITTER SCOPE (d634e874) applies on this path too: the RAW runs carry the
+  // role token uncut, so the emitter-scoped choice is available here even when
+  // the placeholder-split pieces above lost it.
+  const rawEmitter = emitterScopedRun(fp, candidates);
   const out = preferDiscriminating(chosen, pool, avoid).slice(0, LOG_FRAGMENT_MAX).trim();
-  return out.length >= LOG_FRAGMENT_MIN ? out : null;
+  const resolved = rawEmitter.required ? rawEmitter.run : (out.length >= LOG_FRAGMENT_MIN ? out : null);
+  if (!resolved || resolved.length < LOG_FRAGMENT_MIN) return null;
+  if (rawEmitter.required && avoid && avoid(resolved)) {
+    return out.length >= LOG_FRAGMENT_MIN ? out : null;
+  }
+  return resolved;
 }
 
 /**
@@ -904,6 +987,64 @@ export function healAutofilerDefaultMetric(metric: AcceptanceMetric, source: unk
   if (metric.probe !== 'app_error_log_count') return { metric, healed: false };
   if (metric.params.excludeLogClass) return { metric, healed: false };
   return { metric: { ...metric, params: { ...metric.params, excludeLogClass: 'external' } }, healed: true };
+}
+
+/**
+ * HEAL an auto-filer default metric whose pattern was derived BEFORE the emitter
+ * scope existed (ticket d634e874, 2026-11-07) — the SECOND such read-time heal,
+ * and the same posture as `healAutofilerDefaultMetric` above.
+ *
+ * THE PROBLEM IT REPAIRS. The stored metric is what the post-deploy verifier
+ * re-measures, so fixing the derivation in code does nothing for a ticket filed
+ * under the old one. d634e874 stores
+ * `messagePattern: 'flash (llm-cql (custom endpoint)) failed — timeout of'` —
+ * a pattern that matches `pdf_ocr`, `vision_describe` AND `computer_vision`
+ * rows. Its pdf_ocr fix was deployed and its own class fell to one row, yet the
+ * verifier reopened it at 2026-11-07T15:05:49Z on `measured 3`, every one of the
+ * three outside the emit class the ticket was filed about.
+ *
+ * SCOPE IS DELIBERATELY NARROW — all of:
+ *   - source is `autofiler-default` (a hand-authored metric is never rewritten);
+ *   - probe is `app_error_log_count`;
+ *   - the TICKET's own fingerprint names an emitter (`<role> seat: …`);
+ *   - an emitter-scoped run of the fingerprint exists;
+ *   - the stored pattern does NOT already carry that emitter name.
+ * When any of those fails the metric is returned untouched (`healed:false`), so
+ * this can never widen or narrow a bar a lane chose for itself. Pure.
+ *
+ * `fingerprint` is the ticket's own normalized fingerprint, recovered by the
+ * caller from the stable title (`log-signal: <fingerprint>`); passing null (an
+ * untitled/legacy row) simply skips the heal.
+ */
+/**
+ * The ticket's own log-signal FINGERPRINT, recovered from its stable title
+ * (`log-signal: <fingerprint>` — log-signal-sweep.service.ts:915). Returns null
+ * for any row that is not a log-signal ticket, so a caller can pass any title.
+ */
+export function fingerprintOfLogSignalTitle(title: unknown): string | null {
+  const t = typeof title === 'string' ? title : '';
+  const m = /^log-signal:\s*(.+)$/i.exec(t.trim());
+  const fp = m ? m[1].trim() : '';
+  return fp || null;
+}
+
+export function healEmitterScopedPattern(metric: AcceptanceMetric, source: unknown, fingerprint: unknown): { metric: AcceptanceMetric; healed: boolean; role?: string } {
+  if (source !== AUTOFILER_DEFAULT_METRIC_SOURCE) return { metric, healed: false };
+  if (metric.probe !== 'app_error_log_count') return { metric, healed: false };
+  const fp = typeof fingerprint === 'string' ? fingerprint : '';
+  if (!fp) return { metric, healed: false };
+  const stored = String(metric.params?.messagePattern ?? '');
+  const m = EMITTER_ROLE_PREFIX_RE.exec(fp);
+  if (!m) return { metric, healed: false };
+  const role = m[1];
+  if (stored.toLowerCase().startsWith(`${role} seat:`)) return { metric, healed: false }; // already scoped
+  const pieces = fp
+    .split(/<[a-z_-]+>|\[REDACTED[^\]]*\]|…/i)
+    .map((x) => x.replace(/^[\s:;,.\-—–'"`]+|[\s:;,\-—–'"`]+$/g, ''))
+    .filter((x) => x.length >= LOG_FRAGMENT_MIN && !regexIntentOf(x));
+  const scoped = emitterScopedRun(fp, pieces);
+  if (!scoped.run) return { metric, healed: false };
+  return { metric: { ...metric, params: { ...metric.params, messagePattern: scoped.run } }, healed: true, role };
 }
 
 /**
