@@ -76,6 +76,8 @@ model User {
   featureRequests      UserFeatureRequest[]
   googleOAuth          GoogleOAuthToken[]
   driveWatches         DriveWatch[]
+  /// Phase 3 Enterprise SSO (todo 3ad2b010): one link per (user, IdP).
+  federatedIdentities  FederatedIdentity[]
   githubOAuth          GitHubOAuthToken[]
   xOAuth               XOAuthToken[]
   xeroOAuth            XeroOAuthToken[]
@@ -206,6 +208,9 @@ model Organization {
   memberships Membership[]
   usageDays   OrgUsageDaily[]
   modelUsageDays OrgModelUsageDaily[]
+  /// Phase 3 Enterprise SSO (todo 3ad2b010): at most ONE IdP per tenant.
+  identityProvider  OrgIdentityProvider?
+  federatedIdentities FederatedIdentity[]
 
   @@index([ownerId])
   @@map("organizations")
@@ -269,6 +274,137 @@ model OrgModelUsageDaily {
   @@unique([organizationId, day, model])
   @@index([organizationId, day])
   @@map("org_model_usage_daily")
+}
+
+/// Which federation protocol this tenant's IdP speaks (todo 3ad2b010).
+enum OrgSsoProtocol {
+  /// OpenID Connect: authorization-code flow with PKCE, discovery from `oidcIssuer`.
+  OIDC
+  /// SAML 2.0 Service Provider: HTTP-Redirect AuthnRequest out, HTTP-POST
+  /// assertion in, validated by @node-saml/node-saml against `samlIdpCert`.
+  SAML
+}
+
+/// A tenant's external identity provider (Phase 3 Enterprise SSO/SAML, todo
+/// 3ad2b010). ONE per org — `organizationId` is unique.
+///
+/// WHY ONE PER ORG, NOT MANY. A user arrives at federation from a tenant
+/// context ("sign in to workspace X"), not from a provider list, so the lookup
+/// is by org and a second row would make "which IdP do I redirect to?" an
+/// ambiguous question with no user-facing answer. Multiple IdPs per org is a
+/// real enterprise ask, but it needs an org-scoped provider selector in the login
+/// UI first; adding rows without that would produce an unreachable config.
+///
+/// SECRETS AT REST: `oidcClientSecret` is AES-256-GCM ciphertext (reusing
+/// google/crypto encryptWith with ORG_SSO_ENCRYPTION_KEY), NEVER plaintext and
+/// never returned by any read path — the API returns a hasClientSecret boolean.
+/// `samlIdpCert` is a PUBLIC signing certificate, so it is stored as-is.
+model OrgIdentityProvider {
+  id             String          @id @default(uuid())
+  organizationId String          @unique
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  protocol       OrgSsoProtocol
+  /// Federation is inert until an OWNER turns this on. Configuring an IdP and
+  /// enabling it are separate acts so a half-finished config cannot lock a
+  /// tenant out of (or into) the wrong issuer.
+  enabled        Boolean         @default(false)
+  displayName    String?
+
+  // ── OIDC ────────────────────────────────────────────────────────────────
+  /// Issuer base URL; discovery reads `<issuer>/.well-known/openid-configuration`.
+  oidcIssuer       String?
+  oidcClientId     String?
+  /// Ciphertext (AES-256-GCM, base64 iv+tag+ct). Never selected by a route.
+  oidcClientSecret String?
+
+  // ── SAML 2.0 ────────────────────────────────────────────────────────────
+  /// IdP SSO endpoint the AuthnRequest is redirected to.
+  samlEntryPoint String?  @db.Text
+  /// OUR SP entity id — must match what the customer registered at their IdP.
+  samlIssuer     String?
+  /// IdP's X.509 signing certificate (PEM). Public by nature.
+  samlIdpCert    String?  @db.Text
+
+  // ── Just-in-time provisioning ───────────────────────────────────────────
+  /// JIT creates an account only for an email whose domain is in this list. An
+  /// empty list means JIT is CLOSED (existing linked identities still work) —
+  /// never "any domain", because an open JIT on a live IdP lets anyone the IdP
+  /// authenticates mint an account in this tenant.
+  allowedEmailDomains String[]
+  jitEnabled          Boolean  @default(true)
+  /// The role a JIT-created member receives. Clamped in code to MEMBER|BILLING
+  /// (see org-sso.service.ts adaptiveJitRole): a value outside that set is
+  /// rejected at write time AND coerced on read, because a stored OWNER here
+  /// would be a self-service path to tenant ownership.
+  jitRole             OrgRole  @default(MEMBER)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  identities FederatedIdentity[]
+
+  @@map("org_identity_providers")
+}
+
+/// The link between a Digby user and their subject at one org's IdP.
+///
+/// THIS TABLE IS THE AUTHORIZATION RECORD, not a cache. A federated login is
+/// only ever resolved by looking up (providerId, subject) here; we never match
+/// on email. Matching on email would let anyone who can make the IdP assert an
+/// address (`victim@corp.com`) sign in as that existing user — the classic
+/// identity-takeover path, and on a tenant whose OWNER also uses SSO it is
+/// account takeover of the tenant.
+model FederatedIdentity {
+  id             String              @id @default(uuid())
+  userId         String
+  user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization   Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providerId     String
+  provider       OrgIdentityProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  /// The IdP's stable identifier for the subject (`sub` for OIDC, NameID for
+  /// SAML). Paired with providerId it is the ONLY lookup key.
+  subject        String
+  /// The address the IdP asserted at link time — kept for operator display and
+  /// audit, never used for authorization.
+  email          String
+  createdAt      DateTime            @default(now())
+  lastLoginAt    DateTime?
+
+  @@unique([providerId, subject])
+  /// One link per (user, provider): a user has at most one subject per IdP.
+  @@unique([userId, providerId])
+  @@index([organizationId])
+  @@map("federated_identities")
+}
+
+/// One in-flight federated login. Carries the OIDC state/nonce/PKCE-verifier
+/// (or the SAML request id) across the redirect to the IdP and back.
+///
+/// SINGLE USE AND SHORT LIVED. `consumedAt` is stamped inside the same
+/// conditional update that claims the row, so a replayed callback finds no
+/// unclaimed row. Without that a captured callback URL is replayable for the
+/// lifetime of the state — i.e. a session-fixation primitive.
+model SsoLoginState {
+  id             String   @id @default(uuid())
+  /// The opaque `state` value echoed by the IdP. Unique so a collision cannot
+  /// silently adopt another login's verifier.
+  state          String   @unique
+  organizationId String
+  codeVerifier   String?
+  nonce          String?
+  /// SAML only: the AuthnRequest id we must see echoed in the assertion.
+  requestId      String?
+  /// Where to send the browser after a successful login. Validated to a
+  /// same-origin relative path at issue AND at use (open-redirect guard).
+  returnTo       String?
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime
+  consumedAt     DateTime?
+
+  @@index([organizationId])
+  @@index([expiresAt])
+  @@map("sso_login_states")
 }
 
 /// Email-verification token for self-serve signup. The RAW token is never

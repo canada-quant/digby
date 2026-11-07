@@ -45,6 +45,7 @@
   "dependencies": {
     "@langchain/core": "^1.1.29",
     "@langchain/textsplitters": "^1.0.1",
+    "@node-saml/node-saml": "^5.2.0",
     "@prisma/adapter-pg": "^7.9.1",
     "@prisma/client": "^7.9.1",
     "@types/multer": "^2.3.0",
@@ -64,6 +65,7 @@
     "mammoth": "^1.11.0",
     "multer": "^2.5.0",
     "nodemailer": "^10.0.10",
+    "openid-client": "^6.8.9",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pg": "^8.23.0",

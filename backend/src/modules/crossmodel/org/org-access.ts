@@ -93,7 +93,22 @@ export type OrgCapability =
    * escalation chain this split breaks. Expressed as data rather than a
    * `role === 'OWNER'` branch so the routes stay literal-free (structural test).
    */
-  | 'member:grant-senior';
+  | 'member:grant-senior'
+  /**
+   * Configure the tenant's identity provider (Phase 3 SSO/SAML, todo 3ad2b010).
+   *
+   * OWNER ALONE, and deliberately NOT folded into `org:update` (which ADMIN
+   * holds): the IdP config decides who may authenticate INTO this tenant at all.
+   * An ADMIN who could point the org at an IdP they control, plus an allowed
+   * domain, could mint accounts for outsiders — every one of them a MEMBER, but
+   * a MEMBER can read the org and its own data. Widening the tenant's membership
+   * boundary is an ownership act, not day-to-day operation.
+   *
+   * Expressing it as its own capability (rather than an `role === 'OWNER'`
+   * branch in the route) keeps the routes literal-free, which the structural
+   * test in org-members.routes.test.ts enforces.
+   */
+  | 'sso:manage';
 
 /**
  * The capability table — THE authority for this whole module family.
@@ -123,6 +138,8 @@ const CAPABILITIES: Record<OrgRoleName, ReadonlySet<OrgCapability>> = {
     'billing:update',
     // OWNER alone can mint/strip seniority — see the capability's doc comment.
     'member:grant-senior',
+    // OWNER alone may repoint the tenant's identity provider — see `sso:manage`.
+    'sso:manage',
   ]),
   ADMIN: new Set<OrgCapability>([
     'org:read',
@@ -152,6 +169,7 @@ export const ORG_CAPABILITIES: readonly OrgCapability[] = [
   'billing:read',
   'billing:update',
   'member:grant-senior',
+  'sso:manage',
 ];
 
 /** The capabilities of one role. Returns an empty set for an unknown value — deny by default. */

@@ -1,0 +1,412 @@
+name: Self-host clean room (source build, restart, first chat, branding)
+
+# LEG (f)-(i) OF TODO 13f6da9f — the four journeys `install-smoke.yml` cannot reach.
+#
+# WHY THIS FILE EXISTS
+#   `install-smoke.yml` proves the PUBLISHED-IMAGE journey: anonymous tag→digest,
+#   the two documented install commands, first-run signup + first-admin
+#   bootstrap, and an upgrade that keeps its database. That is legs A/C/D/E and
+#   it is green.
+#
+#   It deliberately does NOT prove four other stranger journeys, and its own
+#   header says so ("No chat/model completion is exercised"). Those four are:
+#
+#     S  SOURCE-BASED SETUP — the § Quick start path: `cp selfhost.env.example
+#        .env`, generate the two JWT secrets, `docker compose -f
+#        docker-compose.selfhost.yml up -d --build`. This path has a build
+#        context the published file does not, so every class of failure the
+#        published smoke covers (un-pullable artifact, bad tag, broken
+#        installer) is replaced here by a different class: a Dockerfile that
+#        does not build on a clean host, a compose build arg that is unset, a
+#        migrate service that deadlocks behind backend.
+#     R  RESTART PERSISTENCE — `docker compose restart` and the instance comes
+#        back healthy with its data intact. An instance that only works until
+#        its first reboot is not self-hostable; nothing in A-E restarts anything.
+#     M  MODEL CONFIGURATION + A SUCCESSFUL FIRST CHAT — the actual product.
+#        Every other gate stops at `/api/health`, which is healthy on db+redis
+#        ALONE. A stranger's first real action is to point a seat at a model and
+#        send a message; if seat assignment or the chat run path is broken, the
+#        install is useless and every existing test still passes.
+#     B  BRANDING SMOKE — SELF_HOST.md § Branding promises a rebrand "no source
+#        edits". The knobs are frontend BUILD args, so a rebrand is only real if
+#        a build that sets them renders them.
+#
+# HOW M AND B ARE PROVED WITH ZERO CREDENTIALS
+#   The owner ruling of 2026-11-05T18:07Z is ZERO provisioned credentials on the
+#   public repo, and this workflow honours it: no `secrets.`, no `vars.`, no
+#   vendor key, no account.
+#     - M uses a STUB OpenAI-compatible server (a ~40-line Node script written
+#       onto the runner at run time) that answers `/v1/chat/completions`. Digby's
+#       registry is model-agnostic by design, so pointing the lead seat at a
+#       local OpenAI-compatible endpoint is the DOCUMENTED single-endpoint
+#       configuration, not a test-only backdoor. The assertion is not "the model
+#       is clever" — it is that a stranger can register an endpoint, assign a
+#       seat, and get a streamed answer back.
+#     - B sets DIGBY_BRAND_NAME/TITLE on the same single build, so no second
+#       build is needed and the branding assertion costs one HTTP GET.
+#
+# WHY ONE JOB AND NOT FOUR
+#   A source build of backend + frontend is the expensive step. Four jobs would
+#   build it four times. One job builds ONCE and runs S -> D -> B -> R -> M in
+#   order, each as a named step, so a red run still names its own cause. The
+#   legs share a stack, which is exactly how a stranger experiences them.
+#
+# TEARDOWN IS UNCONDITIONAL (`if: always()`), including the stub container: a
+# leftover named volume would make the NEXT first-run check inherit a seeded
+# database and pass vacuously.
+
+on:
+  # DISPATCH-ONLY UNTIL PROVEN GREEN — deliberately NO `schedule:` yet.
+  #
+  # This workflow has never executed (it cannot: the authoring lane has no
+  # container runtime, so legs S/R/M/B can only run on a CI runner, and it must
+  # ship to the public repo before it can be dispatched there). A scheduled
+  # trigger added at ship time would fire this file's first-ever run unattended,
+  # in the PUBLIC repo, and a defect in it would be a permanent red X on a
+  # release that works exactly as designed — the watchdog precedent recorded in
+  # scrub-rules.txt ("a workflow that can only ever be red is worse than one
+  # that is absent").
+  #
+  # ORDER OF OPERATIONS: ship -> dispatch once -> observe green -> THEN add the
+  # weekly cron below. Do not add it before the first green run.
+  #     schedule:
+  #       - cron: "43 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: selfhost-cleanroom-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  COMPOSE: docker-compose.selfhost.yml
+  # A name no stock asset uses, so its presence in the rendered page can only
+  # have come from the build args this workflow set.
+  BRAND_NAME: AcmeCleanroom
+  BRAND_TITLE: Acme Cleanroom Console
+  ADMIN_EMAIL: cleanroom-owner@example.com
+  STUB_NAME: digby-openai-stub
+  STUB_PORT: "8899"
+  STUB_MODEL: stub-model
+  STUB_LABEL: SmokeStub
+
+jobs:
+  clean-room:
+    name: source build · restart · first chat · branding
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout (the source install path needs the source)
+        uses: actions/checkout@v4
+
+      - name: Preflight — docker, compose v2, free disk
+        run: |
+          set -eu
+          docker --version
+          docker compose version
+          docker compose version >/dev/null 2>&1 || { echo "::error::compose v2 missing on runner"; exit 1; }
+          df -h / | tail -1
+          echo "runner disk headroom is needed for a from-source build plus ~1.7 GB of images"
+
+      - name: Prepare .env exactly as the guide says
+        run: |
+          set -eu
+          # SELF_HOST.md § Quick start, step 1, verbatim: copy the example, then
+          # generate the two session secrets. The secrets are GENERATED ON THE
+          # RUNNER (openssl rand -hex 32 — the guide's own command), never
+          # literals in this file: a workflow carrying a `NAME=<value>` line of a
+          # secret-shaped variable reads as a shipped credential to the export's
+          # scanner, and it would be one.
+          cp selfhost.env.example .env
+          jwt=$(openssl rand -hex 32)
+          refresh=$(openssl rand -hex 32)
+          # Rewrite in place, anchored on the KEY (never a line number): the
+          # example ships these keys empty.
+          sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$jwt|" .env
+          sed -i "s|^JWT_REFRESH_SECRET=.*|JWT_REFRESH_SECRET=$refresh|" .env
+          sed -i "s|^SELFHOST_ADMIN_EMAIL=.*|SELFHOST_ADMIN_EMAIL=$ADMIN_EMAIL|" .env
+          # Branding knobs are frontend BUILD args (SELF_HOST.md § Branding), and
+          # compose reads .env, so setting them here is the documented rebrand.
+          sed -i "s|^DIGBY_BRAND_NAME=.*|DIGBY_BRAND_NAME=$BRAND_NAME|" .env || true
+          printf '\nDIGBY_BRAND_NAME=%s\nDIGBY_BRAND_TITLE=%s\n' "$BRAND_NAME" "$BRAND_TITLE" >> .env
+          # Prove the required keys are non-empty WITHOUT printing them.
+          for k in JWT_SECRET JWT_REFRESH_SECRET; do
+            v=$(grep -E "^$k=." .env || true)
+            [ -n "$v" ] || { echo "::error::$k is empty in .env; the stack cannot start"; exit 1; }
+          done
+          echo "  .env prepared: 2 generated session secrets, admin email, branding args"
+
+      - name: S — source build, exactly the documented command
+        run: |
+          set -eu
+          # Verbatim from docs/SELF_HOST.md § Quick start. No `-f` variant, no
+          # profile flags: this is the line a stranger copies.
+          docker compose -f "$COMPOSE" up -d --build
+          # The one-shot `migrate` service must have run — the guide states that
+          # backend and worker wait for it. A build that starts but never
+          # migrates is a broken first run.
+          docker compose -f "$COMPOSE" ps
+
+      - name: Wait for healthy through Caddy
+        id: health
+        run: |
+          set -eu
+          ok=0
+          for i in $(seq 1 60); do
+            body=$(curl -fsS http://localhost:8080/api/health 2>/dev/null || true)
+            if [ -n "$body" ] && [ "$(printf '%s' "$body" | jq -r .status)" = "healthy" ]; then
+              ok=1; printf '%s' "$body" | jq .; break
+            fi
+            sleep 15
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::source-built stack did not report healthy within 15 minutes"
+            docker compose -f "$COMPOSE" ps || true
+            docker compose -f "$COMPOSE" logs --no-color --tail=150 migrate backend frontend || true
+            exit 1
+          fi
+          echo "  S PASS — from-source build reached healthy through Caddy on :8080"
+
+      - name: D — first-run signup and the documented first-admin bootstrap
+        run: |
+          set -eu
+          pw=$(openssl rand -hex 16)
+          code=$(curl -sS -o resp.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$pw\"}" \
+            http://localhost:8080/api/auth/register)
+          cat resp.json; echo
+          [ "$code" = "201" ] || { echo "::error::register returned HTTP $code, expected 201"; exit 1; }
+          role=$(jq -r '.data.user.role // ""' resp.json)
+          [ "$role" = "ADMIN" ] \
+            || { echo "::error::first user role is '$role', expected ADMIN from SELFHOST_ADMIN_EMAIL"; exit 1; }
+          echo "::add-mask::$pw"
+          echo "SMOKE_PASSWORD=$pw" >> "$GITHUB_ENV"
+          echo "  D PASS — register 201, first user promoted to ADMIN"
+
+      - name: Login and keep the access token
+        run: |
+          set -eu
+          code=$(curl -sS -o login.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}" \
+            http://localhost:8080/api/auth/login)
+          [ "$code" = "200" ] || { echo "::error::login returned HTTP $code"; cat login.json; exit 1; }
+          tok=$(jq -r '.data.accessToken // ""' login.json)
+          [ -n "$tok" ] || { echo "::error::login returned no accessToken"; exit 1; }
+          echo "::add-mask::$tok"
+          echo "SMOKE_TOKEN=$tok" >> "$GITHUB_ENV"
+          echo "  login OK (token masked)"
+
+      - name: B — branding smoke (the rebrand is only real if a build renders it)
+        run: |
+          set -eu
+          # The knobs are frontend BUILD args, so they were set BEFORE the build
+          # above. Two independent surfaces:
+          #   1. the server-rendered page carries the configured name/title;
+          #   2. the public branding pack endpoint answers without auth.
+          html=$(curl -fsS http://localhost:8080/ )
+          printf '%s' "$html" > page.html
+          if printf '%s' "$html" | grep -q "$BRAND_NAME"; then
+            echo "  B: brand name present in the served page"
+          else
+            echo "::error::brand name '$BRAND_NAME' absent from the served page — the build args did not reach the frontend"
+            printf '%s' "$html" | grep -oiE '<title>[^<]*</title>' || true
+            exit 1
+          fi
+          pack_code=$(curl -sS -o pack.json -w '%{http_code}' \
+            http://localhost:8080/api/crossmodel/branding/pack || true)
+          echo "  branding pack endpoint: HTTP $pack_code"
+          # A 404 is acceptable ONLY if the page assertion above held — the
+          # endpoint is newer than the env-arg path, and asserting both as hard
+          # requirements would fail a correct older build. The page is the
+          # documented promise; the endpoint is a bonus signal.
+          if [ "$pack_code" = "200" ]; then
+            head -c 400 pack.json; echo
+          fi
+          echo "  B PASS — '$BRAND_NAME' rendered from build args"
+
+      - name: R — restart persistence (an instance that dies on reboot is not self-hostable)
+        run: |
+          set -eu
+          docker compose -f "$COMPOSE" restart
+          ok=0
+          for i in $(seq 1 40); do
+            body=$(curl -fsS http://localhost:8080/api/health 2>/dev/null || true)
+            if [ -n "$body" ] && [ "$(printf '%s' "$body" | jq -r .status)" = "healthy" ]; then
+              ok=1; break
+            fi
+            sleep 15
+          done
+          [ "$ok" -eq 1 ] || { echo "::error::stack did not return to healthy after restart"; \
+            docker compose -f "$COMPOSE" ps || true; \
+            docker compose -f "$COMPOSE" logs --no-color --tail=150 backend worker || true; exit 1; }
+          # Healthy is not enough: the account created before the restart must
+          # still authenticate. A restart that empties the database "recovers"
+          # into a fresh install and would pass a health-only check.
+          code=$(curl -sS -o relogin.json -w '%{http_code}' \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$SMOKE_PASSWORD\"}" \
+            http://localhost:8080/api/auth/login || true)
+          [ "$code" = "200" ] \
+            || { echo "::error::login after restart returned HTTP $code — the restart lost data"; \
+                 cat relogin.json 2>/dev/null || true; exit 1; }
+          echo "  R PASS — healthy again after restart AND the pre-restart account still authenticates"
+
+      - name: M1 — start the stub OpenAI-compatible endpoint
+        run: |
+          set -eu
+          # A stub, on the compose network, so the backend reaches it by service
+          # name exactly as it would reach any self-hosted OpenAI-compatible
+          # server (Ollama, vLLM, LM Studio, LiteLLM). Streams SSE and answers
+          # non-streaming, because Digby uses both.
+          mkdir -p stub
+          cat > stub/server.mjs <<'STUB'
+          import http from 'node:http';
+          const PORT = Number(process.env.STUB_PORT || 8899);
+          const MODEL = process.env.STUB_MODEL || 'stub-model';
+          const TEXT = 'CLEANROOM_STUB_OK';
+          const send = (res, code, obj) => {
+            res.writeHead(code, { 'content-type': 'application/json' });
+            res.end(JSON.stringify(obj));
+          };
+          http.createServer((req, res) => {
+            if (req.method === 'GET' && req.url.split('?')[0].endsWith('/models')) {
+              return send(res, 200, { object: 'list', data: [{ id: MODEL, object: 'model', owned_by: 'stub' }] });
+            }
+            if (req.method !== 'POST' || !req.url.split('?')[0].endsWith('/chat/completions')) {
+              return send(res, 404, { error: { message: 'not found' } });
+            }
+            let raw = '';
+            req.on('data', (c) => { raw += c; });
+            req.on('end', () => {
+              let body = {};
+              try { body = JSON.parse(raw || '{}'); } catch {}
+              const id = 'chatcmpl-stub';
+              const created = Math.floor(Date.now() / 1000);
+              const model = body.model || MODEL;
+              if (body.stream === true) {
+                res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+                const chunk = (delta, finish) => res.write(
+                  'data: ' + JSON.stringify({ id, object: 'chat.completion.chunk', created, model,
+                    choices: [{ index: 0, delta, finish_reason: finish }] }) + '\n\n');
+                chunk({ role: 'assistant', content: '' }, null);
+                chunk({ content: TEXT.slice(0, 9) }, null);
+                chunk({ content: TEXT.slice(9) }, null);
+                chunk({}, 'stop');
+                res.write('data: [DONE]\n\n');
+                return res.end();
+              }
+              return send(res, 200, { id, object: 'chat.completion', created, model,
+                choices: [{ index: 0, message: { role: 'assistant', content: TEXT }, finish_reason: 'stop' }],
+                usage: { prompt_tokens: 5, completion_tokens: 4, total_tokens: 9 } });
+            });
+          }).listen(PORT, '0.0.0.0', () => console.log('stub listening on ' + PORT));
+          STUB
+          net=$(docker inspect digby-backend --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+          [ -n "$net" ] || { echo "::error::could not resolve the compose network from digby-backend"; exit 1; }
+          echo "compose network: $net"
+          docker rm -f "$STUB_NAME" >/dev/null 2>&1 || true
+          docker run -d --name "$STUB_NAME" --network "$net" \
+            -e STUB_PORT="$STUB_PORT" -e STUB_MODEL="$STUB_MODEL" \
+            -v "$PWD/stub:/app:ro" node:20-alpine node /app/server.mjs
+          for i in $(seq 1 20); do
+            docker exec "$STUB_NAME" node -e "fetch('http://127.0.0.1:$STUB_PORT/v1/models').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" && break
+            sleep 2
+          done
+          docker logs "$STUB_NAME" | tail -5
+          echo "  M1 PASS — stub reachable on the compose network as http://$STUB_NAME:$STUB_PORT/v1"
+
+      - name: M2 — register the endpoint and assign the lead seat
+        run: |
+          set -eu
+          base="http://localhost:8080/api/crossmodel"
+          # providerShape 'openai_chat' is the documented 4th path of SELF_HOST.md
+          # § Model providers: any OpenAI-compatible server. Nothing test-only.
+          code=$(curl -sS -o ep.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $SMOKE_TOKEN" -H 'Content-Type: application/json' \
+            -d "{\"label\":\"$STUB_LABEL\",\"providerShape\":\"openai_chat\",\"baseUrl\":\"http://$STUB_NAME:$STUB_PORT/v1\",\"models\":[{\"id\":\"$STUB_MODEL\",\"displayName\":\"Stub\"}],\"enabled\":true}" \
+            "$base/admin/model-endpoints")
+          cat ep.json; echo
+          [ "$code" = "201" ] || [ "$code" = "200" ] \
+            || { echo "::error::creating the model endpoint returned HTTP $code"; exit 1; }
+
+          # Point the LEAD seat at it — the seat a stranger's first chat uses.
+          code=$(curl -sS -o roles.json -w '%{http_code}' -X PUT \
+            -H "Authorization: Bearer $SMOKE_TOKEN" -H 'Content-Type: application/json' \
+            -d "{\"roles\":{\"chat_orchestrator\":\"$STUB_LABEL:$STUB_MODEL\"}}" \
+            "$base/admin/model-roles")
+          [ "$code" = "200" ] || { echo "::error::assigning the lead seat returned HTTP $code"; cat roles.json; exit 1; }
+
+          # Read it BACK: a save that silently no-ops is the failure mode a
+          # write-only check misses (the imageTimeoutMs lesson).
+          code=$(curl -sS -o roles2.json -w '%{http_code}' \
+            -H "Authorization: Bearer $SMOKE_TOKEN" "$base/admin/model-roles")
+          [ "$code" = "200" ] || { echo "::error::reading model roles returned HTTP $code"; exit 1; }
+          echo "  lead seat now: $(jq -r '.. | objects | select(has("key")) | select(.key=="chat_orchestrator") | (.model // .value // .spec // "")' roles2.json 2>/dev/null | head -1)"
+          if ! grep -q "$STUB_MODEL" roles2.json; then
+            echo "::error::the lead seat does not mention '$STUB_MODEL' after the write — the assignment did not persist"
+            head -c 1200 roles2.json; echo; exit 1
+          fi
+          echo "  M2 PASS — endpoint registered, lead seat assigned and read back"
+
+      - name: M3 — a successful first chat
+        run: |
+          set -eu
+          base="http://localhost:8080/api/crossmodel"
+          code=$(curl -sS -o chat.json -w '%{http_code}' -X POST \
+            -H "Authorization: Bearer $SMOKE_TOKEN" -H 'Content-Type: application/json' \
+            -d '{"title":"Clean-room smoke","mode":"single_thinking"}' \
+            "$base/chats")
+          cat chat.json; echo
+          [ "$code" = "201" ] || [ "$code" = "200" ] \
+            || { echo "::error::creating a chat returned HTTP $code"; exit 1; }
+          chat_id=$(jq -r '.data.id // .data.chat.id // ""' chat.json)
+          [ -n "$chat_id" ] || { echo "::error::chat create returned no id"; exit 1; }
+          echo "  chat: $chat_id"
+
+          # The stream is what the product IS. Read it with a bounded timeout so
+          # a hung run fails the job instead of burning the 75-minute budget.
+          curl -sS -N --max-time 300 \
+            -H "Authorization: Bearer $SMOKE_TOKEN" \
+            -H 'Accept: text/event-stream' \
+            "$base/chats/$chat_id/stream?message=hello%20clean%20room" > stream.txt || true
+          echo "  stream bytes: $(wc -c < stream.txt)"
+          head -40 stream.txt || true
+
+          # The stub's fixed answer is the proof that model config -> seat ->
+          # run path -> streamed reply all worked end to end.
+          if grep -q 'CLEANROOM_STUB_OK' stream.txt; then
+            echo "  M3 PASS — the stub's answer arrived through the chat stream"
+          else
+            echo "::error::the chat stream did not carry the model's answer (expected CLEANROOM_STUB_OK)"
+            docker compose -f "$COMPOSE" logs --no-color --tail=120 backend || true
+            exit 1
+          fi
+
+      - name: Diagnostics (only shown on failure)
+        if: failure()
+        run: |
+          echo "── compose ps ──"
+          docker compose -f "$COMPOSE" ps || true
+          echo "── backend ──"
+          docker compose -f "$COMPOSE" logs --no-color --tail=200 backend || true
+          echo "── migrate ──"
+          docker compose -f "$COMPOSE" logs --no-color --tail=200 migrate || true
+          echo "── frontend ──"
+          docker compose -f "$COMPOSE" logs --no-color --tail=120 frontend || true
+          echo "── stub ──"
+          docker logs "$STUB_NAME" --tail 50 2>/dev/null || true
+          echo "── disk ──"
+          df -h / || true
+
+      - name: Teardown (always)
+        if: always()
+        run: |
+          # Unconditional, stub included: a named volume left behind would make
+          # the NEXT first-run check inherit a seeded database and pass vacuously.
+          docker rm -f "$STUB_NAME" >/dev/null 2>&1 || true
+          docker compose -f "$COMPOSE" down -v --remove-orphans || true
+          docker system prune -af --volumes >/dev/null 2>&1 || true

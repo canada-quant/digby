@@ -3430,6 +3430,83 @@
         ]
       }
     },
+    "/api/crossmodel/orgs/{orgId}/sso/start": {
+      "get": {
+        "summary": "redirect the browser to the tenant's IdP.",
+        "tags": [
+          "org"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "description": "Returns the URL as JSON rather than a 302 so the SPA can decide how to\nnavigate (and can show its own error surface when this 404s). A redirect here\nwould make a refused login look like a broken page.",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/orgs/sso/callback": {
+      "get": {
+        "summary": "OIDC authorization-code return.",
+        "tags": [
+          "org"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        }
+      }
+    },
+    "/api/crossmodel/orgs/sso/acs": {
+      "post": {
+        "summary": "SAML Assertion Consumer Service.",
+        "tags": [
+          "org"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        }
+      }
+    },
+    "/api/crossmodel/orgs/{orgId}/sso/metadata": {
+      "get": {
+        "summary": "SP metadata a SAML tenant registers at its IdP.",
+        "tags": [
+          "org"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          }
+        },
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
     "/api/crossmodel/branding/pack": {
       "get": {
         "summary": "The ACTIVE branding pack for this instance (public)",
@@ -12527,6 +12604,104 @@
           },
           {
             "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/crossmodel/orgs/{orgId}/sso": {
+      "get": {
+        "summary": "the tenant's IdP config, secrets redacted.",
+        "tags": [
+          "org"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "summary": "create or update the tenant's IdP. OWNER only.",
+        "tags": [
+          "org"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "summary": "remove federation. OWNER only.",
+        "tags": [
+          "org"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response"
+          },
+          "401": {
+            "description": "Authentication required"
+          }
+        },
+        "parameters": [
+          {
+            "name": "orgId",
             "in": "path",
             "required": true,
             "schema": {

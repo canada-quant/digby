@@ -86,6 +86,9 @@ describe('capability table — pinned exhaustively', () => {
       'billing:read',
       'billing:update',
       'member:grant-senior',
+      // Phase 3 SSO (3ad2b010): repointing the tenant's IdP is an ownership
+      // act — it decides who may authenticate into the tenant at all.
+      'sso:manage',
     ],
     ADMIN: ['org:read', 'org:update', 'member:read', 'member:invite', 'member:role', 'member:remove', 'billing:read'],
     BILLING: ['org:read', 'billing:read', 'billing:update'],
@@ -105,6 +108,7 @@ describe('capability table — pinned exhaustively', () => {
         'member:role',
         'org:read',
         'org:update',
+        'sso:manage',
       ].sort(),
     );
   });

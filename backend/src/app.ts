@@ -45,6 +45,8 @@ import { INSTANCE_PAIR_PATH_RE } from './modules/crossmodel/instances/instances.
 import { visitorAdminRoutes } from './modules/crossmodel/visitors/visitor.routes';
 import { orgAdminRoutes } from './modules/crossmodel/org/org-admin.routes';
 import { orgMembersRoutes } from './modules/crossmodel/org/org-members.routes';
+import { orgSsoRoutes } from './modules/crossmodel/org/org-sso.routes';
+import { orgSsoOpenRoutes } from './modules/crossmodel/org/org-sso-open.routes';
 import { brandingPackPublicRoutes, brandingPackAdminRoutes } from './modules/crossmodel/branding/branding-pack.routes';
 import { clientIpForHash } from './modules/crossmodel/visitors/visitor.service';
 import { hashIp } from './modules/crossmodel/visitors/ip-hash';
@@ -455,6 +457,10 @@ mountApi(app, '', publicShareRoutes); // public share links — no auth at all
 mountApi(app, '', codingPublicRoutes); // Digby Code SSE/preview (query-token) — optionalAuthenticate + handler self-check
 mountApi(app, '', generatedFilesPublicRoutes); // generated-file download (query-token — chat markdown links send no Authorization header)
 mountApi(app, '', crossmodelOpenRoutes); // stream/upload/feedback/OAuth/webhooks — open posture
+// Phase 3 Enterprise SSO/SAML (todo 3ad2b010) — the OPEN half. A federated user
+// is by definition not signed in yet, so these MUST precede the guard; every
+// callback still has to present a single-use `state` this server issued.
+mountApi(app, '', orgSsoOpenRoutes);
 // Phase 2 Cloud brandings packs (todo 61dc8aaf) — PUBLIC half: every visitor,
 // logged out included, must see an active seasonal skin, so the active-pack read
 // and its asset bytes sit BEFORE the guard. Both routes are read-only and can
@@ -489,6 +495,9 @@ mountApi(app, '', orgAdminRoutes); // Phase 2 Cloud — tenant abuse kill switch
 // handler is gated on the caller's `memberships.role` for the `:orgId` in its own
 // path (org-access.ts), so these reach one workspace each, never the whole deployment.
 mountApi(app, '', orgMembersRoutes);
+// Phase 3 Enterprise SSO/SAML (todo 3ad2b010) — the ADMIN half: per-org IdP CRUD,
+// OWNER-only via the `sso:manage` capability (never `org:update`, which ADMIN holds).
+mountApi(app, '', orgSsoRoutes);
 // Phase 2 Cloud branding packs (todo 61dc8aaf) — ADMIN half: upload → validate →
 // preview → activate → rollback. Behind the guard AND gated per handler on
 // isAdminViewer (the owner-email fallback never applies on a self-host instance).
